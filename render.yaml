@@ -1,7 +1,7 @@
 services:
   - type: web
     name: villa-gianni-pms
-    env: node
+    runtime: node
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
@@ -12,6 +12,8 @@ services:
           property: connectionString
       - key: NODE_VERSION
         value: 20.11.0
+      - key: ELECTRON_SKIP_BINARY_DOWNLOAD
+        value: "1"
 
 databases:
   - name: villa-gianni-db
