@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design system tokens (can be extended or themed) */
+:root {
+  --ds-radius: 0.75rem; /* rounded-xl */
+  --ds-spacing: 1.5rem; /* p-6 */
+}
+
+@layer base {
+  html, body {
+    width: 100%;
+    overflow-x: hidden;
+  }
+}
+
+@layer components {
+  /* Unified card/section wrappers to match POS Settings */
+  .ds-card { @apply bg-white rounded-xl shadow-lg p-6; }
+  .ds-section { @apply border rounded-lg p-4 mb-6 bg-white; }
+
+  /* Typography helpers */
+  .ds-header { @apply text-xl font-bold text-gray-800 mb-4; }
+  .ds-subheader { @apply text-lg font-semibold mb-2; }
+  .ds-muted { @apply text-xs text-gray-600; }
+
+  /* Layout utilities */
+  .ds-controls { @apply flex items-center gap-2; }
+  .ds-grid-2 { @apply grid grid-cols-1 md:grid-cols-2 gap-3; }
+  .ds-grid-3 { @apply grid grid-cols-1 md:grid-cols-3 gap-3; }
+
+  /* Responsive toolbar for action buttons and controls */
+  .ds-toolbar { @apply flex flex-wrap items-center gap-2 sm:gap-3 md:gap-4; }
+  .ds-toolbar > * { @apply max-w-full; }
+  /* Controls inside toolbars should not overflow on small screens */
+  .ds-control { @apply w-full sm:w-auto; }
+
+  /* Button style aligners (use with existing Button component when needed) */
+  .ds-button-primary { @apply bg-blue-600 text-white hover:bg-blue-700 transition-all duration-200; }
+  .ds-button-outline { @apply border rounded px-3 py-2 text-sm; }
+
+  /* Payment method buttons (accessible color scheme) */
+  .pay-btn { @apply rounded-lg border-2 font-semibold transition-all px-4 py-3; }
+  .pay-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .pay-btn:focus { outline: 2px solid rgba(0,0,0,0.6); outline-offset: 2px; }
+  .pay-btn-active { box-shadow: 0 0 0 3px rgba(0,0,0,0.12); }
+  .pay-btn-inactive { filter: saturate(0.95) brightness(0.98); }
+  .pay-btn-cash { background-color: #FF0000; color: #000000; border-color: #CC0000; }
+  .pay-btn-cash:hover { filter: brightness(0.92); }
+  .pay-btn-card { background-color: #FFDB58; color: #000000; border-color: #E6C54E; }
+  .pay-btn-card:hover { filter: brightness(0.95); }
+  .pay-btn-room { background-color: #00FF00; color: #000000; border-color: #00CC00; }
+  .pay-btn-room:hover { filter: brightness(0.92); }
+
+  /* Pre-payment option panels */
+  .preopt { @apply border rounded p-3; }
+  .preopt-split { background-color: #E6F0FF; color: #0A1F44; }
+  .preopt-transfer { background-color: #FFF7E6; color: #3C2F0F; }
+  .preopt-discount { background-color: #E8FBE8; color: #0F3D0F; }
+  .preopt:hover { box-shadow: 0 1px 6px rgba(0,0,0,0.08); }
+
+  /* Table styling to match POS Settings typography and spacing */
+  .ds-table { @apply w-full text-sm; }
+  .ds-table thead tr { @apply bg-gray-100; }
+  .ds-table th { @apply px-4 py-3 text-left font-semibold text-gray-700; }
+  .ds-table td { @apply px-4 py-3 text-sm text-gray-800; }
+}

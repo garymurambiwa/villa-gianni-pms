@@ -1,0 +1,282 @@
+/**
+ * Dynamic Background Styles
+ * Cross-browser compatible CSS for dynamic background color changes
+ */
+
+/* Base styles for dynamic background elements */
+.dynamic-background-div {
+  /* Ensure smooth transitions across all browsers */
+  -webkit-transition: background-color 300ms ease-in-out, 
+                      color 300ms ease-in-out, 
+                      transform 150ms ease-in-out, 
+                      box-shadow 150ms ease-in-out;
+  -moz-transition: background-color 300ms ease-in-out, 
+                   color 300ms ease-in-out, 
+                   transform 150ms ease-in-out, 
+                   box-shadow 150ms ease-in-out;
+  -o-transition: background-color 300ms ease-in-out, 
+                 color 300ms ease-in-out, 
+                 transform 150ms ease-in-out, 
+                 box-shadow 150ms ease-in-out;
+  transition: background-color 300ms ease-in-out, 
+              color 300ms ease-in-out, 
+              transform 150ms ease-in-out, 
+              box-shadow 150ms ease-in-out;
+  
+  /* Improve performance with hardware acceleration */
+  -webkit-transform: translateZ(0);
+  -moz-transform: translateZ(0);
+  -ms-transform: translateZ(0);
+  transform: translateZ(0);
+  
+  /* Ensure proper rendering */
+  -webkit-backface-visibility: hidden;
+  -moz-backface-visibility: hidden;
+  backface-visibility: hidden;
+  
+  /* Better font rendering */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  
+  /* Prevent text selection on double click */
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  
+  /* Ensure proper box model */
+  -webkit-box-sizing: border-box;
+  -moz-box-sizing: border-box;
+  box-sizing: border-box;
+}
+
+/* Focus styles for accessibility */
+.dynamic-background-div:focus {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  outline-style: solid;
+}
+
+.dynamic-background-div:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.dynamic-background-div:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  outline-style: solid;
+}
+
+/* Hover and active states */
+.dynamic-background-div:hover {
+  -webkit-transform: scale(1.02);
+  -moz-transform: scale(1.02);
+  -ms-transform: scale(1.02);
+  transform: scale(1.02);
+}
+
+.dynamic-background-div:active {
+  -webkit-transform: scale(0.98);
+  -moz-transform: scale(0.98);
+  -ms-transform: scale(0.98);
+  transform: scale(0.98);
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+  .dynamic-background-div {
+    height: 5rem; /* Slightly smaller on mobile */
+    margin-bottom: 0.75rem;
+    font-size: 0.875rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .dynamic-background-div {
+    /* Touch-friendly sizing */
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .dynamic-background-div {
+    border: 2px solid currentColor !important;
+    box-shadow: none !important;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .dynamic-background-div {
+    -webkit-transition: none !important;
+    -moz-transition: none !important;
+    -o-transition: none !important;
+    transition: none !important;
+    -webkit-animation: none !important;
+    -moz-animation: none !important;
+    animation: none !important;
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .dynamic-background-div {
+    /* Ensure colors remain visible in dark mode */
+    filter: brightness(0.9) contrast(1.1);
+  }
+}
+
+/* Print styles */
+@media print {
+  .dynamic-background-div {
+    background-color: #f5f5f5 !important;
+    color: #000000 !important;
+    border: 1px solid #cccccc !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
+/* Screen reader only content */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* Browser-specific fixes */
+/* Chrome/Chromium */
+@supports (-webkit-appearance: none) {
+  .dynamic-background-div {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Firefox */
+@-moz-document url-prefix() {
+  .dynamic-background-div {
+    -moz-user-focus: normal;
+  }
+}
+
+/* Safari */
+@supports (-webkit-backdrop-filter: none) {
+  .dynamic-background-div {
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* Edge */
+@supports (-ms-ime-align: auto) {
+  .dynamic-background-div {
+    -ms-touch-action: manipulation;
+    touch-action: manipulation;
+  }
+}
+
+/* IE11 fallback */
+@media screen and (-ms-high-contrast: active), (-ms-high-contrast: none) {
+  .dynamic-background-div {
+    background-color: #dddddd !important;
+    color: #000000 !important;
+    border: 1px solid #999999 !important;
+  }
+}
+
+/* Custom properties for dynamic colors */
+:root {
+  --dynamic-bg-color: #dddddd;
+  --dynamic-text-color: #000000;
+  --contrast-ratio: 4.5;
+  --transition-duration: 300ms;
+}
+
+.dynamic-background-div {
+  background-color: var(--dynamic-bg-color, #dddddd);
+  color: var(--dynamic-text-color, #000000);
+}
+
+/* Animation for color changes */
+@keyframes colorChange {
+  0% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.8;
+  }
+}
+
+.dynamic-background-div.color-changing {
+  -webkit-animation: colorChange 300ms ease-in-out;
+  -moz-animation: colorChange 300ms ease-in-out;
+  animation: colorChange 300ms ease-in-out;
+}
+
+/* Error state styling */
+.dynamic-background-div[data-invalid="true"] {
+  background-color: #ef4444 !important;
+  color: #ffffff !important;
+  border: 2px dashed #dc2626 !important;
+}
+
+.dynamic-background-div[data-invalid="true"]:before {
+  content: "⚠️ Invalid Color";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.75rem;
+  font-weight: bold;
+  text-align: center;
+}
+
+/* Loading state */
+.dynamic-background-div[data-loading="true"] {
+  background: linear-gradient(90deg, 
+    var(--dynamic-bg-color) 25%, 
+    rgba(255, 255, 255, 0.1) 50%, 
+    var(--dynamic-bg-color) 75%);
+  background-size: 200% 100%;
+  -webkit-animation: loading 1.5s ease-in-out infinite;
+  -moz-animation: loading 1.5s ease-in-out infinite;
+  animation: loading 1.5s ease-in-out infinite;
+}
+
+@-webkit-keyframes loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@-moz-keyframes loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

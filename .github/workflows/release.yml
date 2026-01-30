@@ -1,0 +1,67 @@
+name: release
+on:
+  push:
+    branches:
+      - main
+      - 'release/*'
+jobs:
+  semantic-release:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  build-release-artifacts:
+    needs: semantic-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run electron:build:unsigned
+      - name: Generate SHA256 checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse release_v* | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            "$($hash)  $($_.FullName)" | Add-Content SHASUMS.txt
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-shasums
+          path: SHASUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: release_v*/**
+  docker-publish:
+    needs: semantic-release
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: pkg
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> $GITHUB_OUTPUT
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ steps.pkg.outputs.version }},ghcr.io/${{ github.repository }}:latest

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Codigita default brand mark (simplified) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="CODIGITA logo">
+  <title>CODIGITA logo</title>
+  <defs>
+    <linearGradient id="navyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0B0742"/>
+      <stop offset="100%" stop-color="#0B0A3A"/>
+    </linearGradient>
+  </defs>
+  <!-- Outer ring silhouette -->
+  <circle cx="256" cy="256" r="240" fill="#ffffff"/>
+  <!-- Top navy wave -->
+  <path d="M32,160 C120,80 200,40 256,40 C312,40 392,80 480,160 C440,150 392,160 352,174 C300,192 268,204 256,206 C244,204 212,192 160,174 C120,160 72,150 32,160 Z" fill="url(#navyGrad)"/>
+  <!-- Red body with inner cutout -->
+  <path d="M32,160 C70,110 108,96 144,96 C184,96 232,121 270,134 C292,141 316,148 340,148 C372,148 420,130 472,108 C506,94 540,132 480,352 C472,380 460,404 448,424 H64 C52,404 40,380 32,352 C-20,172 12,120 32,160 Z" fill="#ED1C24"/>
+  <!-- Inner hole -->
+  <circle cx="256" cy="256" r="120" fill="#000000"/>
+  <!-- Thin white wave separator -->
+  <path d="M48,168 C120,120 192,152 256,152 C320,152 392,120 464,168" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round"/>
+</svg>
+

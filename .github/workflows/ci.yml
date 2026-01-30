@@ -1,0 +1,151 @@
+name: ci
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  unit-integration:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm run lint
+      - run: npx vitest run --coverage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.node }}
+          path: coverage
+  e2e:
+    needs: unit-integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+      - run: nohup npm run preview -- --port 8081 > preview.log 2>&1 &
+      - uses: microsoft/playwright-github-action@v1
+      - run: npx playwright install --with-deps
+      - run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-logs
+          path: preview.log
+  db-validation:
+    needs: unit-integration
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: example
+          MYSQL_DATABASE: corepms
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pexample"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run flyway:validate
+        env:
+          FLYWAY_URL: jdbc:mysql://127.0.0.1:3306/corepms
+          FLYWAY_USER: root
+          FLYWAY_PASSWORD: example
+      - run: npm run flyway:migrate
+        env:
+          FLYWAY_URL: jdbc:mysql://127.0.0.1:3306/corepms
+          FLYWAY_USER: root
+          FLYWAY_PASSWORD: example
+      - run: npm run db:acid
+        env:
+          FLYWAY_URL: jdbc:mysql://127.0.0.1:3306/corepms
+          FLYWAY_USER: root
+          FLYWAY_PASSWORD: example
+  security:
+    needs: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run audit
+      - run: npm run security:check
+  owasp-zap:
+    needs: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: nohup npm run preview -- --port 8081 > zap-preview.log 2>&1 &
+      - name: OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: 'http://localhost:8081'
+          fail_action: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zap-preview-logs
+          path: zap-preview.log
+  perf:
+    needs: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: nohup npm run preview -- --port 8081 > perf-preview.log 2>&1 &
+      - uses: grafana/k6-action@v0.2.0
+        with:
+          filename: test/perf/k6-smoke.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perf-preview-logs
+          path: perf-preview.log
+  build-artifacts:
+    needs: [unit-integration, e2e]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run electron:build:unsigned
+      - name: Generate SHA256 checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse release-v* | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            "$($hash)  $($_.FullName)" | Add-Content SHASUMS.txt
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shasums
+          path: SHASUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: electron-artifacts
+          path: release-v*/**

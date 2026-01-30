@@ -1,0 +1,15 @@
+CORE DPMS End User License Agreement (EULA)
+
+By installing or using CORE DPMS, you agree to the terms of this End User License Agreement. If you do not agree, do not install or use the software.
+
+1. License. COREPMS grants you a non-exclusive, non-transferable license to install and use CORE DPMS on Windows devices for business operations.
+2. Ownership. COREPMS retains all rights, title, and interest in and to the software.
+3. Restrictions. You may not reverse engineer, decompile, or disassemble the software except as expressly permitted by applicable law.
+4. Data. You are responsible for the data entered into and processed by the software.
+5. Updates. Updates may modify features and functionality; continued use constitutes acceptance of such updates.
+6. Warranty. The software is provided “as is” without warranties of any kind.
+7. Liability. COREPMS shall not be liable for indirect, incidental, or consequential damages.
+8. Termination. COREPMS may terminate this license if you fail to comply with the terms.
+9. Governing Law. This EULA is governed by the laws applicable in your jurisdiction.
+
+Copyright © 2025 COREPMS. All rights reserved.

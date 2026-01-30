@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-User Supabase Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7;
+        }
+        .container {
+            max-width: 900px;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex items-center justify-center p-4">
+
+    <div id="app" class="container bg-white shadow-xl rounded-xl p-6 md:p-10 w-full">
+        <h1 class="text-3xl font-extrabold text-blue-800 mb-6 text-center">Supabase Multi-User App</h1>
+        <p class="text-sm text-gray-500 mb-6 text-center">Your local database migration simplified.</p>
+
+        <!-- Configuration Warning -->
+        <div id="config-warning" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-md mb-6 hidden" role="alert">
+            <strong class="font-bold">Configuration Required:</strong> Please replace the placeholder values for `SUPABASE_URL` and `SUPABASE_ANON_KEY` in the script section.
+        </div>
+        
+        <!-- Loading Indicator -->
+        <div id="loading" class="text-center py-10 hidden">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <p class="mt-4 text-gray-600">Loading...</p>
+        </div>
+
+        <!-- Auth View -->
+        <div id="auth-view">
+            <h2 class="text-2xl font-semibold mb-4 text-gray-700">Sign Up / Sign In</h2>
+            <form id="auth-form" class="space-y-4">
+                <input type="email" id="email" placeholder="Email" required 
+                       class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                <input type="password" id="password" placeholder="Password (min 6 chars)" required 
+                       class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                <button type="submit" id="sign-in-btn" 
+                        class="w-full py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition duration-150 shadow-md">
+                    Sign In
+                </button>
+                <button type="button" id="sign-up-btn" 
+                        class="w-full py-3 border border-blue-600 text-blue-600 font-bold rounded-lg hover:bg-blue-50 transition duration-150">
+                    Sign Up
+                </button>
+            </form>
+            <div id="auth-message" class="mt-4 p-3 rounded-lg text-sm text-center"></div>
+        </div>
+
+        <!-- Dashboard View (Visible after login) -->
+        <div id="dashboard-view" class="hidden">
+            <div class="flex justify-between items-center border-b pb-4 mb-4">
+                <div>
+                    <p class="text-lg font-medium text-gray-700">Welcome, <span id="user-email" class="font-bold text-blue-600"></span>!</p>
+                    <p class="text-sm text-gray-500">Your User ID: <span id="user-id"></span></p>
+                </div>
+                <button id="sign-out-btn" class="px-4 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150 shadow-md">
+                    Sign Out
+                </button>
+            </div>
+
+            <h2 class="text-xl font-semibold mb-4 text-gray-700">Your Private Tasks (Real-time)</h2>
+            
+            <form id="add-task-form" class="flex gap-2 mb-6">
+                <input type="text" id="new-task-text" placeholder="Add a new task..." required 
+                       class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                <button type="submit" 
+                        class="py-3 px-6 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition duration-150 shadow-md">
+                    Add
+                </button>
+            </form>
+
+            <div id="task-list" class="space-y-3">
+                <!-- Tasks will be injected here -->
+            </div>
+            <p id="no-tasks-message" class="text-center text-gray-500 italic mt-6 hidden">You have no tasks yet.</p>
+
+        </div>
+    </div>
+
+    <script>
+        // --- Supabase Configuration (UPDATE THESE) ---
+        // 🚨 IMPORTANT: Replace these placeholders with your actual Supabase Project URL and Public Anon Key.
+        const SUPABASE_URL = 'https://your-project-ref.supabase.co'; // e.g., 'https://abcd1234.supabase.co'
+        const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY'; 
+
+        // Initial setup for UI elements
+        const authView = document.getElementById('auth-view');
+        const dashboardView = document.getElementById('dashboard-view');
+        const loadingIndicator = document.getElementById('loading');
+        const authMessage = document.getElementById('auth-message');
+        const configWarning = document.getElementById('config-warning');
+
+        let supabase = null;
+        let userId = null;
+
+        // Utility Functions
+        function showMessage(element, text, isError = false) {
+            element.textContent = text;
+            element.className = isError 
+                ? 'mt-4 p-3 rounded-lg text-sm text-red-700 bg-red-100 text-center' 
+                : 'mt-4 p-3 rounded-lg text-sm text-green-700 bg-green-100 text-center';
+        }
+
+        function showView(viewId) {
+            authView.classList.add('hidden');
+            dashboardView.classList.add('hidden');
+            if (viewId === 'loading') {
+                loadingIndicator.classList.remove('hidden');
+            } else {
+                loadingIndicator.classList.add('hidden');
+                document.getElementById(viewId).classList.remove('hidden');
+            }
+        }
+
+        // --- Supabase Initialization ---
+        function initializeSupabase() {
+            if (SUPABASE_URL.includes('your-project') || SUPABASE_ANON_KEY.includes('YOUR_ANON_KEY')) {
+                configWarning.classList.remove('hidden');
+                showView('auth-view');
+                return false;
+            }
+            supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            return true;
+        }
+
+        // --- Auth State Listener ---
+        async function handleAuthChange(session) {
+            if (!session) {
+                userId = null;
+                showView('auth-view');
+                return;
+            }
+
+            userId = session.user.id;
+            document.getElementById('user-email').textContent = session.user.email;
+            document.getElementById('user-id').textContent = userId;
+            
+            showView('dashboard-view');
+            await fetchAndSubscribeTasks();
+        }
+
+        // --- Auth Handlers ---
+        document.getElementById('auth-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const target = e.submitter.id;
+
+            authMessage.textContent = '';
+            
+            try {
+                if (target === 'sign-in-btn') {
+                    showView('loading');
+                    const { error } = await supabase.auth.signInWithPassword({ email, password });
+                    if (error) throw error;
+                    showMessage(authMessage, 'Signed in successfully!', false);
+                }
+            } catch (error) {
+                showMessage(authMessage, `Sign In Error: ${error.message}`, true);
+                showView('auth-view'); // Show auth view again on error
+            }
+        });
+
+        document.getElementById('sign-up-btn').addEventListener('click', async () => {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            authMessage.textContent = '';
+            
+            try {
+                showView('loading');
+                const { data, error } = await supabase.auth.signUp({ 
+                    email, 
+                    password 
+                });
+
+                if (error) throw error;
+
+                if (data.user) {
+                    showMessage(authMessage, 'Sign up successful! Please check your email to confirm your account.', false);
+                } else {
+                     // This path is hit if email confirmation is required but user is not immediately signed in
+                    showMessage(authMessage, 'Account created! Please check your email to verify.', false);
+                }
+                showView('auth-view');
+            } catch (error) {
+                showMessage(authMessage, `Sign Up Error: ${error.message}`, true);
+                showView('auth-view');
+            }
+        });
+
+        document.getElementById('sign-out-btn').addEventListener('click', async () => {
+            showView('loading');
+            const { error } = await supabase.auth.signOut();
+            if (error) {
+                console.error('Sign Out Error:', error);
+                // Note: Using a custom message box instead of alert()
+                document.getElementById('auth-message').textContent = 'Could not sign out.';
+                showMessage(authMessage, 'Could not sign out.', true);
+            }
+            showView('auth-view');
+        });
+
+        // --- Task (Data) Handlers ---
+
+        function renderTasks(tasks) {
+            const taskList = document.getElementById('task-list');
+            taskList.innerHTML = '';
+            
+            if (tasks.length === 0) {
+                document.getElementById('no-tasks-message').classList.remove('hidden');
+                return;
+            }
+            document.getElementById('no-tasks-message').classList.add('hidden');
+
+            tasks.sort((a, b) => a.id - b.id).forEach(task => {
+                const item = document.createElement('div');
+                item.className = 'flex items-center justify-between p-4 bg-gray-100 rounded-lg shadow-sm';
+                item.innerHTML = `
+                    <span class="text-gray-800 ${task.is_complete ? 'line-through text-gray-500' : ''}">${task.description}</span>
+                    <div class="flex items-center space-x-2">
+                        <button data-id="${task.id}" data-complete="${task.is_complete}" class="toggle-btn text-sm font-medium ${task.is_complete ? 'text-orange-500 hover:text-orange-600' : 'text-blue-500 hover:text-blue-600'}">
+                            ${task.is_complete ? 'Undo' : 'Complete'}
+                        </button>
+                        <button data-id="${task.id}" class="delete-btn text-sm font-medium text-red-500 hover:text-red-600">
+                            Delete
+                        </button>
+                    </div>
+                `;
+                taskList.appendChild(item);
+            });
+        }
+
+        // Real-time task listener and data fetch
+        let realtimeInterval = null;
+
+        async function fetchAndSubscribeTasks() {
+            if (!supabase || !userId) return;
+
+            // 1. Initial Fetch
+            const { data: initialTasks, error: fetchError } = await supabase
+                .from('tasks')
+                .select('*')
+                .eq('user_id', userId);
+
+            if (fetchError) {
+                console.error('Error fetching initial tasks:', fetchError);
+                renderTasks([]);
+                return;
+            }
+            renderTasks(initialTasks || []);
+
+
+            // 2. Setup Real-time Subscription (for the quickest multi-user update)
+            if (realtimeInterval) {
+                // Remove previous subscription if exists
+                supabase.removeChannel(realtimeInterval);
+            }
+
+            realtimeInterval = supabase
+                .channel('schema-db-changes')
+                .on(
+                    'postgres_changes',
+                    { event: '*', schema: 'public', table: 'tasks', filter: `user_id=eq.${userId}` },
+                    async (payload) => {
+                        console.log('Realtime change received!', payload);
+                        
+                        // Refetch the entire list for simplicity and consistency
+                        const { data: updatedTasks, error: refetchError } = await supabase
+                            .from('tasks')
+                            .select('*')
+                            .eq('user_id', userId);
+
+                        if (refetchError) {
+                            console.error('Error refetching tasks:', refetchError);
+                            return;
+                        }
+                        renderTasks(updatedTasks || []);
+                    }
+                )
+                .subscribe();
+        }
+
+        // Add Task
+        document.getElementById('add-task-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const description = document.getElementById('new-task-text').value;
+            if (!description || !userId) return;
+
+            const { error } = await supabase
+                .from('tasks')
+                .insert({ description: description, user_id: userId });
+
+            if (error) {
+                console.error('Error adding task:', error);
+                showMessage(authMessage, 'Could not add task.', true);
+            } else {
+                document.getElementById('new-task-text').value = '';
+            }
+        });
+        
+        // Handle Toggle and Delete buttons (Event Delegation)
+        document.getElementById('task-list').addEventListener('click', async (e) => {
+            const target = e.target;
+            const taskId = target.dataset.id;
+            
+            if (!taskId) return;
+            
+            if (target.classList.contains('toggle-btn')) {
+                const isComplete = target.dataset.complete === 'true';
+                const { error } = await supabase
+                    .from('tasks')
+                    .update({ is_complete: !isComplete })
+                    .eq('id', taskId);
+
+                if (error) {
+                    console.error('Error toggling task:', error);
+                    showMessage(authMessage, 'Could not toggle task.', true);
+                }
+            } else if (target.classList.contains('delete-btn')) {
+                const { error } = await supabase
+                    .from('tasks')
+                    .delete()
+                    .eq('id', taskId);
+
+                if (error) {
+                    console.error('Error deleting task:', error);
+                    showMessage(authMessage, 'Could not delete task.', true);
+                }
+            }
+        });
+
+
+        // --- Main Execution Block ---
+        function initApp() {
+            showView('loading');
+            if (initializeSupabase()) {
+                // Watch for changes in the authentication state
+                supabase.auth.onAuthStateChange((event, session) => {
+                    handleAuthChange(session);
+                });
+            }
+        }
+
+        // Supabase requires this function name
+        const { createClient } = supabase; 
+        
+        // This is necessary to avoid running before the window is fully loaded.
+        window.onload = initApp;
+
+        /* * --- POST-SETUP INSTRUCTIONS FOR THE USER ---
+         * 1. Create a Supabase project and get your URL and Anon Key.
+         * 2. In your Supabase Dashboard, go to the SQL Editor and run this command 
+         * to create the required 'tasks' table:
+         * * CREATE TABLE tasks (
+         * id BIGSERIAL PRIMARY KEY,
+         * user_id UUID REFERENCES auth.users(id) NOT NULL,
+         * description TEXT NOT NULL,
+         * is_complete BOOLEAN DEFAULT FALSE,
+         * created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+         * );
+         * * 3. Set Row Level Security (RLS) policies for the 'tasks' table to ensure users can only 
+         * see and modify their own tasks (critical for multi-user security):
+         * - Enable RLS for 'tasks' table.
+         * - Create a 'SELECT' policy: "Performs SELECT for users based on user_id"
+         * - Target roles: authenticated
+         * - Using expression: (auth.uid() = user_id)
+         * - Create an 'INSERT' policy: "Users can insert their own tasks"
+         * - Target roles: authenticated
+         * - With check expression: (auth.uid() = user_id)
+         * - Create an 'UPDATE' policy: "Users can update their own tasks"
+         * - Target roles: authenticated
+         * - Using expression: (auth.uid() = user_id)
+         * - Create a 'DELETE' policy: "Users can delete their own tasks"
+         * - Target roles: authenticated
+         * - Using expression: (auth.uid() = user_id)
+         */
+    </script>
+</body>
+</html>

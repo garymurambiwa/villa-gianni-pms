@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: villa-gianni-pms
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: villa-gianni-db
+          property: connectionString
+      - key: NODE_VERSION
+        value: 20.11.0
+
+databases:
+  - name: villa-gianni-db
+    databaseName: villa_gianni
+    user: villa_gianni_user
+    plan: free

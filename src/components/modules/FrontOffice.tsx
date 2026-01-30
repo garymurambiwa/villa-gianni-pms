@@ -1,0 +1,1927 @@
+import React, { useState, useMemo } from 'react';
+import { useData } from '../../context/DataContext';
+import { errorTracker } from '@/lib/errorTracker';
+import { Button } from '../ui/button';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '../ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
+import { Badge } from '../ui/badge';
+import { Checkbox } from '../ui/checkbox';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
+import { format, differenceInCalendarDays } from 'date-fns';
+import { Calendar, CreditCard, Search, UserCheck, UserX, Printer, Utensils, AlertTriangle, FileText, FileSearch, Settings, LayoutGrid, ArrowRightLeft } from 'lucide-react';
+import { toast } from 'sonner';
+import { getResPackageLabel, computeTotalRate, sanitizePackageCode } from '@/lib/packageUtils';
+import { logger } from '@/lib/logger';
+import FOPrintCustomization from '@/components/modules/FOPrintCustomization';
+import FolioManagement from './folio/FolioManagement';
+import { TransferRoomModal } from './folio/TransferRoomModal';
+import { ReportLayout, ReportTable } from '../ui/ReportLayout';
+
+const packageOptions = [
+  { code: 'RO', label: 'Room Only', surcharge: 0 },
+  { code: 'BB', label: 'Bed & Breakfast', surcharge: 15 },
+  { code: 'DBB', label: 'Dinner, Bed & Breakfast', surcharge: 45 },
+];
+
+export const FrontOffice: React.FC = () => {
+  const ctx = useData() as any;
+  const rooms: any[] = Array.isArray(ctx?.rooms) ? ctx.rooms : [];
+  const reservations: any[] = Array.isArray(ctx?.reservations) ? ctx.reservations : [];
+  const guests: any[] = Array.isArray(ctx?.guests) ? ctx.guests : [];
+  const folioCharges: any[] = Array.isArray(ctx?.folioCharges) ? ctx.folioCharges : [];
+  const checkInGuest: any = typeof ctx?.checkInGuest === 'function' ? ctx.checkInGuest : () => { };
+  const checkOutGuest: any = typeof ctx?.checkOutGuest === 'function' ? ctx.checkOutGuest : () => { };
+  const updateRoomStatus: any = typeof ctx?.updateRoomStatus === 'function' ? ctx.updateRoomStatus : () => { };
+  const addFolioCharge: any = typeof ctx?.addFolioCharge === 'function' ? ctx.addFolioCharge : () => { };
+  const dataError: string | null = typeof ctx?.dataError === 'string' ? ctx.dataError : null;
+  React.useEffect(() => {
+    try {
+      if (!Array.isArray(ctx?.rooms) || !Array.isArray(ctx?.reservations) || !Array.isArray(ctx?.guests) || !Array.isArray(ctx?.folioCharges)) {
+        errorTracker.log('FrontOffice: missing or invalid data arrays', 'warning', {
+          rooms: typeof ctx?.rooms,
+          reservations: typeof ctx?.reservations,
+          guests: typeof ctx?.guests,
+          folioCharges: typeof ctx?.folioCharges
+        });
+      }
+    } catch { }
+  }, [ctx]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedResId, setSelectedResId] = useState<string | null>(null);
+  const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
+  const [checkInDialogOpen, setCheckInDialogOpen] = useState(false);
+  const [showPrintSettings, setShowPrintSettings] = useState(false);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
+
+  // Manual Charge State
+  const [chargeDialogOpen, setChargeDialogOpen] = useState(false);
+  const [chargeGuestId, setChargeGuestId] = useState<string | null>(null);
+  const [chargeAmount, setChargeAmount] = useState('');
+  const [chargeDescription, setChargeDescription] = useState('');
+  const [chargeError, setChargeError] = useState<string | null>(null);
+  const [roomStatusDialogOpen, setRoomStatusDialogOpen] = useState(false);
+
+  // Transfer Room State
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [transferResId, setTransferResId] = useState<string | null>(null);
+  const [transferRoomId, setTransferRoomId] = useState<string | null>(null);
+
+  // Check-in state
+  const [rateOverride, setRateOverride] = useState<string>('');
+  const [selectedPackage, setSelectedPackage] = useState<string>('RO');
+  const [taxInclusive, setTaxInclusive] = useState<boolean>(false);
+  const [taxEnabled, setTaxEnabled] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('corepms_frontoffice_tax_settings');
+      if (raw) return !!JSON.parse(raw).enabled;
+    } catch { }
+    return true;
+  });
+  const [taxRatePercent, setTaxRatePercent] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem('corepms_frontoffice_tax_settings');
+      if (raw) {
+        const obj = JSON.parse(raw);
+        return typeof obj.ratePercent === 'number' ? String(obj.ratePercent) : String(obj.ratePercent || '10');
+      }
+    } catch { }
+    return '10';
+  });
+  const [taxMethod, setTaxMethod] = useState<'inclusive' | 'exclusive'>(() => {
+    try {
+      const raw = localStorage.getItem('corepms_frontoffice_tax_settings');
+      if (raw) return JSON.parse(raw).method === 'exclusive' ? 'exclusive' : 'inclusive';
+    } catch { }
+    return 'inclusive';
+  });
+  const [taxError, setTaxError] = useState<string | null>(null);
+
+  // Guard against missing bridge/data
+  React.useEffect(() => {
+    if (!reservations && !guests) {
+      setDbError("Connecting to local database...");
+    } else {
+      setDbError(null);
+    }
+  }, [reservations, guests]);
+
+  // Derived state for available rooms
+  const availableRooms = useMemo(() => {
+    if (!rooms) return [];
+    return rooms.filter(r => {
+      const s = String(r.status || '').toLowerCase();
+      return s === 'available' || s === 'vacant' || String(r.status).toUpperCase() === 'VC';
+    });
+  }, [rooms]);
+
+  const isLoadingRooms = !rooms || (rooms.length === 0 && !dbError);
+  const roomsError = (!rooms || rooms.length === 0) && dbError ? dbError : null;
+
+  // Helper to safely get reservation status
+  const getResStatus = (res: any) => res.status || 'confirmed';
+
+  // Helper to safely get reservation package
+  const getResPackage = (res: any) => getResPackageLabel(res, packageOptions, 'RO');
+
+  const [guestLookupOpen, setGuestLookupOpen] = useState(false);
+  const [lookupQuery, setLookupQuery] = useState('');
+  const [arrivalsPreviewOpen, setArrivalsPreviewOpen] = useState(false);
+  const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
+  const [printMode, setPrintMode] = useState<'restaurant' | 'arrivals' | 'both'>('restaurant');
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'html' | 'txt'>('pdf');
+  const [printDestination, setPrintDestination] = useState<'printer' | 'download' | 'email'>('printer');
+
+  // Report Generation Functions (defined early for use in handlePrintWithOptions)
+  const generateRestaurantReport = (): string => {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const checkedInGuests = reservations.filter(r => getResStatus(r) === 'checked-in');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Restaurant Guest List - ${today}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          h1 { text-align: center; color: #333; border-bottom: 2px solid #333; padding-bottom: 10px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+          th { background-color: #f2f2f2; font-weight: bold; }
+          .summary { margin-top: 20px; font-weight: bold; }
+          @media print { body { padding: 10px; } }
+        </style>
+      </head>
+      <body>
+        <h1>Restaurant Guest List</h1>
+        <p>Date: ${today}</p>
+        <p>Prepared for: Kitchen/Restaurant Operations</p>
+        
+        <table>
+          <thead>
+            <tr>
+              <th>Room</th>
+              <th>Guest Name</th>
+              <th>Pax</th>
+              <th>Package</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${checkedInGuests.map(r => {
+      const roomNum = guests.find(g => g.name === r.guestName)?.roomNumber || r.roomType;
+      return `
+                <tr>
+                  <td>${roomNum}</td>
+                  <td>${r.guestName}</td>
+                  <td>${r.adults + (r.children || 0)}</td>
+                  <td>${getResPackage(r)}</td>
+                  <td>In House</td>
+                </tr>
+              `;
+    }).join('')}
+          </tbody>
+        </table>
+        
+        <div class="summary">
+          <h3>Summary</h3>
+          <p>Total In-House Guests: ${checkedInGuests.length}</p>
+          <p>Breakfast Meals (BB/DBB): ${checkedInGuests.filter(r => ['BB', 'DBB'].includes(r.packageCode || 'RO')).reduce((sum, r) => sum + r.adults + (r.children || 0), 0)}</p>
+          <p>Dinner Meals (DBB): ${checkedInGuests.filter(r => (r.packageCode || 'RO') === 'DBB').reduce((sum, r) => sum + r.adults + (r.children || 0), 0)}</p>
+        </div>
+      </body>
+      </html>
+    `;
+  };
+
+  const generateArrivalsReport = (): string => {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const arrivingGuests = reservations.filter(r => {
+      const status = getResStatus(r);
+      return status === 'confirmed' && r.checkIn === today;
+    });
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Today's Arrivals - ${today}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          h1 { text-align: center; color: #333; border-bottom: 2px solid #333; padding-bottom: 10px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+          th { background-color: #f2f2f2; font-weight: bold; }
+          .summary { margin-top: 20px; font-weight: bold; }
+          @media print { body { padding: 10px; } }
+        </style>
+      </head>
+      <body>
+        <h1>Today's Arrivals</h1>
+        <p>Date: ${today}</p>
+        <p>Prepared for: Front Office Operations</p>
+        
+        <table>
+          <thead>
+            <tr>
+              <th>Guest Name</th>
+              <th>Contact</th>
+              <th>Room Type</th>
+              <th>Room #</th>
+              <th>Pax</th>
+              <th>Package</th>
+              <th>Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${arrivingGuests.map(r => {
+      const roomAssignment = getRoomAssignment(r);
+      return `
+                <tr>
+                  <td>${r.guestName}</td>
+                  <td>${r.email || r.phone || '-'}</td>
+                  <td>${r.roomType}</td>
+                  <td>${roomAssignment}</td>
+                  <td>${r.adults + (r.children || 0)}</td>
+                  <td>${getResPackage(r)}</td>
+                  <td>$${r.rate || 0}</td>
+                </tr>
+              `;
+    }).join('')}
+          </tbody>
+        </table>
+        
+        <div class="summary">
+          <h3>Summary</h3>
+          <p>Total Arrivals: ${arrivingGuests.length}</p>
+          <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}</p>
+        </div>
+      </body>
+      </html>
+    `;
+  };
+
+  const generateCombinedReport = (): string => {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const checkedInGuests = reservations.filter(r => getResStatus(r) === 'checked-in');
+    const arrivingGuests = reservations.filter(r => {
+      const status = getResStatus(r);
+      return status === 'confirmed' && r.checkIn === today;
+    });
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Daily Operations Report - ${today}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          h1, h2 { color: #333; border-bottom: 2px solid #333; padding-bottom: 10px; }
+          h1 { text-align: center; }
+          h2 { margin-top: 30px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+          th { background-color: #f2f2f2; font-weight: bold; }
+          .section { margin-bottom: 30px; }
+          .summary { margin-top: 20px; font-weight: bold; }
+          @media print { body { padding: 10px; } }
+        </style>
+      </head>
+      <body>
+        <h1>Daily Operations Report</h1>
+        <p>Date: ${today}</p>
+        <p>Prepared for: Daily Operations Management</p>
+        
+        <div class="section">
+          <h2>Restaurant/Kitchen Guest List</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Room</th>
+                <th>Guest Name</th>
+                <th>Pax</th>
+                <th>Package</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${checkedInGuests.map(r => {
+      const roomNum = guests.find(g => g.name === r.guestName)?.roomNumber || r.roomType;
+      return `
+                  <tr>
+                    <td>${roomNum}</td>
+                    <td>${r.guestName}</td>
+                    <td>${r.adults + (r.children || 0)}</td>
+                    <td>${getResPackage(r)}</td>
+                    <td>In House</td>
+                  </tr>
+                `;
+    }).join('')}
+            </tbody>
+          </table>
+          <div class="summary">
+            <p>Total In-House Guests: ${checkedInGuests.length}</p>
+            <p>Breakfast Meals: ${checkedInGuests.filter(r => ['BB', 'DBB'].includes(r.packageCode || 'RO')).reduce((sum, r) => sum + r.adults + (r.children || 0), 0)}</p>
+            <p>Dinner Meals: ${checkedInGuests.filter(r => (r.packageCode || 'RO') === 'DBB').reduce((sum, r) => sum + r.adults + (r.children || 0), 0)}</p>
+          </div>
+        </div>
+        
+        <div class="section">
+          <h2>Today's Arrivals</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Guest Name</th>
+                <th>Contact</th>
+                <th>Room Type</th>
+                <th>Room #</th>
+                <th>Pax</th>
+                <th>Package</th>
+                <th>Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${arrivingGuests.map(r => {
+      const roomAssignment = getRoomAssignment(r);
+      return `
+                  <tr>
+                    <td>${r.guestName}</td>
+                    <td>${r.email || r.phone || '-'}</td>
+                    <td>${r.roomType}</td>
+                    <td>${roomAssignment}</td>
+                    <td>${r.adults + (r.children || 0)}</td>
+                    <td>${getResPackage(r)}</td>
+                    <td>$${r.rate || 0}</td>
+                  </tr>
+                `;
+    }).join('')}
+            </tbody>
+          </table>
+          <div class="summary">
+            <p>Total Arrivals: ${arrivingGuests.length}</p>
+            <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  };
+
+  // Export Handler Functions
+  const handlePDFExport = async (htmlContent: string, fileName: string) => {
+    try {
+      // For now, we'll save as HTML with .pdf extension suggestion
+      // In a real implementation, you'd use a library like jsPDF or puppeteer
+      const blob = new Blob([htmlContent], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${fileName}.html`; // Will suggest PDF but save as HTML
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      throw new Error('Failed to export PDF');
+    }
+  };
+
+  const handleHTMLExport = async (htmlContent: string, fileName: string) => {
+    try {
+      const blob = new Blob([htmlContent], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${fileName}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      throw new Error('Failed to export HTML');
+    }
+  };
+
+  const handleTextExport = async (htmlContent: string, fileName: string) => {
+    try {
+      // Convert HTML to plain text (basic conversion)
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = htmlContent;
+      const textContent = tempDiv.textContent || tempDiv.innerText || '';
+
+      const blob = new Blob([textContent], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${fileName}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      throw new Error('Failed to export text');
+    }
+  };
+
+  const printHTMLContent = (htmlContent: string) => {
+    try {
+      const win = window.open('', '_blank', 'width=900,height=700');
+      if (win) {
+        win.document.write(htmlContent);
+        win.document.close();
+        // Trigger print after a small delay to ensure content loads
+        setTimeout(() => {
+          win.print();
+        }, 500);
+      } else {
+        toast.error('Pop-up blocked. Please allow pop-ups for this site.');
+      }
+    } catch (error) {
+      throw new Error('Failed to open print window');
+    }
+  };
+
+  // Enhanced print function with options
+  const handlePrintWithOptions = async () => {
+    setPrintOptionsOpen(false);
+
+    try {
+      let htmlContent = '';
+      let fileName = '';
+
+      // Generate appropriate content based on print mode
+      if (printMode === 'restaurant') {
+        htmlContent = generateRestaurantReport();
+        fileName = `restaurant-guest-list-${format(new Date(), 'yyyy-MM-dd')}`;
+      } else if (printMode === 'arrivals') {
+        htmlContent = generateArrivalsReport();
+        fileName = `todays-arrivals-${format(new Date(), 'yyyy-MM-dd')}`;
+      } else {
+        htmlContent = generateCombinedReport();
+        fileName = `daily-operations-${format(new Date(), 'yyyy-MM-dd')}`;
+      }
+
+      // Handle different export formats
+      if (exportFormat === 'pdf') {
+        await handlePDFExport(htmlContent, fileName);
+      } else if (exportFormat === 'html') {
+        await handleHTMLExport(htmlContent, fileName);
+      } else {
+        await handleTextExport(htmlContent, fileName);
+      }
+
+      // Handle different destinations
+      if (printDestination === 'printer') {
+        printHTMLContent(htmlContent);
+      } else if (printDestination === 'download') {
+        // Already handled in format-specific functions
+        toast.success('Report downloaded successfully');
+      } else {
+        // Email functionality (placeholder)
+        toast.success('Email functionality will be available in the next update');
+      }
+    } catch (error) {
+      console.error('Print/export error:', error);
+      toast.error('Failed to generate report');
+    }
+  };
+  // Combined report for both restaurant and arrivals (legacy function for backward compatibility)
+  const printCombinedReport = () => {
+    const today = format(new Date(), 'yyyy-MM-dd');
+
+    // Get restaurant guests (checked-in)
+    const checkedInGuests = reservations.filter(r => getResStatus(r) === 'checked-in');
+
+    // Get arrivals
+    const arrivingGuests = reservations.filter(r => {
+      const status = getResStatus(r);
+      return status === 'confirmed' && r.checkIn === today;
+    });
+
+    let html = `
+      <html>
+        <head>
+          <title>Daily Operations Report - ${today}</title>
+          <style>
+            body { font-family: sans-serif; padding: 20px; }
+            h1 { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; }
+            h2 { margin-top: 30px; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; }
+            .section { margin-bottom: 30px; }
+            .summary { margin-top: 20px; font-weight: bold; }
+            @media print {
+              .no-print { display: none; }
+              body { padding: 10px; }
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Daily Operations Report</h1>
+          <p>Date: ${today}</p>
+          
+          <div class="section">
+            <h2>Restaurant/Kitchen Guest List</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Room</th>
+                  <th>Guest Name</th>
+                  <th>Pax</th>
+                  <th>Package</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${checkedInGuests.map(r => {
+      const roomNum = guests.find(g => g.name === r.guestName)?.roomNumber || r.roomType;
+      return `
+                    <tr>
+                      <td>${roomNum}</td>
+                      <td>${r.guestName}</td>
+                      <td>${r.adults + (r.children || 0)}</td>
+                      <td>${getResPackage(r)}</td>
+                      <td>In House</td>
+                    </tr>
+                  `;
+    }).join('')}
+              </tbody>
+            </table>
+            <div class="summary">
+              <p>Total In-House Guests: ${checkedInGuests.length}</p>
+              <p>Breakfast Meals: ${checkedInGuests.filter(r => ['BB', 'DBB'].includes(r.packageCode || 'RO')).reduce((sum, r) => sum + r.adults + (r.children || 0), 0)}</p>
+              <p>Dinner Meals: ${checkedInGuests.filter(r => (r.packageCode || 'RO') === 'DBB').reduce((sum, r) => sum + r.adults + (r.children || 0), 0)}</p>
+            </div>
+          </div>
+          
+          <div class="section">
+            <h2>Today's Arrivals</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Guest Name</th>
+                  <th>Room Type</th>
+                  <th>Room #</th>
+                  <th>Pax</th>
+                  <th>Package</th>
+                  <th>Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${arrivingGuests.map(r => {
+      const roomAssignment = getRoomAssignment(r);
+      return `
+                    <tr>
+                      <td>${r.guestName}</td>
+                      <td>${r.roomType}</td>
+                      <td>${roomAssignment}</td>
+                      <td>${r.adults + (r.children || 0)}</td>
+                      <td>${getResPackage(r)}</td>
+                      <td>$${r.rate || 0}</td>
+                    </tr>
+                  `;
+    }).join('')}
+              </tbody>
+            </table>
+            <div class="summary">
+              <p>Total Arrivals: ${arrivingGuests.length}</p>
+              <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}</p>
+            </div>
+          </div>
+          
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+              }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    try {
+      const win = window.open('', '_blank', 'width=900,height=700');
+      if (win) {
+        win.document.write(html);
+        win.document.close();
+      } else {
+        toast.error('Pop-up blocked. Please allow pop-ups for this site.');
+      }
+    } catch (err) {
+      toast.error('Failed to open print preview');
+      console.error('printCombinedReport failed', err);
+    }
+  };
+
+  // Logic to print the guest list for the restaurant/kitchen
+  const printDailyPackageList = () => {
+    // Use local date instead of UTC to fix timezone issues
+    const today = format(new Date(), 'yyyy-MM-dd');
+    // Filter for guests who are currently checked in (status='checked-in')
+    // OR reservations arriving today (status='confirmed' && checkIn === today)
+    const activeReservations = reservations.filter(r => {
+      const status = getResStatus(r);
+      const isCheckedIn = status === 'checked-in';
+      const isArriving = status === 'confirmed' && r.checkIn === today;
+      return isCheckedIn || isArriving;
+    });
+
+    let html = `
+      <html>
+        <head>
+          <title>Daily Package Report - ${today}</title>
+          <style>
+            body { font-family: sans-serif; padding: 20px; }
+            h1 { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; }
+            .summary { margin-top: 30px; font-weight: bold; }
+            @media print {
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Daily Meal Plan Report</h1>
+          <p>Date: ${today}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Room</th>
+                <th>Guest Name</th>
+                <th>Pax</th>
+                <th>Package</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${activeReservations.map(r => {
+      const roomNum = guests.find(g => g.name === r.guestName)?.roomNumber || r.roomType;
+      return `
+                  <tr>
+                    <td>${roomNum}</td>
+                    <td>${r.guestName}</td>
+                    <td>${r.adults + (r.children || 0)}</td>
+                    <td>${getResPackage(r)}</td>
+                    <td>${getResStatus(r) === 'checked-in' ? 'In House' : 'Arrival'}</td>
+                  </tr>
+                `;
+    }).join('')}
+            </tbody>
+          </table>
+          <div class="summary">
+            <h3>Summary</h3>
+            <p>Total Breakfasts (BB/DBB): ${activeReservations.filter(r => ['BB', 'DBB'].includes(r.packageCode || 'RO')).reduce((sum, r) => sum + r.adults + (r.children || 0), 0)}</p>
+            <p>Total Dinners (DBB): ${activeReservations.filter(r => (r.packageCode || 'RO') === 'DBB').reduce((sum, r) => sum + r.adults + (r.children || 0), 0)}</p>
+          </div>
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                // Optional: close after print
+                // window.onafterprint = function() { window.close(); }
+              }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    try {
+      const win = window.open('', '_blank', 'width=800,height=600');
+      if (win) {
+        win.document.write(html);
+        win.document.close();
+      } else {
+        toast.error('Pop-up blocked. Please allow pop-ups for this site.');
+      }
+    } catch (err) {
+      toast.error('Failed to open print preview');
+      console.error('printDailyPackageList failed', err);
+    }
+  };
+
+  // Open arrivals print preview dialog
+  const printArrivals = () => {
+    setArrivalsPreviewOpen(true);
+  };
+
+  // Get arrivals list for the report
+  const todayArrivals = useMemo(() => {
+    // Use local date to match "today" correctly
+    const today = format(new Date(), 'yyyy-MM-dd');
+    return reservations.filter(r => {
+      const status = getResStatus(r).toLowerCase();
+
+      // Normalize checkIn date for comparison (same logic as arrivals filter)
+      let checkInDate = '';
+
+      // Try multiple field names for check-in date
+      const rawCheckIn = r.checkIn || r.check_in_date || r.check_in;
+
+      if (rawCheckIn) {
+        const dateString = String(rawCheckIn);
+        if (dateString.includes('T')) {
+          checkInDate = dateString.split('T')[0];
+        } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+          checkInDate = dateString;
+        } else if (/^\d{4}-\d{2}-\d{2}/.test(dateString)) {
+          const match = dateString.match(/^(\d{4}-\d{2}-\d{2})/);
+          checkInDate = match ? match[1] : '';
+        } else {
+          try {
+            const dateObj = new Date(dateString);
+            if (!isNaN(dateObj.getTime())) {
+              checkInDate = format(dateObj, 'yyyy-MM-dd');
+            }
+          } catch {
+            checkInDate = dateString;
+          }
+        }
+      }
+
+      return (status === 'confirmed' || status === 'pending') && checkInDate === today;
+    });
+  }, [reservations]);
+
+  // Get room assignment for a reservation
+  const getRoomAssignment = (reservation: any) => {
+    // Check if reservation has a room_id assigned
+    if (reservation.room_id) {
+      const room = rooms.find(r => r.id === reservation.room_id);
+      return room?.number || 'Assigned';
+    }
+    // Check in guests list
+    const guest = guests.find(g => g.name === reservation.guestName);
+    if (guest?.roomNumber) return guest.roomNumber;
+    // Return room type as fallback
+    return reservation.roomType || 'TBA';
+  };
+
+  const openGuestLookup = () => {
+    setGuestLookupOpen(true);
+    setLookupQuery('');
+  };
+
+  const handleCheckInClick = (resId: string) => {
+    const res = reservations.find(r => r.id === resId);
+    if (!res) return;
+
+    setSelectedResId(resId);
+    setRateOverride(res.rate?.toString() || '');
+    setSelectedPackage(sanitizePackageCode(res.packageCode || res.package_code || 'RO', 'RO'));
+    setTaxInclusive(!!res.taxInclusive); // Default to existing or false
+
+    // Auto-select a room if available
+    if (availableRooms.length > 0) {
+      // Try to match room type first
+      const match = availableRooms.find(r => r.type === res.roomType);
+      setSelectedRoom(match ? match.id : availableRooms[0].id);
+    } else {
+      setSelectedRoom(null);
+    }
+
+    setCheckInDialogOpen(true);
+  };
+
+  const handleManualChargeClick = (guestId: string) => {
+    setChargeGuestId(guestId);
+    setChargeAmount('');
+    setChargeDescription('');
+    setChargeError(null);
+    setChargeDialogOpen(true);
+  };
+
+  const handleTransferClick = (resId: string, roomId: string) => {
+    setTransferResId(resId);
+    setTransferRoomId(roomId);
+    setTransferDialogOpen(true);
+  };
+
+  const handleCheckOut = async (reservationId: string) => {
+    if (typeof checkOutGuest !== 'function') {
+      const msg = 'FrontOffice: check-out unavailable';
+      errorTracker.log(msg, 'critical', { reservationId, hasCheckOut: typeof checkOutGuest === 'function' });
+      toast.error('Failed to process check-out');
+      logger.error(msg, { reservationId });
+      return;
+    }
+    try {
+      await checkOutGuest(reservationId);
+      toast.success('Guest checked out successfully');
+      logger.info('FrontOffice: guest checked out', { reservationId });
+    } catch (err: any) {
+      const message = err?.message || 'Unknown check-out error';
+      errorTracker.log(err as any, 'error', { action: 'check_out', reservationId });
+      logger.error('FrontOffice: check-out failed', { reservationId, error: message });
+      toast.error(`Check-out failed: ${message}`);
+    }
+  };
+
+  const handleChargeSubmit = () => {
+    if (!chargeGuestId) return;
+
+    const amount = parseFloat(chargeAmount);
+    if (isNaN(amount) || amount <= 0) {
+      setChargeError("Please enter a valid positive amount");
+      return;
+    }
+
+    if (!chargeDescription.trim()) {
+      setChargeError("Please enter a description or code");
+      return;
+    }
+
+    try {
+      addFolioCharge({
+        guestId: chargeGuestId,
+        amount: amount,
+        code: chargeDescription,
+        date: new Date().toISOString()
+      });
+      toast.success("Charge added successfully");
+      setChargeDialogOpen(false);
+      setChargeGuestId(null);
+    } catch (err) {
+      toast.error("Failed to add charge");
+      console.error(err);
+    }
+  };
+
+  React.useEffect(() => {
+    const pct = Math.max(0, Math.min(100, parseFloat(taxRatePercent || '0')));
+    const valid = !isNaN(pct) && pct >= 0 && pct <= 100;
+    setTaxError(valid ? null : 'Enter a number between 0 and 100');
+    try {
+      localStorage.setItem('corepms_frontoffice_tax_settings', JSON.stringify({
+        enabled: taxEnabled,
+        ratePercent: valid ? pct : 0,
+        method: taxMethod
+      }));
+    } catch { }
+  }, [taxEnabled, taxRatePercent, taxMethod]);
+
+  const handleCheckInConfirm = () => {
+    if (selectedResId && selectedRoom) {
+      const roomObj = rooms.find(r => r.id === selectedRoom);
+      const baseRate = rateOverride ? parseFloat(rateOverride) : (roomObj?.rate || (reservations.find(r => r.id === selectedResId)?.rate || 0));
+      const totalRate = computeTotalRate(baseRate, selectedPackage, packageOptions, 'RO');
+      const pct = Math.max(0, Math.min(100, parseFloat(taxRatePercent || '0')));
+      const includeTax = taxEnabled && taxMethod === 'inclusive';
+      checkInGuest(selectedResId, selectedRoom, { rateOverride: totalRate, packageCode: sanitizePackageCode(selectedPackage, 'RO'), taxInclusive: includeTax });
+      setCheckInDialogOpen(false);
+      setSelectedResId(null);
+      setSelectedRoom(null);
+      toast.success("Guest checked in successfully");
+    }
+  };
+
+  // Filter reservations
+  const filteredReservations = reservations.filter(r =>
+    (getResStatus(r) === 'confirmed' || getResStatus(r) === 'checked-in') &&
+    ((r.guestName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (r.id || '').toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  const arrivals = useMemo(() => {
+    // Use local date for accurate "today" check
+    const today = format(new Date(), 'yyyy-MM-dd');
+
+    console.log('[FrontOffice] Computing arrivals:', {
+      totalReservations: reservations.length,
+      today
+    });
+
+    const matchedArrivals = reservations.filter(r => {
+      // Use consistent status checking with getResStatus helper
+      const status = getResStatus(r).toLowerCase();
+
+      // Normalize checkIn date for comparison
+      // Handle various date formats that might come from database or API
+      let checkInDate = '';
+
+      // Try multiple field names for check-in date
+      const rawCheckIn = r.checkIn || r.check_in_date || r.check_in;
+
+      if (rawCheckIn) {
+        const dateString = String(rawCheckIn);
+
+        // Handle ISO date strings (2024-01-21T10:30:00.000Z)
+        if (dateString.includes('T')) {
+          checkInDate = dateString.split('T')[0];
+        }
+        // Handle already formatted YYYY-MM-DD dates
+        else if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+          checkInDate = dateString;
+        }
+        // Handle YYYY-MM-DD with additional info
+        else if (/^\d{4}-\d{2}-\d{2}/.test(dateString)) {
+          const match = dateString.match(/^(\d{4}-\d{2}-\d{2})/);
+          checkInDate = match ? match[1] : '';
+        }
+        // Handle other formats by parsing and reformatting
+        else {
+          try {
+            const dateObj = new Date(dateString);
+            if (!isNaN(dateObj.getTime())) {
+              checkInDate = format(dateObj, 'yyyy-MM-dd');
+            }
+          } catch {
+            // Fallback to original string if all else fails
+            checkInDate = dateString;
+          }
+        }
+      }
+
+      // Match arrivals: confirmed/pending status AND check-in date matches today
+      const isArrival = (status === 'confirmed' || status === 'pending') && checkInDate === today;
+
+      // Debug logging for arrivals
+      if (isArrival) {
+        console.log('[FrontOffice] Matched arrival:', {
+          guest: r.guestName,
+          rawCheckIn: rawCheckIn,
+          normalizedCheckIn: checkInDate,
+          today,
+          status
+        });
+      }
+
+      return isArrival;
+    });
+
+    console.log('[FrontOffice] Found', matchedArrivals.length, 'arrivals for today');
+
+    return matchedArrivals;
+  }, [reservations]);
+
+  const inHouse = filteredReservations.filter(r => getResStatus(r) === 'checked-in');
+
+  const checkedOutToday = useMemo(() => {
+    // Use local date for accurate "today" check
+    const today = format(new Date(), 'yyyy-MM-dd');
+    return filteredReservations.filter(r =>
+      getResStatus(r) === 'checked-out' &&
+      // Handle potential full ISO strings or just YYYY-MM-DD
+      (r.checkOut && (r.checkOut === today || r.checkOut.startsWith(today)))
+    );
+  }, [filteredReservations]);
+
+  if ((dataError || dbError) && guests.length === 0 && reservations.length === 0) {
+    // Non-blocking now
+  }
+
+  const errorToShow = dataError || dbError;
+  const isErrorVisible = !!errorToShow && errorToShow !== dismissedError;
+
+  return (
+    <div className="space-y-6">
+      {isErrorVisible && (
+        <div className="p-3 bg-yellow-50 border rounded text-sm" role="alert" aria-live="polite">
+          <div className="flex items-center justify-between">
+            <p className="text-yellow-800">{errorToShow}</p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => window.location.reload()}>Retry Connection</Button>
+              <Button variant="ghost" size="sm" onClick={() => setDismissedError(errorToShow)}>Dismiss</Button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="flex flex-col gap-4 md:flex-row md:justify-between md:items-center">
+        <div>
+          <h2 className="text-3xl font-bold tracking-tight">Front Office</h2>
+          <p className="text-muted-foreground">Manage arrivals, departures, and in-house guests</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={openGuestLookup}>
+            <FileSearch className="mr-2 h-4 w-4" />
+            Guest Lookup
+          </Button>
+          <Button variant="outline" onClick={() => setPrintOptionsOpen(true)}>
+            <Utensils className="mr-2 h-4 w-4" />
+            Print Restaurant Guest List
+          </Button>
+          <Button variant="outline" onClick={() => setRoomStatusDialogOpen(true)}>
+            <LayoutGrid className="mr-2 h-4 w-4" />
+            Room Status Overview
+          </Button>
+          <Button variant="outline" onClick={printArrivals}>
+            <Printer className="mr-2 h-4 w-4" />
+            Print Arrivals
+          </Button>
+          <Button variant="outline" size="icon" onClick={() => setShowPrintSettings(true)} title="Print Settings">
+            <Settings className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex items-center space-x-2 bg-white p-4 rounded-lg shadow-sm border">
+        <Search className="h-5 w-5 text-gray-400" />
+        <Input
+          placeholder="Search guest name or reservation ID..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="flex-1 border-none shadow-none focus-visible:ring-0"
+        />
+      </div>
+
+      <Tabs defaultValue="arrivals" className="w-full">
+        <TabsList className="grid w-full grid-cols-2 md:grid-cols-5 lg:w-[750px] h-auto">
+          <TabsTrigger value="in_house">In House ({inHouse.length})</TabsTrigger>
+          <TabsTrigger value="arrivals">Arrivals ({arrivals.length})</TabsTrigger>
+          <TabsTrigger value="departures">Departed ({checkedOutToday.length})</TabsTrigger>
+          <TabsTrigger value="charges">Charges</TabsTrigger>
+          <TabsTrigger value="folio">Folio</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="arrivals" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Expected Arrivals</CardTitle>
+              <CardDescription>Guests scheduled to check in today</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Guest</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Dates</TableHead>
+                    <TableHead>Rate</TableHead>
+                    <TableHead>Package</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {arrivals.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        No arrivals found matching your search
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    arrivals.map((res) => (
+                      <TableRow key={res.id}>
+                        <TableCell>
+                          <div className="font-medium">{res.guestName}</div>
+                          <div className="text-xs text-muted-foreground">ID: {res.id}</div>
+                        </TableCell>
+                        <TableCell>{res.roomType}</TableCell>
+                        <TableCell>
+                          <div className="text-sm">
+                            {format(new Date(res.checkIn), 'MMM d')} - {format(new Date(res.checkOut), 'MMM d')}
+                          </div>
+                        </TableCell>
+                        <TableCell>${res.rate}</TableCell>
+                        <TableCell><Badge variant="outline">{getResPackage(res)}</Badge></TableCell>
+                        <TableCell>
+                          <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">Confirmed</Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button size="sm" onClick={() => handleCheckInClick(res.id)}>
+                            <UserCheck className="mr-2 h-4 w-4" />
+                            Check In
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="in_house" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>In House Guests</CardTitle>
+              <CardDescription>Currently occupied rooms</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Room</TableHead>
+                    <TableHead>Guest</TableHead>
+                    <TableHead>Departure</TableHead>
+                    <TableHead>Balance</TableHead>
+                    <TableHead>Package</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {inHouse.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                        No in-house guests found
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    inHouse.map((res) => {
+                      // Find the room assigned to this reservation
+                      const room = rooms.find(r => r.id === res.room_id);
+                      const roomNumber = room?.number || 'Unassigned';
+                      return (
+                        <TableRow key={res.id}>
+                          <TableCell className="font-bold">{roomNumber}</TableCell>
+                          <TableCell>
+                            <div className="font-medium">{res.guestName}</div>
+                          </TableCell>
+                          <TableCell>{format(new Date(res.checkOut), 'MMM d, yyyy')}</TableCell>
+                          <TableCell className="text-green-600">
+                            ${(res.rate || 0).toFixed(2)}
+                          </TableCell>
+                          <TableCell><Badge variant="secondary">{getResPackage(res)}</Badge></TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="outline" size="sm" aria-label="View Folio" onClick={() => handleManualChargeClick(res.guest_id || res.id)}>
+                                <FileText className="h-4 w-4" />
+                              </Button>
+                              <Button variant="outline" size="sm" title="Transfer Room" onClick={() => handleTransferClick(res.id, res.room_id)}>
+                                <ArrowRightLeft className="h-4 w-4" />
+                              </Button>
+                              <Button variant="destructive" size="sm" onClick={() => handleCheckOut(res.id)}>
+                                <UserX className="mr-2 h-4 w-4" />
+                                Check Out
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="departures" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Today's Check-Outs</CardTitle>
+              <CardDescription>Guests who have departed today</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Guest</TableHead>
+                    <TableHead>Room</TableHead>
+                    <TableHead>Departure</TableHead>
+                    <TableHead>Balance</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {checkedOutToday.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                        No departures today
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    checkedOutToday.map((res) => {
+                      const room = rooms.find(r => r.id === res.room_id);
+                      const roomNumber = room?.number || res.roomType;
+                      return (
+                        <TableRow key={res.id}>
+                          <TableCell className="font-medium">{res.guestName}</TableCell>
+                          <TableCell>{roomNumber}</TableCell>
+                          <TableCell>{format(new Date(res.checkOut), 'MMM d, yyyy')}</TableCell>
+                          <TableCell className="text-green-600">
+                            ${(res.rate || 0).toFixed(2)}
+                          </TableCell>
+                          <TableCell><Badge variant="secondary" className="bg-gray-100 text-gray-800">Checked Out</Badge></TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="charges" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Charges</CardTitle>
+              <CardDescription>Recent folio charges</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Guest</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Code</TableHead>
+                    <TableHead>Date</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {folioCharges.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                        No charges recorded
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    folioCharges.map(c => {
+                      const g = guests.find(x => x.id === c.guestId);
+                      return (
+                        <TableRow key={c.id}>
+                          <TableCell>{g?.name || c.guestId}</TableCell>
+                          <TableCell>${c.amount.toFixed(2)}</TableCell>
+                          <TableCell>{c.code || '-'}</TableCell>
+                          <TableCell>{format(new Date(c.date), 'MMM d, yyyy')}</TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="folio" className="mt-4">
+          <FolioManagement />
+        </TabsContent>
+      </Tabs>
+
+      <Dialog open={roomStatusDialogOpen} onOpenChange={setRoomStatusDialogOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Room Status Overview</DialogTitle>
+            <DialogDescription>Current status of all rooms in the property.</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-4 max-h-[60vh] overflow-y-auto">
+            {rooms.map(room => (
+              <div key={room.id} className={`p-3 rounded-lg border text-center ${room.status === 'VC' ? 'bg-green-50 border-green-200 text-green-800' :
+                  room.status === 'VD' ? 'bg-red-50 border-red-200 text-red-800' :
+                    room.status === 'OC' ? 'bg-blue-50 border-blue-200 text-blue-800' :
+                      room.status === 'OD' ? 'bg-yellow-50 border-yellow-200 text-yellow-800' :
+                        'bg-gray-50 border-gray-200 text-gray-800'
+                }`}>
+                <div className="font-bold text-lg">{room.number}</div>
+                <div className="text-xs font-medium uppercase mt-1">{room.status}</div>
+                <div className="text-[10px] mt-1 truncate">{room.type}</div>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-between items-center text-xs text-muted-foreground border-t pt-4">
+            <div className="flex gap-3">
+              <span className="flex items-center"><span className="w-2 h-2 rounded-full bg-green-500 mr-1"></span> VC (Vacant Clean)</span>
+              <span className="flex items-center"><span className="w-2 h-2 rounded-full bg-red-500 mr-1"></span> VD (Vacant Dirty)</span>
+              <span className="flex items-center"><span className="w-2 h-2 rounded-full bg-blue-500 mr-1"></span> OC (Occupied Clean)</span>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setRoomStatusDialogOpen(false)}>Close</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={checkInDialogOpen} onOpenChange={setCheckInDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Check In Guest</DialogTitle>
+            <DialogDescription>
+              Assign a room and confirm rate details.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div>
+              <Label className="mb-2 block text-sm font-medium">Room</Label>
+              <Select value={selectedRoom || ''} onValueChange={setSelectedRoom} disabled={isLoadingRooms || !!roomsError || availableRooms.length === 0}>
+                <SelectTrigger>
+                  <SelectValue placeholder={
+                    isLoadingRooms ? "Loading rooms..." :
+                      roomsError ? "Error loading rooms" :
+                        availableRooms.length === 0 ? "No rooms available" :
+                          "Assign Room..."
+                  } />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableRooms.map(r => (
+                    <SelectItem key={r.id} value={r.id}>
+                      Room {r.number} ({r.type})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {roomsError && <p className="text-xs text-red-500 mt-1">{roomsError}</p>}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label className="mb-2 block text-sm font-medium">Daily Rate ($)</Label>
+                <Input
+                  type="number"
+                  value={rateOverride}
+                  onChange={(e) => setRateOverride(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="mb-2 block text-sm font-medium">Meal Plan</Label>
+                <Select value={selectedPackage} onValueChange={setSelectedPackage}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {packageOptions.map(pkg => (
+                      <SelectItem key={pkg.code} value={pkg.code}>
+                        {pkg.label} (+${pkg.surcharge})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid gap-2 pt-2">
+              <Label className="text-sm font-medium">Tax Settings</Label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="tax_enabled"
+                    checked={taxEnabled}
+                    onCheckedChange={(checked) => setTaxEnabled(!!checked)}
+                    aria-label="Enable tax calculation"
+                  />
+                  <Label htmlFor="tax_enabled" className="text-sm">Enable Tax</Label>
+                </div>
+                <div>
+                  <Label htmlFor="tax_rate" className="mb-2 block text-sm">Tax Percentage</Label>
+                  <Input
+                    id="tax_rate"
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    max={100}
+                    step="0.01"
+                    value={taxRatePercent}
+                    onChange={(e) => setTaxRatePercent(e.target.value)}
+                    aria-invalid={!!taxError}
+                    aria-describedby="tax_rate_help"
+                  />
+                  <p id="tax_rate_help" className={`text-xs mt-1 ${taxError ? 'text-red-600' : 'text-gray-500'}`}>
+                    {taxError ? taxError : 'Enter a value between 0 and 100'}
+                  </p>
+                </div>
+                <div>
+                  <Label className="mb-2 block text-sm">Calculation Method</Label>
+                  <Select value={taxMethod} onValueChange={(v) => setTaxMethod(v as 'inclusive' | 'exclusive')}>
+                    <SelectTrigger data-testid="fo-checkin-method-trigger">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="exclusive">Exclusive (add tax on top)</SelectItem>
+                      <SelectItem value="inclusive">Inclusive (rate includes tax)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-blue-50 p-3 rounded-md border border-blue-100 mt-2">
+              <p className="text-xs text-blue-800">
+                <strong>Summary:</strong> Room {rooms.find(r => r.id === selectedRoom)?.number || 'Unassigned'} •
+                {(() => {
+                  const roomObj = rooms.find(r => r.id === selectedRoom);
+                  const baseIn = rateOverride ? parseFloat(rateOverride) : (roomObj?.rate || 0);
+                  const nightlyBase = (typeof computeTotalRate === 'function' ? computeTotalRate : () => baseIn)(baseIn, selectedPackage, packageOptions, 'RO');
+                  const pct = Math.max(0, Math.min(100, parseFloat(taxRatePercent || '0')));
+                  const r = isNaN(pct) ? 0 : pct / 100;
+                  const nights = (() => {
+                    const res = reservations.find(x => x.id === selectedResId);
+                    if (!res) return 1;
+                    try {
+                      return Math.max(1, differenceInCalendarDays(new Date(res.checkOut), new Date(res.checkIn)));
+                    } catch { return 1 }
+                  })();
+                  const calc = (() => {
+                    if (!taxEnabled) {
+                      const subtotal = nightlyBase * nights;
+                      return { nights, nightlyBase, subtotal, tax: 0, total: subtotal, r };
+                    }
+                    if (taxMethod === 'inclusive') {
+                      const nightlySubtotal = nightlyBase / (1 + r);
+                      const nightlyTax = nightlyBase - nightlySubtotal;
+                      return { nights, nightlyBase, subtotal: nightlySubtotal * nights, tax: nightlyTax * nights, total: nightlyBase * nights, r };
+                    }
+                    const nightlyTax = nightlyBase * r;
+                    const nightlyTotal = nightlyBase + nightlyTax;
+                    return { nights, nightlyBase, subtotal: nightlyBase * nights, tax: nightlyTax * nights, total: nightlyTotal * nights, r };
+                  })();
+                  const pkgLabel = packageOptions.find(p => p.code === sanitizePackageCode(selectedPackage, 'RO'))?.label;
+                  return `Rate $${nightlyBase.toFixed(2)} • ${pkgLabel}${taxEnabled ? (taxMethod === 'inclusive' ? ' (Tax Inc.)' : ' (+ Tax)') : ''} • Nights ${calc.nights} • Subtotal $${calc.subtotal.toFixed(2)} • Tax (${(calc.r * 100).toFixed(2)}%) $${calc.tax.toFixed(2)} • Total $${calc.total.toFixed(2)}`;
+                })()}
+              </p>
+            </div>
+            <div className="p-3 mt-2 bg-gray-50 border rounded-lg text-sm">
+              {(() => {
+                const roomObj = rooms.find(r => r.id === selectedRoom);
+                const baseIn = rateOverride ? parseFloat(rateOverride) : (roomObj?.rate || 0);
+                const nightlyBase = (typeof computeTotalRate === 'function' ? computeTotalRate : () => baseIn)(baseIn, selectedPackage, packageOptions, 'RO');
+                const pct = Math.max(0, Math.min(100, parseFloat(taxRatePercent || '0')));
+                const r = isNaN(pct) ? 0 : pct / 100;
+                const res = reservations.find(x => x.id === selectedResId);
+                const nights = (() => {
+                  if (!res) return 1;
+                  try {
+                    return Math.max(1, differenceInCalendarDays(new Date(res.checkOut), new Date(res.checkIn)));
+                  } catch { return 1 }
+                })();
+                const calc = (() => {
+                  if (!taxEnabled) {
+                    const subtotal = nightlyBase * nights;
+                    return { nights, nightlyBase, subtotal, tax: 0, total: subtotal };
+                  }
+                  if (taxMethod === 'inclusive') {
+                    const nightlySubtotal = nightlyBase / (1 + r);
+                    const nightlyTax = nightlyBase - nightlySubtotal;
+                    return { nights, nightlyBase, subtotal: nightlySubtotal * nights, tax: nightlyTax * nights, total: nightlyBase * nights };
+                  }
+                  const nightlyTax = nightlyBase * r;
+                  const nightlyTotal = nightlyBase + nightlyTax;
+                  return { nights, nightlyBase, subtotal: nightlyBase * nights, tax: nightlyTax * nights, total: nightlyTotal * nights };
+                })();
+                return (
+                  <>
+                    <p className="text-gray-700">Nights: <span className="font-medium">{calc.nights}</span></p>
+                    <p className="text-gray-700">Nightly Rate: <span className="font-medium" data-testid="fo-checkin-nightly-rate">${nightlyBase.toFixed(2)}</span></p>
+                    <div className="mt-1">
+                      <p className="text-gray-700">Subtotal: <span className="font-medium" data-testid="fo-checkin-subtotal">${calc.subtotal.toFixed(2)}</span></p>
+                      <p className="text-gray-700">Tax ({(r * 100).toFixed(2)}%): <span className="font-medium" data-testid="fo-checkin-tax">${calc.tax.toFixed(2)}</span></p>
+                      <p className="text-gray-800">Total: <span className="font-semibold" data-testid="fo-checkin-total">${calc.total.toFixed(2)}</span></p>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCheckInDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleCheckInConfirm} disabled={!selectedRoom}>Confirm Check In</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={chargeDialogOpen} onOpenChange={setChargeDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Add Manual Charge</DialogTitle>
+            <DialogDescription>
+              Post a charge to the guest folio manually.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="charge-amount">Amount ($)</Label>
+              <Input
+                id="charge-amount"
+                type="number"
+                value={chargeAmount}
+                onChange={(e) => setChargeAmount(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="charge-desc">Description / Code</Label>
+              <Input
+                id="charge-desc"
+                value={chargeDescription}
+                onChange={(e) => setChargeDescription(e.target.value)}
+                placeholder="e.g. Minibar, Laundry, etc."
+              />
+            </div>
+            {chargeError && (
+              <p className="text-sm text-red-500">{chargeError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setChargeDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleChargeSubmit}>Add Charge</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <TransferRoomModal
+        isOpen={transferDialogOpen}
+        onClose={() => setTransferDialogOpen(false)}
+        reservationId={transferResId}
+        currentRoomId={transferRoomId}
+        onSuccess={() => {
+          // Trigger a refresh if the context doesn't auto-update, 
+          // but usually useData context updates via polling or subscription.
+          // For now, we can reload to be safe or assume context sync.
+          if (typeof window !== 'undefined') window.location.reload();
+        }}
+      />
+
+      <Dialog open={guestLookupOpen} onOpenChange={setGuestLookupOpen}>
+        <DialogContent className="sm:max-w-[700px]">
+          <DialogHeader>
+            <DialogTitle>Guest Lookup</DialogTitle>
+            <DialogDescription>Search for past and present guests.</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Search className="h-4 w-4 text-gray-400" />
+              <Input
+                placeholder="Search by name, email, or reservation ID..."
+                value={lookupQuery}
+                onChange={(e) => setLookupQuery(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="max-h-[300px] overflow-y-auto border rounded">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Guest</TableHead>
+                    <TableHead>Dates</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(() => {
+                    const q = lookupQuery.toLowerCase();
+                    const hits = reservations.filter(r =>
+                      !q ||
+                      (r.guestName || '').toLowerCase().includes(q) ||
+                      (r.id || '').toLowerCase().includes(q) ||
+                      (r.email || '').toLowerCase().includes(q)
+                    ).slice(0, 50);
+
+                    if (hits.length === 0) {
+                      return <TableRow><TableCell colSpan={4} className="text-center py-4">No results found</TableCell></TableRow>;
+                    }
+
+                    return hits.map(r => (
+                      <TableRow key={r.id}>
+                        <TableCell>
+                          <div className="font-medium">{r.guestName}</div>
+                          <div className="text-xs text-muted-foreground">{r.email}</div>
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {r.checkIn} - {r.checkOut}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{getResStatus(r)}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Button size="sm" variant="ghost" onClick={() => {
+                            setGuestLookupOpen(false);
+                            setSearchTerm(r.id); // Populate main search
+                          }}>Select</Button>
+                        </TableCell>
+                      </TableRow>
+                    ));
+                  })()}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGuestLookupOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <FOPrintCustomization open={showPrintSettings} onClose={() => setShowPrintSettings(false)} />
+
+      {/* Print Options Dialog */}
+      <Dialog open={printOptionsOpen} onOpenChange={setPrintOptionsOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Print Options</DialogTitle>
+            <DialogDescription>
+              Select what information you want to print for restaurant operations.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="space-y-4">
+              <div>
+                <Label className="text-base font-medium mb-2 block">Report Content</Label>
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id="print-restaurant"
+                      name="print-mode"
+                      value="restaurant"
+                      checked={printMode === 'restaurant'}
+                      onChange={(e) => setPrintMode(e.target.value as 'restaurant' | 'arrivals' | 'both')}
+                      className="h-4 w-4 text-primary focus:ring-primary"
+                    />
+                    <Label htmlFor="print-restaurant" className="flex items-center gap-2">
+                      <Utensils className="h-4 w-4" />
+                      Restaurant Guest List
+                      <span className="text-xs text-muted-foreground ml-1">
+                        (Checked-in guests for meal planning)
+                      </span>
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id="print-arrivals"
+                      name="print-mode"
+                      value="arrivals"
+                      checked={printMode === 'arrivals'}
+                      onChange={(e) => setPrintMode(e.target.value as 'restaurant' | 'arrivals' | 'both')}
+                      className="h-4 w-4 text-primary focus:ring-primary"
+                    />
+                    <Label htmlFor="print-arrivals" className="flex items-center gap-2">
+                      <UserCheck className="h-4 w-4" />
+                      Today's Arrivals
+                      <span className="text-xs text-muted-foreground ml-1">
+                        (Guests checking in today)
+                      </span>
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id="print-both"
+                      name="print-mode"
+                      value="both"
+                      checked={printMode === 'both'}
+                      onChange={(e) => setPrintMode(e.target.value as 'restaurant' | 'arrivals' | 'both')}
+                      className="h-4 w-4 text-primary focus:ring-primary"
+                    />
+                    <Label htmlFor="print-both" className="flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      Combined Report
+                      <span className="text-xs text-muted-foreground ml-1">
+                        (Both restaurant list and arrivals)
+                      </span>
+                    </Label>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-base font-medium mb-2 block">Export Format</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  <Button
+                    variant={exportFormat === 'pdf' ? 'default' : 'outline'}
+                    onClick={() => setExportFormat('pdf')}
+                    className="flex flex-col items-center gap-1 h-auto py-3"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                      <polyline points="14,2 14,8 20,8" />
+                      <line x1="16" y1="13" x2="8" y2="13" />
+                      <line x1="16" y1="17" x2="8" y2="17" />
+                      <line x1="10" y1="9" x2="8" y2="9" />
+                    </svg>
+                    <span className="text-xs">PDF</span>
+                  </Button>
+                  <Button
+                    variant={exportFormat === 'html' ? 'default' : 'outline'}
+                    onClick={() => setExportFormat('html')}
+                    className="flex flex-col items-center gap-1 h-auto py-3"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                      <line x1="4" y1="20" x2="20" y2="4" />
+                      <line x1="4" y1="4" x2="20" y2="20" />
+                    </svg>
+                    <span className="text-xs">HTML</span>
+                  </Button>
+                  <Button
+                    variant={exportFormat === 'txt' ? 'default' : 'outline'}
+                    onClick={() => setExportFormat('txt')}
+                    className="flex flex-col items-center gap-1 h-auto py-3"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                      <polyline points="14,2 14,8 20,8" />
+                      <line x1="16" y1="13" x2="8" y2="13" />
+                      <line x1="16" y1="17" x2="8" y2="17" />
+                      <line x1="10" y1="9" x2="8" y2="9" />
+                    </svg>
+                    <span className="text-xs">Text</span>
+                  </Button>
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-base font-medium mb-2 block">Output Destination</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  <Button
+                    variant={printDestination === 'printer' ? 'default' : 'outline'}
+                    onClick={() => setPrintDestination('printer')}
+                    className="flex flex-col items-center gap-1 h-auto py-3"
+                  >
+                    <Printer className="h-5 w-5" />
+                    <span className="text-xs">Printer</span>
+                  </Button>
+                  <Button
+                    variant={printDestination === 'download' ? 'default' : 'outline'}
+                    onClick={() => setPrintDestination('download')}
+                    className="flex flex-col items-center gap-1 h-auto py-3"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7,10 12,15 17,10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    <span className="text-xs">Download</span>
+                  </Button>
+                  <Button
+                    variant={printDestination === 'email' ? 'default' : 'outline'}
+                    onClick={() => setPrintDestination('email')}
+                    className="flex flex-col items-center gap-1 h-auto py-3"
+                    disabled
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                      <rect x="2" y="4" width="20" height="16" rx="2" />
+                      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+                    </svg>
+                    <span className="text-xs">Email</span>
+                    <span className="text-[10px] text-muted-foreground">(Soon)</span>
+                  </Button>
+                </div>
+              </div>
+
+              <div className="bg-blue-50 p-3 rounded-md border border-blue-100">
+                <h4 className="font-medium text-blue-800 mb-1">Preview Summary</h4>
+                <div className="space-y-1">
+                  <p className="text-sm text-blue-700">
+                    {printMode === 'restaurant' && (
+                      <>Restaurant list: {inHouse.length} in-house guests with meal packages</>
+                    )}
+                    {printMode === 'arrivals' && (
+                      <>Arrivals report: {todayArrivals.length} guests checking in today</>
+                    )}
+                    {printMode === 'both' && (
+                      <>Combined report: {inHouse.length} in-house + {todayArrivals.length} arrivals</>
+                    )}
+                  </p>
+                  <p className="text-xs text-blue-600">
+                    Format: <span className="font-medium">{exportFormat.toUpperCase()}</span> •
+                    Destination: <span className="font-medium">
+                      {printDestination === 'printer' ? 'Direct Print' :
+                        printDestination === 'download' ? 'File Download' : 'Email (Coming Soon)'}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPrintOptionsOpen(false)}>Cancel</Button>
+            <Button onClick={handlePrintWithOptions}>
+              {printDestination === 'printer' ? (
+                <Printer className="mr-2 h-4 w-4" />
+              ) : printDestination === 'download' ? (
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2 h-4 w-4">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7,10 12,15 17,10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2 h-4 w-4">
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+                </svg>
+              )}
+              {printDestination === 'printer' ? 'Print Report' :
+                printDestination === 'download' ? 'Download Report' : 'Send Email'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Arrivals Print Preview Dialog */}
+      <Dialog open={arrivalsPreviewOpen} onOpenChange={setArrivalsPreviewOpen}>
+        <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader className="no-print">
+            <DialogTitle>Arrivals Report Preview</DialogTitle>
+            <DialogDescription>
+              Review the arrivals report before printing. Click "Print Report" to send to printer.
+            </DialogDescription>
+          </DialogHeader>
+
+          <ReportLayout
+            reportName="Daily Arrivals Report"
+            subtitle={`${todayArrivals.length} Guest${todayArrivals.length !== 1 ? 's' : ''} Expected`}
+            reportDate={new Date()}
+            showPrintButton={true}
+            showDownloadButton={false}
+            metaInfo={[
+              { label: 'Report Type', value: 'Front Office - Arrivals' },
+              { label: 'Business Date', value: format(new Date(), 'MMMM d, yyyy') },
+              { label: 'Total Arrivals', value: String(todayArrivals.length) },
+              { label: 'Generated By', value: 'Front Desk' }
+            ]}
+          >
+            {todayArrivals.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <p className="text-lg">No arrivals scheduled for today</p>
+                <p className="text-sm mt-2">Check back later or view upcoming reservations in the Reservations module.</p>
+              </div>
+            ) : (
+              <ReportTable
+                headers={[
+                  { label: 'Guest Name', align: 'left' },
+                  { label: 'Contact', align: 'left' },
+                  { label: 'Room Type', align: 'left' },
+                  { label: 'Room #', align: 'center' },
+                  { label: 'Check-In', align: 'center' },
+                  { label: 'Check-Out', align: 'center' },
+                  { label: 'Nights', align: 'center' },
+                  { label: 'Pax', align: 'center' },
+                  { label: 'Package', align: 'left' },
+                  { label: 'Rate', align: 'right' }
+                ]}
+                footer={
+                  <tr>
+                    <td colSpan={7} className="text-right font-semibold">Total Guests:</td>
+                    <td className="text-center font-bold">
+                      {todayArrivals.reduce((sum, r) => sum + (r.adults || 1) + (r.children || 0), 0)}
+                    </td>
+                    <td></td>
+                    <td className="text-right font-bold">
+                      ${todayArrivals.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}
+                    </td>
+                  </tr>
+                }
+              >
+                {todayArrivals.map((res) => {
+                  const nights = (() => {
+                    try {
+                      return Math.max(1, differenceInCalendarDays(new Date(res.checkOut), new Date(res.checkIn)));
+                    } catch { return 1; }
+                  })();
+                  return (
+                    <tr key={res.id}>
+                      <td className="font-medium">
+                        {res.guestName}
+                        {res.vip && <span className="ml-1 text-xs text-amber-600">(VIP)</span>}
+                      </td>
+                      <td className="text-sm text-gray-600">
+                        {res.email || res.phone || '-'}
+                      </td>
+                      <td>{res.roomType}</td>
+                      <td className="text-center font-medium">{getRoomAssignment(res)}</td>
+                      <td className="text-center">{format(new Date(res.checkIn), 'MMM d')}</td>
+                      <td className="text-center">{format(new Date(res.checkOut), 'MMM d')}</td>
+                      <td className="text-center">{nights}</td>
+                      <td className="text-center">
+                        {res.adults || 1}{res.children ? `+${res.children}` : ''}
+                      </td>
+                      <td>
+                        <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">
+                          {getResPackage(res)}
+                        </span>
+                      </td>
+                      <td className="text-right font-medium">${(res.rate || 0).toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
+              </ReportTable>
+            )}
+
+            {/* Special Requests Section */}
+            {todayArrivals.some(r => r.specialRequests || r.notes) && (
+              <div className="mt-6 avoid-break">
+                <h4 className="font-semibold text-sm border-b pb-1 mb-3">Special Requests & Notes</h4>
+                <div className="space-y-2">
+                  {todayArrivals.filter(r => r.specialRequests || r.notes).map(r => (
+                    <div key={r.id} className="text-sm p-2 bg-gray-50 rounded">
+                      <span className="font-medium">{r.guestName}:</span>{' '}
+                      <span className="text-gray-600">{r.specialRequests || r.notes}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </ReportLayout>
+
+          <DialogFooter className="no-print">
+            <Button variant="outline" onClick={() => setArrivalsPreviewOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div >
+  );
+};

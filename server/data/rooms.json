@@ -1,0 +1,102 @@
+[
+  {
+    "id": "R101",
+    "number": "101",
+    "type": "Standard King",
+    "status": "VC",
+    "floor": 1,
+    "rate": 120
+  },
+  {
+    "id": "R102",
+    "number": "102",
+    "type": "Standard Queen",
+    "status": "OC",
+    "floor": 1,
+    "rate": 110,
+    "guestId": "G001"
+  },
+  {
+    "id": "R103",
+    "number": "103",
+    "type": "Deluxe King",
+    "status": "VD",
+    "floor": 1,
+    "rate": 150
+  },
+  {
+    "id": "R104",
+    "number": "104",
+    "type": "Suite",
+    "status": "OC",
+    "floor": 1,
+    "rate": 250,
+    "guestId": "G002"
+  },
+  {
+    "id": "R201",
+    "number": "201",
+    "type": "Standard King",
+    "status": "VC",
+    "floor": 2,
+    "rate": 120
+  },
+  {
+    "id": "R202",
+    "number": "202",
+    "type": "Deluxe Queen",
+    "status": "OD",
+    "floor": 2,
+    "rate": 140,
+    "guestId": "G003"
+  },
+  {
+    "id": "R203",
+    "number": "203",
+    "type": "Standard King",
+    "status": "VC",
+    "floor": 2,
+    "rate": 120
+  },
+  {
+    "id": "R204",
+    "number": "204",
+    "type": "Suite",
+    "status": "OOO",
+    "floor": 2,
+    "rate": 250
+  },
+  {
+    "id": "R301",
+    "number": "301",
+    "type": "Deluxe King",
+    "status": "VC",
+    "floor": 3,
+    "rate": 150
+  },
+  {
+    "id": "R302",
+    "number": "302",
+    "type": "Standard Queen",
+    "status": "VC",
+    "floor": 3,
+    "rate": 110
+  },
+  {
+    "id": "R303",
+    "number": "303",
+    "type": "Suite",
+    "status": "OC",
+    "floor": 3,
+    "rate": 250,
+    "guestId": "G004"
+  },
+  {
+    "id": "R304",
+    "number": "304",
+    "type": "Deluxe King",
+    "status": "VD",
+    "floor": 3,
+    "rate": 150
+  }
+]

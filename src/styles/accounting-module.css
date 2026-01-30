@@ -1,0 +1,45 @@
+/* Accounting module styling: distinct color scheme and accessible states */
+.accounting-module {
+  background-color: #0f172a; /* slate-900 */
+}
+.text-accounting {
+  color: #22c55e; /* green-500 */
+}
+.acct-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background-color: #1f2937; /* gray-800 */
+  color: #f3f4f6; /* gray-100 */
+  border: 1px solid #374151; /* gray-700 */
+  transition: background-color 0.2s ease, transform 0.02s ease;
+}
+.acct-btn:hover {
+  background-color: #2563eb; /* blue-600 */
+}
+.acct-btn:active {
+  transform: scale(0.98);
+}
+.acct-btn:focus {
+  outline: 3px solid #22c55e; /* green-500 focus ring */
+  outline-offset: 2px;
+}
+/* Consistent top-left placement for back button within accounting-related views */
+.acct-back-btn {
+  position: sticky;
+  top: 0.75rem;
+  z-index: 50;
+  margin-bottom: 0.75rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .acct-btn {
+    transition: none;
+  }
+}
+@media (max-width: 640px) {
+  .acct-btn {
+    width: 100%;
+  }
+}

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading COREPMS</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: #2d3748;
+        }
+        .container {
+            text-align: center;
+            max-width: 500px;
+            padding: 2rem;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: #4a5568;
+        }
+        .status {
+            font-size: 1rem;
+            margin-bottom: 1.5rem;
+            color: #718096;
+        }
+        .spinner {
+            border: 4px solid #e2e8f0;
+            border-top: 4px solid #4299e1;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1.5rem;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error-container {
+            display: none;
+            margin-top: 1rem;
+            padding: 1rem;
+            background-color: #fed7d7;
+            border: 1px solid #feb2b2;
+            border-radius: 6px;
+            color: #c53030;
+        }
+        .retry-btn {
+            display: none;
+            margin-top: 1rem;
+            padding: 0.5rem 1rem;
+            background-color: #4299e1;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .retry-btn:hover {
+            background-color: #3182ce;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo"> <!-- Placeholder for logo if available -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 80px; height: 80px; color: #4299e1;">
+                <path fill-rule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm-2.625 6c-.54 0-.828.419-.936.634a1.96 1.96 0 00-.189.866c0 .298.059.605.189.866.108.215.395.634.936.634.54 0 .828-.419.936-.634.13-.26.189-.568.189-.866 0-.298-.059-.605-.189-.866-.108-.215-.395-.634-.936-.634zm5.25 0c-.54 0-.828.419-.936.634a1.96 1.96 0 00-.189.866c0 .298.059.605.189.866.108.215.395.634.936.634.54 0 .828-.419.936-.634.13-.26.189-.568.189-.866 0-.298-.059-.605-.189-.866-.108-.215-.395-.634-.936-.634zm-7.5 4.5c-.28 0-.531.057-.75.156a3 3 0 003.087 3.087c.099-.219.156-.47.156-.75 0-.547-.156-1.05-.423-1.5-.267-.45-.653-.817-1.087-1.05-.219-.124-.47-.181-.75-.181z" clip-rule="evenodd"></path>
+            </svg>
+        </div>
+        <h1>COREPMS</h1>
+        <div class="spinner" id="spinner"></div>
+        <div class="status" id="status">Database Initializing...</div>
+        <div class="error-container" id="errorContainer">
+            <div id="errorMessage"></div>
+        </div>
+        <button class="retry-btn" id="retryBtn">Retry Connection</button>
+    </div>
+
+    <script>
+        // No require() needed - using exposed 'native' API from preload
+        const db = window.native && window.native.db;
+        const app = window.native && window.native.app;
+        
+        if (!db || !app) {
+            console.error('CorePMS Native Bridge not found!');
+            document.getElementById('status').textContent = 'Error: Native bridge missing. Restart application.';
+        } else {
+            // Listen for status updates
+            db.onStatus((status) => {
+                const msg = status.message || status;
+                document.getElementById('status').textContent = msg;
+                
+                // Check for ready message
+                if (msg && msg.includes('Database ready, loading application...')) {
+                    // Signal main process to load the app
+                    app.signalReady();
+                }
+            });
+            
+            // Listen for error events
+            db.onError((error) => {
+                const errorContainer = document.getElementById('errorContainer');
+                const errorMessage = document.getElementById('errorMessage');
+                const retryBtn = document.getElementById('retryBtn');
+                
+                errorMessage.textContent = error.message || error;
+                errorContainer.style.display = 'block';
+                retryBtn.style.display = 'block';
+                document.getElementById('status').textContent = 'Initialization Failed';
+                document.getElementById('spinner').style.display = 'none';
+            });
+            
+            // Retry button functionality
+            document.getElementById('retryBtn').addEventListener('click', () => {
+                document.getElementById('errorContainer').style.display = 'none';
+                document.getElementById('retryBtn').style.display = 'none';
+                document.getElementById('spinner').style.display = 'block';
+                document.getElementById('status').textContent = 'Retrying...';
+                db.retryInitialization();
+            });
+        }
+    </script>
+</body>
+</html>

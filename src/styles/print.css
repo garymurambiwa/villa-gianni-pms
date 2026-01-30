@@ -1,0 +1,527 @@
+/**
+ * Core DPMS - Global Print Stylesheet
+ * 
+ * Standardizes all printed documents (Folios, Statements, Management Reports)
+ * with consistent branding, typography, and layout optimization.
+ */
+
+/* ============================================================================
+   CSS VARIABLES - Brand Colors & Spacing
+   ============================================================================ */
+:root {
+  --print-brand-primary: #0073e6;
+  --print-brand-secondary: #1e3a5f;
+  --print-text-primary: #1a1a1a;
+  --print-text-secondary: #4a4a4a;
+  --print-text-muted: #6b7280;
+  --print-border-color: #e5e7eb;
+  --print-divider-color: #0073e6;
+  --print-header-height: 80px;
+  --print-footer-height: 40px;
+  --print-page-margin: 15mm;
+}
+
+/* ============================================================================
+   @MEDIA PRINT - Core Print Styles
+   ============================================================================ */
+@media print {
+  /* Page Setup */
+  @page {
+    size: A4 portrait;
+    margin: var(--print-page-margin);
+  }
+
+  @page :first {
+    margin-top: 10mm;
+  }
+
+  /* Letter size alternative */
+  @page letter {
+    size: letter portrait;
+    margin: 0.75in;
+  }
+
+  /* Hide Non-Print Elements */
+  .no-print,
+  .sidebar,
+  nav,
+  header:not(.print-header),
+  .navigation,
+  .app-sidebar,
+  .app-header,
+  button:not(.print-visible),
+  .toast,
+  .dialog-overlay,
+  [role="dialog"],
+  .fixed:not(.print-visible) {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* Reset body for print */
+  body {
+    background: white !important;
+    color: var(--print-text-primary) !important;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
+    font-size: 10pt !important;
+    line-height: 1.4 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Main content takes full width */
+  main,
+  .main-content,
+  .page-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* ============================================================================
+     REPORT LAYOUT STRUCTURE
+     ============================================================================ */
+
+  /* Report Container */
+  .report-container {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Report Header */
+  .report-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    margin-bottom: 0;
+    padding-bottom: 12px;
+  }
+
+  .report-header .company-logo {
+    max-height: 60px;
+    max-width: 180px;
+    object-fit: contain;
+    margin-bottom: 8px;
+  }
+
+  .report-header .company-name {
+    font-size: 16pt;
+    font-weight: 700;
+    color: var(--print-brand-secondary);
+    margin: 0 0 4px 0;
+    letter-spacing: -0.02em;
+  }
+
+  .report-header .company-details {
+    font-size: 9pt;
+    color: var(--print-text-secondary);
+    line-height: 1.5;
+  }
+
+  .report-header .company-details span {
+    display: inline-block;
+  }
+
+  .report-header .company-details span::after {
+    content: " • ";
+    color: var(--print-text-muted);
+  }
+
+  .report-header .company-details span:last-child::after {
+    content: "";
+  }
+
+  /* Thematic Divider - Thick Blue Border */
+  .report-divider {
+    width: 100%;
+    height: 4px;
+    background: linear-gradient(90deg, var(--print-divider-color), #2196f3);
+    margin: 12px 0 16px 0;
+    border-radius: 2px;
+  }
+
+  /* Report Identity Section */
+  .report-identity {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--print-border-color);
+  }
+
+  .report-identity .report-title {
+    font-size: 14pt;
+    font-weight: 600;
+    color: var(--print-brand-primary);
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .report-identity .report-date {
+    font-size: 9pt;
+    color: var(--print-text-muted);
+  }
+
+  /* Report Meta Info (e.g., Guest Name, Room Number) */
+  .report-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 8px 24px;
+    margin-bottom: 16px;
+    padding: 12px;
+    background: #f8fafc;
+    border-radius: 4px;
+  }
+
+  .report-meta-item {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .report-meta-label {
+    font-size: 8pt;
+    font-weight: 600;
+    color: var(--print-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .report-meta-value {
+    font-size: 10pt;
+    color: var(--print-text-primary);
+    font-weight: 500;
+  }
+
+  /* ============================================================================
+     TABLE STYLES - Optimized for Print
+     ============================================================================ */
+
+  .report-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 9pt;
+  }
+
+  .report-table thead {
+    display: table-header-group; /* Repeat header on each page */
+  }
+
+  .report-table thead th {
+    background: var(--print-brand-primary) !important;
+    color: white !important;
+    font-weight: 600;
+    text-align: left;
+    padding: 8px 10px;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border: none;
+  }
+
+  .report-table thead th.text-right {
+    text-align: right;
+  }
+
+  .report-table thead th.text-center {
+    text-align: center;
+  }
+
+  .report-table tbody tr {
+    page-break-inside: avoid;
+  }
+
+  .report-table tbody tr:nth-child(even) {
+    background: #f9fafb;
+  }
+
+  .report-table tbody td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--print-border-color);
+    vertical-align: top;
+  }
+
+  .report-table tbody td.text-right {
+    text-align: right;
+  }
+
+  .report-table tbody td.text-center {
+    text-align: center;
+  }
+
+  .report-table tbody td.font-bold {
+    font-weight: 600;
+  }
+
+  /* Table Footer / Totals Row */
+  .report-table tfoot {
+    display: table-footer-group;
+  }
+
+  .report-table tfoot tr {
+    background: #e5e7eb !important;
+    font-weight: 600;
+  }
+
+  .report-table tfoot td {
+    padding: 8px 10px;
+    border-top: 2px solid var(--print-brand-primary);
+  }
+
+  /* ============================================================================
+     SUMMARY & TOTALS SECTION
+     ============================================================================ */
+
+  .report-summary {
+    margin-top: 20px;
+    border-top: 2px solid var(--print-brand-primary);
+    padding-top: 12px;
+  }
+
+  .report-summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 10pt;
+  }
+
+  .report-summary-row.total {
+    font-weight: 700;
+    font-size: 12pt;
+    border-top: 1px solid var(--print-border-color);
+    padding-top: 8px;
+    margin-top: 8px;
+  }
+
+  .report-summary-label {
+    color: var(--print-text-secondary);
+  }
+
+  .report-summary-value {
+    color: var(--print-text-primary);
+    font-weight: 600;
+  }
+
+  /* ============================================================================
+     PAGE BREAKS & FLOW CONTROL
+     ============================================================================ */
+
+  .page-break-before {
+    page-break-before: always;
+  }
+
+  .page-break-after {
+    page-break-after: always;
+  }
+
+  .avoid-break {
+    page-break-inside: avoid;
+  }
+
+  .keep-together {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Section breaks */
+  .report-section {
+    page-break-inside: avoid;
+    margin-bottom: 16px;
+  }
+
+  .report-section-title {
+    font-size: 11pt;
+    font-weight: 600;
+    color: var(--print-brand-secondary);
+    margin: 0 0 8px 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--print-border-color);
+  }
+
+  /* ============================================================================
+     REPORT FOOTER
+     ============================================================================ */
+
+  .report-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 8pt;
+    color: var(--print-text-muted);
+    padding: 8px var(--print-page-margin);
+    border-top: 1px solid var(--print-border-color);
+    background: white;
+  }
+
+  .report-footer-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .report-footer .page-number::after {
+    content: counter(page);
+  }
+
+  /* Signature Section */
+  .signature-section {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 40px;
+    margin-top: 40px;
+    page-break-inside: avoid;
+  }
+
+  .signature-block {
+    text-align: center;
+  }
+
+  .signature-line {
+    border-bottom: 1px solid var(--print-text-primary);
+    height: 40px;
+    margin-bottom: 4px;
+  }
+
+  .signature-label {
+    font-size: 8pt;
+    color: var(--print-text-muted);
+    text-transform: uppercase;
+  }
+
+  /* ============================================================================
+     TYPOGRAPHY UTILITIES
+     ============================================================================ */
+
+  .print-text-xs { font-size: 8pt; }
+  .print-text-sm { font-size: 9pt; }
+  .print-text-base { font-size: 10pt; }
+  .print-text-lg { font-size: 11pt; }
+  .print-text-xl { font-size: 12pt; }
+  .print-text-2xl { font-size: 14pt; }
+
+  .print-font-normal { font-weight: 400; }
+  .print-font-medium { font-weight: 500; }
+  .print-font-semibold { font-weight: 600; }
+  .print-font-bold { font-weight: 700; }
+
+  .print-text-muted { color: var(--print-text-muted); }
+  .print-text-secondary { color: var(--print-text-secondary); }
+  .print-text-primary { color: var(--print-text-primary); }
+  .print-text-brand { color: var(--print-brand-primary); }
+
+  /* ============================================================================
+     POWERED BY FOOTER
+     ============================================================================ */
+
+  .powered-by {
+    text-align: center;
+    font-size: 8pt;
+    color: var(--print-text-muted);
+    margin-top: 24px;
+    padding-top: 12px;
+    border-top: 1px solid var(--print-border-color);
+  }
+}
+
+/* ============================================================================
+   SCREEN PREVIEW STYLES (For on-screen report preview)
+   ============================================================================ */
+@media screen {
+  .report-preview {
+    background: white;
+    max-width: 210mm; /* A4 width */
+    margin: 20px auto;
+    padding: 20mm;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+  }
+
+  .report-preview .report-header {
+    text-align: center;
+    margin-bottom: 16px;
+  }
+
+  .report-preview .company-logo {
+    max-height: 60px;
+    max-width: 180px;
+    object-fit: contain;
+    margin-bottom: 8px;
+  }
+
+  .report-preview .company-name {
+    font-size: 20px;
+    font-weight: 700;
+    color: #1e3a5f;
+    margin: 0 0 4px 0;
+  }
+
+  .report-preview .company-details {
+    font-size: 12px;
+    color: #4a4a4a;
+  }
+
+  .report-preview .report-divider {
+    width: 100%;
+    height: 4px;
+    background: linear-gradient(90deg, #0073e6, #2196f3);
+    margin: 16px 0 20px 0;
+    border-radius: 2px;
+  }
+
+  .report-preview .report-identity {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .report-preview .report-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #0073e6;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .report-preview .report-date {
+    font-size: 12px;
+    color: #6b7280;
+  }
+
+  .report-preview .report-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+
+  .report-preview .report-table thead th {
+    background: #0073e6;
+    color: white;
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 12px;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
+
+  .report-preview .report-table tbody tr:nth-child(even) {
+    background: #f9fafb;
+  }
+
+  .report-preview .report-table tbody td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+}

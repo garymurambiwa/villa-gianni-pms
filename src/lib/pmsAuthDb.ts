@@ -1,0 +1,535 @@
+import { db } from '@/lib/db'
+import bcrypt from 'bcryptjs'
+const makeUuid = (): string => {
+  try {
+    const g = (globalThis as any);
+    const u = g?.crypto?.randomUUID?.();
+    if (u) return u;
+  } catch {}
+  return `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+export type DbUser = {
+  id: string;
+  username: string;
+  name: string;
+  role: string;
+  active: boolean;
+  password_change_required: boolean;
+  created_at: string;
+}
+
+export type AccessLog = {
+  id: number;
+  ts: string;
+  user_username: string | null;
+  event: string;
+  detail: any | null;
+}
+
+const STRONG_PASSWORD = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^\da-zA-Z]).{8,}$/
+
+export const pmsAuthDb = {
+  async init(): Promise<void> {
+    const createUsers = `
+      CREATE TABLE IF NOT EXISTS app_users (
+        id VARCHAR(255) PRIMARY KEY,
+        username VARCHAR(255) UNIQUE NOT NULL,
+        email VARCHAR(255) UNIQUE,
+        name VARCHAR(255) NOT NULL,
+        role VARCHAR(50) NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        active BOOLEAN NOT NULL DEFAULT true,
+        password_change_required BOOLEAN NOT NULL DEFAULT true,
+        is_verified BOOLEAN NOT NULL DEFAULT false,
+        is_mock_account BOOLEAN NOT NULL DEFAULT false,
+        failed_attempts INTEGER NOT NULL DEFAULT 0,
+        lockout_until TIMESTAMP,
+        password_changed_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_login TIMESTAMP,
+        two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
+        two_factor_secret TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_app_users_username ON app_users(username);
+      CREATE INDEX IF NOT EXISTS idx_app_users_email ON app_users(email);
+      CREATE INDEX IF NOT EXISTS idx_app_users_id ON app_users(id);
+    `;
+    const createLogs = `
+      CREATE TABLE IF NOT EXISTS access_logs (
+        id BIGSERIAL PRIMARY KEY,
+        ts TIMESTAMP NOT NULL DEFAULT NOW(),
+        user_username VARCHAR(255),
+        event VARCHAR(255) NOT NULL,
+        detail JSONB
+      );`;
+    const createVerifications = `
+      CREATE TABLE IF NOT EXISTS email_verifications (
+        token VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_email_verifications_user ON email_verifications(user_id);
+      CREATE INDEX IF NOT EXISTS idx_email_verifications_expires ON email_verifications(expires_at);
+    `;
+    const createLoginAttempts = `
+      CREATE TABLE IF NOT EXISTS login_attempts (
+        id BIGSERIAL PRIMARY KEY,
+        ts TIMESTAMP NOT NULL DEFAULT NOW(),
+        user_username VARCHAR(255),
+        ip VARCHAR(50),
+        user_agent TEXT,
+        ok BOOLEAN NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_login_attempts_user ON login_attempts(user_username);
+      CREATE INDEX IF NOT EXISTS idx_login_attempts_ts ON login_attempts(ts);
+    `;
+    await db.exec(createUsers);
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT false`); } catch {}
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT`); } catch {}
+    await db.exec(createLogs);
+    await db.exec(createVerifications);
+    await db.exec(createLoginAttempts);
+    const createAdmins = `
+      CREATE TABLE IF NOT EXISTS admins (
+        user_id VARCHAR(36) PRIMARY KEY,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createProfiles = `
+      CREATE TABLE IF NOT EXISTS profiles (
+        id VARCHAR(36) PRIMARY KEY,
+        email TEXT,
+        full_name TEXT,
+        role TEXT,
+        property_id TEXT,
+        is_active BOOLEAN DEFAULT true,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createPrinterConfigs = `
+      CREATE TABLE IF NOT EXISTS printer_configs (
+        id VARCHAR(36) PRIMARY KEY,
+        property_id TEXT NOT NULL,
+        data JSONB NOT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS printer_configs_property_id_idx ON printer_configs(property_id);
+    `;
+    const createRooms = `
+      CREATE TABLE IF NOT EXISTS rooms (
+        id VARCHAR(36) PRIMARY KEY,
+        number VARCHAR(50) UNIQUE NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        status VARCHAR(50) NOT NULL DEFAULT 'vacant',
+        rate NUMERIC(12,2) NOT NULL DEFAULT 0,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createGuests = `
+      CREATE TABLE IF NOT EXISTS guests (
+        id VARCHAR(36) PRIMARY KEY,
+        full_name TEXT NOT NULL,
+        email TEXT,
+        phone TEXT,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createReservations = `
+      CREATE TABLE IF NOT EXISTS reservations (
+        id VARCHAR(36) PRIMARY KEY,
+        guest_id VARCHAR(36) NOT NULL,
+        room_id VARCHAR(36),
+        status VARCHAR(50) NOT NULL DEFAULT 'confirmed',
+        check_in_date DATE NOT NULL,
+        check_out_date DATE NOT NULL,
+        source TEXT,
+        id_document_enc TEXT,
+        id_document_type TEXT,
+        nationality_code TEXT,
+        nationality_name TEXT,
+        booking_source TEXT,
+        partner_code TEXT,
+        utm_source TEXT,
+        utm_medium TEXT,
+        utm_campaign TEXT,
+        utm_term TEXT,
+        utm_content TEXT,
+        terms_accepted BOOLEAN,
+        confirmed_at TIMESTAMP,
+        signature_encrypted TEXT,
+        payment_info_source TEXT,
+        payment_verified BOOLEAN,
+        package_code VARCHAR(50) DEFAULT 'RO',
+        tax_inclusive BOOLEAN DEFAULT false,
+        expires_at TIMESTAMP,
+        payment_status VARCHAR(20) DEFAULT 'pending',
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createMenuItems = `
+      CREATE TABLE IF NOT EXISTS menu_items (
+        id VARCHAR(36) PRIMARY KEY,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        price NUMERIC(12,2) NOT NULL,
+        active BOOLEAN NOT NULL DEFAULT true,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createOrders = `
+      CREATE TABLE IF NOT EXISTS orders (
+        id VARCHAR(36) PRIMARY KEY,
+        user_id VARCHAR(36),
+        table_no TEXT,
+        status VARCHAR(50) NOT NULL DEFAULT 'open',
+        total NUMERIC(12,2) NOT NULL DEFAULT 0,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createOrderItems = `
+      CREATE TABLE IF NOT EXISTS order_items (
+        id VARCHAR(36) PRIMARY KEY,
+        order_id VARCHAR(36) NOT NULL,
+        menu_item_id VARCHAR(36) NOT NULL,
+        qty INTEGER NOT NULL DEFAULT 1,
+        price NUMERIC(12,2) NOT NULL,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createInventoryItems = `
+      CREATE TABLE IF NOT EXISTS inventory_items (
+        id VARCHAR(36) PRIMARY KEY,
+        name TEXT NOT NULL,
+        quantity NUMERIC NOT NULL DEFAULT 0,
+        unit TEXT NOT NULL DEFAULT 'units',
+        reorder_level INTEGER NOT NULL DEFAULT 10,
+        cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createInventoryMovements = `
+      CREATE TABLE IF NOT EXISTS inventory_movements (
+        id VARCHAR(36) PRIMARY KEY,
+        item_id VARCHAR(36) NOT NULL,
+        delta NUMERIC NOT NULL,
+        reason TEXT,
+        user_id VARCHAR(36),
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createSuppliers = `
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id VARCHAR(36) PRIMARY KEY,
+        name TEXT NOT NULL,
+        contact TEXT,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createTaxes = `
+      CREATE TABLE IF NOT EXISTS taxes (
+        id VARCHAR(36) PRIMARY KEY,
+        name TEXT NOT NULL,
+        percentage NUMERIC(12,2) NOT NULL,
+        is_inclusive BOOLEAN NOT NULL DEFAULT false,
+        applies_to VARCHAR(50) NOT NULL CHECK (applies_to IN ('all','accommodation','pos','services')),
+        active BOOLEAN NOT NULL DEFAULT true,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS taxes_active_idx ON taxes(active);
+      CREATE INDEX IF NOT EXISTS taxes_applies_idx ON taxes(applies_to);
+    `;
+    await db.exec(createAdmins);
+    await db.exec(createProfiles);
+    await db.exec(createPrinterConfigs);
+    await db.exec(createRooms);
+    await db.exec(createGuests);
+    await db.exec(createReservations);
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_inserted_at_idx ON reservations(inserted_at)`) } catch {}
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_guest_idx ON reservations(guest_id)`) } catch {}
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_room_idx ON reservations(room_id)`) } catch {}
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_status_idx ON reservations(status)`) } catch {}
+    try { await db.exec(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP`) } catch {}
+    try { await db.exec(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) DEFAULT 'pending'`) } catch {}
+    await db.exec(createMenuItems);
+    await db.exec(createOrders);
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(status)`) } catch {}
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_inserted_at_idx ON orders(inserted_at)`) } catch {}
+    await db.exec(createOrderItems);
+    await db.exec(createInventoryItems);
+    await db.exec(createInventoryMovements);
+    await db.exec(createSuppliers);
+    await db.exec(createTaxes);
+  },
+
+  async recordAccessAttempt(user_username: string, event: string, detail?: Record<string, any>) {
+    const sql = `INSERT INTO access_logs (user_username, event, detail) VALUES (?, ?, ?)`;
+    await db.query(sql, [user_username, event, detail ? JSON.stringify(detail) : null]);
+  },
+
+  async listAccessLogs(filters?: { limit?: number; username?: string; event?: string; from?: string; to?: string }): Promise<AccessLog[]> {
+    const clauses: string[] = [];
+    const params: any[] = [];
+    if (filters?.username) { clauses.push(`user_username = ?`); params.push(filters.username); }
+    if (filters?.event) { clauses.push(`event = ?`); params.push(filters.event); }
+    if (filters?.from) { clauses.push(`ts >= ?`); params.push(filters.from); }
+    if (filters?.to) { clauses.push(`ts <= ?`); params.push(filters.to); }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const limit = Math.max(1, Math.min(filters?.limit || 50, 500));
+    const sql = `SELECT id, ts, user_username, event, detail FROM access_logs ${where} ORDER BY ts DESC, id DESC LIMIT ${limit}`;
+    const res = await db.query<AccessLog>(sql, params);
+    if ('error' in res) return [];
+    return res.rows || [];
+  },
+
+  async ensureSuperUser(): Promise<void> {
+    const exists = await db.query<DbUser>(`SELECT * FROM app_users WHERE username = ?`, ['Super User']);
+    if ('error' in exists) return;
+    if (exists.rows && exists.rows.length > 0) return;
+    const id = `su_${Date.now()}`;
+    const passwordHash = await bcrypt.hash('Super@123', 12);
+    const sql = `INSERT INTO app_users (id, username, name, role, password_hash, active, password_change_required) VALUES (?, ?, ?, ?, ?, true, true)`;
+    await db.query(sql, [id, 'Super User', 'Super User', 'admin', passwordHash]);
+    await this.recordAccessAttempt('Super User', 'super_user_created', { id });
+  },
+
+  async grantPrivilegesForSuperUser(newPassword: string): Promise<{ ok: boolean; error?: string }>{
+    try {
+      const exists = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role FROM app_users WHERE username = ?`, ['Super User']);
+      if ('error' in exists) return { ok: false, error: exists.error };
+      if (!exists.rows || exists.rows.length === 0) {
+        // If missing, create then proceed
+        const id = `su_${Date.now()}`;
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+        const sql = `INSERT INTO app_users (id, username, name, role, password_hash, active, password_change_required) VALUES (?, ?, ?, ?, ?, true, false)`;
+        const ins = await db.query(sql, [id, 'Super User', 'Super User', 'admin', passwordHash]);
+        if ('error' in ins) return { ok: false, error: ins.error };
+        await this.recordAccessAttempt('Super User', 'super_user_created', { id });
+      } else {
+        // Promote to admin and set password
+        const hash = await bcrypt.hash(newPassword, 12);
+        const up = await db.query(`UPDATE app_users SET role = 'admin', password_hash = ?, password_change_required = false WHERE username = 'Super User'`, [hash]);
+        if ('error' in up) return { ok: false, error: up.error };
+      }
+      // Audit: permissions granted
+      await this.recordAccessAttempt('Super User', 'permissions_granted', {
+        privileges: [
+          'full_database_administration',
+          'connection_string_modification',
+          'system_configuration_access',
+          'security_settings_management',
+        ]
+      });
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to grant privileges' };
+    }
+  },
+
+  async ensureAdminWithPolicies(): Promise<{ ok: boolean; created?: boolean; updated?: boolean }>{
+    const configured = await db.isConfigured();
+    if (!configured) return { ok: false };
+    await this.init();
+    const row = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username) = lower('admin')`);
+    if (!('error' in row) && row.rows && row.rows.length > 0) {
+      const id = row.rows[0].id;
+      await db.query(`UPDATE app_users SET role = 'admin', active = true, updated_at = NOW() WHERE id = ?`, [id]);
+      await db.query(`UPDATE app_users SET two_factor_enabled = true WHERE id = ?`, [id]);
+      await this.recordAccessAttempt('admin', 'permissions_granted', {
+        privileges: [
+          'full_system_configuration_access',
+          'user_management_capabilities',
+          'security_settings_modification',
+          'administrative_dashboard_features'
+        ]
+      });
+      return { ok: true, updated: true };
+    } else {
+      const id = `usr_${makeUuid()}`;
+      const hash = await bcrypt.hash('admin123', 12);
+      await db.query(`INSERT INTO app_users (id, username, name, role, password_hash, active, password_change_required, password_changed_at, is_verified, created_at, updated_at) VALUES (?, ?, ?, 'admin', ?, true, true, NOW(), false, NOW(), NOW())`, [id, 'admin', 'System Administrator', hash]);
+      await db.query(`UPDATE app_users SET two_factor_enabled = true WHERE id = ?`, [id]);
+      await this.recordAccessAttempt('admin', 'super_user_created', { id });
+      await this.recordAccessAttempt('admin', 'permissions_granted', {
+        privileges: [
+          'full_system_configuration_access',
+          'user_management_capabilities',
+          'security_settings_modification',
+          'administrative_dashboard_features'
+        ]
+      });
+      return { ok: true, created: true };
+    }
+  },
+
+  async cleanupTestData(preserveUsername: string): Promise<{ ok: boolean; error?: string; deletedCounts?: Record<string, number> }>{
+    try {
+      const configured = await db.isConfigured();
+      if (!configured) return { ok: false, error: 'Database not configured' };
+      await this.init();
+      const stats: Record<string, number> = {};
+
+      const del = async (sql: string, params: any[] = [], key: string) => {
+        const res = await db.query<{ affected_rows: number }>(sql, params);
+        if ('error' in res) throw new Error(res.error);
+        stats[key] = (stats[key] || 0) + (res.rowCount ?? 0);
+      };
+
+      // Purge app data except the preserved admin user
+      await del(`DELETE FROM reservations`, [], 'reservations');
+      await del(`DELETE FROM guests`, [], 'guests');
+      await del(`DELETE FROM login_attempts`, [], 'login_attempts');
+      await del(`DELETE FROM email_verifications`, [], 'email_verifications');
+      await del(`DELETE FROM access_logs WHERE user_username IS NULL OR user_username <> ?`, [preserveUsername], 'access_logs');
+      await del(`DELETE FROM app_users WHERE lower(username) <> lower(?)`, [preserveUsername], 'app_users');
+
+      // Ensure preserved admin user exists and is active
+      const adminRow = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username) = lower(?)`, [preserveUsername]);
+      if ('error' in adminRow) throw new Error(adminRow.error);
+      if (!adminRow.rows || adminRow.rows.length === 0) {
+        const id = `usr_${makeUuid()}`;
+        const hash = await bcrypt.hash('admin123', 12);
+        // Insert using minimal guaranteed columns for compatibility
+        const ins = await db.query(`INSERT INTO app_users (id, username, name, role, password_hash, active, password_change_required) VALUES (?, ?, ?, 'admin', ?, true, false)`, [id, preserveUsername, 'Super User Admin', hash]);
+        if ('error' in ins) throw new Error(ins.error);
+      } else {
+        // Update without touching columns that may not exist on older schema
+        await db.query(`UPDATE app_users SET role = 'admin', active = true WHERE lower(username) = lower(?)`, [preserveUsername]);
+      }
+
+      await this.recordAccessAttempt(preserveUsername, 'cleanup_executed', { deletedCounts: stats });
+      return { ok: true, deletedCounts: stats };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Cleanup failed' };
+    }
+  },
+
+  async getUser(id: string): Promise<DbUser | null> {
+    const res = await db.query<DbUser>(`SELECT id, username, name, role, active, password_change_required, created_at FROM app_users WHERE id = ?`, [id]);
+    if ('error' in res || !res.rows || res.rows.length === 0) return null;
+    return res.rows[0];
+  },
+
+  async verifyLogin(username: string, password: string): Promise<{ ok: boolean; user?: DbUser; mustChange?: boolean }> {
+    const res = await db.query<DbUser & { password_hash: string; failed_attempts: number; lockout_until: string | null; password_changed_at: string | null }>(`SELECT id, username, name, role, active, password_change_required, created_at, password_hash, failed_attempts, lockout_until, password_changed_at FROM app_users WHERE username = ?`, [username]);
+    if ('error' in res || !res.rows || res.rows.length === 0) {
+      await this.recordAccessAttempt(username, 'login_attempt', { ok: false, reason: 'user_not_found' });
+      return { ok: false };
+    }
+    const row = res.rows[0] as any;
+    // Rate limiting: count last 15 minutes attempts (PostgreSQL interval syntax)
+    const rate = await db.query<{ c: number }>(`SELECT COUNT(*) AS c FROM login_attempts WHERE user_username = $1 AND ts >= NOW() - INTERVAL '15 minutes'`, [username]);
+    const recentAttempts = ('error' in rate) ? 0 : (rate.rows?.[0]?.c ?? 0);
+    if (recentAttempts >= 5) {
+      await this.recordAccessAttempt(username, 'login_attempt', { ok: false, reason: 'rate_limited' });
+      return { ok: false };
+    }
+    // Lockout check
+    if (row.lockout_until && new Date(row.lockout_until).getTime() > Date.now()) {
+      await this.recordAccessAttempt(username, 'login_attempt', { ok: false, reason: 'locked_out_until', until: row.lockout_until });
+      return { ok: false };
+    }
+    const ok = await bcrypt.compare(password, row.password_hash);
+    await db.query(`INSERT INTO login_attempts (user_username, ip, user_agent, ok) VALUES (?, ?, ?, ?)`, [username, 'electron', navigator.userAgent || 'electron', ok]);
+    await this.recordAccessAttempt(username, 'login_attempt', { ok });
+    if (!ok) {
+      const nextFailed = (Number(row.failed_attempts || 0) + 1);
+      let lockUntil: string | null = null;
+      if (nextFailed >= 10) {
+        lockUntil = new Date(Date.now() + 30*60*1000).toISOString(); // ISO string is fine for MySQL DATETIME usually, or use JS Date
+      }
+      await db.query(`UPDATE app_users SET failed_attempts = ?, lockout_until = ?, updated_at = NOW() WHERE username = ?`, [nextFailed, lockUntil ? new Date(lockUntil) : null, username]);
+      return { ok: false };
+    }
+    // Success: reset counters
+    await db.query(`UPDATE app_users SET failed_attempts = 0, lockout_until = NULL, last_login = NOW(), updated_at = NOW() WHERE username = ?`, [username]);
+    // Unified preview policy: do not force password change in Electron preview
+    const mustChange = false;
+    const user: DbUser = {
+      id: row.id,
+      username: row.username,
+      name: row.name,
+      role: row.role,
+      active: !!row.active,
+      password_change_required: !!row.password_change_required,
+      created_at: row.created_at,
+    };
+    await db.query(`UPDATE app_users SET password_change_required = false WHERE username = ?`, [username]);
+    return { ok: true, user, mustChange };
+  },
+
+  validateStrongPassword(pw: string): boolean {
+    return STRONG_PASSWORD.test(pw);
+  },
+
+  async updatePasswordForUser(username: string, newPassword: string): Promise<{ ok: boolean; error?: string }>{
+    if (!this.validateStrongPassword(newPassword)) {
+      return { ok: false, error: 'Password not strong enough' };
+    }
+    const hash = await bcrypt.hash(newPassword, 12);
+    // Update without referencing optional columns for schema compatibility
+    const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false, password_changed_at = NOW(), failed_attempts = 0, lockout_until = NULL, updated_at = NOW() WHERE username = ?`;
+    const res = await db.query(sql, [hash, username]);
+    if ('error' in res) return { ok: false, error: res.error };
+    await this.recordAccessAttempt(username, 'password_changed');
+    return { ok: true };
+  },
+
+  async updatePasswordForUserUnsafe(username: string, newPassword: string): Promise<{ ok: boolean; error?: string }>{
+    try {
+      const hash = await bcrypt.hash(newPassword, 12);
+      const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false WHERE lower(username) = lower(?)`;
+      const res = await db.query(sql, [hash, username]);
+      if ('error' in res) return { ok: false, error: res.error };
+      await this.recordAccessAttempt(username, 'password_changed_unsafe');
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to set password' };
+    }
+  },
+
+  async registerUser(payload: { username: string; email: string; password: string; name: string; role: string }): Promise<{ ok: boolean; error?: string; verifyToken?: string }>{
+    const { username, email, password, name, role } = payload || ({} as any);
+    if (!username || !email || !password || !name) return { ok: false, error: 'Missing fields' };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
+    if (!this.validateStrongPassword(password)) return { ok: false, error: 'Weak password' };
+    const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE username = ? OR email = ?`, [username, email]);
+    if (!('error' in exists) && exists.rows && exists.rows.length > 0) return { ok: false, error: 'User exists' };
+    const id = `usr_${makeUuid()}`;
+    const hash = await bcrypt.hash(password, 12);
+    const ins = await db.query(`INSERT INTO app_users (id, username, email, name, role, password_hash, active, password_change_required, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, true, true, false, NOW(), NOW())`, [id, username, email, name, role, hash]);
+    if ('error' in ins) return { ok: false, error: ins.error };
+    const token = makeUuid();
+    const expires = new Date(Date.now() + 24*60*60*1000).toISOString();
+    await db.query(`INSERT INTO email_verifications (token, user_id, expires_at) VALUES (?, ?, ?)`, [token, id, expires]);
+    await this.recordAccessAttempt(username, 'user_registered', { email });
+    return { ok: true, verifyToken: token };
+  },
+
+  async resendVerification(usernameOrEmail: string): Promise<{ ok: boolean; error?: string; verifyToken?: string }>{
+    const res = await db.query<{ id: string; is_verified: number }>(`SELECT id, is_verified FROM app_users WHERE username = ? OR email = ?`, [usernameOrEmail, usernameOrEmail]);
+    if ('error' in res || !res.rows || res.rows.length === 0) return { ok: false, error: 'User not found' };
+    if (res.rows[0].is_verified) return { ok: false, error: 'Already verified' };
+    const token = makeUuid();
+    const expires = new Date(Date.now() + 24*60*60*1000).toISOString();
+    await db.query(`INSERT INTO email_verifications (token, user_id, expires_at) VALUES (?, ?, ?)`, [token, res.rows[0].id, expires]);
+    await this.recordAccessAttempt(usernameOrEmail, 'verification_resent');
+    return { ok: true, verifyToken: token };
+  },
+
+  async verifyEmail(token: string): Promise<{ ok: boolean; error?: string }>{
+    const row = await db.query<{ user_id: string; expires_at: string; used_at: string | null }>(`SELECT user_id, expires_at, used_at FROM email_verifications WHERE token = ?`, [token]);
+    if ('error' in row || !row.rows || row.rows.length === 0) return { ok: false, error: 'Invalid token' };
+    const rec = row.rows[0];
+    if (rec.used_at) return { ok: false, error: 'Token used' };
+    if (new Date(rec.expires_at).getTime() < Date.now()) return { ok: false, error: 'Token expired' };
+    await db.query(`UPDATE app_users SET is_verified = true, updated_at = NOW() WHERE id = ?`, [rec.user_id]);
+    await db.query(`UPDATE email_verifications SET used_at = NOW() WHERE token = ?`, [token]);
+    return { ok: true };
+  }
+}
+
+export default pmsAuthDb
