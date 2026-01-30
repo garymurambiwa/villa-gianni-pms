@@ -62,6 +62,32 @@ app.post('/api/db/test', async (req, res) => {
     }
 });
 
+// GET /api/setup/init-db?key=123 (Temporary workaround for no-shell environments)
+app.get('/api/setup/init-db', async (req, res) => {
+    const { key } = req.query;
+    // Simple protection: only running if explicitly requested with a basic key or just "confirm"
+    if (key !== 'confirm') {
+        return res.status(400).send('<h1>Missing confirmation</h1><p>Please use <code>/api/setup/init-db?key=confirm</code> to initialize the database.</p>');
+    }
+
+    try {
+        const fs = require('fs');
+        const schemaPath = path.join(__dirname, '..', 'db', 'schema.sql');
+        if (!fs.existsSync(schemaPath)) return res.status(500).send('Schema file missing');
+
+        const sql = fs.readFileSync(schemaPath, 'utf8');
+        const result = await db.exec(sql);
+
+        if (result.ok) {
+            res.send('<h1>✅ Database Initialized Successfully!</h1><p>You can now go back to the home page.</p>');
+        } else {
+            res.status(500).send(`<h1>❌ Error</h1><pre>${result.error}</pre>`);
+        }
+    } catch (e) {
+        res.status(500).send(`<h1>❌ Exception</h1><pre>${e.message}</pre>`);
+    }
+});
+
 
 // 2. Serve Static Assets (Frontend)
 // Serve dist folder
