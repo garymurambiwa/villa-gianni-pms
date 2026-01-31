@@ -63,11 +63,12 @@ app.post('/api/db/test', async (req, res) => {
 });
 
 // GET /api/setup/init-db?key=123 (Temporary workaround for no-shell environments)
+// GET /api/setup/init-db?key=confirm&reset=true
 app.get('/api/setup/init-db', async (req, res) => {
-    const { key } = req.query;
-    // Simple protection: only running if explicitly requested with a basic key or just "confirm"
+    const { key, reset } = req.query;
+
     if (key !== 'confirm') {
-        return res.status(400).send('<h1>Missing confirmation</h1><p>Please use <code>/api/setup/init-db?key=confirm</code> to initialize the database.</p>');
+        return res.status(400).send('<h1>Missing confirmation</h1><p>Use <code>?key=confirm</code> to init. Add <code>&reset=true</code> to wipe DB first.</p>');
     }
 
     try {
@@ -76,10 +77,16 @@ app.get('/api/setup/init-db', async (req, res) => {
         if (!fs.existsSync(schemaPath)) return res.status(500).send('Schema file missing');
 
         const sql = fs.readFileSync(schemaPath, 'utf8');
+
+        // If reset=true, DROP everything first
+        if (reset === 'true') {
+            await db.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public;');
+        }
+
         const result = await db.exec(sql);
 
         if (result.ok) {
-            res.send('<h1>✅ Database Initialized Successfully!</h1><p>You can now go back to the home page.</p>');
+            res.send('<h1>✅ Database Initialized Successfully!</h1><p>Tables created. You can now go to the home page.</p>');
         } else {
             res.status(500).send(`<h1>❌ Error</h1><pre>${result.error}</pre>`);
         }
