@@ -18,12 +18,12 @@ export interface AuthError {
 interface AuthContextType {
   user: User | null;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: AuthError }>;
-  register: (payload: { username: string; email: string; password: string; name?: string; phone?: string }) => Promise<{ ok:boolean; error?:string }>;
-  requestPasswordReset: (usernameOrEmail: string) => { ok:boolean; error?:string; token?: string };
-  resetPassword: (token: string, newPassword: string) => Promise<{ ok:boolean; error?:string }>;
+  register: (payload: { username: string; email: string; password: string; name?: string; phone?: string }) => Promise<{ ok: boolean; error?: string }>;
+  requestPasswordReset: (usernameOrEmail: string) => { ok: boolean; error?: string; token?: string };
+  resetPassword: (token: string, newPassword: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
-  updateProfile: (patch: Partial<{ name?: string; phone?: string }>) => Promise<{ ok:boolean; error?:string }>;
-  changePassword: (currentPassword: string, newPassword: string) => Promise<{ ok:boolean; error?:string }>;
+  updateProfile: (patch: Partial<{ name?: string; phone?: string }>) => Promise<{ ok: boolean; error?: string }>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -39,13 +39,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Session expiry check interval
   useEffect(() => {
     let sessionCheckInterval: NodeJS.Timeout | null = null;
-    
+
     const checkSessionExpiry = () => {
       if (!supabase && user) {
         const session = auth.getSession();
         if (!session || (session.expiresAt && new Date() > new Date(session.expiresAt))) {
-          logger.logAuth('session_expired', { 
-            userId: user.id, 
+          logger.logAuth('session_expired', {
+            userId: user.id,
             username: user.username,
             timestamp: new Date().toISOString()
           });
@@ -69,7 +69,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     let unsub: any;
     let onActivity: (() => void) | undefined;
-    
+
     const setup = async () => {
       // If central DB is configured, initialize auth tables and ensure Super User exists
       try {
@@ -78,10 +78,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           await pmsAuthDb.init();
           await pmsAuthDb.ensureSuperUser();
           // Ensure Super User has admin privileges and the requested password
-          try { await pmsAuthDb.grantPrivilegesForSuperUser('Pass@123'); } catch {}
-          try { await pmsAuthDb.ensureAdminWithPolicies(); } catch {}
+          try { await pmsAuthDb.grantPrivilegesForSuperUser('Pass@123'); } catch { }
+          try { await pmsAuthDb.ensureAdminWithPolicies(); } catch { }
         }
-      } catch {}
+      } catch { }
       if (supabase) {
         try {
           const { data } = await supabase.auth.getSession();
@@ -92,14 +92,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               id: sUser.id,
               username: (sUser.user_metadata?.username as string) || sUser.email || sUser.id,
               name: (sUser.user_metadata?.name as string) || sUser.email || 'User',
-              role: ((sUser.user_metadata?.role as string) || (uname==='admin' ? 'admin' : 'manager')) as any,
+              role: ((sUser.user_metadata?.role as string) || (uname === 'admin' ? 'admin' : 'manager')) as any,
               propertyId: 'P001',
               active: true,
             } as User
-          {
-            const merged = await mergeUserWithProfile(baseUser);
-            setUser(enforceAdminRole(merged));
-          }
+            {
+              const merged = await mergeUserWithProfile(baseUser);
+              setUser(enforceAdminRole(merged));
+            }
           }
         } catch {
           // ignore
@@ -112,11 +112,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             id: sUser.id,
             username: (sUser.user_metadata?.username as string) || sUser.email || sUser.id,
             name: (sUser.user_metadata?.name as string) || sUser.email || 'User',
-            role: ((sUser.user_metadata?.role as string) || (uname==='admin' ? 'admin' : 'manager')) as any,
+            role: ((sUser.user_metadata?.role as string) || (uname === 'admin' ? 'admin' : 'manager')) as any,
             propertyId: 'P001',
             active: true,
           } as User
-          mergeUserWithProfile(baseUser).then((v)=> setUser(enforceAdminRole(v))).catch(() => setUser(enforceAdminRole(baseUser)))
+          mergeUserWithProfile(baseUser).then((v) => setUser(enforceAdminRole(v))).catch(() => setUser(enforceAdminRole(baseUser)))
         });
         unsub = sub;
       } else {
@@ -128,10 +128,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           } else {
             logger.logAuth('no_session_on_boot');
           }
-        } catch {}
+        } catch { }
         if (sess) {
           let userFound = false;
-          const dbUser = auth.listUsers().find(u => u.id === sess.userId);
+          const users = await auth.listUsers();
+          const dbUser = users.find(u => u.id === sess.userId);
           if (dbUser) {
             setUser(enforceAdminRole({ id: dbUser.id, username: dbUser.username, name: dbUser.profile?.name || dbUser.username, role: dbUser.role, propertyId: 'P001', active: dbUser.active, authProvider: 'local' } as User));
             userFound = true;
@@ -146,7 +147,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     id: rUser.id,
                     username: rUser.username,
                     name: rUser.name,
-                    role: (String(rUser.username || '').toLowerCase()==='admin' ? 'admin' : (rUser.role as any)),
+                    role: (String(rUser.username || '').toLowerCase() === 'admin' ? 'admin' : (rUser.role as any)),
                     propertyId: 'P001',
                     active: rUser.active,
                     passwordChangeRequired: !!rUser.password_change_required,
@@ -155,7 +156,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                   userFound = true;
                 }
               }
-            } catch {}
+            } catch { }
           }
           if (!userFound) auth.logout();
         }
@@ -207,7 +208,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             permissions: []
           });
           try {
-            const existing = auth.listUsers?.() || [];
+            const existing = await auth.listUsers() || [];
             const exists = !!existing.find(u => u.id === resDb.user.id);
             if (!exists) {
               const next = [{
@@ -224,13 +225,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               }, ...existing].slice(0, 2000);
               setUsers(next as any);
             }
-          } catch {}
+          } catch { }
 
           setUser(enforceAdminRole({
             id: resDb.user.id,
             username: resDb.user.username,
             name: resDb.user.name,
-            role: (String(resDb.user.username || '').toLowerCase()==='admin' ? 'admin' : (resDb.user.role as any)),
+            role: (String(resDb.user.username || '').toLowerCase() === 'admin' ? 'admin' : (resDb.user.role as any)),
             propertyId: 'P001',
             active: resDb.user.active,
             passwordChangeRequired: !!resDb.mustChange,
@@ -249,7 +250,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           return { success: false, error: authError };
         }
       }
-    } catch {}
+    } catch { }
     if (supabase) {
       const { data, error } = await supabase.auth.signInWithPassword({ email: username, password });
       if (error) {
@@ -280,7 +281,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return { success: true };
     }
     await initAuth();
-    const existingUsers = auth.listUsers?.() || [];
+    const existingUsers = await auth.listUsers() || [];
     if (!existingUsers || existingUsers.length === 0) {
       const now = new Date().toISOString();
       const mk = async (u: string, p: string, r: string, name: string) => ({
@@ -296,11 +297,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         permissions: [],
       });
       const seeds = [
-        await mk('admin','admin123','admin','System Administrator'),
-        await mk('frontdesk','front123','frontdesk','Front Desk Manager'),
-        await mk('auditor','audit123','auditor','Night Auditor'),
-        await mk('posmanager','pos123','posmanager','POS Manager'),
-        await mk('housekeeping','house123','housekeeping','Housekeeping'),
+        await mk('admin', 'admin123', 'admin', 'System Administrator'),
+        await mk('frontdesk', 'front123', 'frontdesk', 'Front Desk Manager'),
+        await mk('auditor', 'audit123', 'auditor', 'Night Auditor'),
+        await mk('posmanager', 'pos123', 'posmanager', 'POS Manager'),
+        await mk('housekeeping', 'house123', 'housekeeping', 'Housekeeping'),
       ];
       setUsers(seeds as any);
     }
@@ -323,7 +324,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         password: payload.password,
         options: { data: { username: payload.username, name: payload.name, phone: payload.phone, role: 'manager' } }
       });
-      if (error) return { ok:false, error:error.message };
+      if (error) return { ok: false, error: error.message };
       // User may need to verify email; reflect optimistic ok
       if (data?.user) {
         setUser({
@@ -335,7 +336,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           active: true,
         });
       }
-      return { ok:true };
+      return { ok: true };
     }
     const res = await auth.register(payload);
     return { ok: res.ok, error: res.error };
@@ -345,22 +346,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (supabase) {
       const email = usernameOrEmail;
       // Supabase sends a password reset email; token handling is via the email link flow
-      supabase.auth.resetPasswordForEmail(email).catch(() => {/* ignore */});
-      return { ok:true };
+      supabase.auth.resetPasswordForEmail(email).catch(() => {/* ignore */ });
+      return { ok: true };
     }
     return auth.requestPasswordReset(usernameOrEmail);
   };
   const resetPassword = async (token: string, newPassword: string) => {
     if (supabase) {
       // Password reset with Supabase is handled via email link; in-app token reset is not supported here
-      return { ok:false, error:'Use the password reset link sent to your email.' };
+      return { ok: false, error: 'Use the password reset link sent to your email.' };
     }
     return auth.resetPassword(token, newPassword);
   };
 
   const logout = () => {
     if (supabase) {
-      supabase.auth.signOut().catch(() => {/* ignore */});
+      supabase.auth.signOut().catch(() => {/* ignore */ });
     } else {
       auth.logout();
     }
@@ -368,10 +369,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const updateProfile = async (patch: Partial<{ name?: string; phone?: string }>) => {
-    if (!user) return { ok:false, error:'Not logged in' };
+    if (!user) return { ok: false, error: 'Not logged in' };
     if (supabase) {
       const { data, error } = await supabase.auth.updateUser({ data: { name: patch.name, phone: patch.phone } });
-      if (error) return { ok:false, error:error.message };
+      if (error) return { ok: false, error: error.message };
       const sUser = data?.user;
       if (sUser) {
         const baseUser = {
@@ -385,28 +386,28 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const merged = await mergeUserWithProfile(baseUser)
         setUser(enforceAdminRole(merged))
       }
-      return { ok:true };
+      return { ok: true };
     }
-    const res = auth.updateProfile(user.id, patch);
+    const res = await auth.updateProfile(user.id, patch);
     if (res.ok && res.user) setUser(enforceAdminRole({ id: res.user.id, username: res.user.username, name: res.user.profile?.name || res.user.username, role: res.user.role, propertyId: 'P001', active: res.user.active } as User));
     return { ok: res.ok, error: res.error };
   };
 
   const changePassword = async (currentPassword: string, newPassword: string) => {
-    if (!user) return { ok:false, error:'Not logged in' };
+    if (!user) return { ok: false, error: 'Not logged in' };
     try {
       const beforeSession = auth.getSession();
       logger.logAuth('password_change_attempt', { username: user.username, userId: user.id, provider: user.authProvider || 'local', sessionId: beforeSession?.token, expiresAt: beforeSession?.expiresAt });
-    } catch {}
+    } catch { }
     if (supabase) {
       // Supabase requires the user to be logged in; we update directly.
       const { error } = await supabase.auth.updateUser({ password: newPassword });
       if (error) {
         logger.logAuth('password_change_failure', { username: user.username, userId: user.id, provider: 'supabase', error: error.message });
-        return { ok:false, error:error.message };
+        return { ok: false, error: error.message };
       }
       logger.logAuth('password_change_success', { username: user.username, userId: user.id, provider: 'supabase' });
-      return { ok:true };
+      return { ok: true };
     }
     // If user logged in via DB, change their password there and clear the must-change flag
     if (user.authProvider === 'db') {
@@ -433,7 +434,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     const resLocal = await auth.changePassword(user.id, currentPassword, newPassword);
     if (resLocal.ok) {
-      const dbUser = auth.listUsers().find(u => u.id === user.id);
+      const users = await auth.listUsers();
+      const dbUser = users.find(u => u.id === user.id);
       if (dbUser) {
         const newSess = auth.createSession(dbUser);
         logger.logAuth('session_regenerated_after_password_change', { username: dbUser.username, userId: dbUser.id, provider: 'local', sessionId: newSess.token, expiresAt: newSess.expiresAt });

@@ -59,6 +59,11 @@ contextBridge.exposeInMainWorld('native', {
     issueTokens: (payload) => ipcRenderer.invoke('auth:issueTokens', payload),
     refresh: (payload) => ipcRenderer.invoke('auth:refresh', payload),
     revokeSession: (payload) => ipcRenderer.invoke('auth:revokeSession', payload),
+    register: (payload) => ipcRenderer.invoke('auth:register', payload),
+    listUsers: () => ipcRenderer.invoke('auth:listUsers'),
+    login: (payload) => ipcRenderer.invoke('auth:login', payload),
+    updateUser: (id, patch) => ipcRenderer.invoke('auth:updateUser', { id, patch }),
+    deleteUser: (id) => ipcRenderer.invoke('auth:deleteUser', { id }),
   },
   update: {
     check: (config) => ipcRenderer.invoke('update:check', config),
@@ -84,7 +89,7 @@ window.addEventListener('error', (event) => {
       stack: String(event.error && event.error.stack ? event.error.stack : ''),
     }
     ipcRenderer.send('renderer:error', payload)
-  } catch {}
+  } catch { }
 })
 
 window.addEventListener('unhandledrejection', (event) => {
@@ -95,5 +100,5 @@ window.addEventListener('unhandledrejection', (event) => {
       stack: String((reason && reason.stack) || ''),
     }
     ipcRenderer.send('renderer:error', payload)
-  } catch {}
+  } catch { }
 })

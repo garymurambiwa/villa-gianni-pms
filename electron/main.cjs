@@ -308,6 +308,150 @@ ipcMain.handle('db:exec', async (_event, { sql }) => {
   }
 });
 
+// Auth Handlers (Sync to app_users and profiles)
+ipcMain.handle('auth:register', async (_event, { username, email, password, name, phone, role }) => {
+  const connString = getStoredConnectionString();
+  if (!connString) return { ok: false, error: 'Database not connected' };
+
+  if (!pg) return { ok: false, error: 'PG driver missing' };
+
+  const client = new pg.Client(connString);
+  try {
+    await client.connect();
+    await client.query('BEGIN');
+
+    // 1. Create App User
+    // Use gen_random_uuid() from pgcrypto -> cast to varchar
+    const userRes = await client.query(
+      `INSERT INTO public.app_users (
+         id, username, email, name, role, password_hash, created_at, updated_at, is_verified
+       ) VALUES (
+         gen_random_uuid()::varchar, $1, $2, $3, $4, crypt($5, gen_salt('bf')), NOW(), NOW(), true
+       ) RETURNING id, username, email, name, role`,
+      [username, email || null, name || username, role || 'staff', password]
+    );
+
+    const newUser = userRes.rows[0];
+
+    // 2. Create Public Profile
+    await client.query(
+      `INSERT INTO public.profiles (id, email, full_name, role, is_active)
+       VALUES ($1, $2, $3, $4, true)
+       ON CONFLICT (id) DO NOTHING`,
+      [newUser.id, newUser.email, newUser.name, newUser.role]
+    );
+
+    await client.query('COMMIT');
+    return { ok: true, user: newUser };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => { });
+    console.error('Registration failed:', e);
+    return { ok: false, error: e.message };
+  } finally {
+    await client.end().catch(() => { });
+  }
+});
+
+ipcMain.handle('auth:listUsers', async () => {
+  const connString = getStoredConnectionString();
+  if (!connString) return { ok: false, error: 'Database not connected' };
+  if (!pg) return { ok: false, error: 'PG driver missing' };
+
+  const pool = await getPgPool(connString);
+  try {
+    const res = await pool.query(`
+       SELECT id, username, email, name, role, active, permissions, last_login, created_at, updated_at
+       FROM public.app_users 
+       ORDER BY username ASC
+     `);
+    return { ok: true, users: res.rows };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('auth:login', async (_event, { username, password }) => {
+  const connString = getStoredConnectionString();
+  if (!connString || !pg) return { ok: false, error: 'Database unavailable' };
+
+  const pool = await getPgPool(connString);
+  try {
+    const res = await pool.query(
+      `SELECT id, username, email, name, role, active, permissions, created_at
+       FROM public.app_users 
+       WHERE (username = $1 OR email = $1) 
+       AND password_hash = crypt($2, password_hash)
+       AND active = true`,
+      [username, password]
+    );
+    if (res.rows.length === 0) return { ok: false, error: 'Invalid credentials' };
+
+    // Update last login
+    await pool.query('UPDATE public.app_users SET last_login = NOW() WHERE id = $1', [res.rows[0].id]);
+
+    return { ok: true, user: res.rows[0] };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('auth:updateUser', async (_event, { id, patch }) => {
+  const connString = getStoredConnectionString();
+  if (!connString || !pg) return { ok: false, error: 'Database unavailable' };
+
+  const client = new pg.Client(connString);
+  try {
+    await client.connect();
+    await client.query('BEGIN');
+
+    if (patch.role || patch.active !== undefined || patch.password) {
+      let q = 'UPDATE public.app_users SET updated_at = NOW()';
+      const args = [id];
+      let idx = 2;
+      if (patch.role) { q += `, role = $${idx++}`; args.push(patch.role); }
+      if (patch.active !== undefined) { q += `, active = $${idx++}`; args.push(patch.active); }
+      if (patch.password) { q += `, password_hash = crypt($${idx++}, gen_salt('bf'))`; args.push(patch.password); }
+      q += ' WHERE id = $1';
+      await client.query(q, args);
+    }
+
+    if (patch.name || patch.role || patch.active !== undefined) {
+      let q = 'UPDATE public.profiles SET ';
+      const args = [id];
+      let idx = 2;
+      const updates = [];
+      if (patch.name) { updates.push(`full_name = $${idx++}`); args.push(patch.name); }
+      if (patch.role) { updates.push(`role = $${idx++}`); args.push(patch.role); }
+      if (patch.active !== undefined) { updates.push(`is_active = $${idx++}`); args.push(patch.active); }
+
+      if (updates.length > 0) {
+        q += updates.join(', ') + ' WHERE id = $1';
+        await client.query(q, args);
+      }
+    }
+
+    await client.query('COMMIT');
+    return { ok: true };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => { });
+    return { ok: false, error: e.message };
+  } finally {
+    client.end().catch(() => { });
+  }
+});
+
+ipcMain.handle('auth:deleteUser', async (_event, { id }) => {
+  const connString = getStoredConnectionString();
+  const pool = await getPgPool(connString);
+  try {
+    await pool.query('DELETE FROM public.app_users WHERE id = $1', [id]);
+    await pool.query('DELETE FROM public.profiles WHERE id = $1', [id]);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 // IPC handler to get bundled database status
 ipcMain.handle('db:getBundledStatus', async () => {
   return {

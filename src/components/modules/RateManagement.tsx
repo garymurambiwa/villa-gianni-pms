@@ -22,7 +22,7 @@ const RateManagement: React.FC = () => {
     endMonthDay: '01-31',
     adjustment: 0,
   });
-  
+
   // Breakfast Package States
   const [breakfastPackages, setBreakfastPackages] = React.useState<any[]>([]);
   const [loadingBreakfastPackages, setLoadingBreakfastPackages] = React.useState(true);
@@ -39,32 +39,32 @@ const RateManagement: React.FC = () => {
   });
   const [editingPackageId, setEditingPackageId] = React.useState<string | null>(null);
   const [breakfastSeasonalRates, setBreakfastSeasonalRates] = React.useState<Record<string, any[]>>({});
-  
+
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Validation helpers
   const MIN_PERCENT = -90; // lower bound for percent inputs
   const MAX_PERCENT = 300; // upper bound for percent inputs
   const isValidMonthDay = (s: string) => /^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/.test(s);
-  
+
   // Load breakfast packages on component mount
   React.useEffect(() => {
     loadBreakfastPackages();
   }, []);
-  
+
   const loadBreakfastPackages = async () => {
     try {
       setLoadingBreakfastPackages(true);
       const packages = await breakfastPackageService.getAllPackages();
       setBreakfastPackages(packages);
-      
+
       // Load seasonal rates for each package
       const seasonalRatesData: Record<string, any[]> = {};
       for (const pkg of packages) {
         const rates = await breakfastPackageService.getSeasonalRates(pkg.id);
         seasonalRatesData[pkg.id] = rates;
       }
-      
+
       setBreakfastSeasonalRates(seasonalRatesData);
     } catch (error) {
       console.error('Failed to load breakfast packages:', error);
@@ -456,26 +456,33 @@ const RateManagement: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
                     <Label>Code *</Label>
-                    <Input 
-                      value={newBreakfastPackage.code} 
+                    <Input
+                      value={newBreakfastPackage.code}
                       onChange={(e) => setNewBreakfastPackage(prev => ({ ...prev, code: e.target.value.toUpperCase() }))}
                       placeholder="e.g., BB"
                     />
                   </div>
                   <div>
                     <Label>Name *</Label>
-                    <Input 
-                      value={newBreakfastPackage.name} 
+                    <Input
+                      value={newBreakfastPackage.name}
                       onChange={(e) => setNewBreakfastPackage(prev => ({ ...prev, name: e.target.value }))}
                       placeholder="e.g., Bed & Breakfast"
                     />
                   </div>
                   <div>
                     <Label>Base Price per Person ($)</Label>
-                    <Input 
+                    <Input
                       type="number"
-                      value={newBreakfastPackage.basePricePerPerson} 
-                      onChange={(e) => setNewBreakfastPackage(prev => ({ ...prev, basePricePerPerson: e.target.value }))}
+                      min="0"
+                      step="0.01"
+                      value={newBreakfastPackage.basePricePerPerson}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || (!isNaN(Number(val)) && Number(val) >= 0)) {
+                          setNewBreakfastPackage(prev => ({ ...prev, basePricePerPerson: val }));
+                        }
+                      }}
                       placeholder="0.00"
                     />
                   </div>
@@ -490,7 +497,7 @@ const RateManagement: React.FC = () => {
                   </div>
                 </div>
                 <div className="mt-3 flex justify-end">
-                  <Button 
+                  <Button
                     onClick={async () => {
                       if (!newBreakfastPackage.code || !newBreakfastPackage.name) {
                         alert('Please enter both code and name');
@@ -565,9 +572,9 @@ const RateManagement: React.FC = () => {
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
+                          <Button
+                            variant="outline"
+                            size="sm"
                             className="mr-2"
                             onClick={async () => {
                               try {
@@ -581,8 +588,8 @@ const RateManagement: React.FC = () => {
                           >
                             Delete
                           </Button>
-                          <Button 
-                            variant="outline" 
+                          <Button
+                            variant="outline"
                             size="sm"
                             onClick={() => {
                               // TODO: Implement edit functionality

@@ -5,7 +5,7 @@ const makeUuid = (): string => {
     const g = (globalThis as any);
     const u = g?.crypto?.randomUUID?.();
     if (u) return u;
-  } catch {}
+  } catch { }
   return `${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
@@ -88,8 +88,8 @@ export const pmsAuthDb = {
       CREATE INDEX IF NOT EXISTS idx_login_attempts_ts ON login_attempts(ts);
     `;
     await db.exec(createUsers);
-    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT false`); } catch {}
-    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT`); } catch {}
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT false`); } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT`); } catch { }
     await db.exec(createLogs);
     await db.exec(createVerifications);
     await db.exec(createLoginAttempts);
@@ -248,16 +248,16 @@ export const pmsAuthDb = {
     await db.exec(createRooms);
     await db.exec(createGuests);
     await db.exec(createReservations);
-    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_inserted_at_idx ON reservations(inserted_at)`) } catch {}
-    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_guest_idx ON reservations(guest_id)`) } catch {}
-    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_room_idx ON reservations(room_id)`) } catch {}
-    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_status_idx ON reservations(status)`) } catch {}
-    try { await db.exec(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP`) } catch {}
-    try { await db.exec(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) DEFAULT 'pending'`) } catch {}
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_inserted_at_idx ON reservations(inserted_at)`) } catch { }
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_guest_idx ON reservations(guest_id)`) } catch { }
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_room_idx ON reservations(room_id)`) } catch { }
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_status_idx ON reservations(status)`) } catch { }
+    try { await db.exec(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP`) } catch { }
+    try { await db.exec(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) DEFAULT 'pending'`) } catch { }
     await db.exec(createMenuItems);
     await db.exec(createOrders);
-    try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(status)`) } catch {}
-    try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_inserted_at_idx ON orders(inserted_at)`) } catch {}
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(status)`) } catch { }
+    try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_inserted_at_idx ON orders(inserted_at)`) } catch { }
     await db.exec(createOrderItems);
     await db.exec(createInventoryItems);
     await db.exec(createInventoryMovements);
@@ -296,7 +296,7 @@ export const pmsAuthDb = {
     await this.recordAccessAttempt('Super User', 'super_user_created', { id });
   },
 
-  async grantPrivilegesForSuperUser(newPassword: string): Promise<{ ok: boolean; error?: string }>{
+  async grantPrivilegesForSuperUser(newPassword: string): Promise<{ ok: boolean; error?: string }> {
     try {
       const exists = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role FROM app_users WHERE username = ?`, ['Super User']);
       if ('error' in exists) return { ok: false, error: exists.error };
@@ -329,7 +329,7 @@ export const pmsAuthDb = {
     }
   },
 
-  async ensureAdminWithPolicies(): Promise<{ ok: boolean; created?: boolean; updated?: boolean }>{
+  async ensureAdminWithPolicies(): Promise<{ ok: boolean; created?: boolean; updated?: boolean }> {
     const configured = await db.isConfigured();
     if (!configured) return { ok: false };
     await this.init();
@@ -365,7 +365,7 @@ export const pmsAuthDb = {
     }
   },
 
-  async cleanupTestData(preserveUsername: string): Promise<{ ok: boolean; error?: string; deletedCounts?: Record<string, number> }>{
+  async cleanupTestData(preserveUsername: string): Promise<{ ok: boolean; error?: string; deletedCounts?: Record<string, number> }> {
     try {
       const configured = await db.isConfigured();
       if (!configured) return { ok: false, error: 'Database not configured' };
@@ -413,7 +413,7 @@ export const pmsAuthDb = {
     return res.rows[0];
   },
 
-  async verifyLogin(username: string, password: string): Promise<{ ok: boolean; user?: DbUser; mustChange?: boolean }> {
+  async verifyLogin(username: string, password: string): Promise<{ ok: boolean; user?: DbUser; mustChange?: boolean; error?: string }> {
     const res = await db.query<DbUser & { password_hash: string; failed_attempts: number; lockout_until: string | null; password_changed_at: string | null }>(`SELECT id, username, name, role, active, password_change_required, created_at, password_hash, failed_attempts, lockout_until, password_changed_at FROM app_users WHERE username = ?`, [username]);
     if ('error' in res || !res.rows || res.rows.length === 0) {
       await this.recordAccessAttempt(username, 'login_attempt', { ok: false, reason: 'user_not_found' });
@@ -439,7 +439,7 @@ export const pmsAuthDb = {
       const nextFailed = (Number(row.failed_attempts || 0) + 1);
       let lockUntil: string | null = null;
       if (nextFailed >= 10) {
-        lockUntil = new Date(Date.now() + 30*60*1000).toISOString(); // ISO string is fine for MySQL DATETIME usually, or use JS Date
+        lockUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // ISO string is fine for MySQL DATETIME usually, or use JS Date
       }
       await db.query(`UPDATE app_users SET failed_attempts = ?, lockout_until = ?, updated_at = NOW() WHERE username = ?`, [nextFailed, lockUntil ? new Date(lockUntil) : null, username]);
       return { ok: false };
@@ -465,7 +465,7 @@ export const pmsAuthDb = {
     return STRONG_PASSWORD.test(pw);
   },
 
-  async updatePasswordForUser(username: string, newPassword: string): Promise<{ ok: boolean; error?: string }>{
+  async updatePasswordForUser(username: string, newPassword: string): Promise<{ ok: boolean; error?: string }> {
     if (!this.validateStrongPassword(newPassword)) {
       return { ok: false, error: 'Password not strong enough' };
     }
@@ -478,7 +478,7 @@ export const pmsAuthDb = {
     return { ok: true };
   },
 
-  async updatePasswordForUserUnsafe(username: string, newPassword: string): Promise<{ ok: boolean; error?: string }>{
+  async updatePasswordForUserUnsafe(username: string, newPassword: string): Promise<{ ok: boolean; error?: string }> {
     try {
       const hash = await bcrypt.hash(newPassword, 12);
       const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false WHERE lower(username) = lower(?)`;
@@ -491,7 +491,7 @@ export const pmsAuthDb = {
     }
   },
 
-  async registerUser(payload: { username: string; email: string; password: string; name: string; role: string }): Promise<{ ok: boolean; error?: string; verifyToken?: string }>{
+  async registerUser(payload: { username: string; email: string; password: string; name: string; role: string }): Promise<{ ok: boolean; error?: string; verifyToken?: string }> {
     const { username, email, password, name, role } = payload || ({} as any);
     if (!username || !email || !password || !name) return { ok: false, error: 'Missing fields' };
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
@@ -503,24 +503,24 @@ export const pmsAuthDb = {
     const ins = await db.query(`INSERT INTO app_users (id, username, email, name, role, password_hash, active, password_change_required, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, true, true, false, NOW(), NOW())`, [id, username, email, name, role, hash]);
     if ('error' in ins) return { ok: false, error: ins.error };
     const token = makeUuid();
-    const expires = new Date(Date.now() + 24*60*60*1000).toISOString();
+    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     await db.query(`INSERT INTO email_verifications (token, user_id, expires_at) VALUES (?, ?, ?)`, [token, id, expires]);
     await this.recordAccessAttempt(username, 'user_registered', { email });
     return { ok: true, verifyToken: token };
   },
 
-  async resendVerification(usernameOrEmail: string): Promise<{ ok: boolean; error?: string; verifyToken?: string }>{
+  async resendVerification(usernameOrEmail: string): Promise<{ ok: boolean; error?: string; verifyToken?: string }> {
     const res = await db.query<{ id: string; is_verified: number }>(`SELECT id, is_verified FROM app_users WHERE username = ? OR email = ?`, [usernameOrEmail, usernameOrEmail]);
     if ('error' in res || !res.rows || res.rows.length === 0) return { ok: false, error: 'User not found' };
     if (res.rows[0].is_verified) return { ok: false, error: 'Already verified' };
     const token = makeUuid();
-    const expires = new Date(Date.now() + 24*60*60*1000).toISOString();
+    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     await db.query(`INSERT INTO email_verifications (token, user_id, expires_at) VALUES (?, ?, ?)`, [token, res.rows[0].id, expires]);
     await this.recordAccessAttempt(usernameOrEmail, 'verification_resent');
     return { ok: true, verifyToken: token };
   },
 
-  async verifyEmail(token: string): Promise<{ ok: boolean; error?: string }>{
+  async verifyEmail(token: string): Promise<{ ok: boolean; error?: string }> {
     const row = await db.query<{ user_id: string; expires_at: string; used_at: string | null }>(`SELECT user_id, expires_at, used_at FROM email_verifications WHERE token = ?`, [token]);
     if ('error' in row || !row.rows || row.rows.length === 0) return { ok: false, error: 'Invalid token' };
     const rec = row.rows[0];

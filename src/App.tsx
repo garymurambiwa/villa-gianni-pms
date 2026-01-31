@@ -18,6 +18,7 @@ import PasswordChangePage from "./pages/PasswordChange";
 import { useEffect } from "react";
 import { toast } from "@/hooks/use-toast";
 import VersionDisplay from "@/components/ui/VersionDisplay";
+import { VirtualKeyboard } from "@/components/ui/VirtualKeyboard";
 
 const queryClient = new QueryClient();
 
@@ -48,7 +49,7 @@ const UpdateStatusBinder = () => {
       const title = stage === 'progress' ? 'Downloading update' : `Update: ${stage}`
       toast({ title, description: `${msg}${pct}` })
     }
-    try { w.native.update.onStatus(handler) } catch {}
+    try { w.native.update.onStatus(handler) } catch { }
   }, [])
   return null
 }
@@ -103,6 +104,7 @@ const App = () => (
                   <VersionDisplay className="text-gray-700 dark:text-gray-200" />
                 </div>
               </div>
+              <VirtualKeyboard />
             </SetupCheck>
           </ErrorBoundary>
         </AppProvider>

@@ -1,10 +1,10 @@
 // Breakfast Package Service Implementation
 import { db } from './db';
-import { 
-  BreakfastPackage, 
-  BreakfastPackageSeasonalRate, 
+import {
+  BreakfastPackage,
+  BreakfastPackageSeasonalRate,
   BreakfastPackageService,
-  BreakfastRateCalculationContext 
+  BreakfastRateCalculationContext
 } from '@/types/breakfastPackages';
 import { getSeasonForDate } from './ratePlanService';
 
@@ -13,7 +13,7 @@ function generateUUID(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  
+
   // Fallback implementation using timestamp + random for uniqueness
   const timestamp = Date.now().toString(36);
   const randomPart = Math.random().toString(36).substring(2, 15);
@@ -22,8 +22,8 @@ function generateUUID(): string {
 
 // Check if we're in a browser environment with no native DB bridge (dev mode)
 function isDevModeWithoutDb(): boolean {
-  return typeof window !== 'undefined' && 
-         !((window as any).native && (window as any).native.db);
+  return typeof window !== 'undefined' &&
+    !((window as any).native && (window as any).native.db);
 }
 
 // Ensure breakfast package tables exist
@@ -34,14 +34,14 @@ async function ensureBreakfastTablesExist(): Promise<void> {
       console.log('[BreakfastService] Dev mode detected, skipping table creation');
       return;
     }
-    
+
     // Wait for database to be ready before creating tables
     const isReady = await db.waitForReady(10, 500);
     if (!isReady) {
       console.warn('[BreakfastService] Database not ready, will retry later');
       return;
     }
-    
+
     // Create breakfast_packages table with explicit schema
     const createTableResult = await db.exec(`
       CREATE TABLE IF NOT EXISTS public.breakfast_packages (
@@ -59,12 +59,12 @@ async function ensureBreakfastTablesExist(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
-    
+
     if (createTableResult && 'error' in createTableResult && !createTableResult.ok) {
       // Table may already exist, which is fine
       console.log('[BreakfastService] Note: breakfast_packages table creation result:', createTableResult);
     }
-    
+
     // Create breakfast_package_seasonal_rates table
     await db.exec(`
       CREATE TABLE IF NOT EXISTS public.breakfast_package_seasonal_rates (
@@ -79,7 +79,7 @@ async function ensureBreakfastTablesExist(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
-    
+
     // Create indexes safely (ignore errors if they already exist)
     try {
       await db.exec(`CREATE INDEX IF NOT EXISTS breakfast_packages_code_idx ON public.breakfast_packages(code)`);
@@ -89,7 +89,7 @@ async function ensureBreakfastTablesExist(): Promise<void> {
     } catch (indexError) {
       console.warn('[BreakfastService] Index creation warning (may already exist):', indexError);
     }
-    
+
     // Add breakfast package columns to reservations table if not exists
     try {
       await db.exec(`ALTER TABLE public.reservations ADD COLUMN IF NOT EXISTS breakfast_package_code TEXT DEFAULT 'RO'`);
@@ -99,7 +99,7 @@ async function ensureBreakfastTablesExist(): Promise<void> {
     } catch (alterError) {
       console.warn('[BreakfastService] Reservation column addition warning:', alterError);
     }
-    
+
     console.log('[BreakfastService] Tables ensured successfully');
   } catch (error) {
     console.error('[BreakfastService] Error ensuring tables exist:', error);
@@ -110,7 +110,7 @@ async function ensureBreakfastTablesExist(): Promise<void> {
 class BreakfastPackageServiceImpl implements BreakfastPackageService {
   private tablesInitialized = false;
   private initializationPromise: Promise<void> | null = null;
-  
+
   private async ensureTables(): Promise<void> {
     if (!this.tablesInitialized) {
       // Prevent concurrent initialization
@@ -125,7 +125,7 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
       await this.initializationPromise;
     }
   }
-  
+
   // Initialize tables when service is first accessed
   constructor() {
     // Delay initialization to allow DB bridge to be ready
@@ -137,17 +137,17 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
       }, 1000);
     }
   }
-  
+
   async getAllPackages(): Promise<BreakfastPackage[]> {
     try {
       await this.ensureTables();
       const result = await db.query('SELECT * FROM public.breakfast_packages ORDER BY sort_order, name');
-      
+
       if ('error' in result) {
         console.error('[BreakfastService] getAllPackages error:', result.error);
         return [];
       }
-      
+
       if ('rows' in result && Array.isArray(result.rows)) {
         const packages = result.rows.map(this.mapRowToPackage);
         console.log(`[BreakfastService] Fetched ${packages.length} packages`);
@@ -166,12 +166,12 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
       const result = await db.query(
         'SELECT * FROM public.breakfast_packages WHERE is_active = true ORDER BY sort_order, name'
       );
-      
+
       if ('error' in result) {
         console.error('[BreakfastService] getActivePackages error:', result.error);
         return [];
       }
-      
+
       if ('rows' in result && Array.isArray(result.rows)) {
         return result.rows.map(this.mapRowToPackage);
       }
@@ -189,12 +189,12 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
         'SELECT * FROM public.breakfast_packages WHERE code = $1 AND is_active = true',
         [code]
       );
-      
+
       if ('error' in result) {
         console.error('[BreakfastService] getPackageByCode error:', result.error);
         return null;
       }
-      
+
       if ('rows' in result && Array.isArray(result.rows) && result.rows.length > 0) {
         return this.mapRowToPackage(result.rows[0]);
       }
@@ -208,29 +208,29 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
   async createPackage(data: Omit<BreakfastPackage, 'id' | 'insertedAt' | 'updatedAt'>): Promise<BreakfastPackage> {
     try {
       await this.ensureTables();
-      
+
       // Validate required fields
       if (!data.code || !data.name) {
         throw new Error('Package code and name are required');
       }
-      
+
       const id = generateUUID();
       const now = new Date().toISOString();
-      
+
       // Convert room types array to PostgreSQL text[] format
       // PostgreSQL text[] expects format like: '{item1,item2}' or ARRAY['item1','item2']
       const roomTypesArray = data.applicableRoomTypes || [];
-      const roomTypesPostgres = roomTypesArray.length > 0 
+      const roomTypesPostgres = roomTypesArray.length > 0
         ? `{${roomTypesArray.map(t => `"${t.replace(/"/g, '\\"')}"`).join(',')}}`
         : '{}';
-      
+
       console.log('[BreakfastService] Creating package:', {
         id,
         code: data.code,
         name: data.name,
         roomTypesPostgres
       });
-      
+
       const sql = `
         INSERT INTO public.breakfast_packages 
         (id, code, name, description, base_price, adult_price, child_price, 
@@ -238,7 +238,7 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, $10, $11, $12)
         RETURNING *
       `;
-      
+
       const params = [
         id,
         data.code.trim(),
@@ -255,12 +255,12 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
       ];
 
       const result = await db.query(sql, params);
-      
+
       // Check for errors in result
       if ('error' in result) {
         const errorMsg = (result as any).error || 'Unknown database error';
         console.error('[BreakfastService] Package creation failed:', errorMsg);
-        
+
         // Provide user-friendly error messages for common issues
         if (errorMsg.includes('duplicate key') && errorMsg.includes('code')) {
           throw new Error(`A package with code "${data.code}" already exists. Please use a different code.`);
@@ -268,7 +268,7 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
         if (errorMsg.includes('duplicate key')) {
           throw new Error('A package with this information already exists.');
         }
-        
+
         throw new Error(`Database error: ${errorMsg}`);
       }
 
@@ -277,7 +277,7 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
         console.log('[BreakfastService] Package created successfully with RETURNING');
         return this.mapRowToPackage(result.rows[0]);
       }
-      
+
       // If no rows returned but no error, the insert was successful
       // Return the constructed package
       console.log('[BreakfastService] Package created successfully');
@@ -302,16 +302,16 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
   }
 
   async updatePackage(
-    id: string, 
+    id: string,
     data: Partial<Omit<BreakfastPackage, 'id' | 'insertedAt' | 'updatedAt'>>
   ): Promise<BreakfastPackage> {
     try {
       await this.ensureTables();
-      
+
       if (!id) {
         throw new Error('Package ID is required for update');
       }
-      
+
       const now = new Date().toISOString();
       const updates: string[] = [];
       const params: any[] = [];
@@ -343,7 +343,7 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
       // Handle applicableRoomTypes separately (PostgreSQL text[] array)
       if (data.applicableRoomTypes !== undefined) {
         const roomTypesArray = data.applicableRoomTypes || [];
-        const roomTypesPostgres = roomTypesArray.length > 0 
+        const roomTypesPostgres = roomTypesArray.length > 0
           ? `{${roomTypesArray.map(t => `"${t.replace(/"/g, '\\"')}"`).join(',')}}`
           : '{}';
         updates.push(`applicable_room_types = $${paramIndex}::text[]`);
@@ -359,14 +359,14 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
       updates.push(`updated_at = $${paramIndex}`);
       params.push(now);
       paramIndex++;
-      
+
       // Add id as last parameter
       params.push(id);
 
       const sql = `UPDATE public.breakfast_packages SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
-      
+
       console.log('[BreakfastService] Updating package:', { id, updates: updates.length });
-      
+
       const result = await db.query(sql, params);
 
       if ('error' in result) {
@@ -397,20 +397,20 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
   async deletePackage(id: string): Promise<boolean> {
     try {
       await this.ensureTables();
-      
+
       if (!id) {
         throw new Error('Package ID is required for deletion');
       }
-      
+
       console.log('[BreakfastService] Deleting package:', id);
-      
+
       const result = await db.query('DELETE FROM public.breakfast_packages WHERE id = $1', [id]);
-      
+
       if ('error' in result) {
         console.error('[BreakfastService] Delete failed:', (result as any).error);
         return false;
       }
-      
+
       console.log('[BreakfastService] Package deleted successfully');
       return true;
     } catch (error) {
@@ -426,12 +426,12 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
         'SELECT * FROM public.breakfast_package_seasonal_rates WHERE breakfast_package_id = $1 AND is_active = true ORDER BY season_key',
         [packageId]
       );
-      
+
       if ('error' in result) {
         console.error('[BreakfastService] getSeasonalRates error:', result.error);
         return [];
       }
-      
+
       if ('rows' in result && Array.isArray(result.rows)) {
         return result.rows.map(this.mapRowToSeasonalRate);
       }
@@ -443,15 +443,15 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
   }
 
   async updateSeasonalRate(
-    packageId: string, 
-    seasonKey: string, 
+    packageId: string,
+    seasonKey: string,
     multiplier: number
   ): Promise<BreakfastPackageSeasonalRate> {
     try {
       await this.ensureTables();
       const now = new Date().toISOString();
       const id = generateUUID();
-      
+
       // Try to update existing or insert new using PostgreSQL's ON CONFLICT
       const upsertSql = `
         INSERT INTO public.breakfast_package_seasonal_rates 
@@ -461,18 +461,18 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
         DO UPDATE SET price_multiplier = EXCLUDED.price_multiplier, updated_at = EXCLUDED.updated_at
         RETURNING *
       `;
-      
+
       const result = await db.query(upsertSql, [id, packageId, seasonKey, multiplier, now]);
-      
+
       if ('error' in result) {
         console.error('[BreakfastService] Seasonal rate update failed:', result.error);
         throw new Error((result as any).error);
       }
-      
+
       if ('rows' in result && Array.isArray(result.rows) && result.rows.length > 0) {
         return this.mapRowToSeasonalRate(result.rows[0]);
       }
-      
+
       throw new Error('Failed to update seasonal rate');
     } catch (error) {
       console.error('[BreakfastService] Error updating seasonal rate:', error);
@@ -505,10 +505,10 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
       const multiplier = seasonalRate?.priceMultiplier || 1;
 
       // Calculate total price
-      const baseCost = pkg.basePrice * multiplier;
-      const adultCost = (pkg.adultPrice * adults) * multiplier;
-      const childCost = (pkg.childPrice * children) * multiplier;
-      
+      const baseCost = Number(pkg.basePrice) * multiplier;
+      const adultCost = (Number(pkg.adultPrice) * adults) * multiplier;
+      const childCost = (Number(pkg.childPrice) * children) * multiplier;
+
       const total = Math.round((baseCost + adultCost + childCost) * 100) / 100;
       return Math.max(0, total);
     } catch (error) {
@@ -520,7 +520,7 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
   async getAvailablePackagesForRoomType(roomType: string): Promise<BreakfastPackage[]> {
     try {
       const allPackages = await this.getActivePackages();
-      return allPackages.filter(pkg => 
+      return allPackages.filter(pkg =>
         pkg.applicableRoomTypes.length === 0 || pkg.applicableRoomTypes.includes(roomType)
       );
     } catch (error) {
@@ -557,7 +557,7 @@ class BreakfastPackageServiceImpl implements BreakfastPackageService {
         }
       }
     }
-    
+
     return {
       id: row.id,
       code: row.code,

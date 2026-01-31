@@ -1268,10 +1268,10 @@ export const FrontOffice: React.FC = () => {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-4 max-h-[60vh] overflow-y-auto">
             {rooms.map(room => (
               <div key={room.id} className={`p-3 rounded-lg border text-center ${room.status === 'VC' ? 'bg-green-50 border-green-200 text-green-800' :
-                  room.status === 'VD' ? 'bg-red-50 border-red-200 text-red-800' :
-                    room.status === 'OC' ? 'bg-blue-50 border-blue-200 text-blue-800' :
-                      room.status === 'OD' ? 'bg-yellow-50 border-yellow-200 text-yellow-800' :
-                        'bg-gray-50 border-gray-200 text-gray-800'
+                room.status === 'VD' ? 'bg-red-50 border-red-200 text-red-800' :
+                  room.status === 'OC' ? 'bg-blue-50 border-blue-200 text-blue-800' :
+                    room.status === 'OD' ? 'bg-yellow-50 border-yellow-200 text-yellow-800' :
+                      'bg-gray-50 border-gray-200 text-gray-800'
                 }`}>
                 <div className="font-bold text-lg">{room.number}</div>
                 <div className="text-xs font-medium uppercase mt-1">{room.status}</div>
@@ -1291,15 +1291,15 @@ export const FrontOffice: React.FC = () => {
       </Dialog>
 
       <Dialog open={checkInDialogOpen} onOpenChange={setCheckInDialogOpen}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[500px] max-h-[85vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-6 pb-2">
             <DialogTitle>Check In Guest</DialogTitle>
             <DialogDescription>
               Assign a room and confirm rate details.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
+          <div className="grid gap-4 p-6 py-4 overflow-y-auto flex-1 min-h-0">
             <div>
               <Label className="mb-2 block text-sm font-medium">Room</Label>
               <Select value={selectedRoom || ''} onValueChange={setSelectedRoom} disabled={isLoadingRooms || !!roomsError || availableRooms.length === 0}>
@@ -1327,6 +1327,8 @@ export const FrontOffice: React.FC = () => {
                 <Label className="mb-2 block text-sm font-medium">Daily Rate ($)</Label>
                 <Input
                   type="number"
+                  min="0"
+                  step="0.01"
                   value={rateOverride}
                   onChange={(e) => setRateOverride(e.target.value)}
                 />
@@ -1471,7 +1473,7 @@ export const FrontOffice: React.FC = () => {
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="p-6 pt-2 border-t mt-auto">
             <Button variant="outline" onClick={() => setCheckInDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleCheckInConfirm} disabled={!selectedRoom}>Confirm Check In</Button>
           </DialogFooter>

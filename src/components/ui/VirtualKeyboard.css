@@ -1,0 +1,21 @@
+.myTheme1 {
+  background-color: rgba(243, 244, 246, 1); /* tailwind gray-100 */
+  border-radius: 0;
+}
+
+.hg-button {
+  height: 50px !important;
+  font-size: 1.2rem !important;
+}
+
+.hg-theme-default .hg-button {
+    background: white;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    border-bottom: 2px solid #ddd;
+}
+
+.hg-theme-default .hg-button:active {
+    background: #e5e7eb;
+    transform: translateY(1px);
+    border-bottom: 1px solid #ddd;
+}

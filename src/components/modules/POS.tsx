@@ -4,6 +4,7 @@ import { PaymentModal, BillSummary, QuickActions } from '../pos/POSIntegrationCo
 import { formatCurrency, generateShiftXReadingHTML, printDocument } from '@/lib/posIntegration';
 import { useShift } from '@/contexts/ShiftContext';
 import { getOutletReceiptSettings } from '@/components/modules/ReceiptSettingsModal';
+import { useAuth } from '@/context/AuthContext';
 
 interface MenuItem {
   id: string;
@@ -24,6 +25,7 @@ const menuItems: MenuItem[] = [
 ];
 
 export const POS: React.FC = () => {
+  const { user } = useAuth();
   const { guests, recordFolioCharge, removeFolioCharge } = useData();
   const { activeShift, startShift, endShift, getTotals, addTransaction } = useShift();
   const [activeCategory, setActiveCategory] = useState<'bar' | 'restaurant'>('restaurant');
@@ -40,7 +42,7 @@ export const POS: React.FC = () => {
       if (savedCart) {
         setCart(JSON.parse(savedCart));
       }
-    } catch {}
+    } catch { }
   }, []);
 
   React.useEffect(() => {
@@ -52,13 +54,13 @@ export const POS: React.FC = () => {
   const [isScrolling, setIsScrolling] = useState(false);
   const txLastRef = useRef<number>(0);
   const TX_ROW_HEIGHT = 44;
-  
+
   const handleTxScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const container = e.currentTarget;
     const scrollTop = container.scrollTop;
     const scrollHeight = container.scrollHeight;
     const clientHeight = container.clientHeight;
-    
+
     // Show hint when user scrolls near bottom
     if (scrollHeight - scrollTop - clientHeight < 200 && activeShift?.transactions.length > 10) {
       setTxScrollHint(true);
@@ -292,7 +294,7 @@ export const POS: React.FC = () => {
               <div className="grid grid-cols-2 gap-2 mb-2">
                 <div>
                   <label className="block text-xs text-gray-700 mb-1">Preparation Level</label>
-                  <select className="w-full px-2 py-1 border rounded" value={prepLevel} onChange={(e)=> setPrepLevel(e.target.value)}>
+                  <select className="w-full px-2 py-1 border rounded" value={prepLevel} onChange={(e) => setPrepLevel(e.target.value)}>
                     <option value="">Select…</option>
                     <option value="Rare">Rare</option>
                     <option value="Medium">Medium</option>
@@ -302,7 +304,7 @@ export const POS: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-xs text-gray-700 mb-1">Quantity</label>
-                  <input type="number" min={1} className="w-full px-2 py-1 border rounded" value={cart[editIdx].qty} onChange={(e)=> {
+                  <input type="number" min={1} className="w-full px-2 py-1 border rounded" value={cart[editIdx].qty} onChange={(e) => {
                     const q = Math.max(1, Number(e.target.value || 1));
                     const copy = [...cart]; copy[editIdx] = { ...copy[editIdx], qty: q }; setCart(copy);
                   }} />
@@ -310,7 +312,7 @@ export const POS: React.FC = () => {
               </div>
               <div>
                 <label className="block text-xs text-gray-700 mb-1">Special Instructions</label>
-                <textarea className="w-full px-2 py-1 border rounded" rows={3} value={specialNotes} onChange={(e)=> setSpecialNotes(e.target.value)} placeholder="e.g., No salt, extra sauce, allergy notes…" />
+                <textarea className="w-full px-2 py-1 border rounded" rows={3} value={specialNotes} onChange={(e) => setSpecialNotes(e.target.value)} placeholder="e.g., No salt, extra sauce, allergy notes…" />
               </div>
               <div className="mt-2 flex gap-2">
                 <button
@@ -345,7 +347,7 @@ export const POS: React.FC = () => {
 
           <QuickActions actions={actions} />
 
-          
+
 
           {/* Shift Transactions Table */}
           {activeShift && (
@@ -356,7 +358,7 @@ export const POS: React.FC = () => {
                 ref={txContainerRef}
                 className="relative overflow-x-auto overflow-y-auto max-h-64 sm:max-h-80 scroll-smooth"
                 onScroll={handleTxScroll}
-                style={{ 
+                style={{
                   WebkitOverflowScrolling: 'touch',
                   touchAction: 'pan-y', // Explicitly allow vertical panning
                   scrollBehavior: isScrolling ? 'auto' : 'smooth' // Use auto during drag, smooth for snap
@@ -393,9 +395,9 @@ export const POS: React.FC = () => {
                       (() => {
                         const data = activeShift.transactions.slice().reverse();
                         const rows = data.slice(txVisibleRange.start, txVisibleRange.end).map((tx) => (
-                          <tr 
-                            key={tx.id} 
-                            className={`border-b transition-colors ${isScrolling ? '' : 'hover:bg-gray-50'}`} 
+                          <tr
+                            key={tx.id}
+                            className={`border-b transition-colors ${isScrolling ? '' : 'hover:bg-gray-50'}`}
                             style={{ height: TX_ROW_HEIGHT }}
                           >
                             <td className="py-2 pr-4 pl-2">{new Date(tx.createdAt).toLocaleString()}</td>
@@ -408,19 +410,19 @@ export const POS: React.FC = () => {
                         // to prevent browser collapsing behavior
                         const topHeight = txVisibleRange.start * TX_ROW_HEIGHT;
                         const bottomHeight = Math.max(0, (data.length - txVisibleRange.end) * TX_ROW_HEIGHT);
-                        
+
                         const top = topHeight > 0 ? (
                           <tr style={{ height: topHeight, padding: 0, border: 0 }} aria-hidden="true">
                             <td colSpan={4} style={{ padding: 0, border: 0 }}></td>
                           </tr>
                         ) : null;
-                        
+
                         const bottom = bottomHeight > 0 ? (
                           <tr style={{ height: bottomHeight, padding: 0, border: 0 }} aria-hidden="true">
                             <td colSpan={4} style={{ padding: 0, border: 0 }}></td>
                           </tr>
                         ) : null;
-                        
+
                         return [top, ...rows, bottom];
                       })()
                     )}
@@ -442,7 +444,7 @@ export const POS: React.FC = () => {
         isOpen={isPaymentOpen}
         onClose={() => setIsPaymentOpen(false)}
         onPaymentComplete={handlePaymentComplete}
-        currentUser={{ name: 'Server', id: 'server-1' }}
+        currentUser={{ name: user?.name || 'Server', id: user?.id || 'server-1' }}
         receiptSettings={receiptSettings}
       />
     </div>
@@ -454,6 +456,6 @@ const logPaymentError = (step: string, error: any, ctx?: any) => {
     const entry = { step, error: String((error && (error.message || error)) || 'Unknown'), ctx, at: new Date().toISOString() };
     const raw = localStorage.getItem('corepms_payment_errors');
     const list = raw ? JSON.parse(raw) : [];
-    localStorage.setItem('corepms_payment_errors', JSON.stringify([entry, ...list].slice(0,500)));
-  } catch {}
+    localStorage.setItem('corepms_payment_errors', JSON.stringify([entry, ...list].slice(0, 500)));
+  } catch { }
 };

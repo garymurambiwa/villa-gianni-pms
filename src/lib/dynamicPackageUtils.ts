@@ -8,21 +8,21 @@ import { PackageOption } from './packageUtils';
 export async function getDynamicPackageOptions(): Promise<PackageOption[]> {
   try {
     const packages = await breakfastPackageService.getActivePackages();
-    
+
     // Convert breakfast packages to package options format
     const packageOptions: PackageOption[] = packages.map(pkg => ({
       code: pkg.code,
       label: pkg.name,
       surcharge: pkg.basePrice // Use base price as the surcharge
     }));
-    
+
     // Sort by sort order, then alphabetically
     return packageOptions.sort((a, b) => {
       const pkgA = packages.find(p => p.code === a.code);
       const pkgB = packages.find(p => p.code === b.code);
       const orderA = pkgA?.sortOrder || 0;
       const orderB = pkgB?.sortOrder || 0;
-      
+
       if (orderA !== orderB) {
         return orderA - orderB;
       }
@@ -59,22 +59,22 @@ export async function calculateDynamicMealPlanCost(
       checkInDate,
       roomType
     );
-    
+
     return Math.max(0, totalPrice);
   } catch (error) {
     console.error('Failed to calculate dynamic meal plan cost:', error);
     // Fallback to simple calculation if service fails
     const packages = await breakfastPackageService.getActivePackages();
     const pkg = packages.find(p => p.code === packageCode);
-    
+
     if (pkg) {
       // Simple fallback calculation without seasonal rates
-      const baseCost = pkg.basePrice;
-      const adultCost = pkg.adultPrice * adults;
-      const childCost = pkg.childPrice * children;
+      const baseCost = Number(pkg.basePrice);
+      const adultCost = Number(pkg.adultPrice) * adults;
+      const childCost = Number(pkg.childPrice) * children;
       return Math.max(0, baseCost + adultCost + childCost);
     }
-    
+
     return 0;
   }
 }

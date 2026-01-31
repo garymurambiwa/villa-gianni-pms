@@ -87,17 +87,17 @@ const ALL_RIGHT_KEYS = RIGHTS_CATEGORIES.flatMap(c => c.rights.map(r => r.key));
 const DEFAULT_ROLE_RIGHTS: Record<RoleName, RightsKey[]> = {
   'Super Admin': [...ALL_RIGHT_KEYS],
   'Admin': [...ALL_RIGHT_KEYS],
-  'FO Manager': ['fo_checkin_checkout','fo_reservations_edit','fo_process_room_payments','fo_access_folios','fo_view_room_status','fin_view_reports_pl','fin_access_ledgers_readonly'],
-  'FNB Manager': ['fnb_process_orders','fnb_apply_discounts_voids','fnb_manage_inventory','fin_view_reports_pl','fin_access_ledgers_readonly','admin_view_audit_logs'],
-  'FO Supervisor': ['fo_checkin_checkout','fo_reservations_edit','fo_process_room_payments','fo_access_folios','fo_view_room_status','fin_view_reports_pl'],
-  'FNB Supervisor': ['fnb_process_orders','fnb_apply_discounts_voids','fnb_manage_inventory','fin_view_reports_pl'],
-  'Restaurant Cashier': ['fnb_process_orders','fnb_apply_discounts_voids'],
-  'Barman': ['fnb_process_orders','fnb_manage_inventory'],
-  'Accountant': ['fin_view_reports_pl','fin_access_ledgers_readonly'],
-  'Front office Cashier': ['fo_process_room_payments','fo_access_folios','fo_view_room_status'],
-  'Night Auditor': ['fin_night_audit_closing','fin_view_reports_pl','fin_access_ledgers_readonly','fo_access_folios','fo_checkin_checkout'],
+  'FO Manager': ['fo_checkin_checkout', 'fo_reservations_edit', 'fo_process_room_payments', 'fo_access_folios', 'fo_view_room_status', 'fin_view_reports_pl', 'fin_access_ledgers_readonly'],
+  'FNB Manager': ['fnb_process_orders', 'fnb_apply_discounts_voids', 'fnb_manage_inventory', 'fin_view_reports_pl', 'fin_access_ledgers_readonly', 'admin_view_audit_logs'],
+  'FO Supervisor': ['fo_checkin_checkout', 'fo_reservations_edit', 'fo_process_room_payments', 'fo_access_folios', 'fo_view_room_status', 'fin_view_reports_pl'],
+  'FNB Supervisor': ['fnb_process_orders', 'fnb_apply_discounts_voids', 'fnb_manage_inventory', 'fin_view_reports_pl'],
+  'Restaurant Cashier': ['fnb_process_orders', 'fnb_apply_discounts_voids'],
+  'Barman': ['fnb_process_orders', 'fnb_manage_inventory'],
+  'Accountant': ['fin_view_reports_pl', 'fin_access_ledgers_readonly'],
+  'Front office Cashier': ['fo_process_room_payments', 'fo_access_folios', 'fo_view_room_status'],
+  'Night Auditor': ['fin_night_audit_closing', 'fin_view_reports_pl', 'fin_access_ledgers_readonly', 'fo_access_folios', 'fo_checkin_checkout'],
   'House keeper': ['fo_view_room_status'],
-  'Maintenance': ['ops_work_orders','ops_change_room_ooo','fo_view_room_status'],
+  'Maintenance': ['ops_work_orders', 'ops_change_room_ooo', 'fo_view_room_status'],
 };
 
 interface SystemUser {
@@ -119,22 +119,31 @@ const mockUsers: SystemUser[] = [
 ];
 
 export const Users: React.FC = () => {
-  const [users, setUsers] = useState<SystemUser[]>(() => {
-    try {
-      const rows = authListUsers();
-      return rows.map(u => ({
-        id: u.id,
-        username: u.username,
-        name: u.profile?.name || u.username,
-        role: mapInternalRoleToStandard(u.role as any),
-        active: u.active,
-        lastLogin: '—',
-        permissions: (u.permissions || []) as any,
-      }));
-    } catch {
-      return mockUsers;
-    }
-  });
+  const [users, setUsers] = useState<SystemUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const rows = await authListUsers();
+        setUsers(rows.map(u => ({
+          id: u.id,
+          username: u.username,
+          name: u.profile?.name || u.name || u.username,
+          role: mapInternalRoleToStandard(u.role as any),
+          active: u.active,
+          lastLogin: u.lastLogin || '—',
+          permissions: (u.permissions || []) as any,
+        })));
+      } catch {
+        // Fallback to mock users if DB fails/offline
+        setUsers(mockUsers);
+      } finally {
+        setLoadingUsers(false);
+      }
+    })();
+  }, []);
+
   const [showNewForm, setShowNewForm] = useState(false);
   const [editingUser, setEditingUser] = useState<SystemUser | null>(null);
   const [saving, setSaving] = useState(false);
@@ -248,7 +257,7 @@ export const Users: React.FC = () => {
             setSaving(true);
             try {
               const roleInternal = ROLE_LIST.includes(updated.role as any) ? mapStandardRoleToInternal(updated.role) : (updated.role as any);
-              const res = authUpdateUser(updated.id, {
+              const res = await authUpdateUser(updated.id, {
                 role: roleInternal as any,
                 active: updated.active,
                 permissions: (updated.permissions || []) as any,
@@ -279,7 +288,7 @@ export const Users: React.FC = () => {
             setDeleting(true);
             try {
               const id = deletingUser?.id || '';
-              const res = authDeleteUser(id);
+              const res = await authDeleteUser(id);
               if (!res.ok) console.warn('Delete failed:', res.error);
               setUsers(prev => prev.filter(u => u.id !== id));
             } finally {
@@ -366,24 +375,24 @@ const NewUserForm: React.FC<{ users: SystemUser[]; onCreate: (u: SystemUser) => 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-          <input type="text" value={fullName} onChange={(e)=>setFullName(e.target.value)} placeholder="e.g., Vhukile Matenda" className="w-full px-4 py-2 border rounded-lg" />
+          <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g., Vhukile Matenda" className="w-full px-4 py-2 border rounded-lg" />
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Username (Email or System ID)</label>
-          <input type="text" value={usernameOrId} onChange={(e)=>setUsernameOrId(e.target.value)} placeholder="e.g., user@example.com or SYS001" className="w-full px-4 py-2 border rounded-lg" />
+          <input type="text" value={usernameOrId} onChange={(e) => setUsernameOrId(e.target.value)} placeholder="e.g., user@example.com or SYS001" className="w-full px-4 py-2 border rounded-lg" />
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-          <input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} className="w-full px-4 py-2 border rounded-lg" />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-2 border rounded-lg" />
           <p className="text-xs text-gray-500 mt-1">Min 8 chars, include upper, lower, number, and symbol.</p>
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
-          <input type="password" value={confirmPassword} onChange={(e)=>setConfirmPassword(e.target.value)} className="w-full px-4 py-2 border rounded-lg" />
+          <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full px-4 py-2 border rounded-lg" />
         </div>
         <div className="md:col-span-2">
           <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-          <select value={role} onChange={(e)=>applyRoleDefaults(e.target.value as RoleName)} className="w-full px-4 py-2 border rounded-lg">
+          <select value={role} onChange={(e) => applyRoleDefaults(e.target.value as RoleName)} className="w-full px-4 py-2 border rounded-lg">
             {ROLE_LIST.map(r => (
               <option key={r} value={r}>{r}</option>
             ))}
@@ -399,7 +408,7 @@ const NewUserForm: React.FC<{ users: SystemUser[]; onCreate: (u: SystemUser) => 
             <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
               {cat.rights.map(r => (
                 <label key={r.key} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" className="h-4 w-4" checked={!!rights[r.key]} onChange={()=>toggleRight(r.key)} />
+                  <input type="checkbox" className="h-4 w-4" checked={!!rights[r.key]} onChange={() => toggleRight(r.key)} />
                   <span>{r.label}</span>
                 </label>
               ))}
@@ -428,19 +437,19 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
 const roles = [...ROLE_LIST];
 
-const EditUserDialog: React.FC<{ user: SystemUser; onClose: ()=>void; onSave: (u: SystemUser)=>void; saving: boolean }>=({ user, onClose, onSave, saving })=>{
+const EditUserDialog: React.FC<{ user: SystemUser; onClose: () => void; onSave: (u: SystemUser) => void; saving: boolean }> = ({ user, onClose, onSave, saving }) => {
   const [form, setForm] = useState<SystemUser>({ ...user });
-  const [perm, setPerm] = useState<Record<RightsKey, boolean>>(()=>{
+  const [perm, setPerm] = useState<Record<RightsKey, boolean>>(() => {
     const m: Record<RightsKey, boolean> = {} as any;
     ALL_RIGHT_KEYS.forEach(k => { (m as any)[k] = (user.permissions || []).includes(k); });
     return m;
   });
   const toggleRight = (key: RightsKey) => setPerm(prev => ({ ...prev, [key]: !prev[key] }));
   const handleScroll = React.useCallback((e: React.UIEvent<HTMLElement>) => {
-    try { if ((import.meta as any).env?.DEV) console.log('[ScrollDiag] dialog-scrollTop', (e.target as HTMLElement).scrollTop); } catch {}
+    try { if ((import.meta as any).env?.DEV) console.log('[ScrollDiag] dialog-scrollTop', (e.target as HTMLElement).scrollTop); } catch { }
   }, []);
   return (
-    <Dialog open onOpenChange={(o)=>{ if(!o) onClose(); }}>
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="w-full max-w-md sm:max-w-lg max-h-[90vh] overflow-y-auto" onScroll={handleScroll}>
         <DialogHeader>
           <DialogTitle>Edit User</DialogTitle>
@@ -449,20 +458,20 @@ const EditUserDialog: React.FC<{ user: SystemUser; onClose: ()=>void; onSave: (u
         <div className="grid grid-cols-1 gap-3">
           <div>
             <label className="text-xs">Username</label>
-            <Input value={form.username} disabled className="mt-1"/>
+            <Input value={form.username} disabled className="mt-1" />
           </div>
           <div>
             <label className="text-xs">Full Name</label>
-            <Input value={form.name} onChange={(e)=>setForm({ ...form, name: e.target.value })} className="mt-1"/>
+            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="mt-1" />
           </div>
           <div>
             <label className="text-xs">Role</label>
-            <select className="border rounded-md px-3 py-2 mt-1" value={form.role} onChange={(e)=>setForm({ ...form, role: e.target.value })}>
+            <select className="border rounded-md px-3 py-2 mt-1" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
               {roles.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
           <div className="flex items-center gap-2 mt-1">
-            <input id="active" type="checkbox" checked={form.active} onChange={(e)=>setForm({ ...form, active: e.target.checked })} className="h-4 w-4" />
+            <input id="active" type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} className="h-4 w-4" />
             <label htmlFor="active" className="text-sm">Active</label>
           </div>
           <div className="mt-2">
@@ -472,7 +481,7 @@ const EditUserDialog: React.FC<{ user: SystemUser; onClose: ()=>void; onSave: (u
                 <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-2">
                   {cat.rights.map(r => (
                     <label key={r.key} className="flex items-center gap-2 text-xs">
-                      <input type="checkbox" className="h-4 w-4" checked={!!perm[r.key]} onChange={()=>toggleRight(r.key)} />
+                      <input type="checkbox" className="h-4 w-4" checked={!!perm[r.key]} onChange={() => toggleRight(r.key)} />
                       <span>{r.label}</span>
                     </label>
                   ))}
@@ -482,12 +491,12 @@ const EditUserDialog: React.FC<{ user: SystemUser; onClose: ()=>void; onSave: (u
           </div>
         </div>
         <div className="mt-4 flex gap-2">
-          <Button className="bg-indigo-600 text-white px-4 py-2 min-h-[44px]" onClick={()=>onSave({ ...form, permissions: ALL_RIGHT_KEYS.filter(k => perm[k]) as RightsKey[] })} disabled={saving}>
+          <Button className="bg-indigo-600 text-white px-4 py-2 min-h-[44px]" onClick={() => onSave({ ...form, permissions: ALL_RIGHT_KEYS.filter(k => perm[k]) as RightsKey[] })} disabled={saving}>
             {saving ? 'Saving…' : 'Save Changes'}
           </Button>
           <Button variant="outline" className="px-4 py-2 min-h-[44px]" onClick={onClose} disabled={saving}>Cancel</Button>
         </div>
-        {saving && <LoadingSpinner className="mt-3" label="Applying changes" size="sm"/>}
+        {saving && <LoadingSpinner className="mt-3" label="Applying changes" size="sm" />}
       </DialogContent>
     </Dialog>
   );
@@ -496,9 +505,9 @@ const EditUserDialog: React.FC<{ user: SystemUser; onClose: ()=>void; onSave: (u
 // Delete Confirmation Dialog
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
 
-const DeleteConfirmDialog: React.FC<{ user: SystemUser; onCancel: ()=>void; onConfirm: ()=>void; deleting: boolean }>=({ user, onCancel, onConfirm, deleting })=>{
+const DeleteConfirmDialog: React.FC<{ user: SystemUser; onCancel: () => void; onConfirm: () => void; deleting: boolean }> = ({ user, onCancel, onConfirm, deleting }) => {
   return (
-    <AlertDialog open onOpenChange={(o)=>{ if(!o) onCancel(); }}>
+    <AlertDialog open onOpenChange={(o) => { if (!o) onCancel(); }}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete user “{user.username}”?</AlertDialogTitle>
