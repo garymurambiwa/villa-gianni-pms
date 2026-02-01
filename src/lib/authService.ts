@@ -162,7 +162,33 @@ export const validatePasswordStrength = (password: string) => /^(?=.*[a-z])(?=.*
 
 // Legacy/No-ops
 export const setUsers = (users: any[]) => { /* no-op in DB mode */ };
-export const hashPassword = async (p: string) => ({ hash: 'redacted', salt: '', iterations: 0 }); // stub
+// Client-side encryption for local features (e.g. Admin PIN)
+export const hashPassword = async (password: string) => {
+  const enc = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey('raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits']);
+  const hash = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, key, 256);
+  return {
+    hash: Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join(''),
+    salt: Array.from(salt).map(b => b.toString(16).padStart(2, '0')).join(''),
+    iterations: 100000
+  };
+};
+
+export const verifyPassword = async (password: string, stored: { hash: string; salt: string; iterations: number }) => {
+  if (!stored || !stored.salt || !stored.hash) return false;
+  try {
+    const enc = new TextEncoder();
+    const salt = new Uint8Array(stored.salt.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+    const key = await crypto.subtle.importKey('raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits']);
+    const hash = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: stored.iterations, hash: 'SHA-256' }, key, 256);
+    const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return hashHex === stored.hash;
+  } catch (e) {
+    console.error('Password verification failed', e);
+    return false;
+  }
+};
 
 export const requestPasswordReset = (usernameOrEmail: string) => ({ ok: false, error: 'Use admin reset' }); // Stub
 export const resetPassword = async (token: string, newPassword: string) => ({ ok: false, error: 'Use admin reset' }); // Stub
@@ -209,5 +235,5 @@ export default {
   updateUser, deleteUser, updateProfile, changePassword, setUserRole,
   validateEmail, validatePasswordStrength,
   requestPasswordReset, resetPassword,
-  setUsers, hashPassword, initAuth
+  setUsers, hashPassword, verifyPassword, initAuth
 };
