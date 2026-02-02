@@ -231,7 +231,7 @@ export const setUserRole = (id: string, role: Role) => updateUser(id, { role });
 
 // --- Utils ---
 export const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-export const validatePasswordStrength = (password: string) => /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^\da-zA-Z]).{8,}$/.test(password);
+export const validatePasswordStrength = (password: string) => password && password.length >= 4;
 
 // Legacy/No-ops
 export const setUsers = (users: any[]) => { /* no-op in DB mode */ };
