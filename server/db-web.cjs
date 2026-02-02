@@ -52,6 +52,7 @@ module.exports = {
             return { ok: true, rows: res.rows || [], rowCount: res.rowCount || 0 };
         } catch (e) {
             console.error('DB Query Error:', e.message);
+            console.error('Failed SQL:', sql);
             return { ok: false, error: e.message, rows: [], rowCount: 0 };
         }
     },
@@ -63,6 +64,7 @@ module.exports = {
             return { ok: true };
         } catch (e) {
             console.error('DB Exec Error:', e.message);
+            console.error('Failed SQL:', sql);
             return { ok: false, error: e.message };
         }
     },
