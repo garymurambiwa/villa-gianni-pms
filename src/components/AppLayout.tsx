@@ -74,7 +74,7 @@ const AppLayout: React.FC = () => {
   const hasRedirectedRef = React.useRef(false);
   useEffect(() => {
     (async () => {
-      try { await initializeDatabase() } catch {}
+      try { await initializeDatabase() } catch { }
     })()
     try {
       const url = new URL(window.location.href);
@@ -115,14 +115,14 @@ const AppLayout: React.FC = () => {
     if (user && user.passwordChangeRequired) {
       try {
         navigate('/password-change');
-      } catch {}
+      } catch { }
     }
   }, [user?.passwordChangeRequired]);
 
   useEffect(() => {
     // Enforce login-first: do not auto-load modules until user is authenticated
     if (!user) {
-      try { localStorage.removeItem('corepms_active_module'); } catch {}
+      try { localStorage.removeItem('corepms_active_module'); } catch { }
       setActiveModule('dashboard');
       return;
     }
@@ -137,7 +137,7 @@ const AppLayout: React.FC = () => {
       const resolved = initial === 'folios' ? 'frontoffice' : initial;
       if (resolved) {
         setActiveModule(resolved);
-        try { localStorage.setItem('corepms_active_module', resolved); } catch {}
+        try { localStorage.setItem('corepms_active_module', resolved); } catch { }
       }
       // If the URL requested the deprecated folios module, update it for clarity
       if (fromUrl === 'folios') {
@@ -151,13 +151,13 @@ const AppLayout: React.FC = () => {
           });
         }
       }
-    } catch {}
+    } catch { }
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail as { module?: string };
       const target = detail?.module === 'folios' ? 'frontoffice' : detail?.module;
       if (user && target) {
         setActiveModule(target);
-        try { localStorage.setItem('corepms_active_module', target); } catch {}
+        try { localStorage.setItem('corepms_active_module', target); } catch { }
       }
     };
     window.addEventListener('navigateToModule', handler as EventListener);
@@ -167,11 +167,11 @@ const AppLayout: React.FC = () => {
   React.useEffect(() => {
     if (!(import.meta as any).env?.DEV) return;
     const onWheel = (e: WheelEvent) => {
-      try { console.log('[ScrollDiag] wheel', { dy: e.deltaY, mode: e.deltaMode, ctrl: e.ctrlKey }); } catch {}
+      try { console.log('[ScrollDiag] wheel', { dy: e.deltaY, mode: e.deltaMode, ctrl: e.ctrlKey }); } catch { }
     };
     const onPointer = (e: PointerEvent) => {
       if (e.pointerType === 'touch') {
-        try { console.log('[ScrollDiag] touch pointer', { type: e.type }); } catch {}
+        try { console.log('[ScrollDiag] touch pointer', { type: e.type }); } catch { }
       }
     };
     window.addEventListener('wheel', onWheel, { passive: true });
@@ -226,7 +226,7 @@ const AppLayout: React.FC = () => {
       case 'rooms': return <Rooms />;
       case 'night-audit': {
         const role = normalizeRole(user?.role);
-        const allowed = ['auditor','admin','manager','supervisor'].includes(role);
+        const allowed = ['auditor', 'admin', 'manager', 'supervisor'].includes(role);
         return allowed
           ? (
             <ErrorBoundary fallbackTitle="Night Audit Error" fallbackMessage="Please reload or contact support.">
@@ -237,7 +237,7 @@ const AppLayout: React.FC = () => {
       }
       case 'maintenance': {
         const role = normalizeRole(user?.role);
-        const allowed = ['maintenance','housekeeping','admin','manager','supervisor'].includes(role);
+        const allowed = ['maintenance', 'housekeeping', 'admin', 'manager', 'supervisor'].includes(role);
         return allowed
           ? (
             <ErrorBoundary fallbackTitle="Maintenance Module Error" fallbackMessage="Please reload or contact support.">
@@ -262,7 +262,7 @@ const AppLayout: React.FC = () => {
       }
       case 'accounting-tax': {
         const role = normalizeRole(user?.role);
-        const allowed = ['admin','manager','auditor','supervisor'].includes(role);
+        const allowed = ['admin', 'manager', 'auditor', 'supervisor'].includes(role);
         return allowed
           ? (
             <ErrorBoundary fallbackTitle="Tax Configuration Error" fallbackMessage="Please reload or contact support.">
@@ -276,14 +276,14 @@ const AppLayout: React.FC = () => {
           ? (
             <ErrorBoundary fallbackTitle="POS Module Error" fallbackMessage="Please reload or contact support.">
               <React.Suspense fallback={
-                 <div className="p-6">
-                   <div className="flex items-center justify-center">
-                     <LoadingSpinner label="Loading POS…" size="md" />
-                   </div>
-                 </div>
-               }>
-                 <POSFrontOfficeLazy />
-               </React.Suspense>
+                <div className="p-6">
+                  <div className="flex items-center justify-center">
+                    <LoadingSpinner label="Loading POS…" size="md" />
+                  </div>
+                </div>
+              }>
+                <POSFrontOfficeLazy />
+              </React.Suspense>
             </ErrorBoundary>
           )
           : renderAccessDenied('You do not have permission to access POS.', 'dashboard', 'Back to Dashboard')
@@ -408,27 +408,27 @@ const AppLayout: React.FC = () => {
   return (
     <HotkeysProvider>
       <ActiveModuleSync mod={activeModule} />
-      <div className="flex h-screen bg-gray-100">
+      <div className="flex flex-col md:flex-row h-screen bg-gray-100">
         <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} />
         <div className="flex-1 min-w-0 min-h-0 overflow-y-auto overflow-x-hidden" style={{ touchAction: 'pan-y' }}>
           {/* Dynamic Background Div - Changes color based on selected menu item */}
           <div className="p-4">
-          <DynamicBackgroundDiv
-            activeModule={activeModule}
-            settings={{
-              enableTransitions: true,
-              transitionDuration: 300,
-              validateAccessibility: true,
-              defaultColor: '#dddddd',
-              minContrastRatio: 7.0,
-              autoAdjustOptOutModules: []
-            }}
-            onClick={() => console.log(`Background for ${activeModule} module clicked`)}
-            onHover={(isHovering) => console.log(`Background hover state: ${isHovering}`)}
-            className="shadow-lg"
-          />
+            <DynamicBackgroundDiv
+              activeModule={activeModule}
+              settings={{
+                enableTransitions: true,
+                transitionDuration: 300,
+                validateAccessibility: true,
+                defaultColor: '#dddddd',
+                minContrastRatio: 7.0,
+                autoAdjustOptOutModules: []
+              }}
+              onClick={() => console.log(`Background for ${activeModule} module clicked`)}
+              onHover={(isHovering) => console.log(`Background hover state: ${isHovering}`)}
+              className="shadow-lg"
+            />
           </div>
-          
+
           {/* Module content */}
           {renderModule()}
         </div>

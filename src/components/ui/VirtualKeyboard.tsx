@@ -83,12 +83,20 @@ export const VirtualKeyboard: React.FC = () => {
     };
 
     useEffect(() => {
-        // Center horizontally on first show
+        // Center horizontally on first show and adjust for mobile
         if (typeof window !== 'undefined') {
-            const initialX = (window.innerWidth - size.width) / 2;
-            setPosition({ x: Math.max(0, initialX), y: 0 }); // y:0 means fixed at bottom initially, or use logic
+            const viewportWidth = window.innerWidth;
+            const isMobile = viewportWidth < 850;
+
+            const initialWidth = isMobile ? Math.min(viewportWidth * 0.95, 850) : 850;
+            const initialScale = initialWidth / 850;
+
+            setSize({ width: initialWidth, scale: initialScale });
+
+            const initialX = (viewportWidth - initialWidth) / 2;
+            setPosition({ x: Math.max(0, initialX), y: 0 });
         }
-    }, []);
+    }, [show]); // Run every time 'show' changes to true to reset position if needed, or leave [] to only run once
 
     useEffect(() => {
         const handleMouseMove = (e: MouseEvent) => {
@@ -100,7 +108,8 @@ export const VirtualKeyboard: React.FC = () => {
             }
             if (isResizing) {
                 const dw = e.clientX - resizeStart.x;
-                const newWidth = Math.max(400, Math.min(1200, resizeStart.width + dw));
+                const maxWidth = window.innerWidth * 0.98; // Prevent overflowing screen
+                const newWidth = Math.max(300, Math.min(maxWidth, 1200, resizeStart.width + dw));
                 // scale proportionally: 850px = scale 1
                 const newScale = newWidth / 850;
                 setSize({ width: newWidth, scale: newScale });
