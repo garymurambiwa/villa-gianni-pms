@@ -127,6 +127,12 @@ export const Users: React.FC = () => {
     const fetchUsers = async () => {
       try {
         const rows = await authListUsers();
+        // Check if rows is actually an array (handle unexpected API responses)
+        if (!Array.isArray(rows)) {
+          console.error("authListUsers returned non-array:", rows);
+          throw new Error("Invalid response from server");
+        }
+
         setUsers(rows.map(u => ({
           id: u.id,
           username: u.username,
@@ -137,8 +143,9 @@ export const Users: React.FC = () => {
           lastActivity: u.lastActivity,
           permissions: (u.permissions || []) as any,
         })));
-      } catch {
-        // Fallback to mock users if DB fails/offline
+      } catch (err) {
+        console.error("Failed to load users:", err);
+        // Fallback to mock users if DB fails/offline, but log it
         setUsers(mockUsers);
       } finally {
         setLoadingUsers(false);
@@ -176,8 +183,24 @@ export const Users: React.FC = () => {
         <NewUserForm
           users={users}
           onCreate={(u) => {
+            // Optimistic update
             setUsers(prev => [{ ...u }, ...prev]);
             setShowNewForm(false);
+            // Trigger actual refresh to ensure DB consistency
+            authListUsers().then(rows => {
+              if (Array.isArray(rows)) {
+                setUsers(rows.map(usr => ({
+                  id: usr.id,
+                  username: usr.username,
+                  name: usr.profile?.name || usr.name || usr.username,
+                  role: mapInternalRoleToStandard(usr.role as any),
+                  active: usr.active,
+                  lastLogin: usr.lastLogin || '—',
+                  lastActivity: usr.lastActivity,
+                  permissions: (usr.permissions || []) as any,
+                })));
+              }
+            }).catch(console.error);
           }}
           onCancel={() => setShowNewForm(false)}
         />

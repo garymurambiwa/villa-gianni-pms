@@ -152,81 +152,96 @@ export const VirtualKeyboard: React.FC = () => {
 
     // ... (keep usage of handleFocus in useEffect)
 
-    if (!show) return null;
-
     return (
-        <div
-            className="fixed z-[9999] bg-gray-100 shadow-2xl border border-gray-300 rounded-lg overflow-hidden flex flex-col"
-            style={{
-                left: position.x,
-                top: position.y || undefined,
-                bottom: position.y ? undefined : 0, // Fallback to bottom if y is 0 (or handle y properly)
-                width: size.width,
-                transformOrigin: 'bottom left',
-                // If using y, we set top/left. If y is 0 relative to something, careful.
-                // Better strategy: Initialize y to standard position
-            }}
-            onMouseDown={(e) => e.preventDefault()}
-        >
-            {/* Drag Handle Header */}
-            <div
-                className="bg-gray-200 border-b border-gray-300 p-2 flex justify-between items-center cursor-move select-none"
-                onMouseDown={startDrag}
+        <>
+            {/* Manual Toggle Button - Persistent at bottom left */}
+            <button
+                className="fixed bottom-4 left-4 z-[9990] bg-gray-800 text-white p-3 rounded-full shadow-lg hover:bg-gray-700 transition-all active:scale-95"
+                onClick={() => setShow(prev => !prev)}
+                title="Toggle Virtual Keyboard"
             >
-                <span className="text-xs font-bold text-gray-500 pl-2">Virtual Keyboard</span>
-                <div className="flex gap-2">
-                    <button onClick={() => setShow(false)} className="text-xs font-bold bg-gray-300 px-2 py-1 rounded hover:bg-gray-400">✕</button>
-                </div>
-            </div>
+                {/* Keyboard Icon */}
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="4" width="20" height="16" rx="2" />
+                    <path d="M6 8h.01" /><path d="M10 8h.01" /><path d="M14 8h.01" /><path d="M18 8h.01" />
+                    <path d="M6 12h.01" /><path d="M10 12h.01" /><path d="M14 12h.01" /><path d="M18 12h.01" />
+                    <path d="M7 16h10" />
+                </svg>
+            </button>
 
-            <div className="p-2 relative">
-                <Keyboard
-                    keyboardRef={(r) => (keyboardRef.current = r)}
-                    layoutName={layoutName}
-                    onChange={onChange}
-                    onKeyPress={onKeyPress}
-                    display={{
-                        '{bksp}': '⌫',
-                        '{enter}': '↵',
-                        '{shift}': '⇧',
-                        '{space}': 'Space',
-                        '{lock}': '⇪',
-                        '{tab}': '⇥',
-                        '{close}': '✕'
-                    }}
-                    layout={{
-                        default: [
-                            '` 1 2 3 4 5 6 7 8 9 0 - = {bksp}',
-                            '{tab} q w e r t y u i o p [ ] \\',
-                            '{lock} a s d f g h j k l ; \' {enter}',
-                            '{shift} z x c v b n m , . / {shift}',
-                            '.com @ {space} {close}'
-                        ],
-                        shift: [
-                            '~ ! @ # $ % ^ & * ( ) _ + {bksp}',
-                            '{tab} Q W E R T Y U I O P { } |',
-                            '{lock} A S D F G H J K L : " {enter}',
-                            '{shift} Z X C V B N M < > ? {shift}',
-                            '.com @ {space} {close}'
-                        ]
-                    }}
-                    theme={"hg-theme-default myTheme1"}
-                    buttonTheme={[
-                        {
-                            class: "hg-red",
-                            buttons: "{close}"
-                        }
-                    ]}
-                />
-
-                {/* Resize Handle */}
+            {show && (
                 <div
-                    className="absolute bottom-0 right-0 w-6 h-6 cursor-se-resize flex items-end justify-end p-1 select-none"
-                    onMouseDown={startResize}
+                    className="fixed z-[9999] bg-gray-100 shadow-2xl border border-gray-300 rounded-lg overflow-hidden flex flex-col"
+                    style={{
+                        left: position.x,
+                        top: position.y || undefined,
+                        bottom: position.y ? undefined : 0,
+                        width: size.width,
+                        transformOrigin: 'bottom left',
+                    }}
+                    onMouseDown={(e) => e.preventDefault()}
                 >
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="gray"><path d="M10 0L0 10V10H10V0Z" /></svg>
+                    {/* Drag Handle Header */}
+                    <div
+                        className="bg-gray-200 border-b border-gray-300 p-2 flex justify-between items-center cursor-move select-none"
+                        onMouseDown={startDrag}
+                    >
+                        <span className="text-xs font-bold text-gray-500 pl-2">Virtual Keyboard</span>
+                        <div className="flex gap-2">
+                            <button onClick={() => setShow(false)} className="text-xs font-bold bg-gray-300 px-2 py-1 rounded hover:bg-gray-400">✕</button>
+                        </div>
+                    </div>
+
+                    <div className="p-2 relative">
+                        <Keyboard
+                            keyboardRef={(r) => (keyboardRef.current = r)}
+                            layoutName={layoutName}
+                            onChange={onChange}
+                            onKeyPress={onKeyPress}
+                            display={{
+                                '{bksp}': '⌫',
+                                '{enter}': '↵',
+                                '{shift}': '⇧',
+                                '{space}': 'Space',
+                                '{lock}': '⇪',
+                                '{tab}': '⇥',
+                                '{close}': '✕'
+                            }}
+                            layout={{
+                                default: [
+                                    '` 1 2 3 4 5 6 7 8 9 0 - = {bksp}',
+                                    '{tab} q w e r t y u i o p [ ] \\',
+                                    '{lock} a s d f g h j k l ; \' {enter}',
+                                    '{shift} z x c v b n m , . / {shift}',
+                                    '.com @ {space} {close}'
+                                ],
+                                shift: [
+                                    '~ ! @ # $ % ^ & * ( ) _ + {bksp}',
+                                    '{tab} Q W E R T Y U I O P { } |',
+                                    '{lock} A S D F G H J K L : " {enter}',
+                                    '{shift} Z X C V B N M < > ? {shift}',
+                                    '.com @ {space} {close}'
+                                ]
+                            }}
+                            theme={"hg-theme-default myTheme1"}
+                            buttonTheme={[
+                                {
+                                    class: "hg-red",
+                                    buttons: "{close}"
+                                }
+                            ]}
+                        />
+
+                        {/* Resize Handle */}
+                        <div
+                            className="absolute bottom-0 right-0 w-6 h-6 cursor-se-resize flex items-end justify-end p-1 select-none"
+                            onMouseDown={startResize}
+                        >
+                            <svg width="10" height="10" viewBox="0 0 10 10" fill="gray"><path d="M10 0L0 10V10H10V0Z" /></svg>
+                        </div>
+                    </div>
                 </div>
-            </div>
-        </div>
+            )}
+        </>
     );
 };
