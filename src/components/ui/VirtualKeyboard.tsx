@@ -11,6 +11,77 @@ export const VirtualKeyboard: React.FC = () => {
     const [isResizing, setIsResizing] = useState(false);
     const [resizeStart, setResizeStart] = useState({ x: 0, width: 0 });
 
+    // Restoring missing state and refs
+    const [show, setShow] = useState(false);
+    const [layoutName, setLayoutName] = useState('default');
+    const [input, setInput] = useState('');
+    const activeInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+    const keyboardRef = useRef<any>(null);
+
+    useEffect(() => {
+        const handleFocus = (e: FocusEvent) => {
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+                const type = (target as HTMLInputElement).type;
+                if (type === 'file' || type === 'checkbox' || type === 'radio' || type === 'submit') return;
+
+                activeInputRef.current = target as HTMLInputElement | HTMLTextAreaElement;
+                setInput(activeInputRef.current.value);
+                if (keyboardRef.current) {
+                    keyboardRef.current.setInput(activeInputRef.current.value);
+                }
+                setShow(true);
+            }
+        };
+
+        const handleBlur = (e: FocusEvent) => {
+            setTimeout(() => {
+                if (activeInputRef.current && document.activeElement !== activeInputRef.current) {
+                    setShow(false);
+                    activeInputRef.current = null;
+                }
+            }, 100);
+        };
+
+        document.addEventListener('focusin', handleFocus);
+        return () => {
+            document.removeEventListener('focusin', handleFocus);
+        };
+    }, []);
+
+    const onChange = (input: string) => {
+        setInput(input);
+        if (activeInputRef.current) {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype,
+                'value'
+            )?.set;
+
+            if (nativeInputValueSetter) {
+                nativeInputValueSetter.call(activeInputRef.current, input);
+            } else {
+                activeInputRef.current.value = input;
+            }
+
+            const event = new Event('input', { bubbles: true });
+            activeInputRef.current.dispatchEvent(event);
+        }
+    };
+
+    const onKeyPress = (button: string) => {
+        if (button === '{shift}' || button === '{lock}') {
+            setLayoutName(layoutName === 'default' ? 'shift' : 'default');
+        }
+        if (button === '{enter}') {
+            setShow(false);
+            activeInputRef.current?.blur();
+        }
+        if (button === '{close}') {
+            setShow(false);
+            activeInputRef.current?.blur();
+        }
+    };
+
     useEffect(() => {
         // Center horizontally on first show
         if (typeof window !== 'undefined') {
