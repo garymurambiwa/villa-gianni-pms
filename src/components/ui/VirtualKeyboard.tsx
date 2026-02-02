@@ -30,7 +30,7 @@ export const VirtualKeyboard: React.FC = () => {
                 if (keyboardRef.current) {
                     keyboardRef.current.setInput(activeInputRef.current.value);
                 }
-                setShow(true);
+                // setShow(true); // Removed to prevent auto-popup
             }
         };
 
