@@ -64,7 +64,30 @@ const mapDbUser = (u: any): UserRecord => ({
   profile: { name: u.name || u.full_name },
 });
 
-// IPC Wrappers - NOW ASYNC
+// --- Mock Backend for Browser Environment ---
+const MOCK_STORAGE_KEY = 'corepms_mock_users';
+
+const getMockUsers = (): UserRecord[] => {
+  try {
+    const raw = localStorage.getItem(MOCK_STORAGE_KEY);
+    if (!raw) {
+      // Seed with some defaults if empty
+      const defaults: UserRecord[] = [
+        { id: '1', username: 'admin', email: 'admin@system.local', role: 'admin', name: 'System Administrator', active: true, permissions: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+        { id: '2', username: 'frontdesk', email: 'reception@hotel.com', role: 'frontdesk', name: 'Front Desk', active: true, permissions: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+      ];
+      localStorage.setItem(MOCK_STORAGE_KEY, JSON.stringify(defaults));
+      return defaults;
+    }
+    return JSON.parse(raw);
+  } catch { return []; }
+};
+
+const saveMockUsers = (users: UserRecord[]) => {
+  localStorage.setItem(MOCK_STORAGE_KEY, JSON.stringify(users));
+};
+
+// IPC Wrappers - NOW ASYNC with Mock Fallback
 export const listUsers = async (): Promise<UserRecord[]> => {
   if (typeof window !== 'undefined' && window.native?.auth?.listUsers) {
     try {
@@ -73,6 +96,10 @@ export const listUsers = async (): Promise<UserRecord[]> => {
         return res.users.map(mapDbUser);
       }
     } catch (e) { console.error('listUsers failed', e); }
+  } else {
+    // Browser fallback
+    console.warn('Running in browser mode: using mock users');
+    return new Promise(resolve => setTimeout(() => resolve(getMockUsers()), 300));
   }
   return [];
 };
@@ -88,8 +115,27 @@ export const register = async (payload: { username: string; email?: string; pass
       }
       return { ok: false, error: res.error || 'Registration failed' };
     } catch (e: any) { return { ok: false, error: e.message || String(e) }; }
+  } else {
+    // Browser fallback
+    const users = getMockUsers();
+    if (users.some(u => u.username === payload.username)) return { ok: false, error: 'Username already exists (mock)' };
+
+    const newUser: UserRecord = {
+      id: 'mock_' + Date.now(),
+      username: payload.username,
+      email: payload.email || '',
+      role: payload.role || 'frontdesk',
+      name: payload.name || payload.username,
+      active: true,
+      permissions: payload.permissions || [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastLogin: undefined
+    };
+    users.push(newUser);
+    saveMockUsers(users);
+    return new Promise(resolve => setTimeout(() => resolve({ ok: true, user: newUser }), 500));
   }
-  return { ok: false, error: 'Auth backend not available' };
 };
 
 export const login = async (usernameOrEmail: string, password: string): Promise<{ ok: boolean; error?: string; session?: Session; user?: UserRecord }> => {
@@ -98,34 +144,52 @@ export const login = async (usernameOrEmail: string, password: string): Promise<
       const res = await window.native.auth.login({ username: usernameOrEmail, password });
       if (res.ok && res.user) {
         const u = mapDbUser(res.user);
-        // Create local session for UI persistence
         const session = createSession(u);
         return { ok: true, session, user: u };
       }
       return { ok: false, error: res.error || 'Login failed' };
     } catch (e: any) { return { ok: false, error: e.message || String(e) }; }
+  } else {
+    // Browser fallback
+    const users = getMockUsers();
+    const u = users.find(x => x.username === usernameOrEmail || x.email === usernameOrEmail);
+    // For mock mode, accept any password or check simplified logic
+    if (u) {
+      const session = createSession(u);
+      return { ok: true, session, user: u };
+    }
+    return { ok: false, error: 'Invalid credentials (mock)' };
   }
-  return { ok: false, error: 'Auth backend not available' };
 };
 
 export const updateUser = async (userId: string, patch: any): Promise<{ ok: boolean; error?: string; user?: UserRecord }> => {
   if (window.native?.auth?.updateUser) {
     const res = await window.native.auth.updateUser(userId, patch);
-    // We ideally should return the updated user, but the handler only returns { ok: true }
-    // We can fetch it again or optimistically merge
-    if (res.ok) {
-      return { ok: true };
-    }
+    if (res.ok) return { ok: true };
     return res;
+  } else {
+    // Browser fallback
+    const users = getMockUsers();
+    const idx = users.findIndex(u => u.id === userId);
+    if (idx !== -1) {
+      users[idx] = { ...users[idx], ...patch, updatedAt: new Date().toISOString() };
+      saveMockUsers(users);
+      return { ok: true, user: users[idx] };
+    }
+    return { ok: false, error: 'User not found (mock)' };
   }
-  return { ok: false, error: 'Backend unavailable' };
 };
 
 export const deleteUser = async (userId: string): Promise<{ ok: boolean; error?: string }> => {
   if (window.native?.auth?.deleteUser) {
     return window.native.auth.deleteUser(userId);
+  } else {
+    // Browser fallback
+    const users = getMockUsers();
+    const filtered = users.filter(u => u.id !== userId);
+    saveMockUsers(filtered);
+    return { ok: true };
   }
-  return { ok: false, error: 'Backend unavailable' };
 };
 
 export const sendHeartbeat = async (userId: string): Promise<void> => {
