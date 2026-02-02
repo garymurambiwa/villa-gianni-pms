@@ -148,113 +148,91 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
   const availableModules = modules.filter(m => m.roles.map(r => r.toLowerCase()).includes(String(user?.role || '').toLowerCase()));
   const sections = ['Front Office', 'POS', 'Back Office'];
 
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
+
   return (
     <div className="w-full md:w-64 bg-gray-900 text-white flex flex-col md:h-screen transition-all duration-300">
-      <div className="p-6 border-b border-gray-700">
-        <BrandHeader />
-        <p className="text-sm text-gray-400 mt-1">{user?.name}</p>
-        <p className="text-xs text-gray-500">{(user?.role || '').toUpperCase()}</p>
+      <div className="p-6 border-b border-gray-700 flex justify-between items-center">
+        <div>
+          <BrandHeader />
+          <p className="text-sm text-gray-400 mt-1">{user?.name}</p>
+          <p className="text-xs text-gray-500">{(user?.role || '').toUpperCase()}</p>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="md:hidden text-gray-300 hover:text-white"
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        >
+          {isMobileMenuOpen ? '✕' : '☰'}
+        </Button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto min-h-0 py-4 max-h-[50vh] md:max-h-full">
-        {sections.map(section => (
-          <div key={section} className="mb-3">
-            <div className="px-6 py-2 text-xs uppercase tracking-wide text-gray-400">{section}</div>
-            {availableModules
-              .filter(m => m.section === section)
-              .map(module => (
-                <button
-                  key={module.id}
-                  onClick={() => setActiveModule(module.id)}
-                  className={`w-full px-6 py-3 flex items-center transition-colors ${activeModule === module.id
+      <div className={`${isMobileMenuOpen ? 'flex' : 'hidden'} md:flex flex-col flex-1 overflow-hidden min-h-0`}>
+        <nav className="flex-1 overflow-y-auto min-h-0 py-4 max-h-[50vh] md:max-h-full">
+          {sections.map(section => (
+            <div key={section} className="mb-3">
+              <div className="px-6 py-2 text-xs uppercase tracking-wide text-gray-400">{section}</div>
+              {availableModules
+                .filter(m => m.section === section)
+                .map(module => (
+                  <button
+                    key={module.id}
+                    onClick={() => {
+                      setActiveModule(module.id);
+                      setIsMobileMenuOpen(false); // Auto-close on selection
+                    }}
+                    className={`w-full px-6 py-3 flex items-center transition-colors ${activeModule === module.id
                       ? 'bg-blue-600 text-white'
                       : 'text-gray-300 hover:bg-gray-800'
-                    }`}
-                >
-                  <span className="text-xl mr-3">{module.icon}</span>
-                  <span className="font-medium flex-1 text-left">{module.name}</span>
-                  {module.id === 'pos-settings' && canManagePOS(user?.role) && (
-                    <>
-                      <span className="ml-2">🔒</span>
-                      <span className="ml-2 text-[10px] uppercase tracking-wide bg-red-600 text-white px-2 py-1 rounded">Admin/Supervisor</span>
-                    </>
-                  )}
-                </button>
-              ))}
-          </div>
-        ))}
-      </nav>
+                      }`}
+                  >
+                    <span className="text-xl mr-3">{module.icon}</span>
+                    <span className="font-medium flex-1 text-left">{module.name}</span>
+                    {module.id === 'pos-settings' && canManagePOS(user?.role) && (
+                      <>
+                        <span className="ml-2">🔒</span>
+                        <span className="ml-2 text-[10px] uppercase tracking-wide bg-red-600 text-white px-2 py-1 rounded">Admin/Supervisor</span>
+                      </>
+                    )}
+                  </button>
+                ))}
+            </div>
+          ))}
+        </nav>
 
-      <div className="p-4 border-t border-gray-700">
-        <div className="flex items-center gap-2">
-          <Button
-            onClick={logout}
-            variant="destructive"
-            size="sm"
-            className="flex-1"
-            aria-label="Logout"
-          >
-            Logout
-          </Button>
+        <div className="p-4 border-t border-gray-700">
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={logout}
+              variant="destructive"
+              size="sm"
+              className="flex-1"
+              aria-label="Logout"
+            >
+              Logout
+            </Button>
 
-          <Button
-            onClick={async () => {
-              console.log('[ModeButton] Clicked! Current fullscreen state:', isFullscreen);
+            <Button
+              onClick={async () => {
+                console.log('[ModeButton] Clicked! Current fullscreen state:', isFullscreen);
 
-              setIsFsTransitioning(true);
-              const native = (window as any).native?.window;
+                setIsFsTransitioning(true);
+                const native = (window as any).native?.window;
 
-              try {
-                // First try native Electron API
-                if (native?.toggleFullscreen) {
-                  console.log('[ModeButton] Using native toggleFullscreen');
-                  await native.toggleFullscreen();
-                } else {
-                  // Fallback to browser Fullscreen API
-                  console.log('[ModeButton] Using browser Fullscreen API');
-                  const elem: any = document.documentElement;
-                  const inFs = !!(document.fullscreenElement || (document as any).webkitFullscreenElement || (document as any).msFullscreenElement);
-
-                  if (!inFs) {
-                    console.log('[ModeButton] Entering fullscreen');
-                    if (elem.requestFullscreen) {
-                      await elem.requestFullscreen();
-                    } else if (elem.webkitRequestFullscreen) {
-                      await elem.webkitRequestFullscreen();
-                    } else if (elem.msRequestFullscreen) {
-                      await elem.msRequestFullscreen();
-                    }
+                try {
+                  // First try native Electron API
+                  if (native?.toggleFullscreen) {
+                    console.log('[ModeButton] Using native toggleFullscreen');
+                    await native.toggleFullscreen();
                   } else {
-                    console.log('[ModeButton] Exiting fullscreen');
-                    if (document.exitFullscreen) {
-                      await document.exitFullscreen();
-                    } else if ((document as any).webkitExitFullscreen) {
-                      await (document as any).webkitExitFullscreen();
-                    } else if ((document as any).msExitFullscreen) {
-                      await (document as any).msExitFullscreen();
-                    }
-                  }
-                }
-
-                // Small delay to allow state to update
-                setTimeout(() => {
-                  setIsFsTransitioning(false);
-                }, 300);
-
-              } catch (error) {
-                console.error('[ModeButton] Fullscreen toggle failed:', error);
-
-                // Check if the error is related to missing native handler
-                if (error instanceof Error && error.message.includes('No handler registered')) {
-                  console.log('[ModeButton] Native API not available, using browser API directly');
-
-                  // Directly use browser API as fallback
-                  try {
+                    // Fallback to browser Fullscreen API
+                    console.log('[ModeButton] Using browser Fullscreen API');
                     const elem: any = document.documentElement;
                     const inFs = !!(document.fullscreenElement || (document as any).webkitFullscreenElement || (document as any).msFullscreenElement);
 
                     if (!inFs) {
-                      console.log('[ModeButton] Attempting to enter fullscreen via browser API');
+                      console.log('[ModeButton] Entering fullscreen');
                       if (elem.requestFullscreen) {
                         await elem.requestFullscreen();
                       } else if (elem.webkitRequestFullscreen) {
@@ -263,7 +241,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
                         await elem.msRequestFullscreen();
                       }
                     } else {
-                      console.log('[ModeButton] Attempting to exit fullscreen via browser API');
+                      console.log('[ModeButton] Exiting fullscreen');
                       if (document.exitFullscreen) {
                         await document.exitFullscreen();
                       } else if ((document as any).webkitExitFullscreen) {
@@ -272,49 +250,88 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
                         await (document as any).msExitFullscreen();
                       }
                     }
-                  } catch (browserError) {
-                    console.error('[ModeButton] Browser API also failed:', browserError);
                   }
+
+                  // Small delay to allow state to update
+                  setTimeout(() => {
+                    setIsFsTransitioning(false);
+                  }, 300);
+
+                } catch (error) {
+                  console.error('[ModeButton] Fullscreen toggle failed:', error);
+
+                  // Check if the error is related to missing native handler
+                  if (error instanceof Error && error.message.includes('No handler registered')) {
+                    console.log('[ModeButton] Native API not available, using browser API directly');
+
+                    // Directly use browser API as fallback
+                    try {
+                      const elem: any = document.documentElement;
+                      const inFs = !!(document.fullscreenElement || (document as any).webkitFullscreenElement || (document as any).msFullscreenElement);
+
+                      if (!inFs) {
+                        console.log('[ModeButton] Attempting to enter fullscreen via browser API');
+                        if (elem.requestFullscreen) {
+                          await elem.requestFullscreen();
+                        } else if (elem.webkitRequestFullscreen) {
+                          await elem.webkitRequestFullscreen();
+                        } else if (elem.msRequestFullscreen) {
+                          await elem.msRequestFullscreen();
+                        }
+                      } else {
+                        console.log('[ModeButton] Attempting to exit fullscreen via browser API');
+                        if (document.exitFullscreen) {
+                          await document.exitFullscreen();
+                        } else if ((document as any).webkitExitFullscreen) {
+                          await (document as any).webkitExitFullscreen();
+                        } else if ((document as any).msExitFullscreen) {
+                          await (document as any).msExitFullscreen();
+                        }
+                      }
+                    } catch (browserError) {
+                      console.error('[ModeButton] Browser API also failed:', browserError);
+                    }
+                  }
+
+                  // In all cases, update the state based on actual document state after a brief moment
+                  setTimeout(() => {
+                    const actualFullscreen = !!(document.fullscreenElement ||
+                      (document as any).webkitFullscreenElement ||
+                      (document as any).msFullscreenElement);
+                    setIsFullscreen(actualFullscreen);
+                    setIsFsTransitioning(false);
+                  }, 100);
                 }
+              }}
+              variant={isFullscreen ? 'secondary' : 'default'}
+              size="sm"
+              className={`min-w-[4.75rem] ${isFsTransitioning ? 'animate-pulse' : ''}`}
+              title="Toggle Display Mode (F11)"
+              aria-label="Toggle Display Mode"
+              aria-busy={isFsTransitioning}
+              disabled={isFsTransitioning}
+            >
+              {isFullscreen ? 'Window' : 'Full'}
+            </Button>
 
-                // In all cases, update the state based on actual document state after a brief moment
-                setTimeout(() => {
-                  const actualFullscreen = !!(document.fullscreenElement ||
-                    (document as any).webkitFullscreenElement ||
-                    (document as any).msFullscreenElement);
-                  setIsFullscreen(actualFullscreen);
-                  setIsFsTransitioning(false);
-                }, 100);
-              }
-            }}
-            variant={isFullscreen ? 'secondary' : 'default'}
-            size="sm"
-            className={`min-w-[4.75rem] ${isFsTransitioning ? 'animate-pulse' : ''}`}
-            title="Toggle Display Mode (F11)"
-            aria-label="Toggle Display Mode"
-            aria-busy={isFsTransitioning}
-            disabled={isFsTransitioning}
-          >
-            {isFullscreen ? 'Window' : 'Full'}
-          </Button>
-
-          <Button
-            onClick={() => setHotkeysOpen(true)}
-            variant="secondary"
-            size="sm"
-            className="min-w-[4.75rem]"
-            title="Open Hotkeys"
-            aria-label="Open Hotkeys"
-          >
-            ⚡ Hotkeys
-          </Button>
+            <Button
+              onClick={() => setHotkeysOpen(true)}
+              variant="secondary"
+              size="sm"
+              className="min-w-[4.75rem]"
+              title="Open Hotkeys"
+              aria-label="Open Hotkeys"
+            >
+              ⚡ Hotkeys
+            </Button>
+          </div>
+          <div className="mt-3 flex justify-center">
+            <VersionDisplay className="text-gray-600" />
+          </div>
         </div>
-        <div className="mt-3 flex justify-center">
-          <VersionDisplay className="text-gray-600" />
-        </div>
+        <HotkeysSettings open={hotkeysOpen} onOpenChange={setHotkeysOpen} />
+        {/* Journal Posting Modal removed; lives in Accounting module */}
       </div>
-      <HotkeysSettings open={hotkeysOpen} onOpenChange={setHotkeysOpen} />
-      {/* Journal Posting Modal removed; lives in Accounting module */}
     </div>
   );
 };
