@@ -13,6 +13,7 @@ import VerifyEmail from "./pages/VerifyEmail";
 import ApprovalLink from "./pages/ApprovalLink";
 import NotFound from "./pages/NotFound";
 import { AppProvider } from "@/contexts/AppContext";
+import { useAuth } from "@/context/AuthContext";
 import ModuleAlias from "./pages/ModuleAlias";
 import PasswordChangePage from "./pages/PasswordChange";
 import { useEffect } from "react";
@@ -85,6 +86,27 @@ const SetupCheck = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+const Heartbeat = () => {
+  const { user } = useAuth();
+  useEffect(() => {
+    if (!user) return;
+
+    const beat = async () => {
+      if (typeof window !== 'undefined' && window.native?.auth?.heartbeat) {
+        try { await window.native.auth.heartbeat(user.id); } catch { }
+      }
+    };
+
+    // Initial beat
+    beat();
+
+    // Loop every 60s
+    const interval = setInterval(beat, 60000);
+    return () => clearInterval(interval);
+  }, [user]);
+  return null;
+};
+
 const App = () => (
   <ThemeProvider defaultTheme="light">
     <QueryClientProvider client={queryClient}>
@@ -96,6 +118,7 @@ const App = () => (
             <SetupCheck>
               <RouterProvider router={router} future={{ v7_startTransition: true }} />
               <UpdateStatusBinder />
+              <Heartbeat />
               <div
                 className="fixed bottom-3 right-3 z-50"
                 role="contentinfo"

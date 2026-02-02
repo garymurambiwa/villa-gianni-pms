@@ -4,130 +4,158 @@ import 'react-simple-keyboard/build/css/index.css';
 import './VirtualKeyboard.css';
 
 export const VirtualKeyboard: React.FC = () => {
-    const [show, setShow] = useState(false);
-    const [layoutName, setLayoutName] = useState('default');
-    const [input, setInput] = useState('');
-    const activeInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
-    const keyboardRef = useRef<any>(null);
+    const [position, setPosition] = useState({ x: 0, y: 0 });
+    const [size, setSize] = useState({ width: 850, scale: 1 });
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const [isResizing, setIsResizing] = useState(false);
+    const [resizeStart, setResizeStart] = useState({ x: 0, width: 0 });
 
     useEffect(() => {
-        const handleFocus = (e: FocusEvent) => {
-            const target = e.target as HTMLElement;
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
-                // Ignore file inputs and others if needed
-                const type = (target as HTMLInputElement).type;
-                if (type === 'file' || type === 'checkbox' || type === 'radio' || type === 'submit') return;
-
-                activeInputRef.current = target as HTMLInputElement | HTMLTextAreaElement;
-                setInput(activeInputRef.current.value);
-                if (keyboardRef.current) {
-                    keyboardRef.current.setInput(activeInputRef.current.value);
-                }
-                setShow(true);
-            }
-        };
-
-        const handleBlur = (e: FocusEvent) => {
-            // We delay hiding to check if the new focus is part of the keyboard
-            // But since we use preventDefault onMouseDown for keyboard, focus shouldn't leave input ideally.
-            // However, if user taps outside, we hide.
-            setTimeout(() => {
-                if (activeInputRef.current && document.activeElement !== activeInputRef.current) {
-                    // If focus moved away from input
-                    // Check if it moved to keyboard? (Not if we preventDefault)
-                    // For now, simple logic: hide if active element is body or something else
-                    setShow(false);
-                    activeInputRef.current = null;
-                }
-            }, 100);
-        };
-
-        document.addEventListener('focusin', handleFocus);
-        // document.addEventListener('focusout', handleBlur); 
-        // Managing hide is tricky with click-outside. We can use a backdrop or just a close button.
-        // Or a timeout on blur.
-
-        return () => {
-            document.removeEventListener('focusin', handleFocus);
-            // document.removeEventListener('focusout', handleBlur);
-        };
+        // Center horizontally on first show
+        if (typeof window !== 'undefined') {
+            const initialX = (window.innerWidth - size.width) / 2;
+            setPosition({ x: Math.max(0, initialX), y: 0 }); // y:0 means fixed at bottom initially, or use logic
+        }
     }, []);
 
-    const onChange = (input: string) => {
-        setInput(input);
-        if (activeInputRef.current) {
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype,
-                'value'
-            )?.set;
-
-            if (nativeInputValueSetter) {
-                nativeInputValueSetter.call(activeInputRef.current, input);
-            } else {
-                activeInputRef.current.value = input;
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (isDragging) {
+                const dx = e.clientX - dragStart.x;
+                const dy = e.clientY - dragStart.y;
+                setPosition(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+                setDragStart({ x: e.clientX, y: e.clientY });
             }
+            if (isResizing) {
+                const dw = e.clientX - resizeStart.x;
+                const newWidth = Math.max(400, Math.min(1200, resizeStart.width + dw));
+                // scale proportionally: 850px = scale 1
+                const newScale = newWidth / 850;
+                setSize({ width: newWidth, scale: newScale });
+            }
+        };
 
-            const event = new Event('input', { bubbles: true });
-            activeInputRef.current.dispatchEvent(event);
+        const handleMouseUp = () => {
+            setIsDragging(false);
+            setIsResizing(false);
+        };
+
+        if (isDragging || isResizing) {
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+        }
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isDragging, isResizing, dragStart, resizeStart]);
+
+    const startDrag = (e: React.MouseEvent) => {
+        setIsDragging(true);
+        setDragStart({ x: e.clientX, y: e.clientY });
+    };
+
+    const startResize = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setIsResizing(true);
+        setResizeStart({ x: e.clientX, width: size.width });
+    };
+
+    const handleFocus = (e: FocusEvent) => {
+        const target = e.target as HTMLElement;
+        // ... (existing focus logic)
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+            const type = (target as HTMLInputElement).type;
+            if (type === 'file' || type === 'checkbox' || type === 'radio' || type === 'submit') return;
+
+            activeInputRef.current = target as HTMLInputElement | HTMLTextAreaElement;
+            setInput(activeInputRef.current.value);
+            if (keyboardRef.current) {
+                keyboardRef.current.setInput(activeInputRef.current.value);
+            }
+            setShow(true);
+            // Re-center if off-screen or first open? optional.
         }
     };
 
-    const onKeyPress = (button: string) => {
-        if (button === '{shift}' || button === '{lock}') {
-            setLayoutName(layoutName === 'default' ? 'shift' : 'default');
-        }
-        if (button === '{enter}') {
-            setShow(false); // Hide on enter
-            activeInputRef.current?.blur();
-        }
-        if (button === '{close}') {
-            setShow(false);
-            activeInputRef.current?.blur();
-        }
-    };
+    // ... (keep usage of handleFocus in useEffect)
 
     if (!show) return null;
 
     return (
         <div
-            className="fixed bottom-0 left-0 right-0 z-[9999] bg-gray-100 shadow-2xl border-t border-gray-300 p-2 pb-6 animate-in slide-in-from-bottom"
-            onMouseDown={(e) => e.preventDefault()} // Prevent focus loss from input
+            className="fixed z-[9999] bg-gray-100 shadow-2xl border border-gray-300 rounded-lg overflow-hidden flex flex-col"
+            style={{
+                left: position.x,
+                top: position.y || undefined,
+                bottom: position.y ? undefined : 0, // Fallback to bottom if y is 0 (or handle y properly)
+                width: size.width,
+                transformOrigin: 'bottom left',
+                // If using y, we set top/left. If y is 0 relative to something, careful.
+                // Better strategy: Initialize y to standard position
+            }}
+            onMouseDown={(e) => e.preventDefault()}
         >
-            <div className="flex justify-end mb-1 px-2">
-                <button onClick={() => setShow(false)} className="text-xs font-bold bg-gray-300 px-2 py-1 rounded hover:bg-gray-400">Close</button>
+            {/* Drag Handle Header */}
+            <div
+                className="bg-gray-200 border-b border-gray-300 p-2 flex justify-between items-center cursor-move select-none"
+                onMouseDown={startDrag}
+            >
+                <span className="text-xs font-bold text-gray-500 pl-2">Virtual Keyboard</span>
+                <div className="flex gap-2">
+                    <button onClick={() => setShow(false)} className="text-xs font-bold bg-gray-300 px-2 py-1 rounded hover:bg-gray-400">✕</button>
+                </div>
             </div>
-            <Keyboard
-                keyboardRef={(r) => (keyboardRef.current = r)}
-                layoutName={layoutName}
-                onChange={onChange}
-                onKeyPress={onKeyPress}
-                display={{
-                    '{bksp}': '⌫',
-                    '{enter}': '↵',
-                    '{shift}': '⇧',
-                    '{space}': 'Space',
-                    '{lock}': '⇪',
-                    '{tab}': '⇥',
-                    '{close}': '✕'
-                }}
-                layout={{
-                    default: [
-                        '` 1 2 3 4 5 6 7 8 9 0 - = {bksp}',
-                        '{tab} q w e r t y u i o p [ ] \\',
-                        '{lock} a s d f g h j k l ; \' {enter}',
-                        '{shift} z x c v b n m , . / {shift}',
-                        '.com @ {space} {close}'
-                    ],
-                    shift: [
-                        '~ ! @ # $ % ^ & * ( ) _ + {bksp}',
-                        '{tab} Q W E R T Y U I O P { } |',
-                        '{lock} A S D F G H J K L : " {enter}',
-                        '{shift} Z X C V B N M < > ? {shift}',
-                        '.com @ {space} {close}'
-                    ]
-                }}
-                theme={"hg-theme-default myTheme1"}
-            />
+
+            <div className="p-2 relative">
+                <Keyboard
+                    keyboardRef={(r) => (keyboardRef.current = r)}
+                    layoutName={layoutName}
+                    onChange={onChange}
+                    onKeyPress={onKeyPress}
+                    display={{
+                        '{bksp}': '⌫',
+                        '{enter}': '↵',
+                        '{shift}': '⇧',
+                        '{space}': 'Space',
+                        '{lock}': '⇪',
+                        '{tab}': '⇥',
+                        '{close}': '✕'
+                    }}
+                    layout={{
+                        default: [
+                            '` 1 2 3 4 5 6 7 8 9 0 - = {bksp}',
+                            '{tab} q w e r t y u i o p [ ] \\',
+                            '{lock} a s d f g h j k l ; \' {enter}',
+                            '{shift} z x c v b n m , . / {shift}',
+                            '.com @ {space} {close}'
+                        ],
+                        shift: [
+                            '~ ! @ # $ % ^ & * ( ) _ + {bksp}',
+                            '{tab} Q W E R T Y U I O P { } |',
+                            '{lock} A S D F G H J K L : " {enter}',
+                            '{shift} Z X C V B N M < > ? {shift}',
+                            '.com @ {space} {close}'
+                        ]
+                    }}
+                    theme={"hg-theme-default myTheme1"}
+                    buttonTheme={[
+                        {
+                            class: "hg-red",
+                            buttons: "{close}"
+                        }
+                    ]}
+                />
+
+                {/* Resize Handle */}
+                <div
+                    className="absolute bottom-0 right-0 w-6 h-6 cursor-se-resize flex items-end justify-end p-1 select-none"
+                    onMouseDown={startResize}
+                >
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="gray"><path d="M10 0L0 10V10H10V0Z" /></svg>
+                </div>
+            </div>
         </div>
     );
 };

@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('native', {
     login: (payload) => ipcRenderer.invoke('auth:login', payload),
     updateUser: (id, patch) => ipcRenderer.invoke('auth:updateUser', { id, patch }),
     deleteUser: (id) => ipcRenderer.invoke('auth:deleteUser', { id }),
+    heartbeat: (userId) => ipcRenderer.invoke('auth:heartbeat', { userId }),
   },
   update: {
     check: (config) => ipcRenderer.invoke('update:check', config),

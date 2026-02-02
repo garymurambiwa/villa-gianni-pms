@@ -107,6 +107,7 @@ interface SystemUser {
   role: string;
   active: boolean;
   lastLogin: string;
+  lastActivity?: string;
   permissions: RightsKey[];
 }
 
@@ -123,7 +124,7 @@ export const Users: React.FC = () => {
   const [loadingUsers, setLoadingUsers] = useState(true);
 
   useEffect(() => {
-    (async () => {
+    const fetchUsers = async () => {
       try {
         const rows = await authListUsers();
         setUsers(rows.map(u => ({
@@ -133,6 +134,7 @@ export const Users: React.FC = () => {
           role: mapInternalRoleToStandard(u.role as any),
           active: u.active,
           lastLogin: u.lastLogin || '—',
+          lastActivity: u.lastActivity,
           permissions: (u.permissions || []) as any,
         })));
       } catch {
@@ -141,7 +143,14 @@ export const Users: React.FC = () => {
       } finally {
         setLoadingUsers(false);
       }
-    })();
+    };
+
+    // Initial fetch
+    fetchUsers();
+
+    // Poll for status updates every 30s
+    const interval = setInterval(fetchUsers, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const [showNewForm, setShowNewForm] = useState(false);
@@ -201,15 +210,25 @@ export const Users: React.FC = () => {
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-600">{user.lastLogin}</td>
                 <td className="px-6 py-4 text-center">
-                  {user.active ? (
-                    <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
-                      Active
-                    </span>
-                  ) : (
-                    <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-xs font-semibold">
-                      Inactive
-                    </span>
-                  )}
+                  {(() => {
+                    const isOnline = user.active && user.lastActivity && (new Date().getTime() - new Date(user.lastActivity).getTime() < 5 * 60 * 1000);
+                    if (isOnline) {
+                      return (
+                        <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold animate-pulse">
+                          Online
+                        </span>
+                      );
+                    }
+                    return user.active ? (
+                      <span className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-semibold">
+                        Offline
+                      </span>
+                    ) : (
+                      <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-xs font-semibold">
+                        Inactive
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td className="px-6 py-4 text-center">
                   <div className="flex justify-center gap-2">

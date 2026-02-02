@@ -10,6 +10,7 @@ declare global {
         login: (p: any) => Promise<{ ok: boolean; user?: any; error?: string }>;
         updateUser: (id: string, p: any) => Promise<{ ok: boolean; error?: string }>;
         deleteUser: (id: string) => Promise<{ ok: boolean; error?: string }>;
+        heartbeat: (userId: string) => Promise<{ ok: boolean }>;
       };
     };
   }
@@ -28,6 +29,7 @@ export interface UserRecord {
   createdAt: string;
   updatedAt: string;
   lastLogin?: string;
+  lastActivity?: string;
   profile?: { name?: string; phone?: string };
   // Legacy fields kept for compatibility but not used for auth check
   password?: any;
@@ -58,6 +60,7 @@ const mapDbUser = (u: any): UserRecord => ({
   createdAt: u.created_at || new Date().toISOString(),
   updatedAt: u.updated_at || u.created_at || new Date().toISOString(),
   lastLogin: u.last_login,
+  lastActivity: u.last_activity,
   profile: { name: u.name || u.full_name },
 });
 
@@ -123,6 +126,12 @@ export const deleteUser = async (userId: string): Promise<{ ok: boolean; error?:
     return window.native.auth.deleteUser(userId);
   }
   return { ok: false, error: 'Backend unavailable' };
+};
+
+export const sendHeartbeat = async (userId: string): Promise<void> => {
+  if (window.native?.auth?.heartbeat && userId) {
+    await window.native.auth.heartbeat(userId).catch(() => { });
+  }
 };
 
 // --- Session Management (Local Storage) ---

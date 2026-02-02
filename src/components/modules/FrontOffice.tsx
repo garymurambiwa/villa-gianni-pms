@@ -1291,7 +1291,8 @@ export const FrontOffice: React.FC = () => {
       </Dialog>
 
       <Dialog open={checkInDialogOpen} onOpenChange={setCheckInDialogOpen}>
-        <DialogContent className="sm:max-w-[500px] max-h-[85vh] flex flex-col p-0 gap-0">
+        {/* Adjusted max-h to 75vh to ensure it fits on smaller screens with virtual keyboards */}
+        <DialogContent className="sm:max-w-[500px] max-h-[75vh] flex flex-col p-0 gap-0">
           <DialogHeader className="p-6 pb-2">
             <DialogTitle>Check In Guest</DialogTitle>
             <DialogDescription>

@@ -360,11 +360,23 @@ ipcMain.handle('auth:listUsers', async () => {
   const pool = await getPgPool(connString);
   try {
     const res = await pool.query(`
-       SELECT id, username, email, name, role, active, permissions, last_login, created_at, updated_at
+       SELECT id, username, email, name, role, active, permissions, last_login, last_activity, created_at, updated_at
        FROM public.app_users 
        ORDER BY username ASC
      `);
     return { ok: true, users: res.rows };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('auth:heartbeat', async (_event, { userId }) => {
+  const connString = getStoredConnectionString();
+  if (!connString || !pg) return { ok: false, error: 'Database unavailable' };
+  const pool = await getPgPool(connString);
+  try {
+    await pool.query('UPDATE public.app_users SET last_activity = NOW() WHERE id = $1', [userId]);
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -663,6 +675,7 @@ async function bootstrapSchemas() {
     try { await client.query(`ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS price numeric(12,2) NOT NULL DEFAULT 0`) } catch { }
     try { await client.query(`ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS inserted_at timestamptz NOT NULL DEFAULT NOW()`) } catch { }
     try { await client.query(`ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS menu_item_id VARCHAR(255)`) } catch { }
+    try { await client.query(`ALTER TABLE public.app_users ADD COLUMN IF NOT EXISTS last_activity TIMESTAMPTZ`) } catch { }
 
     await client.end();
     console.log('[Electron] Database schema bootstrap complete');
