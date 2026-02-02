@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { listUsers as authListUsers, register as authRegister, updateUser as authUpdateUser, deleteUser as authDeleteUser, mapStandardRoleToInternal, mapInternalRoleToStandard, validatePasswordStrength } from '@/lib/authService';
 
 // Standardized roles and granular rights model
