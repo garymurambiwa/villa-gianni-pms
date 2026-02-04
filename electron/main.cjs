@@ -24,6 +24,13 @@ async function getPgPool(config) {
   if (pgPool) return pgPool;
   if (!pg) throw new Error('Postgres driver missing - please run npm install pg');
   const base = typeof config === 'string' ? { connectionString: config } : (config || {});
+
+  // Auto-enable SSL for remote connections (Supabase/Neon/etc)
+  const isRemote = base.connectionString && !base.connectionString.includes('@localhost') && !base.connectionString.includes('@127.0.0.1');
+  if (isRemote) {
+    base.ssl = { rejectUnauthorized: false };
+  }
+
   pgPool = new pg.Pool({
     ...base,
     connectionTimeoutMillis: 90000,
