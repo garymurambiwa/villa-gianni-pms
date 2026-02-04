@@ -137,14 +137,14 @@ function getStoredData() {
 
 // Helper to get connection string from bundled DB, local storage, or environment
 function getStoredConnectionString() {
-  // Priority 1: Bundled PostgreSQL (if initialized)
+  // Priority 1: User-configured connection (allows overriding local DB)
+  const data = getStoredData();
+  if (data.connectionString) return data.connectionString;
+
+  // Priority 2: Bundled PostgreSQL (if initialized)
   if (bundledDbConfig && bundledDbConfig.connectionString) {
     return bundledDbConfig.connectionString;
   }
-
-  // Priority 2: User-configured connection
-  const data = getStoredData();
-  if (data.connectionString) return data.connectionString;
 
   // Priority 3: Environment variable if configured
   if (process.env.DATABASE_URL) {

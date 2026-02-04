@@ -16,7 +16,7 @@ const K_BRAND = 'corepms_brand_settings';
 const readJSON = <T,>(key: string, fallback: T): T => {
   try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; }
 };
-const writeJSON = (key: string, value: any) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+const writeJSON = (key: string, value: any) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { } };
 
 const DEFAULT: BrandSettings = {
   name: 'COREPMS',
@@ -47,7 +47,7 @@ const fileToDataUrl = (file: File): Promise<string | null> => {
     const type = file.type;
     const maxSize = 2 * 1024 * 1024;
     if (file.size > maxSize) return resolve(null);
-    if (!['image/png','image/jpeg','image/jpg','image/svg+xml'].includes(type)) return resolve(null);
+    if (!['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml'].includes(type)) return resolve(null);
     if (type === 'image/svg+xml') {
       const svgData = await sanitizeSvg(file);
       return resolve(svgData);
@@ -65,7 +65,7 @@ const BrandHeader: React.FC = () => {
   // Listen for updates from FO Settings to keep header in sync
   React.useEffect(() => {
     const onUpdated = () => {
-      try { setSettings(readJSON<BrandSettings>(K_BRAND, DEFAULT)); } catch {}
+      try { setSettings(readJSON<BrandSettings>(K_BRAND, DEFAULT)); } catch { }
     };
     window.addEventListener('brand:updated', onUpdated as any);
     return () => window.removeEventListener('brand:updated', onUpdated as any);
@@ -74,7 +74,7 @@ const BrandHeader: React.FC = () => {
   const fontSize = `${settings.sizePx}px`;
   const responsiveSizeClass = 'text-2xl md:text-3xl';
 
-  const defaultLogo = `${import.meta.env.BASE_URL || '/'}codigita-logo.svg`;
+  const defaultLogo = `${import.meta.env.BASE_URL || '/'}logo.jpg`;
   const logoSrc = settings.logoDataUrl || defaultLogo;
   const isSvg = String(logoSrc).startsWith('data:image/svg') || String(logoSrc).endsWith('.svg');
 
