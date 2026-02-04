@@ -570,13 +570,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const orderId = `POS${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       // PostgreSQL uses ON CONFLICT instead of ON DUPLICATE KEY UPDATE
       // First try to update existing order, if not found, insert new one
-      const updateSql = "UPDATE pos_orders SET items = ?, total_amount = ?, status = ? WHERE table_number = ? AND status = 'open' RETURNING id";
+      const updateSql = "UPDATE pos_orders SET items = ?::jsonb, total_amount = ?, status = ? WHERE table_number = ? AND status = 'open' RETURNING id";
       const updateParams = [JSON.stringify(provisional.items), provisional.total_amount, 'open', provisional.table_number];
       const updateResult = await db.query(updateSql, updateParams);
 
       // If no rows updated, insert new order
       if (!('error' in updateResult) && 'rows' in updateResult && updateResult.rows.length === 0) {
-        const insertSql = "INSERT INTO pos_orders (id, table_number, items, total_amount, status) VALUES (?, ?, ?, ?, 'open')";
+        const insertSql = "INSERT INTO pos_orders (id, table_number, items, total_amount, status) VALUES (?, ?, ?::jsonb, ?, 'open')";
         const insertParams = [orderId, provisional.table_number, JSON.stringify(provisional.items), provisional.total_amount];
         const insertResult = await db.query(insertSql, insertParams);
         if ('error' in insertResult) {
