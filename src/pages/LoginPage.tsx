@@ -46,11 +46,6 @@ const LoginPage: React.FC = () => {
   return (
     <div className="p-6">
       <Login />
-      <div className="mt-6">
-        <ErrorBoundary fallbackTitle="Auth Error" fallbackMessage="Authentication portal failed.">
-          <AuthPortal />
-        </ErrorBoundary>
-      </div>
     </div>
   );
 };

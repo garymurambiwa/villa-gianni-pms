@@ -87,22 +87,14 @@ const BrandHeader: React.FC = () => {
               <source srcSet={logoSrc} type="image/svg+xml" />
             )}
             <img
-              src={logoSrc}
-              alt="CODIGITA logo"
-              className="w-[100px] sm:w-[120px] md:w-[150px] h-auto object-contain"
-              // Provide retina hints for PNG/JPG if used
-              srcSet={`${logoSrc} 1x`}
+              src={logoSrc.includes('logo.jpg') ? '/logo.png' : logoSrc} /* Prefer new PNG if default */
+              alt="Villa Gianni"
+              className="w-[120px] sm:w-[150px] md:w-[180px] h-auto object-contain"
               loading="eager"
-              decoding="async"
             />
           </picture>
         </Link>
-        <h1
-          className={`${responsiveSizeClass} font-bold`}
-          style={{ color: settings.color, fontFamily: settings.font, fontSize }}
-        >
-          {settings.name}
-        </h1>
+        {/* Text removed as per request */}
       </div>
     </div>
   );

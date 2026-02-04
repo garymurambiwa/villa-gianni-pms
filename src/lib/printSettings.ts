@@ -39,7 +39,7 @@ export const readPrintSettings = (): PrintSettings => {
 
 export const writePrintSettings = (settings: Partial<PrintSettings>): PrintSettings => {
   const next = { ...readPrintSettings(), ...settings, margins: { ...readPrintSettings().margins, ...(settings.margins || {}) } };
-  try { localStorage.setItem(KEY, JSON.stringify(next)); } catch {}
+  try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { }
   return next;
 };
 
@@ -67,21 +67,40 @@ let __htmlChromeCache: { key: string; headerBrand: string; headerUser: string; f
 
 export const readReceiptBranding = (): ReceiptBranding => {
   if (__brandCache) return __brandCache.value;
+
+  const defaults: ReceiptBranding = {
+    restaurant_name: 'Villa Gianni',
+    address: '4 Saint Annes Road, Avondale',
+    phone: '+263 24 2335324, +263 24 2307355',
+    logo_url: '/logo.png',
+    show_logo: true,
+    footer_text: 'Charm and elegance with a homely feel...',
+    tax_rate: 14.5, // Standard VAT if applicable, or kept as 15 from before
+    paper_size: '80mm'
+  };
+
   try {
     const raw = localStorage.getItem(K_RECEIPT);
-    const value = raw ? JSON.parse(raw) : { restaurant_name: '', logo_url: '', show_logo: true };
+    const value = raw ? JSON.parse(raw) : null;
+
+    // Use defaults if nothing stored, or if stored name is generic placeholders
+    if (!value || !value.restaurant_name || value.restaurant_name === 'POS' || value.restaurant_name === 'Company Name') {
+      const merged = { ...defaults, ...value, restaurant_name: defaults.restaurant_name }; // valid merge
+      __brandCache = { value: merged, version: Date.now() };
+      return merged;
+    }
+
     __brandCache = { value, version: Date.now() };
     return value;
   } catch {
-    const value = { restaurant_name: '', logo_url: '', show_logo: true };
-    __brandCache = { value, version: Date.now() };
-    return value;
+    __brandCache = { value: defaults, version: Date.now() };
+    return defaults;
   }
 };
 
 export const validateReceiptBranding = (b: Partial<ReceiptBranding>, requireName: boolean = false): { ok: boolean; errors?: Record<string, string> } => {
   const errors: Record<string, string> = {};
-  
+
   // Validate restaurant_name - required if explicitly set or if requireName is true
   const name = b.restaurant_name;
   if (requireName && (!name || String(name).trim().length === 0)) {
@@ -89,7 +108,7 @@ export const validateReceiptBranding = (b: Partial<ReceiptBranding>, requireName
   } else if (name !== undefined && String(name).trim().length === 0) {
     errors.restaurant_name = 'Company name cannot be empty';
   }
-  
+
   // Validate tax_rate
   if (b.tax_rate !== undefined) {
     const rate = Number(b.tax_rate);
@@ -97,7 +116,7 @@ export const validateReceiptBranding = (b: Partial<ReceiptBranding>, requireName
       errors.tax_rate = 'Tax rate must be between 0 and 100';
     }
   }
-  
+
   // Validate logo_url - allow empty, http(s) URLs, and base64 data URLs
   if (b.logo_url !== undefined) {
     const u = String(b.logo_url || '').trim();
@@ -105,7 +124,7 @@ export const validateReceiptBranding = (b: Partial<ReceiptBranding>, requireName
       errors.logo_url = 'Logo must be a valid URL or uploaded image';
     }
   }
-  
+
   // Validate email format if provided
   if (b.email !== undefined) {
     const email = String(b.email || '').trim();
@@ -113,7 +132,7 @@ export const validateReceiptBranding = (b: Partial<ReceiptBranding>, requireName
       errors.email = 'Invalid email format';
     }
   }
-  
+
   // Validate website URL if provided
   if (b.website !== undefined) {
     const url = String(b.website || '').trim();
@@ -121,7 +140,7 @@ export const validateReceiptBranding = (b: Partial<ReceiptBranding>, requireName
       errors.website = 'Website must start with http:// or https://';
     }
   }
-  
+
   // Validate phone format if provided (basic check)
   if (b.phone !== undefined) {
     const phone = String(b.phone || '').trim();
@@ -129,21 +148,21 @@ export const validateReceiptBranding = (b: Partial<ReceiptBranding>, requireName
       errors.phone = 'Invalid phone number format';
     }
   }
-  
+
   return { ok: Object.keys(errors).length === 0, errors: Object.keys(errors).length ? errors : undefined };
 };
 
 export const writeReceiptBranding = (patch: Partial<ReceiptBranding>): ReceiptBranding => {
   const current = readReceiptBranding();
   const next: ReceiptBranding = { ...current, ...patch };
-  
+
   // Validate the merged result, requiring restaurant_name for the final object
   const val = validateReceiptBranding(next, true);
   if (!val.ok) {
     const errorMessages = val.errors ? Object.values(val.errors).join('; ') : 'Invalid settings';
     throw new Error(`Failed to save settings: ${errorMessages}`);
   }
-  
+
   try {
     const raw = localStorage.getItem(K_RECEIPT_VERS);
     const hist = raw ? JSON.parse(raw) as Array<{ ts: string; value: ReceiptBranding }> : [];
@@ -154,9 +173,9 @@ export const writeReceiptBranding = (patch: Partial<ReceiptBranding>): ReceiptBr
     console.error('Failed to save to localStorage:', e);
     throw new Error('Failed to save settings to storage');
   }
-  
+
   __brandCache = { value: next, version: Date.now() };
-  try { __brandListeners.forEach(fn => { try { fn(next); } catch {} }); } catch {}
+  try { __brandListeners.forEach(fn => { try { fn(next); } catch { } }); } catch { }
   return next;
 };
 
@@ -176,7 +195,7 @@ export const rollbackReceiptBranding = (ts: string): ReceiptBranding | null => {
     if (!target) return null;
     localStorage.setItem(K_RECEIPT, JSON.stringify(target.value));
     __brandCache = { value: target.value, version: Date.now() };
-    __brandListeners.forEach(fn => { try { fn(target.value); } catch {} });
+    __brandListeners.forEach(fn => { try { fn(target.value); } catch { } });
     return target.value;
   } catch { return null; }
 };

@@ -44,7 +44,7 @@ export const Header: React.FC = () => {
   };
   type BrandSettings = { logoDataUrl?: string };
   const settings = readJSON<BrandSettings>('corepms_brand_settings', {} as BrandSettings);
-  const defaultLogo = `${import.meta.env.BASE_URL || '/'}codigita-logo.svg`;
+  const defaultLogo = '/logo.png';
   const logoSrc = settings.logoDataUrl || defaultLogo;
 
   return (
@@ -60,16 +60,15 @@ export const Header: React.FC = () => {
                   ) : null}
                   <img
                     src={logoSrc}
-                    alt="CODIGITA logo"
-                    className="w-[100px] sm:w-[120px] md:w-[150px] h-auto object-contain"
+                    alt="Villa Gianni"
+                    className="w-[120px] sm:w-[150px] md:w-[180px] h-auto object-contain"
                     srcSet={`${logoSrc} 1x`}
                     loading="eager"
-                    decoding="async"
                   />
                 </picture>
               </a>
               <div>
-                <h1 className="text-2xl font-bold">CoredPOS</h1>
+                {/* Brand Name Removed */}
                 <p className="text-sm text-purple-200">Restaurant Management System</p>
               </div>
             </div>
@@ -79,7 +78,7 @@ export const Header: React.FC = () => {
                 <div className="bg-green-500/20 border border-green-400 rounded px-3 py-2">
                   <div className="text-xs text-green-200">Active Shift</div>
                   <div className="text-sm font-bold">
-                    ${ (getTotals().cash + getTotals().card + getTotals().roomCharge).toFixed(2) }
+                    ${(getTotals().cash + getTotals().card + getTotals().roomCharge).toFixed(2)}
                   </div>
                   <div className="text-xs">{getTotals().count} orders</div>
                 </div>
@@ -87,9 +86,9 @@ export const Header: React.FC = () => {
 
               <div className="flex gap-2">
                 {!activeShift ? (
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => setShowStartModal(true)}
                     className="bg-red-600 hover:bg-red-700 border-red-600 text-current hover:text-current transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
                   >
@@ -97,17 +96,17 @@ export const Header: React.FC = () => {
                   </Button>
                 ) : (
                   <>
-                    <Button 
-                      variant="destructive" 
-                      size="sm" 
+                    <Button
+                      variant="destructive"
+                      size="sm"
                       onClick={handleXReading}
                       className="transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
                     >
                       X-Reading
                     </Button>
-                    <Button 
-                      variant="destructive" 
-                      size="sm" 
+                    <Button
+                      variant="destructive"
+                      size="sm"
                       onClick={handleEndShift}
                       className="transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
                     >
@@ -119,7 +118,7 @@ export const Header: React.FC = () => {
 
               {/* Management-only Settings button */}
               {canManagePOS(user?.role) && (
-                <Button 
+                <Button
                   size="sm"
                   onClick={() => window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'pos-settings' } }))}
                   className="bg-indigo-600 text-white hover:bg-indigo-700 transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
@@ -131,17 +130,17 @@ export const Header: React.FC = () => {
 
               {/* Management-only Reports button */}
               {canManagePOS(user?.role) && (
-                <Button 
+                <Button
                   size="sm"
                   onClick={() => {
                     const end = new Date();
-                    const start = new Date(); start.setDate(end.getDate()-30);
+                    const start = new Date(); start.setDate(end.getDate() - 30);
                     try {
                       const url = new URL(window.location.href);
-                      url.searchParams.set('start', start.toISOString().slice(0,10));
-                      url.searchParams.set('end', end.toISOString().slice(0,10));
+                      url.searchParams.set('start', start.toISOString().slice(0, 10));
+                      url.searchParams.set('end', end.toISOString().slice(0, 10));
                       window.history.replaceState({}, '', url.toString());
-                    } catch {}
+                    } catch { }
                     window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'reports' } }));
                   }}
                   className="bg-teal-600 text-white hover:bg-teal-700 transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
@@ -165,14 +164,14 @@ export const Header: React.FC = () => {
       </header>
 
       <StartShiftModal open={showStartModal} onClose={() => setShowStartModal(false)} />
-      <ShiftClosureModal 
-        open={showClosureModal} 
+      <ShiftClosureModal
+        open={showClosureModal}
         onClose={() => setShowClosureModal(false)}
         onSuccess={handleShiftClosed}
       />
-      <ShiftReportModal 
-        open={showReportModal} 
-        onClose={() => setShowReportModal(false)} 
+      <ShiftReportModal
+        open={showReportModal}
+        onClose={() => setShowReportModal(false)}
         reading={currentReading}
       />
 

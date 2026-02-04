@@ -4,10 +4,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { toast } from '@/hooks/use-toast';
 import { performFullSync, ensureTablesExist } from '@/lib/dbSync';
 import { RealTimeSyncService } from '@/lib/realTimeSyncService';
+import { useAuth } from './AuthContext';
 
 const DataContext = createContext<any>(null);
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
   const [rooms, setRooms] = useState([]);
   const [guests, setGuests] = useState([]);
   const [reservations, setReservations] = useState([]);
@@ -32,7 +34,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const s = String(r.status || '').toLowerCase();
           const status = (s === 'vacant' || s === 'available') ? 'VC'
             : (s === 'occupied') ? 'OCC'
-            : String(r.status || 'VC').toUpperCase();
+              : String(r.status || 'VC').toUpperCase();
           return {
             ...r,
             number: String(r.number || ''),
@@ -74,7 +76,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
               checkIn = String(rawCheckIn);
             }
           }
-          
+
           // Normalize check-out date from database
           let checkOut = '';
           const rawCheckOut = r.check_out_date || r.checkOut;
@@ -90,7 +92,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
               checkOut = String(rawCheckOut);
             }
           }
-          
+
           return {
             ...r,
             // Map database fields to UI expected fields
@@ -122,7 +124,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             packageCode: r.package_code || 'RO'
           };
         });
-        
+
         console.log('[DataContext] Loaded', normalizedReservations.length, 'reservations');
         if (normalizedReservations.length > 0) {
           console.log('[DataContext] Sample reservation:', {
@@ -132,7 +134,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             guestName: normalizedReservations[0].guestName
           });
         }
-        
+
         setReservations(normalizedReservations);
       }
 
@@ -155,7 +157,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const checkedInRes = normalizedReservations.find(
             (r: any) => r.guest_id === g.id && r.status === 'checked-in'
           );
-          
+
           // Calculate folio balance from actual folio charges
           // Balance = sum of charges - sum of payments
           const guestCharges = loadedFolioCharges.filter((c: any) => c.guestId === g.id);
@@ -166,7 +168,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .filter((c: any) => c.type === 'payment')
             .reduce((sum: number, c: any) => sum + Math.abs(Number(c.amount || 0)), 0);
           const computedBalance = Number((totalCharges - totalPayments).toFixed(2));
-          
+
           return {
             ...g,
             name: g.full_name || g.name || '',
@@ -229,10 +231,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         maxRetries: 3,
         timeoutMs: 5000,
       });
-      
+
       setRealTimeSyncService(syncService);
       console.log('[DataContext] Real-time sync service initialized');
-      
+
       return syncService;
     } catch (error) {
       console.error('[DataContext] Failed to initialize real-time sync service:', error);
@@ -275,12 +277,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
+    if (!user) return; // Don't load data if not logged in
+
     loadAllData();
     loadCityLedger();
     loadVendors();
     loadVendorExpenses();
     loadVendorPayments();
-    
+
     // Perform initial sync of localStorage data to database
     // This ensures any items created while offline are synced
     (async () => {
@@ -294,14 +298,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('[DataContext] Initial sync failed:', err);
       }
     })();
-    
+
     // Initialize and start real-time sync service
     const syncService = initializeRealTimeSync();
     if (syncService) {
       syncService.start();
       setIsRealTimeSyncActive(true);
     }
-  }, []);
+  }, [user]);
 
   // Cleanup real-time sync service and other resources on unmount
   useEffect(() => {
@@ -312,10 +316,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         realTimeSyncService.stop();
       }
     };
-    
+
     // Add event listener for window close
     window.addEventListener('beforeunload', handleBeforeUnload);
-    
+
     // Cleanup function
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -353,13 +357,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       // Step 1: Create or find guest first
       let guestId = resData.guestId;
-      
+
       if (!guestId) {
         // Need to create a guest first
         const guestName = resData.guestName || resData.bookingName || 'Guest';
         const guestEmail = resData.email || null;
         const guestPhone = resData.phone || null;
-        
+
         // Check if guest with same email already exists (if email provided)
         if (guestEmail) {
           const existingGuest = await db.query('SELECT id FROM guests WHERE email = ?', [guestEmail]);
@@ -367,14 +371,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             guestId = existingGuest.rows[0].id;
           }
         }
-        
+
         // If no existing guest found, create a new one
         if (!guestId) {
           const newGuestId = `G${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
           const guestSql = "INSERT INTO guests (id, full_name, email, phone) VALUES (?, ?, ?, ?)";
           const guestParams = [newGuestId, guestName, guestEmail, guestPhone];
           const guestResult = await db.query(guestSql, guestParams);
-          
+
           if ('error' in guestResult) {
             const errorMsg = (guestResult as any).error || 'Failed to create guest record';
             console.error('Guest insert failed:', errorMsg);
@@ -383,15 +387,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           guestId = newGuestId;
         }
       }
-      
+
       // Step 2: Create the reservation with the guest_id
       const reservationId = `RES${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      
+
       // Prepare id_document_enc (required field) - encrypt if provided, use placeholder if not
-      const idDocumentEnc = resData.idDocumentNumber 
-        ? String(resData.idDocumentNumber) 
+      const idDocumentEnc = resData.idDocumentNumber
+        ? String(resData.idDocumentNumber)
         : 'NOT_PROVIDED';
-      
+
       const sql = `INSERT INTO reservations (
         id, guest_id, room_id, check_in_date, check_out_date, status, 
         source, id_document_enc, id_document_type, nationality_code, nationality_name,
@@ -400,7 +404,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         room_type, rate, adults, children, room_preference, booking_name, booking_type,
         company_name, payment_method, settle_at_checkout, origin_region, inserted_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
-      
+
       const params = [
         reservationId,
         guestId,
@@ -438,7 +442,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         resData.settleAtCheckout !== false,
         resData.originRegion || null
       ];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         const errorMsg = (result as any).error || 'Database query failed';
@@ -459,8 +463,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updateReservation = async (reservationId: string, resData: any): Promise<{ success: boolean; error?: string }> => {
     try {
       // Prepare id_document_enc (required field)
-      const idDocumentEnc = resData.idDocumentNumber 
-        ? String(resData.idDocumentNumber) 
+      const idDocumentEnc = resData.idDocumentNumber
+        ? String(resData.idDocumentNumber)
         : 'NOT_PROVIDED';
 
       const sql = `UPDATE reservations SET
@@ -471,7 +475,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         room_type = ?, rate = ?, adults = ?, children = ?, room_preference = ?, booking_name = ?, booking_type = ?,
         company_name = ?, payment_method = ?, settle_at_checkout = ?, origin_region = ?
       WHERE id = ?`;
-      
+
       const params = [
         resData.checkIn,
         resData.checkOut,
@@ -504,7 +508,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         resData.originRegion || null,
         reservationId
       ];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         const errorMsg = (result as any).error || 'Database query failed';
@@ -569,7 +573,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const updateSql = "UPDATE pos_orders SET items = ?, total_amount = ?, status = ? WHERE table_number = ? AND status = 'open' RETURNING id";
       const updateParams = [JSON.stringify(provisional.items), provisional.total_amount, 'open', provisional.table_number];
       const updateResult = await db.query(updateSql, updateParams);
-      
+
       // If no rows updated, insert new order
       if (!('error' in updateResult) && 'rows' in updateResult && updateResult.rows.length === 0) {
         const insertSql = "INSERT INTO pos_orders (id, table_number, items, total_amount, status) VALUES (?, ?, ?, ?, 'open')";
@@ -587,7 +591,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toast({ title: 'Database Write Failed', description: 'POS order could not be saved', variant: 'destructive' });
         return false;
       }
-      
+
       return true;
     } catch (e: any) {
       console.error('Save POS order error:', e?.message || e);
@@ -601,19 +605,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 1. Close the order in pos_orders
       const sql = "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open'";
       const result = await db.query(sql, [tableNumber]);
-      
+
       // 2. Update table_status to 'open' (available)
       const tableSql = "INSERT INTO table_status (table_id, status, last_update) VALUES (?, 'open', NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'open', last_update = NOW()";
       await db.query(tableSql, [tableNumber]);
-      
+
       if ('error' in result) {
         console.error('Close POS order failed:', (result as any).error);
         return false;
       }
-      
+
       // Update local state
       setPosOrders((prev: any[]) => prev.filter((p: any) => String(p.table_number) !== tableNumber || String(p.status) !== 'OPEN'));
-      
+
       return true;
     } catch (e: any) {
       console.error('Close POS order error:', e?.message || e);
@@ -749,17 +753,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         type: 'charge',
         source: 'front_office'
       };
-      
+
       // Update state
       setFolioCharges((prev: any[]) => {
         const next = [...prev, newCharge];
         // Also persist to localStorage
         try {
           localStorage.setItem('corepms_folioCharges', JSON.stringify(next));
-        } catch {}
+        } catch { }
         return next;
       });
-      
+
       // Sync to database
       const { syncFolioChargeToDb } = await import('../lib/dbSync');
       const syncResult = await syncFolioChargeToDb({
@@ -773,13 +777,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         source: newCharge.source as 'front_office',
         total_amount: newCharge.amount
       });
-      
+
       if (!syncResult.success) {
         console.error('Folio charge sync failed:', syncResult.error);
         toast({ title: 'Charge Sync Failed', description: 'Charge saved locally but sync to database failed', variant: 'destructive' });
         return false;
       }
-      
+
       return true;
     } catch (e: any) {
       console.error('Add folio charge error:', e?.message || e);
@@ -802,16 +806,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         type: 'charge',
         source: 'pos'
       };
-      
+
       setFolioCharges((prev: any[]) => {
         const next = [...prev, newCharge];
         // Also persist to localStorage
         try {
           localStorage.setItem('corepms_folioCharges', JSON.stringify(next));
-        } catch {}
+        } catch { }
         return next;
       });
-      
+
       // Sync to database
       const { syncFolioChargeToDb } = await import('../lib/dbSync');
       const syncResult = await syncFolioChargeToDb({
@@ -825,13 +829,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         source: newCharge.source as 'pos',
         total_amount: newCharge.amount
       });
-      
+
       if (!syncResult.success) {
         console.error('Folio charge sync failed:', syncResult.error);
         toast({ title: 'Charge Sync Failed', description: 'Charge saved locally but sync to database failed', variant: 'destructive' });
         return null;
       }
-      
+
       return chargeId;
     } catch (e: any) {
       console.error('Record folio charge error:', e?.message || e);
@@ -854,16 +858,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         method: paymentData.method || 'Cash',
         source: 'front_office'
       };
-      
+
       setFolioCharges((prev: any[]) => {
         const next = [...prev, newPayment];
         // Also persist to localStorage
         try {
           localStorage.setItem('corepms_folioCharges', JSON.stringify(next));
-        } catch {}
+        } catch { }
         return next;
       });
-      
+
       // Sync to database
       const { syncFolioChargeToDb } = await import('../lib/dbSync');
       const syncResult = await syncFolioChargeToDb({
@@ -877,13 +881,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         source: newPayment.source as 'front_office',
         total_amount: Math.abs(newPayment.amount)
       });
-      
+
       if (!syncResult.success) {
         console.error('Folio payment sync failed:', syncResult.error);
         toast({ title: 'Payment Sync Failed', description: 'Payment saved locally but sync to database failed', variant: 'destructive' });
         return null;
       }
-      
+
       return paymentId;
     } catch (e: any) {
       console.error('Record folio payment error:', e?.message || e);
@@ -899,10 +903,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Also persist to localStorage
         try {
           localStorage.setItem('corepms_folioCharges', JSON.stringify(next));
-        } catch {}
+        } catch { }
         return next;
       });
-      
+
       // In a real implementation, we would mark the charge as voided rather than deleting
       // For now, just return true since we're only removing from UI
       return true;
@@ -916,18 +920,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const bulkUpdateRoomStatus = async (roomIds: string[], status: string): Promise<boolean> => {
     try {
       if (!roomIds || roomIds.length === 0) return true;
-      
+
       const placeholders = roomIds.map(() => '?').join(',');
       const sql = `UPDATE rooms SET status = ? WHERE id IN (${placeholders})`;
       const params = [status, ...roomIds];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         console.error('Bulk room status update failed:', (result as any).error);
         toast({ title: 'Update Failed', description: 'Could not update room statuses', variant: 'destructive' });
         return false;
       }
-      
+
       await loadAllData();
       return true;
     } catch (e: any) {
@@ -941,17 +945,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const bulkDeleteRooms = async (roomIds: string[]): Promise<boolean> => {
     try {
       if (!roomIds || roomIds.length === 0) return true;
-      
+
       const placeholders = roomIds.map(() => '?').join(',');
       const sql = `DELETE FROM rooms WHERE id IN (${placeholders})`;
-      
+
       const result = await db.query(sql, roomIds);
       if ('error' in result) {
         console.error('Bulk room delete failed:', (result as any).error);
         toast({ title: 'Delete Failed', description: 'Could not delete rooms', variant: 'destructive' });
         return false;
       }
-      
+
       await loadAllData();
       return true;
     } catch (e: any) {
@@ -989,7 +993,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Helper function to calculate account balance
   const calculateAccountBalance = (accountId: string, transactions: any[]) => {
     if (!transactions || transactions.length === 0) return 0;
-    
+
     return transactions.reduce((balance, txn) => {
       if (txn.debit) {
         return balance + Number(txn.debit);
@@ -1008,7 +1012,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return transactionData.type;
       }
     }
-    
+
     // Determine based on debit/credit values
     if (transactionData.debit && !transactionData.credit) {
       // Debit only - likely a charge
@@ -1020,7 +1024,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Both debit and credit - likely an adjustment
       return 'adjustment';
     }
-    
+
     // Default to general if no clear indication
     return 'general';
   };
@@ -1051,7 +1055,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (createErr) {
         console.warn('Could not create table, may already exist:', createErr);
       }
-      
+
       // Add columns if they don't exist (PostgreSQL specific)
       try {
         await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT '';`);
@@ -1120,63 +1124,63 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (createErr) {
         console.warn('Could not create city_ledger_transactions table, may already exist:', createErr);
       }
-      
+
       // Add columns if they don't exist for transactions table
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure critical columns exist (including date column)
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS date_field DATE;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // For backward compatibility, also add the 'date' column if it doesn't exist
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS date DATE;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure reference column exists
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS reference TEXT;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure description column exists
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS description TEXT;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure debit column exists
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS debit DECIMAL(10,2);`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure credit column exists
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS credit DECIMAL(10,2);`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure transaction_type column exists with default value
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS transaction_type TEXT DEFAULT 'general';`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure foreign key constraint exists
       try {
         // Add account_id column if missing
@@ -1184,7 +1188,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Create the foreign key constraint if it doesn't exist
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD CONSTRAINT IF NOT EXISTS fk_transaction_account 
@@ -1207,49 +1211,49 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (createErr) {
         console.warn('Could not create city_ledger_notes table, may already exist:', createErr);
       }
-      
+
       // Add columns if they don't exist for notes table
       try {
         await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure critical columns exist (including date column)
       try {
         await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS date_field DATE;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // For backward compatibility, also add the 'date' column if it doesn't exist
       try {
         await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS date DATE;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure author column exists
       try {
         await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS author TEXT;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure text column exists
       try {
         await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS text TEXT;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure note_type column exists with default value
       try {
         await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS note_type TEXT DEFAULT 'general';`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Ensure foreign key constraint exists
       try {
         // Add account_id column if missing
@@ -1257,7 +1261,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Create the foreign key constraint if it doesn't exist
       try {
         await db.query(`ALTER TABLE city_ledger_notes ADD CONSTRAINT IF NOT EXISTS fk_note_account 
@@ -1275,44 +1279,44 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           transactions: [] as any[],
           notes: [] as any[],
         }));
-        
+
         // Load all transactions
         const transactionsRes = await db.query('SELECT *, COALESCE(date_field, date) as date FROM city_ledger_transactions ORDER BY COALESCE(date_field, date) DESC');
         if ('rows' in transactionsRes) {
           const transactions = transactionsRes.rows || [];
-          
+
           // Group transactions by account
           const transactionsByAccount = transactions.reduce((acc, txn) => {
             if (!acc[txn.account_id]) acc[txn.account_id] = [];
             acc[txn.account_id].push(txn);
             return acc;
           }, {});
-          
+
           // Attach transactions to accounts
           const accountsWithTxns = accounts.map(acc => ({
             ...acc,
             transactions: transactionsByAccount[acc.id] || [],
             balance: calculateAccountBalance(acc.id, transactionsByAccount[acc.id] || []),
           }));
-          
+
           // Load all notes
           const notesRes = await db.query('SELECT *, COALESCE(date_field, date) as date FROM city_ledger_notes ORDER BY COALESCE(date_field, date) DESC');
           if ('rows' in notesRes) {
             const notes = notesRes.rows || [];
-            
+
             // Group notes by account
             const notesByAccount = notes.reduce((acc, note) => {
               if (!acc[note.account_id]) acc[note.account_id] = [];
               acc[note.account_id].push(note);
               return acc;
             }, {});
-            
+
             // Attach notes to accounts
             const accountsWithNotes = accountsWithTxns.map(acc => ({
               ...acc,
               notes: notesByAccount[acc.id] || [],
             }));
-            
+
             setCityLedger(accountsWithNotes);
           }
         }
@@ -1326,12 +1330,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addCityLedgerAccount = async (accountData: any): Promise<boolean> => {
     try {
       const accountId = `CL${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      
+
       const sql = `INSERT INTO city_ledger_accounts (
         id, account_name, type, credit_limit, payment_terms, status, activated_on, contact_name, 
         contact_phone, contact_email, address, billing_cycle, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
-      
+
       const params = [
         accountId,
         accountData.name || '',  // Still use accountData.name but insert into account_name column
@@ -1346,14 +1350,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         accountData.address || null,
         accountData.billingCycle || 'Monthly'
       ];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         console.error('City ledger account insert failed:', (result as any).error);
         toast({ title: 'Database Write Failed', description: 'City ledger account could not be saved', variant: 'destructive' });
         return false;
       }
-      
+
       // Reload the city ledger data
       await loadCityLedger();
       return true;
@@ -1370,7 +1374,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Build dynamic SQL with only provided fields
       const fields = [];
       const values = [];
-      
+
       Object.keys(updateData).forEach(key => {
         // Map the frontend field names to database column names
         let columnName = key;
@@ -1380,21 +1384,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fields.push(`${columnName} = ?`);
         values.push(updateData[key]);
       });
-      
+
       if (fields.length === 0) return true; // Nothing to update
-      
+
       // Add updated_at to the fields to update
       fields.push('updated_at = NOW()');
       const sql = `UPDATE city_ledger_accounts SET ${fields.join(', ')} WHERE id = ?`;
       values.push(accountId);
-      
+
       const result = await db.query(sql, values);
       if ('error' in result) {
         console.error('City ledger account update failed:', (result as any).error);
         toast({ title: 'Update Failed', description: 'City ledger account could not be updated', variant: 'destructive' });
         return false;
       }
-      
+
       // Reload the city ledger data
       await loadCityLedger();
       return true;
@@ -1409,11 +1413,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addCityLedgerTransaction = async (accountId: string, transactionData: any): Promise<boolean> => {
     try {
       const transactionId = `TX${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      
+
       const sql = `INSERT INTO city_ledger_transactions (
         id, account_id, date_field, reference, description, debit, credit, transaction_type, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
-      
+
       const params = [
         transactionId,
         accountId,
@@ -1424,14 +1428,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         transactionData.credit || null,
         determineTransactionType(transactionData)  // Determine appropriate transaction type
       ];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         console.error('City ledger transaction insert failed:', (result as any).error);
         toast({ title: 'Database Write Failed', description: 'City ledger transaction could not be saved', variant: 'destructive' });
         return false;
       }
-      
+
       // Reload the city ledger data
       await loadCityLedger();
       return true;
@@ -1446,11 +1450,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addCityLedgerNote = async (accountId: string, noteData: any): Promise<boolean> => {
     try {
       const noteId = `NOTE${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      
+
       const sql = `INSERT INTO city_ledger_notes (
         id, account_id, date_field, author, text, note_type, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, NOW())`;
-      
+
       const params = [
         noteId,
         accountId,
@@ -1459,14 +1463,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         noteData.text,
         noteData.noteType || 'general'  // Add note type
       ];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         console.error('City ledger note insert failed:', (result as any).error);
         toast({ title: 'Database Write Failed', description: 'City ledger note could not be saved', variant: 'destructive' });
         return false;
       }
-      
+
       // Reload the city ledger data
       await loadCityLedger();
       return true;
@@ -1758,7 +1762,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           AND contype = 'f' 
           AND confrelid = 'vendors'::regclass
         `);
-        
+
         if (('rows' in fkCheck) && (!fkCheck.rows || fkCheck.rows.length === 0)) {
           // Add foreign key constraint if it doesn't exist
           try {
@@ -1790,7 +1794,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if ('error' in result) {
         // If there's an error, try to ensure the vendors table exists and recreate if needed
         console.error('Load vendors failed:', result.error);
-        
+
         // Attempt to recreate the vendors table if it doesn't exist properly
         await db.query(`CREATE TABLE IF NOT EXISTS vendors (
           id TEXT PRIMARY KEY,
@@ -1807,20 +1811,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )`);
-        
+
         // Try loading again
         const retryResult = await db.query(
           `SELECT id, name, contact_person, phone, email, address, tax_id, payment_terms, credit_limit, current_balance, status, created_at, updated_at 
            FROM vendors 
            ORDER BY name ASC`
         );
-        
+
         if ('error' in retryResult) {
           console.error('Load vendors failed after retry:', retryResult.error);
           toast({ title: 'Database Read Failed', description: 'Could not load vendors', variant: 'destructive' });
           return;
         }
-        
+
         setVendors(retryResult.rows || []);
       } else {
         setVendors(result.rows || []);
@@ -1840,28 +1844,28 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
          FROM vendor_expenses ve
          ORDER BY ve.expense_date DESC, ve.created_at DESC`
       );
-      
+
       if ('error' in expensesResult) {
         console.error('Load vendor expenses failed:', expensesResult.error);
         toast({ title: 'Database Read Failed', description: 'Could not load vendor expenses', variant: 'destructive' });
         return;
       }
-      
+
       const expenses = expensesResult.rows || [];
-      
+
       // If there are expenses, get vendor names separately to avoid expensive JOIN
       if (expenses.length > 0) {
         const vendorIds = [...new Set(expenses.map(expense => expense.vendor_id))];
         if (vendorIds.length > 0) {
           const vendorNamesQuery = `SELECT id, name FROM vendors WHERE id IN (${vendorIds.map(() => '?').join(',')})`;
           const vendorsResult = await db.query(vendorNamesQuery, vendorIds);
-          
+
           if (!('error' in vendorsResult)) {
             const vendorMap = {};
             (vendorsResult.rows || []).forEach(vendor => {
               vendorMap[vendor.id] = vendor.name;
             });
-            
+
             // Add vendor names to expenses
             expenses.forEach(expense => {
               expense.vendor_name = vendorMap[expense.vendor_id] || 'Unknown Vendor';
@@ -1869,7 +1873,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       }
-      
+
       setVendorExpenses(expenses);
     } catch (e: any) {
       console.error('Load vendor expenses error:', e?.message || e);
@@ -1886,28 +1890,28 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
          FROM vendor_payments vp
          ORDER BY vp.payment_date DESC, vp.created_at DESC`
       );
-      
+
       if ('error' in paymentsResult) {
         console.error('Load vendor payments failed:', paymentsResult.error);
         toast({ title: 'Database Read Failed', description: 'Could not load vendor payments', variant: 'destructive' });
         return;
       }
-      
+
       const payments = paymentsResult.rows || [];
-      
+
       // If there are payments, get vendor names separately to avoid expensive JOIN
       if (payments.length > 0) {
         const vendorIds = [...new Set(payments.map(payment => payment.vendor_id))];
         if (vendorIds.length > 0) {
           const vendorNamesQuery = `SELECT id, name FROM vendors WHERE id IN (${vendorIds.map(() => '?').join(',')})`;
           const vendorsResult = await db.query(vendorNamesQuery, vendorIds);
-          
+
           if (!('error' in vendorsResult)) {
             const vendorMap = {};
             (vendorsResult.rows || []).forEach(vendor => {
               vendorMap[vendor.id] = vendor.name;
             });
-            
+
             // Add vendor names to payments
             payments.forEach(payment => {
               payment.vendor_name = vendorMap[payment.vendor_id] || 'Unknown Vendor';
@@ -1915,7 +1919,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       }
-      
+
       setVendorPayments(payments);
     } catch (e: any) {
       console.error('Load vendor payments error:', e?.message || e);
@@ -1927,11 +1931,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addVendor = async (vendorData: any): Promise<boolean> => {
     try {
       const vendorId = `VND${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      
+
       const sql = `INSERT INTO vendors (
         id, name, contact_person, phone, email, address, tax_id, payment_terms, credit_limit, current_balance, status, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
-      
+
       const params = [
         vendorId,
         vendorData.name,
@@ -1945,14 +1949,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         parseFloat(vendorData.current_balance) || 0,
         vendorData.status || 'active'
       ];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         console.error('Vendor insert failed:', result.error);
         toast({ title: 'Database Write Failed', description: 'Vendor could not be saved', variant: 'destructive' });
         return false;
       }
-      
+
       // Reload vendors
       await loadVendors();
       return true;
@@ -1970,7 +1974,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         name = ?, contact_person = ?, phone = ?, email = ?, address = ?, tax_id = ?, 
         payment_terms = ?, credit_limit = ?, current_balance = ?, status = ?, updated_at = NOW()
         WHERE id = ?`;
-      
+
       const params = [
         vendorData.name,
         vendorData.contact_person || null,
@@ -1984,14 +1988,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         vendorData.status || 'active',
         vendorId
       ];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         console.error('Vendor update failed:', result.error);
         toast({ title: 'Database Write Failed', description: 'Vendor could not be updated', variant: 'destructive' });
         return false;
       }
-      
+
       // Reload vendors
       await loadVendors();
       return true;
@@ -2012,7 +2016,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toast({ title: 'Database Write Failed', description: 'Vendor could not be deleted', variant: 'destructive' });
         return false;
       }
-      
+
       // Reload vendors
       await loadVendors();
       return true;
@@ -2027,11 +2031,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addVendorExpense = async (expenseData: any): Promise<boolean> => {
     try {
       const expenseId = `EXP${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      
+
       const sql = `INSERT INTO vendor_expenses (
         id, vendor_id, description, quantity, unit_cost, tax_amount, tax_rate, tax_inclusive, expense_date, reference_number, category, department, status, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
-      
+
       const params = [
         expenseId,
         expenseData.vendor_id,
@@ -2047,14 +2051,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         expenseData.department || null,
         expenseData.status || 'pending'
       ];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         console.error('Vendor expense insert failed:', result.error);
         toast({ title: 'Database Write Failed', description: 'Vendor expense could not be saved', variant: 'destructive' });
         return false;
       }
-      
+
       // Reload vendor expenses
       await loadVendorExpenses();
       return true;
@@ -2072,7 +2076,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax_rate = ?, tax_inclusive = ?, 
         expense_date = ?, reference_number = ?, category = ?, department = ?, status = ?, updated_at = NOW()
         WHERE id = ?`;
-      
+
       const params = [
         expenseData.vendor_id,
         expenseData.description,
@@ -2088,14 +2092,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         expenseData.status || 'pending',
         expenseId
       ];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         console.error('Vendor expense update failed:', result.error);
         toast({ title: 'Database Write Failed', description: 'Vendor expense could not be updated', variant: 'destructive' });
         return false;
       }
-      
+
       // Reload vendor expenses
       await loadVendorExpenses();
       return true;
@@ -2116,7 +2120,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toast({ title: 'Database Write Failed', description: 'Vendor expense could not be deleted', variant: 'destructive' });
         return false;
       }
-      
+
       // Reload vendor expenses
       await loadVendorExpenses();
       return true;
@@ -2131,11 +2135,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const payVendor = async (paymentData: any): Promise<boolean> => {
     try {
       const paymentId = `VPAY${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      
+
       const sql = `INSERT INTO vendor_payments (
         id, vendor_id, expense_ids, amount_paid, payment_date, payment_method, reference_number, notes, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
-      
+
       const params = [
         paymentId,
         paymentData.vendor_id,
@@ -2146,25 +2150,25 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         paymentData.reference_number || null,
         paymentData.notes || null
       ];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         console.error('Vendor payment insert failed:', result.error);
         toast({ title: 'Database Write Failed', description: 'Vendor payment could not be saved', variant: 'destructive' });
         return false;
       }
-      
+
       // Also update the expenses status to paid if payment covers them
       if (paymentData.expense_ids) {
         const expenseIds = paymentData.expense_ids.split(',').map((id: string) => id.trim());
         const placeholders = expenseIds.map(() => '?').join(',');
         await db.query(`UPDATE vendor_expenses SET status = 'paid' WHERE id IN (${placeholders})`, expenseIds);
       }
-      
+
       // Reload vendor payments and expenses
       await loadVendorPayments();
       await loadVendorExpenses();
-      
+
       return true;
     } catch (e: any) {
       console.error('Process vendor payment error:', e?.message || e);
@@ -2173,7 +2177,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-    // USER MANAGEMENT - Ensure user tables exist
+  // USER MANAGEMENT - Ensure user tables exist
   const ensureUserTables = async () => {
     try {
       // Create users table
@@ -2186,21 +2190,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )`);
-      
+
       // Add email column if it doesn't exist
       try {
         await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       // Add updated_at column if it doesn't exist
       try {
         await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
       } catch (e) {
         // Column may already exist, which is fine
       }
-      
+
       console.log('User tables created/verified successfully');
     } catch (e: any) {
       console.error('Error creating user tables:', e?.message || e);
@@ -2212,15 +2216,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addUser = async (userData: any): Promise<boolean> => {
     try {
       const userId = `USR${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      
+
       // Hash the password (in a real app, use bcrypt or similar)
       // For now, we'll store the password as-is for simplicity
       const hashedPassword = userData.password; // In real app, hash this
-      
+
       const sql = `INSERT INTO users (
         id, username, password_hash, email, role, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, NOW(), NOW())`;
-      
+
       const params = [
         userId,
         userData.username,
@@ -2228,14 +2232,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         userData.email,
         userData.role
       ];
-      
+
       const result = await db.query(sql, params);
       if ('error' in result) {
         console.error('User insert failed:', result.error);
         toast({ title: 'Database Write Failed', description: 'User could not be saved', variant: 'destructive' });
         return false;
       }
-      
+
       return true;
     } catch (e: any) {
       console.error('Add user error:', e?.message || e);
@@ -2251,7 +2255,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   return (
-    <DataContext.Provider value={{ 
+    <DataContext.Provider value={{
       rooms, guests, reservations, posOrders, inventory, folioCharges,
       vendors, vendorExpenses, vendorPayments,
       addRoom, createReservation, updateReservation, savePosOrder, closePosOrder, updateGuest, updateStock,
@@ -2269,10 +2273,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       getSyncStats,
       isRealTimeSyncActive,
       realTimeSyncService
-    }}> 
-      {children} 
+    }}>
+      {children}
     </DataContext.Provider>
-  ); 
-}; 
+  );
+};
 
 export const useData = () => useContext(DataContext);
