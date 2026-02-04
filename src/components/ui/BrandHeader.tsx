@@ -19,7 +19,7 @@ const readJSON = <T,>(key: string, fallback: T): T => {
 const writeJSON = (key: string, value: any) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { } };
 
 const DEFAULT: BrandSettings = {
-  name: 'COREPMS',
+  name: 'Villa Gianni',
   font: 'Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
   color: '#60a5fa', // text-blue-400
   sizePx: 24,
