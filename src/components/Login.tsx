@@ -27,7 +27,7 @@ export const Login: React.FC = () => {
           setDbModalOpen(true);
         });
       }
-    } catch {}
+    } catch { }
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -60,17 +60,17 @@ export const Login: React.FC = () => {
           default:
             userMessage = 'Invalid username or password';
         }
-        
-        logger.logAuth('login_failure', { 
-          username, 
+
+        logger.logAuth('login_failure', {
+          username,
           errorCode: result.error.code,
           timestamp: new Date().toISOString()
         });
         setError(userMessage);
       }
     } catch (err) {
-      logger.logAuth('login_failure', { 
-        username, 
+      logger.logAuth('login_failure', {
+        username,
         errorCode: 'UNKNOWN_ERROR',
         error: (err as any)?.message,
         timestamp: new Date().toISOString()
@@ -83,140 +83,140 @@ export const Login: React.FC = () => {
 
   return (
     <>
-    <div 
-      className="min-h-screen flex items-center justify-center p-4 relative"
-      style={{
-        backgroundImage: 'url(https://d64gsuwffb70l.cloudfront.net/6902597c3f1b2e5af1fa50b6_1761984216938_8ca99844.webp)',
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundRepeat: 'no-repeat'
-      }}
-    >
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
-      <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-8 w-full max-w-md border border-gray-200 relative z-10">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">COREPMS</h1>
-          <p className="text-gray-600">Hotel Management System</p>
-        </div>
-        
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label className="block text-gray-700 text-sm font-medium mb-2">Username</label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl bg-white border border-gray-300 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Enter username"
-              required
-            />
+      <div
+        className="min-h-screen flex items-center justify-center p-4 relative"
+        style={{
+          backgroundImage: 'url(https://d64gsuwffb70l.cloudfront.net/6902597c3f1b2e5af1fa50b6_1761984216938_8ca99844.webp)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat'
+        }}
+      >
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+        <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-8 w-full max-w-md border border-gray-200 relative z-10">
+          <div className="text-center mb-8">
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">COREPMS</h1>
+            <p className="text-gray-600">Hotel Management System</p>
           </div>
-          
-          <div>
-            <label className="block text-gray-700 text-sm font-medium mb-2">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl bg-white border border-gray-300 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Enter password"
-              required
-            />
-          </div>
-          
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              {error}
-            </div>
-          )}
-          
-          <button
-            type="submit"
-            className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-            disabled={loading}
-          >
-            {loading ? 'Signing In…' : 'Sign In'}
-          </button>
-        </form>
-        
-        <div className="mt-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
-          <div className="flex items-start gap-3">
-            <div aria-hidden="true" className="mt-0.5 h-4 w-4 rounded-sm bg-gray-300 flex items-center justify-center">
-              <span className="text-[10px] font-bold text-gray-700">🔒</span>
-            </div>
-            <div className="text-xs text-gray-600">
-              <p className="font-semibold">Credentials hidden for security</p>
-              <p className="text-gray-600">Contact your administrator for access. Admins can securely reveal test accounts with an access code.</p>
-              <ProtectedReveal />
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 flex justify-center">
-          <VersionDisplay />
-        </div>
-      </div>
-    </div>
-    {dbModalOpen && (
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-        <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-lg border border-gray-200">
-          <div className="flex justify-between items-center mb-3">
-            <h2 className="text-xl font-bold">Database Connection Setup</h2>
-            <button className="text-gray-500 hover:text-gray-700" onClick={()=> setDbModalOpen(false)}>×</button>
-          </div>
-          {dbStatus && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">{dbStatus}</div>}
-          <div className="grid grid-cols-2 gap-3">
+
+          <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Host</label>
-              <input className="w-full px-3 py-2 border rounded" value={dbHost} onChange={(e)=> setDbHost(e.target.value)} />
+              <label className="block text-gray-700 text-sm font-medium mb-2">Username</label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl bg-white border border-gray-300 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Enter username"
+                required
+              />
             </div>
+
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
-              <input className="w-full px-3 py-2 border rounded" value={dbPort} onChange={(e)=> setDbPort(e.target.value)} />
+              <label className="block text-gray-700 text-sm font-medium mb-2">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl bg-white border border-gray-300 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Enter password"
+                required
+              />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">User</label>
-              <input className="w-full px-3 py-2 border rounded" value={dbUser} onChange={(e)=> setDbUser(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-              <input type="password" className="w-full px-3 py-2 border rounded" value={dbPassword} onChange={(e)=> setDbPassword(e.target.value)} />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Database</label>
-              <input className="w-full px-3 py-2 border rounded" value={dbName} onChange={(e)=> setDbName(e.target.value)} />
-            </div>
-          </div>
-          <div className="mt-4 flex items-center gap-2">
+
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                {error}
+              </div>
+            )}
+
             <button
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-300"
-              disabled={dbBusy}
-              onClick={async () => {
-                setDbBusy(true); setDbStatus('');
-                try {
-                  const dsn = `mysql://${encodeURIComponent(dbUser)}:${encodeURIComponent(dbPassword)}@${dbHost}:${dbPort}/${dbName}`;
-                  const res = await (window as any).native.db.setConnectionString(dsn);
-                  if (!res?.ok) { setDbStatus(res?.error || 'Failed to save connection'); setDbBusy(false); return; }
-                  const test = await (window as any).native.db.testConnection();
-                  if (!test?.ok) { setDbStatus(test?.error || 'Connection test failed'); setDbBusy(false); return; }
-                  setDbStatus(`Connected. Server: ${String(test.serverVersion || 'unknown')}`);
-                  setDbModalOpen(false);
-                } catch (e: any) {
-                  setDbStatus(e?.message || 'Failed to apply settings');
-                } finally { setDbBusy(false); }
-              }}
+              type="submit"
+              className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              disabled={loading}
             >
-              Save & Test
+              {loading ? 'Signing In…' : 'Sign In'}
             </button>
-            <button
-              className="border px-4 py-2 rounded hover:bg-gray-50"
-              onClick={()=> setDbModalOpen(false)}
-            >
-              Close
-            </button>
+          </form>
+
+          <div className="mt-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="flex items-start gap-3">
+              <div aria-hidden="true" className="mt-0.5 h-4 w-4 rounded-sm bg-gray-300 flex items-center justify-center">
+                <span className="text-[10px] font-bold text-gray-700">🔒</span>
+              </div>
+              <div className="text-xs text-gray-600">
+                <p className="font-semibold">Credentials hidden for security</p>
+                <p className="text-gray-600">Contact your administrator for access. Admins can securely reveal test accounts with an access code.</p>
+                <ProtectedReveal />
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 flex justify-center">
+            <VersionDisplay />
           </div>
         </div>
       </div>
-    )}
+      {dbModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-lg border border-gray-200">
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-xl font-bold">Database Connection Setup</h2>
+              <button className="text-gray-500 hover:text-gray-700" onClick={() => setDbModalOpen(false)}>×</button>
+            </div>
+            {dbStatus && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">{dbStatus}</div>}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Host</label>
+                <input className="w-full px-3 py-2 border rounded" value={dbHost} onChange={(e) => setDbHost(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
+                <input className="w-full px-3 py-2 border rounded" value={dbPort} onChange={(e) => setDbPort(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">User</label>
+                <input className="w-full px-3 py-2 border rounded" value={dbUser} onChange={(e) => setDbUser(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                <input type="password" className="w-full px-3 py-2 border rounded" value={dbPassword} onChange={(e) => setDbPassword(e.target.value)} />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Database</label>
+                <input className="w-full px-3 py-2 border rounded" value={dbName} onChange={(e) => setDbName(e.target.value)} />
+              </div>
+            </div>
+            <div className="mt-4 flex items-center gap-2">
+              <button
+                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-300"
+                disabled={dbBusy}
+                onClick={async () => {
+                  setDbBusy(true); setDbStatus('');
+                  try {
+                    const dsn = `mysql://${encodeURIComponent(dbUser)}:${encodeURIComponent(dbPassword)}@${dbHost}:${dbPort}/${dbName}`;
+                    const res = await (window as any).native.db.setConnectionString(dsn);
+                    if (!res?.ok) { setDbStatus(res?.error || 'Failed to save connection'); setDbBusy(false); return; }
+                    const test = await (window as any).native.db.testConnection();
+                    if (!test?.ok) { setDbStatus(test?.error || 'Connection test failed'); setDbBusy(false); return; }
+                    setDbStatus(`Connected. Server: ${String(test.serverVersion || 'unknown')}`);
+                    setDbModalOpen(false);
+                  } catch (e: any) {
+                    setDbStatus(e?.message || 'Failed to apply settings');
+                  } finally { setDbBusy(false); }
+                }}
+              >
+                Save & Test
+              </button>
+              <button
+                className="border px-4 py-2 rounded hover:bg-gray-50"
+                onClick={() => setDbModalOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };
@@ -226,7 +226,7 @@ export const Login: React.FC = () => {
 const ProtectedReveal: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState('');
-  const [status, setStatus] = useState<'idle'|'loading'|'success'|'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [error, setError] = useState('');
   const [creds, setCreds] = useState<Array<{ username: string; password: string; role?: string }>>([]);
 
@@ -250,7 +250,7 @@ const ProtectedReveal: React.FC = () => {
           for (const c of res.creds) {
             await register({ username: c.username, email: '', password: c.password, role: (c.role as any) || 'frontdesk' });
           }
-        } catch {}
+        } catch { }
       } else {
         setStatus('error');
         setError(res?.error || 'Reveal failed');
