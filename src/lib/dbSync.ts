@@ -421,9 +421,11 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
     }
 
     return { success: true, synced: 2 };
+    return { success: true, synced: 2 };
   } catch (err: any) {
-    console.error('[dbSync] POS item sync error:', err?.message || err);
-    return { success: false, error: err?.message || String(err) };
+    const msg = err?.message || String(err);
+    console.error('[dbSync] POS item sync CRITICAL FAILURE:', msg, item);
+    return { success: false, error: msg };
   }
 }
 
@@ -479,7 +481,7 @@ export async function performFullSync(): Promise<SyncResult> {
 
     return { success: true, synced: totalSynced };
   } catch (err: any) {
-    console.error('[dbSync] Full sync error:', err?.message || err);
+    console.error('[dbSync] Full sync CRITICAL FAILURE:', err?.message || err);
     return { success: false, error: err?.message || String(err) };
   }
 }
@@ -580,8 +582,9 @@ export async function ensureTablesExist(): Promise<boolean> {
 
     console.log('[dbSync] Database tables verified/created');
     return true;
+    return true;
   } catch (err: any) {
-    console.error('[dbSync] Table creation error:', err?.message || err);
+    console.error('[dbSync] Table creation CRITICAL FAILURE:', err?.message || err);
     return false;
   }
 }

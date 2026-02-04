@@ -2056,7 +2056,7 @@ export const PosSettings: React.FC = () => {
                     if (res.success) {
                       toast({ title: 'Sync Complete', description: `Successfully synced ${res.synced} items.` });
                     } else {
-                      toast({ title: 'Sync Failed', description: res.error, variant: 'destructive' });
+                      toast({ title: 'Sync Failed', description: `Error: ${res.error}. Check console for details.`, variant: 'destructive' });
                     }
                   }}
                 >
