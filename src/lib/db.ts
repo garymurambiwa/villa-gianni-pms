@@ -37,6 +37,11 @@ async function getBrowserPool() {
   // Configure Neon to use direct WebSockets (no HTTP fetch needed)
   neonConfig.fetchConnectionCache = true;
 
+  // [FIX] Explicitly set WebSocket constructor for browsers that don't auto-detect it
+  if (typeof WebSocket !== 'undefined') {
+    neonConfig.webSocketConstructor = WebSocket;
+  }
+
   browserPool = new Pool({ connectionString: BROWSER_DSN });
   return browserPool;
 }
