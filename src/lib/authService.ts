@@ -173,18 +173,27 @@ export const register = async (payload: { username: string; email?: string; pass
         [payload.username, payload.email || null, payload.name || payload.username, payload.role || 'staff', payload.password]
       );
 
+      if ('error' in res) {
+        return { ok: false, error: res.error as string };
+      }
+
       if ('rows' in res && res.rows.length > 0) {
         const newUser = res.rows[0];
         // Create profile
-        await db.query(
+        const profileRes = await db.query(
           `INSERT INTO public.profiles (id, email, full_name, role, is_active)
            VALUES ($1, $2, $3, $4, true)
            ON CONFLICT (id) DO NOTHING`,
           [newUser.id, newUser.email, newUser.name, newUser.role]
         );
+
+        if ('error' in profileRes) {
+          console.warn('Profile creation warning:', profileRes.error);
+        }
+
         return { ok: true, user: mapDbUser(newUser) };
       }
-      return { ok: false, error: 'Registration failed - DB error' };
+      return { ok: false, error: 'Registration failed - no user returned' };
     } catch (e: any) {
       return { ok: false, error: e.message || String(e) };
     }
