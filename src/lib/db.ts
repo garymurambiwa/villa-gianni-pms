@@ -34,13 +34,18 @@ let browserPool: Pool | null = null;
 async function getBrowserPool() {
   if (browserPool) return browserPool;
 
-  // Configure Neon to use direct WebSockets (no HTTP fetch needed)
-  neonConfig.fetchConnectionCache = true;
+  // Configure Neon to use direct WebSockets
+  // neonConfig.fetchConnectionCache = true; // Disable cache to prevent fetch NetworkErrors in some browsers
 
   // [FIX] Explicitly set WebSocket constructor for browsers that don't auto-detect it
   if (typeof WebSocket !== 'undefined') {
     neonConfig.webSocketConstructor = WebSocket;
   }
+
+  // Ensure we use secure connection (WSS)
+  neonConfig.useSecureWebSocket = true;
+  neonConfig.pipelineTLS = true;
+  neonConfig.pipelineConnect = 'password';
 
   browserPool = new Pool({ connectionString: BROWSER_DSN });
   return browserPool;
