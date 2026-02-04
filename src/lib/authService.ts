@@ -133,6 +133,37 @@ export const register = async (payload: { username: string; email?: string; pass
       // Ensure pgcrypto exists
       await db.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
 
+      // Ensure app_users table exists
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS public.app_users (
+          id VARCHAR(50) PRIMARY KEY,
+          username VARCHAR(50) UNIQUE NOT NULL,
+          email VARCHAR(255),
+          password_hash VARCHAR(255),
+          name VARCHAR(100),
+          role VARCHAR(20) DEFAULT 'staff',
+          active BOOLEAN DEFAULT true,
+          permissions TEXT[],
+          last_login TIMESTAMP,
+          last_activity TIMESTAMP,
+          is_verified BOOLEAN DEFAULT false,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+
+      // Ensure profiles table exists
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS public.profiles (
+          id VARCHAR(50) PRIMARY KEY REFERENCES public.app_users(id) ON DELETE CASCADE,
+          email VARCHAR(255),
+          full_name VARCHAR(100),
+          role VARCHAR(20),
+          is_active BOOLEAN,
+          updated_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+
       const res = await db.query(
         `INSERT INTO public.app_users (
            id, username, email, name, role, password_hash, created_at, updated_at, is_verified

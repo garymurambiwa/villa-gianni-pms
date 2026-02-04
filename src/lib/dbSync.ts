@@ -116,7 +116,7 @@ export async function syncMenuItemToDb(item: MenuItemRecord): Promise<SyncResult
       console.error('[dbSync] Invalid menu item data:', item);
       return { success: false, error: 'Missing required fields (id, name, price)' };
     }
-    
+
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
       console.log('[dbSync] Database not configured, skipping menu item sync');
@@ -139,9 +139,9 @@ export async function syncMenuItemToDb(item: MenuItemRecord): Promise<SyncResult
         active = EXCLUDED.active,
         updated_at = NOW()
     `;
-    
+
     const result = await db.query(sql, [item.id, item.name, category, price, active]);
-    
+
     if ('error' in result) {
       console.error('[dbSync] Menu item sync failed:', (result as any).error);
       return { success: false, error: (result as any).error };
@@ -167,7 +167,7 @@ export async function deleteMenuItemFromDb(itemId: string): Promise<SyncResult> 
 
     const sql = `DELETE FROM menu_items WHERE id = $1`;
     const result = await db.query(sql, [itemId]);
-    
+
     if ('error' in result) {
       console.error('[dbSync] Menu item delete failed:', (result as any).error);
       return { success: false, error: (result as any).error };
@@ -230,11 +230,11 @@ export async function syncAllMenuItemsToDb(): Promise<SyncResult> {
     }
 
     console.log(`[dbSync] Bulk menu sync complete: ${syncedCount}/${items.length} items synced`);
-    
+
     if (errors.length > 0) {
       return { success: false, error: errors.join('; '), synced: syncedCount };
     }
-    
+
     return { success: true, synced: syncedCount };
   } catch (err: any) {
     console.error('[dbSync] Bulk menu sync error:', err?.message || err);
@@ -256,7 +256,7 @@ export async function syncInventoryItemToDb(item: InventoryItemRecord): Promise<
       console.error('[dbSync] Invalid inventory item data:', item);
       return { success: false, error: 'Missing required fields (id, name, stock_level)' };
     }
-    
+
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
       console.log('[dbSync] Database not configured, skipping inventory sync');
@@ -278,9 +278,9 @@ export async function syncInventoryItemToDb(item: InventoryItemRecord): Promise<
         price = EXCLUDED.price,
         updated_at = NOW()
     `;
-    
+
     const result = await db.query(sql, [item.id, item.name, category, stockLevel, price]);
-    
+
     if ('error' in result) {
       console.error('[dbSync] Inventory item sync failed:', (result as any).error);
       return { success: false, error: (result as any).error };
@@ -306,7 +306,7 @@ export async function deleteInventoryItemFromDb(itemId: string): Promise<SyncRes
 
     const sql = `DELETE FROM inventory_items WHERE id = $1`;
     const result = await db.query(sql, [itemId]);
-    
+
     if ('error' in result) {
       console.error('[dbSync] Inventory item delete failed:', (result as any).error);
       return { success: false, error: (result as any).error };
@@ -364,11 +364,11 @@ export async function syncAllInventoryItemsToDb(): Promise<SyncResult> {
     }
 
     console.log(`[dbSync] Bulk inventory sync complete: ${syncedCount}/${items.length} items synced`);
-    
+
     if (errors.length > 0) {
       return { success: false, error: errors.join('; '), synced: syncedCount };
     }
-    
+
     return { success: true, synced: syncedCount };
   } catch (err: any) {
     console.error('[dbSync] Bulk inventory sync error:', err?.message || err);
@@ -413,8 +413,8 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
     const invResult = await syncInventoryItemToDb(invItem);
 
     if (!menuResult.success || !invResult.success) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: [menuResult.error, invResult.error].filter(Boolean).join('; '),
         synced: (menuResult.synced || 0) + (invResult.synced || 0)
       };
@@ -458,7 +458,7 @@ export async function deletePosItemFromDb(itemId: string): Promise<SyncResult> {
 export async function performFullSync(): Promise<SyncResult> {
   try {
     console.log('[dbSync] Starting full database sync...');
-    
+
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
       console.log('[dbSync] Database not configured, skipping full sync');
@@ -472,7 +472,7 @@ export async function performFullSync(): Promise<SyncResult> {
     const errors = [menuResult.error, invResult.error].filter(Boolean);
 
     console.log(`[dbSync] Full sync complete: ${totalSynced} items synced`);
-    
+
     if (errors.length > 0) {
       return { success: false, error: errors.join('; '), synced: totalSynced };
     }
@@ -527,19 +527,55 @@ export async function ensureTablesExist(): Promise<boolean> {
     } catch (e) {
       console.warn('[dbSync] Failed to add floor column to rooms:', e);
     }
-    
+
     // Ensure menu_items table has updated_at column
     try {
       await db.query(`ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();`);
     } catch (e) {
       console.warn('[dbSync] Failed to add updated_at column to menu_items:', e);
     }
-    
+
     // Ensure inventory_items table has updated_at column
     try {
       await db.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();`);
     } catch (e) {
       console.warn('[dbSync] Failed to add updated_at column to inventory_items:', e);
+    }
+
+    // Create app_users table if not exists (for Browser Auth)
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS public.app_users (
+        id VARCHAR(50) PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        email VARCHAR(255),
+        password_hash VARCHAR(255),
+        name VARCHAR(100),
+        role VARCHAR(20) DEFAULT 'staff',
+        active BOOLEAN DEFAULT true,
+        permissions TEXT[],
+        last_login TIMESTAMP,
+        last_activity TIMESTAMP,
+        is_verified BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Create profiles table (linked to app_users)
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS public.profiles (
+        id VARCHAR(50) PRIMARY KEY REFERENCES public.app_users(id) ON DELETE CASCADE,
+        email VARCHAR(255),
+        full_name VARCHAR(100),
+        role VARCHAR(20),
+        is_active BOOLEAN,
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Ensure pgcrypto for password hashing
+    try { await db.query('CREATE EXTENSION IF NOT EXISTS pgcrypto'); } catch (e) {
+      console.warn('[dbSync] Failed to create pgcrypto extension - password hashing might fail if not pre-installed:', e);
     }
 
     console.log('[dbSync] Database tables verified/created');
@@ -565,7 +601,7 @@ export async function syncFolioChargeToDb(charge: FolioChargeRecord): Promise<Sy
       console.error('[dbSync] Invalid folio charge data:', charge);
       return { success: false, error: 'Missing required fields (id, guest_id, description, amount)' };
     }
-    
+
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
       console.log('[dbSync] Database not configured, skipping folio charge sync');
@@ -762,7 +798,7 @@ export async function syncPosBillToDb(bill: PosBillRecord): Promise<SyncResult> 
       console.error('[dbSync] Invalid POS bill data:', bill);
       return { success: false, error: 'Missing required fields (id, bill_number, subtotal, total_amount)' };
     }
-    
+
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
       return { success: true, synced: 0 };
@@ -1329,7 +1365,7 @@ export async function syncGLAccountToDb(account: GLAccountRecord): Promise<SyncR
       console.error('[dbSync] Invalid GL account data:', account);
       return { success: false, error: 'Missing required fields (id, name, category)' };
     }
-    
+
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
       return { success: true, synced: 0 };
@@ -1504,12 +1540,12 @@ export async function syncGLJournalEntryToDb(
       console.error('[dbSync] Invalid GL journal entry data:', entry);
       return { success: false, error: 'Missing required fields (id, entry_date, business_date)' };
     }
-    
+
     if (!lines || lines.length === 0) {
       console.error('[dbSync] Invalid GL journal entry lines data:', lines);
       return { success: false, error: 'Journal entry must have at least one line' };
     }
-    
+
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
       return { success: true, synced: 0 };
@@ -1704,7 +1740,7 @@ export async function syncExpenseToDb(expense: ExpenseRecord): Promise<{ success
       console.error('[dbSync] Invalid expense data:', expense);
       return { success: false, error: 'Missing required fields (expense_number, expense_date, business_date, amount)' };
     }
-    
+
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
       return { success: true };
@@ -1871,7 +1907,7 @@ export async function syncVendorToDb(vendor: VendorRecord): Promise<{ success: b
       console.error('[dbSync] Invalid vendor data:', vendor);
       return { success: false, error: 'Missing required field (name)' };
     }
-    
+
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
       return { success: true };
@@ -2004,7 +2040,7 @@ export async function syncPosShiftToDb(shift: PosShiftRecord): Promise<SyncResul
       console.error('[dbSync] Invalid POS shift data:', shift);
       return { success: false, error: 'Missing required fields (id, outlet, business_date, opened_at, opened_by)' };
     }
-    
+
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
       return { success: true, synced: 0 };

@@ -20,7 +20,12 @@ import HorizontalScrollNav from '@/components/ui/HorizontalScrollNav';
 import { Label } from '@/components/ui/label';
 import { db } from '@/lib/db';
 import { parseColor, getContrastRatio } from '@/lib/colorUtils';
-import { syncPosItemToDb, deletePosItemFromDb, performFullSync } from '@/lib/dbSync';
+import {
+  syncPosItemToDb,
+  deletePosItemFromDb,
+  performFullSync,
+  ensureTablesExist
+} from '@/lib/dbSync';
 import vendors from '@/lib/vendors';
 
 const defaultPalette = [
@@ -1192,6 +1197,7 @@ export const PosSettings: React.FC = () => {
         // Process DB sync in background to avoid blocking UI
         (async () => {
           try {
+            await ensureTablesExist(); // Ensure schema
             toast({ title: 'Syncing to Database...', description: `Syncing ${parsed.length} imported items...` });
             for (const item of parsed) {
               const res = await syncPosItemToDb(item);
@@ -2045,6 +2051,7 @@ export const PosSettings: React.FC = () => {
                   className="gap-2 border-blue-200 text-blue-700 hover:bg-blue-50"
                   onClick={async () => {
                     toast({ title: 'Syncing...', description: 'Pushing all items to DB...' });
+                    await ensureTablesExist();
                     const res = await performFullSync();
                     if (res.success) {
                       toast({ title: 'Sync Complete', description: `Successfully synced ${res.synced} items.` });
