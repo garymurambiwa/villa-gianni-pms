@@ -580,15 +580,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const insertParams = [orderId, provisional.table_number, JSON.stringify(provisional.items), provisional.total_amount];
         const insertResult = await db.query(insertSql, insertParams);
         if ('error' in insertResult) {
-          console.error('POS order insert failed:', (insertResult as any).error);
+          console.error('POS order insert details:', { params: insertParams, error: (insertResult as any).error });
+          const dbError = (insertResult as any).error?.message || (insertResult as any).error || 'Unknown DB Error';
           setPosOrders((prev: any[]) => prev.filter((p: any) => String(p.table_number) !== provisional.table_number || String(p.status) !== 'OPEN'));
-          toast({ title: 'Database Write Failed', description: 'POS order could not be saved', variant: 'destructive' });
+          toast({ title: 'Database Write Failed', description: `POS order insert failed: ${dbError}`, variant: 'destructive' });
           return false;
         }
       } else if ('error' in updateResult) {
-        console.error('POS order update failed:', (updateResult as any).error);
+        console.error('POS order update details:', { params: updateParams, error: (updateResult as any).error });
+        const dbError = (updateResult as any).error?.message || (updateResult as any).error || 'Unknown DB Error';
         setPosOrders((prev: any[]) => prev.filter((p: any) => String(p.table_number) !== provisional.table_number || String(p.status) !== 'OPEN'));
-        toast({ title: 'Database Write Failed', description: 'POS order could not be saved', variant: 'destructive' });
+        toast({ title: 'Database Write Failed', description: `POS order update failed: ${dbError}`, variant: 'destructive' });
         return false;
       }
 
@@ -1481,6 +1483,36 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // CHECK - Ensure POS tables exist
+  const ensurePosTables = async () => {
+    try {
+      // Create pos_orders table
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS pos_orders (
+          id VARCHAR(36) PRIMARY KEY,
+          table_number VARCHAR(20),
+          items JSONB,
+          total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+          status VARCHAR(50) NOT NULL DEFAULT 'open',
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+      `);
+
+      // Create table_status table if it doesn't exist
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS table_status (
+          table_id VARCHAR(20) PRIMARY KEY,
+          status VARCHAR(50) DEFAULT 'open',
+          last_update TIMESTAMP DEFAULT NOW()
+        );
+      `);
+
+      console.log('POS tables created/verified successfully');
+    } catch (e: any) {
+      console.error('Error creating POS tables:', e?.message || e);
+    }
+  };
+
   // VENDORS - Ensure vendor tables exist
   const ensureVendorTables = async () => {
     try {
@@ -2251,6 +2283,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Initialize vendor tables when context loads
   useEffect(() => {
     ensureVendorTables();
+    ensurePosTables(); // Ensure POS tables
     ensureUserTables(); // Initialize user tables as well
   }, []);
 
