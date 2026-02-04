@@ -87,9 +87,13 @@ const saveMockUsers = (users: UserRecord[]) => {
   localStorage.setItem(MOCK_STORAGE_KEY, JSON.stringify(users));
 };
 
-// IPC Wrappers - NOW ASYNC with Mock Fallback
+// IPC Wrappers - NOW ASYNC with Browser DB Fallback
+import { db } from './db';
+
+const isBrowser = typeof window === 'undefined' || !window.native?.auth;
+
 export const listUsers = async (): Promise<UserRecord[]> => {
-  if (typeof window !== 'undefined' && window.native?.auth?.listUsers) {
+  if (!isBrowser && window.native?.auth?.listUsers) {
     try {
       const res = await window.native.auth.listUsers();
       if (res.ok && res.users) {
@@ -97,9 +101,17 @@ export const listUsers = async (): Promise<UserRecord[]> => {
       }
     } catch (e) { console.error('listUsers failed', e); }
   } else {
-    // Browser fallback
-    console.warn('Running in browser mode: using mock users');
-    return new Promise(resolve => setTimeout(() => resolve(getMockUsers()), 300));
+    // Browser DB mode
+    try {
+      const res = await db.query(`
+        SELECT id, username, email, name, role, active, permissions, last_login, last_activity, created_at, updated_at
+        FROM public.app_users 
+        ORDER BY username ASC
+      `);
+      if (res && 'rows' in res) {
+        return res.rows.map(mapDbUser);
+      }
+    } catch (e) { console.error('Browser listUsers failed', e); }
   }
   return [];
 };
@@ -107,7 +119,7 @@ export const listUsers = async (): Promise<UserRecord[]> => {
 export const register = async (payload: { username: string; email?: string; password: string; role?: Role; name?: string; phone?: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; user?: UserRecord }> => {
   if (!payload.username || !payload.password) return { ok: false, error: 'Missing fields' };
 
-  if (window.native?.auth?.register) {
+  if (!isBrowser && window.native?.auth?.register) {
     try {
       const res = await window.native.auth.register(payload);
       if (res.ok && res.user) {
@@ -116,30 +128,40 @@ export const register = async (payload: { username: string; email?: string; pass
       return { ok: false, error: res.error || 'Registration failed' };
     } catch (e: any) { return { ok: false, error: e.message || String(e) }; }
   } else {
-    // Browser fallback
-    const users = getMockUsers();
-    if (users.some(u => u.username === payload.username)) return { ok: false, error: 'Username already exists (mock)' };
+    // Browser DB mode
+    try {
+      // Ensure pgcrypto exists
+      await db.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
 
-    const newUser: UserRecord = {
-      id: 'mock_' + Date.now(),
-      username: payload.username,
-      email: payload.email || '',
-      role: payload.role || 'frontdesk',
-      name: payload.name || payload.username,
-      active: true,
-      permissions: payload.permissions || [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      lastLogin: undefined
-    };
-    users.push(newUser);
-    saveMockUsers(users);
-    return new Promise(resolve => setTimeout(() => resolve({ ok: true, user: newUser }), 500));
+      const res = await db.query(
+        `INSERT INTO public.app_users (
+           id, username, email, name, role, password_hash, created_at, updated_at, is_verified
+         ) VALUES (
+           gen_random_uuid()::varchar, $1, $2, $3, $4, crypt($5, gen_salt('bf')), NOW(), NOW(), true
+         ) RETURNING id, username, email, name, role`,
+        [payload.username, payload.email || null, payload.name || payload.username, payload.role || 'staff', payload.password]
+      );
+
+      if ('rows' in res && res.rows.length > 0) {
+        const newUser = res.rows[0];
+        // Create profile
+        await db.query(
+          `INSERT INTO public.profiles (id, email, full_name, role, is_active)
+           VALUES ($1, $2, $3, $4, true)
+           ON CONFLICT (id) DO NOTHING`,
+          [newUser.id, newUser.email, newUser.name, newUser.role]
+        );
+        return { ok: true, user: mapDbUser(newUser) };
+      }
+      return { ok: false, error: 'Registration failed - DB error' };
+    } catch (e: any) {
+      return { ok: false, error: e.message || String(e) };
+    }
   }
 };
 
 export const login = async (usernameOrEmail: string, password: string): Promise<{ ok: boolean; error?: string; session?: Session; user?: UserRecord }> => {
-  if (window.native?.auth?.login) {
+  if (!isBrowser && window.native?.auth?.login) {
     try {
       const res = await window.native.auth.login({ username: usernameOrEmail, password });
       if (res.ok && res.user) {
@@ -150,51 +172,75 @@ export const login = async (usernameOrEmail: string, password: string): Promise<
       return { ok: false, error: res.error || 'Login failed' };
     } catch (e: any) { return { ok: false, error: e.message || String(e) }; }
   } else {
-    // Browser fallback
-    const users = getMockUsers();
-    const u = users.find(x => x.username === usernameOrEmail || x.email === usernameOrEmail);
-    // For mock mode, accept any password or check simplified logic
-    if (u) {
-      const session = createSession(u);
-      return { ok: true, session, user: u };
-    }
-    return { ok: false, error: 'Invalid credentials (mock)' };
+    // Browser DB mode
+    try {
+      // Ensure pgcrypto exists
+      await db.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+
+      const res = await db.query(
+        `SELECT id, username, email, name, role, active, permissions, created_at
+         FROM public.app_users 
+         WHERE (username = $1 OR email = $1) 
+         AND password_hash = crypt($2, password_hash)
+         AND active = true`,
+        [usernameOrEmail, password]
+      );
+
+      if ('rows' in res && res.rows.length > 0) {
+        const u = mapDbUser(res.rows[0]);
+        // Update last login
+        await db.query('UPDATE public.app_users SET last_login = NOW() WHERE id = $1', [u.id]);
+
+        const session = createSession(u);
+        return { ok: true, session, user: u };
+      }
+      return { ok: false, error: 'Invalid username or password' };
+    } catch (e: any) { return { ok: false, error: e.message || String(e) }; }
   }
 };
 
 export const updateUser = async (userId: string, patch: any): Promise<{ ok: boolean; error?: string; user?: UserRecord }> => {
-  if (window.native?.auth?.updateUser) {
+  if (!isBrowser && window.native?.auth?.updateUser) {
     const res = await window.native.auth.updateUser(userId, patch);
     if (res.ok) return { ok: true };
     return res;
   } else {
-    // Browser fallback
-    const users = getMockUsers();
-    const idx = users.findIndex(u => u.id === userId);
-    if (idx !== -1) {
-      users[idx] = { ...users[idx], ...patch, updatedAt: new Date().toISOString() };
-      saveMockUsers(users);
-      return { ok: true, user: users[idx] };
-    }
-    return { ok: false, error: 'User not found (mock)' };
+    // Browser DB mode
+    try {
+      if (patch.role || patch.active !== undefined || patch.password) {
+        let q = 'UPDATE public.app_users SET updated_at = NOW()';
+        const args = [userId];
+        let idx = 2;
+        if (patch.role) { q += `, role = $${idx++}`; args.push(patch.role); }
+        if (patch.active !== undefined) { q += `, active = $${idx++}`; args.push(patch.active); }
+        if (patch.password) { q += `, password_hash = crypt($${idx++}, gen_salt('bf'))`; args.push(patch.password); }
+        q += ' WHERE id = $1';
+        await db.query(q, args);
+      }
+
+      return { ok: true };
+    } catch (e: any) { return { ok: false, error: e.message }; }
   }
 };
 
 export const deleteUser = async (userId: string): Promise<{ ok: boolean; error?: string }> => {
-  if (window.native?.auth?.deleteUser) {
+  if (!isBrowser && window.native?.auth?.deleteUser) {
     return window.native.auth.deleteUser(userId);
   } else {
-    // Browser fallback
-    const users = getMockUsers();
-    const filtered = users.filter(u => u.id !== userId);
-    saveMockUsers(filtered);
-    return { ok: true };
+    // Browser DB mode
+    try {
+      await db.query('DELETE FROM public.app_users WHERE id = $1', [userId]);
+      await db.query('DELETE FROM public.profiles WHERE id = $1', [userId]);
+      return { ok: true };
+    } catch (e: any) { return { ok: false, error: e.message }; }
   }
 };
 
 export const sendHeartbeat = async (userId: string): Promise<void> => {
-  if (window.native?.auth?.heartbeat && userId) {
+  if (!isBrowser && window.native?.auth?.heartbeat && userId) {
     await window.native.auth.heartbeat(userId).catch(() => { });
+  } else if (userId) {
+    db.query('UPDATE public.app_users SET last_activity = NOW() WHERE id = $1', [userId]).catch(() => { });
   }
 };
 
