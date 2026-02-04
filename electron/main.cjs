@@ -143,22 +143,31 @@ function getStoredData() {
 }
 
 // Helper to get connection string from bundled DB, local storage, or environment
+// HARDCODED DEFAULT FOR USER (Cloud DB)
+const DEFAULT_CLOUD_DSN = 'postgresql://neondb_owner:npg_r1fvxIDGLNA8@ep-empty-smoke-ahhjh27q-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require';
+
 function getStoredConnectionString() {
-  // Priority 1: User-configured connection (allows overriding local DB)
+  // Priority 1: Hardcoded Cloud Default (Overrides everything for simple deployment)
+  // If user explicitly clears it, we can fallback, but for now this is the "App DB"
+  return DEFAULT_CLOUD_DSN;
+
+  /*
+  // Old Priorities (Disabled to force Cloud DB)
+  // Priority 2: User-configured connection (allows overriding local DB)
   const data = getStoredData();
   if (data.connectionString) return data.connectionString;
 
-  // Priority 2: Bundled PostgreSQL (if initialized)
+  // Priority 3: Bundled PostgreSQL (if initialized)
   if (bundledDbConfig && bundledDbConfig.connectionString) {
     return bundledDbConfig.connectionString;
   }
 
-  // Priority 3: Environment variable if configured
+  // Priority 4: Environment variable if configured
   if (process.env.DATABASE_URL) {
     return process.env.DATABASE_URL;
   }
-
   return '';
+  */
 }
 
 // 2. Database IPC Handlers
