@@ -139,19 +139,13 @@ export const Login: React.FC = () => {
             </button>
           </form>
 
-          <div className="mt-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
-            <div className="flex items-start gap-3">
-              <div aria-hidden="true" className="mt-0.5 h-4 w-4 rounded-sm bg-gray-300 flex items-center justify-center">
-                <span className="text-[10px] font-bold text-gray-700">🔒</span>
-              </div>
-              <div className="text-xs text-gray-600">
-                <p className="font-semibold">Credentials hidden for security</p>
-                <p className="text-gray-600">Contact your administrator for access. Admins can securely reveal test accounts with an access code.</p>
-                <ProtectedReveal />
-              </div>
-            </div>
-          </div>
-          <div className="mt-4 flex justify-center">
+          <div className="mt-8 flex flex-col items-center gap-4">
+            <button
+              onClick={() => setDbModalOpen(true)}
+              className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1"
+            >
+              <span>🌐</span> Configure Network Database
+            </button>
             <VersionDisplay />
           </div>
         </div>
@@ -193,7 +187,8 @@ export const Login: React.FC = () => {
                 onClick={async () => {
                   setDbBusy(true); setDbStatus('');
                   try {
-                    const dsn = `mysql://${encodeURIComponent(dbUser)}:${encodeURIComponent(dbPassword)}@${dbHost}:${dbPort}/${dbName}`;
+                    const pcol = 'postgres';
+                    const dsn = `${pcol}://${encodeURIComponent(dbUser)}:${encodeURIComponent(dbPassword)}@${dbHost}:${dbPort}/${dbName}`;
                     const res = await (window as any).native.db.setConnectionString(dsn);
                     if (!res?.ok) { setDbStatus(res?.error || 'Failed to save connection'); setDbBusy(false); return; }
                     const test = await (window as any).native.db.testConnection();
@@ -218,105 +213,5 @@ export const Login: React.FC = () => {
         </div>
       )}
     </>
-  );
-};
-
-// Secure, click-to-reveal flow — requires an admin access code via Electron IPC.
-// No credentials are present in the DOM or source until authorization succeeds.
-const ProtectedReveal: React.FC = () => {
-  const [open, setOpen] = useState(false);
-  const [code, setCode] = useState('');
-  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [error, setError] = useState('');
-  const [creds, setCreds] = useState<Array<{ username: string; password: string; role?: string }>>([]);
-
-  const isElectronAvailable = typeof (window as any).native?.security?.revealDefaultCredentials === 'function';
-
-  const handleReveal = async () => {
-    if (!isElectronAvailable) {
-      setError('Secure reveal is only available in the desktop app.');
-      setStatus('error');
-      return;
-    }
-    setStatus('loading'); setError(''); setCreds([]);
-    try {
-      const res = await (window as any).native.security.revealDefaultCredentials(code);
-      if (res?.ok && Array.isArray(res?.creds)) {
-        setCreds(res.creds);
-        setStatus('success');
-        // Seed accounts locally to enable sign-in (without exposing in DOM beforehand)
-        try {
-          const { register } = await import('@/lib/authService');
-          for (const c of res.creds) {
-            await register({ username: c.username, email: '', password: c.password, role: (c.role as any) || 'frontdesk' });
-          }
-        } catch { }
-      } else {
-        setStatus('error');
-        setError(res?.error || 'Reveal failed');
-      }
-    } catch (e) {
-      setStatus('error');
-      setError('Reveal failed');
-    }
-  };
-
-  return (
-    <div className="mt-3" aria-live="polite">
-      <button
-        type="button"
-        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold bg-gray-200 hover:bg-gray-300 text-gray-800"
-        aria-expanded={open}
-        aria-controls="reveal-panel"
-        onClick={() => setOpen((v) => !v)}
-      >
-        {open ? 'Close' : 'Reveal Test Accounts (Admin Code)'}
-      </button>
-
-      {open && (
-        <div id="reveal-panel" className="mt-2 space-y-2">
-          <label className="block text-[11px] text-gray-700 font-medium">Admin access code</label>
-          <input
-            type="password"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-white border border-gray-300 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            placeholder="Enter administrator access code"
-            aria-label="Administrator access code"
-          />
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="px-3 py-1.5 rounded-md text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60 disabled:cursor-not-allowed"
-              onClick={handleReveal}
-              disabled={status === 'loading'}
-            >
-              {status === 'loading' ? 'Verifying…' : 'Verify & Reveal'}
-            </button>
-            {!isElectronAvailable && (
-              <span className="text-[11px] text-gray-500">Desktop app required for secure reveal.</span>
-            )}
-          </div>
-
-          {status === 'error' && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-md text-[11px]" role="alert">
-              {error}
-            </div>
-          )}
-
-          {status === 'success' && creds.length > 0 && (
-            <div className="bg-green-50 border border-green-200 text-green-800 px-3 py-2 rounded-md text-[11px]" role="status">
-              <p className="font-semibold">Test accounts ready</p>
-              <ul className="mt-1 list-disc list-inside">
-                {creds.map((c, i) => (
-                  <li key={i}><span className="font-medium">{c.username}</span> — role: {c.role}</li>
-                ))}
-              </ul>
-              <p className="mt-1">Use these to sign in; passwords are not shown here.</p>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
   );
 };
