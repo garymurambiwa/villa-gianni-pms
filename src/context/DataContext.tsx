@@ -1824,25 +1824,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
          ORDER BY name ASC`
       );
       if ('error' in result) {
-        // If there's an error, try to ensure the vendors table exists and recreate if needed
         console.error('Load vendors failed:', result.error);
 
-        // Attempt to recreate the vendors table if it doesn't exist properly
-        await db.query(`CREATE TABLE IF NOT EXISTS vendors (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          contact_person TEXT,
-          phone TEXT,
-          email TEXT,
-          address TEXT,
-          tax_id TEXT,
-          payment_terms TEXT DEFAULT 'Net 30',
-          credit_limit REAL DEFAULT 0,
-          current_balance REAL DEFAULT 0,
-          status TEXT DEFAULT 'active',
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )`);
+        // Race condition fix: Await the full table ensure logic
+        await ensureVendorTables();
 
         // Try loading again
         const retryResult = await db.query(
@@ -1853,7 +1838,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if ('error' in retryResult) {
           console.error('Load vendors failed after retry:', retryResult.error);
-          toast({ title: 'Database Read Failed', description: 'Could not load vendors', variant: 'destructive' });
+          const dbError = (retryResult as any).error?.message || (retryResult as any).error || 'Unknown Error';
+          toast({ title: 'Database Read Failed', description: `Could not load vendors: ${dbError}`, variant: 'destructive' });
           return;
         }
 
@@ -1863,7 +1849,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (e: any) {
       console.error('Load vendors error:', e?.message || e);
-      toast({ title: 'Database Read Failed', description: 'Could not load vendors', variant: 'destructive' });
+      toast({ title: 'Database Read Failed', description: `Could not load vendors: ${e?.message || e}`, variant: 'destructive' });
     }
   };
 
