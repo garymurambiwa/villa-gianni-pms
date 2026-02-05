@@ -21,7 +21,23 @@ import { toast } from "@/hooks/use-toast";
 import VersionDisplay from "@/components/ui/VersionDisplay";
 import { VirtualKeyboard } from "@/components/ui/VirtualKeyboard";
 
+import { DEFAULT_ROOMS } from "@/data/defaultRooms";
+import { resetToDefaultRooms } from "@/lib/roomService";
+
 const queryClient = new QueryClient();
+
+// MIGRATION: 2026-02-05 - Reset rooms
+const MIGRATION_KEY = 'room_migration_2026_02_05_v2';
+try {
+  if (!localStorage.getItem(MIGRATION_KEY)) {
+    console.log('Running room migration...');
+    resetToDefaultRooms(DEFAULT_ROOMS);
+    localStorage.setItem(MIGRATION_KEY, 'true');
+    console.log('Room migration completed.');
+  }
+} catch (e) {
+  console.error('Migration failed', e);
+}
 
 const router = createHashRouter([
   { path: "/", element: <Index /> },

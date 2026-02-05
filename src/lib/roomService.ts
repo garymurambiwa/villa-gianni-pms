@@ -26,7 +26,7 @@ const readJSON = <T>(key: string, fallback: T): T => {
 };
 
 const writeJSON = (key: string, value: any) => {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { }
 };
 
 const isAlphanumeric = (s: string) => /^[a-zA-Z0-9-]+$/.test(s);
@@ -142,6 +142,18 @@ export const bulkUpdateStatus = (ids: string[], status: Room['status'], actor?: 
   return { ok: true };
 };
 
+export const resetToDefaultRooms = (rooms: Room[]): void => {
+  setRooms(rooms);
+  pushAudit({
+    id: `AUD${Date.now()}_MIGRATION`,
+    timestamp: new Date().toISOString(),
+    user: null, // System action
+    action: 'revert',
+    roomId: 'ALL',
+    message: 'System migration: Reset to default rooms'
+  });
+};
+
 export default {
   getRooms,
   setRooms,
@@ -153,4 +165,5 @@ export default {
   getAudit,
   revertAudit,
   validateRoom,
+  resetToDefaultRooms,
 };
