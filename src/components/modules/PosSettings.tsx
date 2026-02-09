@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { useData } from '@/context/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -728,11 +729,14 @@ export const PosSettings: React.FC = () => {
     setEditingId(null);
   };
 
-  const loadItems = React.useCallback(() => {
-    try { const raw = localStorage.getItem('corepms_pos_items'); setItems(raw ? JSON.parse(raw) : []); } catch { setItems([]); }
-  }, []);
+  // Use inventory from DataContext instead of localStorage
+  const { inventory } = useData();
 
-  React.useEffect(() => { if (!isManager && !isAdminRole) return; loadItems(); }, [loadItems, isManager, isAdminRole]);
+  React.useEffect(() => {
+    if ((isManager || isAdminRole) && inventory) {
+      setItems(inventory);
+    }
+  }, [inventory, isManager, isAdminRole]);
 
   // Register module-specific hotkeys (F1, F2, F3, Shift+I)
   const hk = useHotkeys();
@@ -893,22 +897,22 @@ export const PosSettings: React.FC = () => {
       notes
     };
     try {
-      const raw = localStorage.getItem('corepms_pos_items');
-      const list = raw ? JSON.parse(raw) : [];
-      let next: any[] = list;
+      // Use current items state as source of truth
+      let next: any[] = items;
       let savedItem: any;
+
       if (editingId) {
-        next = list.map((it: any) => it.id === editingId ? { ...it, ...base } : it);
+        next = items.map((it: any) => it.id === editingId ? { ...it, ...base } : it);
         savedItem = next.find((it: any) => it.id === editingId);
-        localStorage.setItem('corepms_pos_items', JSON.stringify(next));
         log('STOCK_ITEM_UPDATE', savedItem);
       } else {
         const item = { id: `ITEM_${Date.now()}`, ...base };
-        next = [item, ...list].slice(0, 500);
-        localStorage.setItem('corepms_pos_items', JSON.stringify(next));
+        next = [item, ...items];
         savedItem = item;
         log('STOCK_ITEM_CREATE', item);
       }
+
+      // Update local state immediately (optimistic UI)
       setItems(next);
       setStockOpen(false);
       resetForm();
@@ -919,6 +923,9 @@ export const PosSettings: React.FC = () => {
           if (!result.success) {
             console.warn('[PosSettings] Database sync failed:', result.error);
             toast({ title: 'Sync failed', description: result.error, variant: 'destructive' });
+            // Optionally revert state here if needed
+          } else {
+            toast({ title: 'Saved', description: 'Item saved to database.' });
           }
         }).catch(err => {
           console.warn('[PosSettings] Database sync error:', err);
@@ -967,10 +974,7 @@ export const PosSettings: React.FC = () => {
 
   const deleteItem = (id: string) => {
     try {
-      const raw = localStorage.getItem('corepms_pos_items');
-      const list = raw ? JSON.parse(raw) : [];
-      const next = list.filter((it: any) => it.id !== id);
-      localStorage.setItem('corepms_pos_items', JSON.stringify(next));
+      const next = items.filter((it: any) => it.id !== id);
       setItems(next);
       log('STOCK_ITEM_DELETE', { id });
 
@@ -979,6 +983,8 @@ export const PosSettings: React.FC = () => {
         if (!result.success) {
           console.warn('[PosSettings] Database delete failed:', result.error);
           toast({ title: 'Delete sync failed', description: result.error, variant: 'destructive' });
+        } else {
+          toast({ title: 'Deleted', description: 'Item removed from database.' });
         }
       }).catch(err => {
         console.warn('[PosSettings] Database delete error:', err);
@@ -1109,16 +1115,16 @@ export const PosSettings: React.FC = () => {
         if (lines.length < 2) { setImportSummary({ imported: 0, created: 0, updated: 0, errors: ['CSV has no data rows'], total: items.length }); return; }
         const headerLine = lines[0];
         const headers = headerLine.split(',').map(h => h.replace(/^\"|\"$/g, '').trim());
-        const idx = (name: string) => headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
-        const idIdx = idx('ID');
-        const nameIdx = idx('Name');
-        const centerIdx = idx('Center');
-        const invcatIdx = idx('InventoryCategory');
-        const catIdIdx = idx('CategoryId');
-        const catNameIdx = idx('CategoryName');
-        const sellIdx = idx('SellingPrice');
-        const costIdx = idx('CostPrice');
-        const stockIdx = idx('QtyInStock');
+        const idx = (...names: string[]) => headers.findIndex(h => names.some(n => h.toLowerCase() === n.toLowerCase()));
+        const idIdx = idx('ID', 'Code');
+        const nameIdx = idx('Name', 'Item', 'Description');
+        const centerIdx = idx('Center', 'Type', 'CostCenter');
+        const invcatIdx = idx('InventoryCategory', 'Cat');
+        const catIdIdx = idx('CategoryId', 'CatId');
+        const catNameIdx = idx('CategoryName', 'Category', 'SubCategory');
+        const sellIdx = idx('SellingPrice', 'Selling', 'Price', 'Retail');
+        const costIdx = idx('CostPrice', 'Cost', 'Buy');
+        const stockIdx = idx('QtyInStock', 'Qty', 'Stock', 'Count');
         const recvIdx = idx('QtyReceived');
         const barIdx = idx('BarVisible');
         const restIdx = idx('RestaurantVisible');

@@ -2158,3 +2158,37 @@ export async function loadPosShiftsFromDb(businessDate?: string): Promise<{ succ
     return { success: false, shifts: [], error: err?.message || String(err) };
   }
 }
+
+/**
+ * Deduct stock from inventory based on POS sales
+ */
+export async function deductInventoryStock(items: { id: string; qty: number }[]): Promise<SyncResult> {
+  const isConfigured = await db.isConfigured();
+  if (!isConfigured) return { success: false, error: 'DB not configured' };
+
+  try {
+    // Basic aggregation to handle duplicate items in list if any
+    const updates = new Map<string, number>();
+    for (const item of items) {
+      if (item.id) {
+        updates.set(item.id, (updates.get(item.id) || 0) + item.qty);
+      }
+    }
+
+    const operations = Array.from(updates.entries()).map(([id, qty]) => ({
+      sql: `UPDATE inventory_items SET stock_level = GREATEST(0, stock_level - $1), updated_at = NOW() WHERE id = $2`,
+      params: [qty, id]
+    }));
+
+    if (operations.length === 0) return { success: true, synced: 0 };
+
+    const result = await db.transaction(operations);
+    if (!result.ok) throw new Error((result as any).error);
+
+    console.log(`[dbSync] Deducted stock for ${operations.length} items`);
+    return { success: true, synced: operations.length };
+  } catch (err: any) {
+    console.error('[dbSync] Deduct stock failed:', err);
+    return { success: false, error: err.message };
+  }
+}

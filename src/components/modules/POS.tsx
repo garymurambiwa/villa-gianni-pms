@@ -2,6 +2,7 @@ import React, { useMemo, useState, useRef } from 'react';
 import { useData } from '@/context/DataContext';
 import { PaymentModal, BillSummary, QuickActions } from '../pos/POSIntegrationComponents';
 import { formatCurrency, generateShiftXReadingHTML, printDocument } from '@/lib/posIntegration';
+import { deductInventoryStock } from '@/lib/dbSync';
 import { useShift } from '@/contexts/ShiftContext';
 import { getOutletReceiptSettings } from '@/components/modules/ReceiptSettingsModal';
 import { useAuth } from '@/context/AuthContext';
@@ -13,21 +14,26 @@ interface MenuItem {
   category: 'bar' | 'restaurant';
 }
 
-const menuItems: MenuItem[] = [
-  { id: 'M1', name: 'Grilled Salmon', price: 28.50, category: 'restaurant' },
-  { id: 'M2', name: 'Ribeye Steak', price: 42.00, category: 'restaurant' },
-  { id: 'M3', name: 'Caesar Salad', price: 12.50, category: 'restaurant' },
-  { id: 'M4', name: 'Pasta Carbonara', price: 18.00, category: 'restaurant' },
-  { id: 'B1', name: 'House Wine', price: 9.00, category: 'bar' },
-  { id: 'B2', name: 'Mojito', price: 12.00, category: 'bar' },
-  { id: 'B3', name: 'Beer', price: 6.50, category: 'bar' },
-  { id: 'B4', name: 'Whiskey', price: 15.00, category: 'bar' }
-];
+// Hardcoded items removed. Using inventory from DataContext.
+// const menuItems: MenuItem[] = [...];
 
 export const POS: React.FC = () => {
   const { user } = useAuth();
-  const { guests, recordFolioCharge, removeFolioCharge } = useData();
+  const { guests, recordFolioCharge, removeFolioCharge, inventory } = useData();
   const { activeShift, startShift, endShift, getTotals, addTransaction } = useShift();
+
+  // Transform inventory to POS Menu Items
+  const menuItems: MenuItem[] = useMemo(() => {
+    return (inventory || [])
+      .filter((i: any) => i.selling_price && Number(i.selling_price) > 0)
+      .map((i: any) => ({
+        id: i.id,
+        name: i.name,
+        price: Number(i.selling_price),
+        category: (i.type === 'bar' || i.type === 'restaurant') ? i.type : 'restaurant' // Default to restaurant if unknown
+      }));
+  }, [inventory]);
+
   const [activeCategory, setActiveCategory] = useState<'bar' | 'restaurant'>('restaurant');
   const [cart, setCart] = useState<{ item: MenuItem; qty: number; preparation_level?: string; manual_notes?: string }[]>([]);
   const [roomNumber, setRoomNumber] = useState('');
@@ -98,6 +104,7 @@ export const POS: React.FC = () => {
   const bill = useMemo(() => ({
     id: `BILL_${Date.now()}`,
     items: cart.map(c => ({
+      id: c.item.id,
       name: c.item.name,
       quantity: c.qty,
       price: c.item.price,
@@ -197,6 +204,18 @@ export const POS: React.FC = () => {
     setCart([]);
     setRoomNumber('');
     setCustomerName('');
+
+
+    // Deduct Stock
+    try {
+      const deductionItems = bill.items.map((item: any) => ({
+        id: item.id,
+        qty: item.quantity
+      }));
+      await deductInventoryStock(deductionItems);
+    } catch (err) {
+      console.error('Failed to deduct stock:', err);
+    }
 
     return { ok: true, method: paymentData.paymentMethod, billId: bill.id, folioPosted, folioChargeId };
   };

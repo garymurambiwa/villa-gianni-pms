@@ -210,6 +210,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const invRes = await db.query('SELECT * FROM inventory_items');
       if ('rows' in invRes) setInventory(invRes.rows);
 
+      // Sync inventory to localStorage for POS offline usage
+      if ('rows' in invRes && Array.isArray(invRes.rows)) {
+        try {
+          localStorage.setItem('corepms_pos_items', JSON.stringify(invRes.rows));
+          window.dispatchEvent(new Event('storage')); // Notify listeners
+        } catch (e) {
+          console.warn('Failed to sync inventory to localStorage', e);
+        }
+      }
+
     } catch (error) {
       console.error("Failed to load data from MySQL:", error);
     } finally {

@@ -70,12 +70,12 @@ export const validateRoomChargePayment = (
  * Integration: Use for all PMS charge calculations and folio line items
  */
 export const calculateTaxBreakdown = (
-  total: number, 
+  total: number,
   taxRate: number = 0.10
 ): { subtotal: number; tax: number; total: number } => {
   const subtotal = total / (1 + taxRate);
   const tax = total - subtotal;
-  
+
   return {
     subtotal: Number(subtotal.toFixed(2)),
     tax: Number(tax.toFixed(2)),
@@ -169,7 +169,7 @@ export const decrementInventory = (soldItems: Array<{ name: string; quantity: nu
           [qty, name]
         );
       }
-    } catch {}
+    } catch { }
   })();
 };
 
@@ -196,7 +196,7 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
         available: typeof it.visibility === 'object' ? available : true,
         // New fields for two-tier categorization
         category_id: it.category_id ? String(it.category_id) : undefined,
-        subCategory: it.subCategory ? String(it.subCategory) : undefined,
+        subCategory: it.subCategory ? String(it.subCategory) : (it.category ? String(it.category) : undefined),
         sub_id: it.sub_id ? String(it.sub_id) : undefined,
         imageBgColor: it.imageBgColor ? String(it.imageBgColor) : undefined,
         image: it.pictureData || undefined,
@@ -225,7 +225,7 @@ export const getMenuItems = async (): Promise<Array<{ id: string; name: string; 
         }));
       }
     }
-  } catch {}
+  } catch { }
   return getMenuItemsFromPOSStore();
 };
 // ============================================================================
@@ -380,7 +380,7 @@ export const generateReceiptHTML = (
  * Integration: Use for all PMS document printing (folios, receipts, confirmations)
  */
 export const printDocument = (
-  htmlContent: string, 
+  htmlContent: string,
   title: string = 'Document',
   autoClose: boolean = true
 ): void => {
@@ -393,7 +393,7 @@ export const printDocument = (
     printWindow.document.open();
     printWindow.document.write(wrapped);
     printWindow.document.close();
-  } catch {}
+  } catch { }
   printWindow.focus();
 
   const trigger = () => {
@@ -401,7 +401,7 @@ export const printDocument = (
       printWindow.print();
       if (autoClose) printWindow.close();
     } catch {
-      setTimeout(() => { try { printWindow.print(); if (autoClose) printWindow.close(); } catch {} }, 250);
+      setTimeout(() => { try { printWindow.print(); if (autoClose) printWindow.close(); } catch { } }, 250);
     }
   };
   try { printWindow.addEventListener('load', trigger); } catch { setTimeout(trigger, 300); }
@@ -426,7 +426,7 @@ export const updateEntity = <T extends { id: string }>(
   entityId: string,
   updates: Partial<T>
 ): T[] => {
-  return entities.map(entity => 
+  return entities.map(entity =>
     entity.id === entityId ? { ...entity, ...updates } : entity
   );
 };
@@ -504,7 +504,7 @@ export const validateRoomNumber = (roomNumber: string): boolean => {
  * Integration: Use for all payment and charge validations
  */
 export const validatePaymentAmount = (
-  amount: number, 
+  amount: number,
   minAmount: number = 0.01
 ): boolean => {
   return amount >= minAmount && Number.isFinite(amount);
@@ -623,7 +623,7 @@ export const generateShiftXReadingHTML = (
 ): string => {
   const timestamp = new Date().toLocaleString();
   const title = `Shift X-Reading - ${shiftMeta.id}`;
-  
+
   // Get outlet-specific settings if not provided
   let brandSettings = settings;
   if (!brandSettings) {
@@ -633,9 +633,9 @@ export const generateShiftXReadingHTML = (
       brandSettings = { restaurant_name: 'Property', tax_rate: 0, show_tax_breakdown: true, paper_size: '80mm' };
     }
   }
-  
+
   // Format outlet name for display
-  const outletDisplayName = outlet === 'default' ? 'All Outlets' : 
+  const outletDisplayName = outlet === 'default' ? 'All Outlets' :
     outlet.charAt(0).toUpperCase() + outlet.slice(1);
 
   return `
@@ -806,7 +806,7 @@ export const logPaymentEvent = (event: { type: string; data?: any }) => {
     const list = raw ? JSON.parse(raw) : [];
     const entry = { ts: new Date().toISOString(), ...event };
     localStorage.setItem('corepms_payment_logs', JSON.stringify([entry, ...list].slice(0, 1000)));
-  } catch {}
+  } catch { }
 };
 
 export const processCardPayment = async (req: { amount: number; currency?: string; token?: string; meta?: any }): Promise<GatewayResult> => {
@@ -815,7 +815,7 @@ export const processCardPayment = async (req: { amount: number; currency?: strin
   if (m.forceTimeout) return new Promise((resolve) => setTimeout(() => resolve({ status: 'timeout' as const }), 1500));
   const approved = Math.random() < 0.9;
   const result: GatewayResult = approved
-    ? { status: 'approved' as const, authCode: `AUTH${Math.random().toString(36).slice(2,8)}`, reference: generateTransactionId('PAY') }
+    ? { status: 'approved' as const, authCode: `AUTH${Math.random().toString(36).slice(2, 8)}`, reference: generateTransactionId('PAY') }
     : { status: 'declined' as const, reason: 'insufficient_funds' };
   logPaymentEvent({ type: 'gateway_result', data: { method: 'card', amount: req.amount, result } });
   return new Promise((resolve) => setTimeout(() => resolve(result), 300));
@@ -830,26 +830,26 @@ export default {
   validateRoomChargePayment,
   calculateTaxBreakdown,
   processPayment,
-  
+
   // Document utilities
   generateReceiptHTML,
   printDocument,
   generateShiftXReadingHTML,
-  
+
   // State management utilities
   updateEntity,
   generateTransactionId,
   calculateBillTotal,
-  
+
   // Validation utilities
   validateEmail,
   validateRoomNumber,
   validatePaymentAmount,
-  
+
   // Formatting utilities
   formatCurrency,
   formatReceiptDate,
-  
+
   // Audit utilities
   createAuditEntry
 };

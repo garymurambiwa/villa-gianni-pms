@@ -30,10 +30,15 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
     if (Array.isArray(items)) return items;
     try { const raw = localStorage.getItem('corepms_pos_items'); return raw ? JSON.parse(raw) : []; } catch { return []; }
   });
+
+  // Sync state when props change
+  React.useEffect(() => {
+    if (Array.isArray(items)) setAllItems(items);
+  }, [items]);
   const [search, setSearch] = React.useState<string>('');
-  const [center, setCenter] = React.useState<'all'|'bar'|'restaurant'>('all');
+  const [center, setCenter] = React.useState<'all' | 'bar' | 'restaurant'>('all');
   const [attentionOnly, setAttentionOnly] = React.useState<boolean>(false);
-  const [severity, setSeverity] = React.useState<'all'|'low'|'medium'|'high'>('all');
+  const [severity, setSeverity] = React.useState<'all' | 'low' | 'medium' | 'high'>('all');
   const [page, setPage] = React.useState<number>(1);
   const [pageSize, setPageSize] = React.useState<number>(25);
   const [loading, setLoading] = React.useState<boolean>(false);
@@ -55,17 +60,17 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
       if (!raw) return;
       const s = JSON.parse(raw);
       if (s.search) setSearch(s.search);
-      if (['all','bar','restaurant'].includes(s.center)) setCenter(s.center);
+      if (['all', 'bar', 'restaurant'].includes(s.center)) setCenter(s.center);
       if (typeof s.attentionOnly === 'boolean') setAttentionOnly(s.attentionOnly);
-      if (['all','low','medium','high'].includes(s.severity)) setSeverity(s.severity);
+      if (['all', 'low', 'medium', 'high'].includes(s.severity)) setSeverity(s.severity);
       if (Number.isFinite(s.page)) setPage(s.page);
       if (Number.isFinite(s.pageSize)) setPageSize(s.pageSize);
-    } catch {}
+    } catch { }
   }, []);
 
   // Persist state on changes
   React.useEffect(() => {
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ search, center, attentionOnly, severity, page, pageSize })); } catch {}
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ search, center, attentionOnly, severity, page, pageSize })); } catch { }
   }, [search, center, attentionOnly, severity, page, pageSize]);
 
   // Manage loading indicator on filter changes
@@ -82,7 +87,7 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
     const issues = (it: any) => {
       const arr: string[] = [];
       if (!it.category_id) arr.push('Missing category');
-      if (Number(it.sellingPrice||0) <= 0) arr.push('Zero price');
+      if (Number(it.sellingPrice || 0) <= 0) arr.push('Zero price');
       return arr;
     };
     const severityFor = (it: any) => {
@@ -106,7 +111,7 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   React.useEffect(() => { if (page > totalPages) setPage(totalPages); }, [totalPages, page]);
-  const pageItems = React.useMemo(() => filtered.slice((page-1)*pageSize, (page-1)*pageSize + pageSize), [filtered, page, pageSize]);
+  const pageItems = React.useMemo(() => filtered.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize), [filtered, page, pageSize]);
 
   // Virtualization calculations
   React.useEffect(() => {
@@ -131,8 +136,8 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
     <div className="space-y-3" aria-labelledby="stock-tab-title">
       <div id="stock-tab-title" className="ds-subheader">Stock List</div>
       <div className="ds-toolbar" role="toolbar" aria-label="Stock filters">
-        <Input aria-label="Search by name" placeholder="Search name" value={search} onChange={(e)=>{ setSearch(e.target.value); setPage(1); }} className="w-48" />
-        <Select value={center} onValueChange={(v)=>{ setCenter(v as any); setPage(1); }}>
+        <Input aria-label="Search by name" placeholder="Search name" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="w-48" />
+        <Select value={center} onValueChange={(v) => { setCenter(v as any); setPage(1); }}>
           <SelectTrigger className="w-36"><SelectValue placeholder="Center" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All</SelectItem>
@@ -140,7 +145,7 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
             <SelectItem value="restaurant">Restaurant</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={severity} onValueChange={(v)=>{ setSeverity(v as any); setPage(1); }}>
+        <Select value={severity} onValueChange={(v) => { setSeverity(v as any); setPage(1); }}>
           <SelectTrigger className="w-40"><SelectValue placeholder="Severity" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All severity</SelectItem>
@@ -150,39 +155,39 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
           </SelectContent>
         </Select>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" aria-label="Attention only" checked={attentionOnly} onChange={(e)=>{ setAttentionOnly(e.target.checked); setPage(1); }} />
+          <input type="checkbox" aria-label="Attention only" checked={attentionOnly} onChange={(e) => { setAttentionOnly(e.target.checked); setPage(1); }} />
           Attention only
         </label>
-        <Select value={String(pageSize)} onValueChange={(v)=>{ setPageSize(Number(v)); setPage(1); }}>
+        <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
           <SelectTrigger className="w-28"><SelectValue placeholder="Page size" /></SelectTrigger>
           <SelectContent>
-            {[25,50,100].map(n => (<SelectItem key={n} value={String(n)}>{n}/page</SelectItem>))}
+            {[25, 50, 100].map(n => (<SelectItem key={n} value={String(n)}>{n}/page</SelectItem>))}
           </SelectContent>
         </Select>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={virtualize} onChange={(e)=> setVirtualize(e.target.checked)} aria-label="Enable virtualization" />
+          <input type="checkbox" checked={virtualize} onChange={(e) => setVirtualize(e.target.checked)} aria-label="Enable virtualization" />
           Virtualize
         </label>
       </div>
 
       {/* Bulk actions */}
       <div className="ds-toolbar text-sm">
-        <Button variant="outline" onClick={()=>{
+        <Button variant="outline" onClick={() => {
           const ids = Array.from(selectedIds);
           if (!ids.length) return;
           // Delete selected locally
-          const next = allItems.filter((it:any)=> !ids.includes(it.id));
+          const next = allItems.filter((it: any) => !ids.includes(it.id));
           setAllItems(next);
           setSelectedIds(new Set());
         }}>Delete Selected</Button>
-        <Button variant="outline" onClick={()=>{
+        <Button variant="outline" onClick={() => {
           const ids = Array.from(selectedIds); if (!ids.length) return;
-          const next = allItems.map((it:any)=> ids.includes(it.id) ? { ...it, visibility: { ...(it.visibility||{}), bar: true } } : it);
+          const next = allItems.map((it: any) => ids.includes(it.id) ? { ...it, visibility: { ...(it.visibility || {}), bar: true } } : it);
           setAllItems(next);
         }}>Set Bar Visible</Button>
-        <Button variant="outline" onClick={()=>{
+        <Button variant="outline" onClick={() => {
           const ids = Array.from(selectedIds); if (!ids.length) return;
-          const next = allItems.map((it:any)=> ids.includes(it.id) ? { ...it, visibility: { ...(it.visibility||{}), restaurant: true } } : it);
+          const next = allItems.map((it: any) => ids.includes(it.id) ? { ...it, visibility: { ...(it.visibility || {}), restaurant: true } } : it);
           setAllItems(next);
         }}>Set Restaurant Visible</Button>
         <div className="text-xs text-gray-600 ml-2">Selected: {selectedIds.size}</div>
@@ -194,8 +199,8 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
         <table className="ds-table" role="table" aria-label="Stock items">
           <thead>
             <tr>
-              <th scope="col"><input type="checkbox" aria-label="Select all" onChange={(e)=>{
-                if (e.target.checked) setSelectedIds(new Set((virtualize ? filtered : pageItems).map((it:any)=> it.id)));
+              <th scope="col"><input type="checkbox" aria-label="Select all" onChange={(e) => {
+                if (e.target.checked) setSelectedIds(new Set((virtualize ? filtered : pageItems).map((it: any) => it.id)));
                 else setSelectedIds(new Set());
               }} /></th>
               <th scope="col" className="text-left">Name</th>
@@ -208,22 +213,22 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
             </tr>
           </thead>
           <tbody>
-            {virtualize && topPad>0 && (<tr style={{ height: topPad }} aria-hidden="true"><td colSpan={8} /></tr>)}
+            {virtualize && topPad > 0 && (<tr style={{ height: topPad }} aria-hidden="true"><td colSpan={8} /></tr>)}
             {(visibleItems).map((it: any) => {
               const issues: string[] = [];
               if (!it.category_id) issues.push('Missing category');
-              if (Number(it.sellingPrice||0) <= 0) issues.push('Zero price');
+              if (Number(it.sellingPrice || 0) <= 0) issues.push('Zero price');
               const gp = Number(it.gpPercent || 0).toFixed(2);
               return (
                 <tr key={it.id} tabIndex={0} className="hover:bg-blue-50 focus:bg-blue-50" style={virtualize ? { height: rowHeight } : undefined}>
-                  <td><input type="checkbox" checked={selectedIds.has(it.id)} onChange={(e)=>{
+                  <td><input type="checkbox" checked={selectedIds.has(it.id)} onChange={(e) => {
                     const next = new Set(selectedIds);
                     if (e.target.checked) next.add(it.id); else next.delete(it.id);
                     setSelectedIds(next);
                   }} aria-label={`Select ${it.name}`} /></td>
                   <td className="text-left">{it.name}</td>
                   <td className="capitalize">{it.costCenter || '—'}</td>
-                  <td className="text-right">${Number(it.sellingPrice||0).toFixed(2)}</td>
+                  <td className="text-right">${Number(it.sellingPrice || 0).toFixed(2)}</td>
                   <td className="text-right">{gp}%</td>
                   <td>
                     {issues.length ? (
@@ -238,15 +243,15 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
                   </td>
                   <td>
                     <div className="flex gap-2">
-                      {canEdit && (<Button variant="outline" onClick={()=> onEditItem?.(it)} aria-label={`Edit ${it.name}`}>Edit</Button>)}
-                      {canFix && (<Button variant="secondary" onClick={()=> onFixItem?.(it)} aria-label={`Fix ${it.name}`}>Fix</Button>)}
-                      {canDelete && (<Button variant="destructive" onClick={()=> onDeleteItem?.(it.id)} aria-label={`Delete ${it.name}`}>Delete</Button>)}
+                      {canEdit && (<Button variant="outline" onClick={() => onEditItem?.(it)} aria-label={`Edit ${it.name}`}>Edit</Button>)}
+                      {canFix && (<Button variant="secondary" onClick={() => onFixItem?.(it)} aria-label={`Fix ${it.name}`}>Fix</Button>)}
+                      {canDelete && (<Button variant="destructive" onClick={() => onDeleteItem?.(it.id)} aria-label={`Delete ${it.name}`}>Delete</Button>)}
                     </div>
                   </td>
                 </tr>
               );
             })}
-            {virtualize && bottomPad>0 && (<tr style={{ height: bottomPad }} aria-hidden="true"><td colSpan={8} /></tr>)}
+            {virtualize && bottomPad > 0 && (<tr style={{ height: bottomPad }} aria-hidden="true"><td colSpan={8} /></tr>)}
             {!pageItems.length && (
               <tr><td colSpan={7} className="py-2 text-gray-500">No items match current filters</td></tr>
             )}
@@ -258,16 +263,16 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
         <div className="flex items-center justify-between mt-2" role="navigation" aria-label="Pagination">
           <div className="text-xs text-gray-600">Page {page} / {totalPages} · {filtered.length} items</div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={()=> setPage(1)} disabled={page===1} aria-label="First page">« First</Button>
-            <Button variant="outline" onClick={()=> setPage(p=> Math.max(1, p-1))} disabled={page===1} aria-label="Previous page">‹ Prev</Button>
-            <Button variant="outline" onClick={()=> setPage(p=> Math.min(totalPages, p+1))} disabled={page===totalPages} aria-label="Next page">Next ›</Button>
-            <Button variant="outline" onClick={()=> setPage(totalPages)} disabled={page===totalPages} aria-label="Last page">Last »</Button>
+            <Button variant="outline" onClick={() => setPage(1)} disabled={page === 1} aria-label="First page">« First</Button>
+            <Button variant="outline" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} aria-label="Previous page">‹ Prev</Button>
+            <Button variant="outline" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} aria-label="Next page">Next ›</Button>
+            <Button variant="outline" onClick={() => setPage(totalPages)} disabled={page === totalPages} aria-label="Last page">Last »</Button>
           </div>
         </div>
       )}
 
       {virtualize && (
-        <div ref={listRef} className="h-[480px] overflow-auto" onScroll={(e)=> setScrollTop((e.target as HTMLDivElement).scrollTop)} aria-label="Virtualized viewport" />
+        <div ref={listRef} className="h-[480px] overflow-auto" onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)} aria-label="Virtualized viewport" />
       )}
     </div>
   );

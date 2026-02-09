@@ -72,31 +72,66 @@ async function main() {
             const id = row['ID'] || `ITEM_${name.replace(/\s+/g, '_').toUpperCase()}`;
             const category = row['CategoryName'] || row['Category'] || 'General';
 
-            // Handle parsing of potential strings like "2.5" or numbers
             const parseNum = (val: any) => {
                 if (typeof val === 'number') return val;
                 if (typeof val === 'string') return parseFloat(val.replace(/[^\d.-]/g, '')) || 0;
                 return 0;
             };
 
-            const qty = parseNum(row['QtyInStock'] || row['Qty'] || row['Stock']);
+            const qty = parseNum(row['QtyInStock'] || row['Qty'] || row['Stock']) + 20; // User requested +20 padding
             const price = parseNum(row['CostPrice'] || row['Cost'] || row['Price']);
+            const sellingRaw = row['SellingPrice'] || row['Selling'];
+            const sellingPrice = parseNum(sellingRaw || 0);
+
+            if (imported < 5) {
+                console.log(`Debug Row ${imported}:`, {
+                    name,
+                    sellingRaw,
+                    sellingPrice,
+                    keys: Object.keys(row).filter(k => k.toLowerCase().includes('selling'))
+                });
+            }
+
+            // Map 'Center' to 'type' (restaurant/bar)
+            let type = String(row['Center'] || row['Type'] || 'general').toLowerCase();
+            // Normalize type
+            if (type !== 'bar' && type !== 'restaurant') type = 'general';
+
+            // Map category IDs
+            const getCategoryId = (center: string, catName: string) => {
+                const c = center.toLowerCase();
+                const n = catName.toLowerCase();
+                if (c === 'bar') {
+                    if (n.includes('beverage') || n.includes('drink') || n.includes('soft')) return 'CAT_BAR_BEV';
+                    return 'CAT_BAR_GEN';
+                }
+                if (c === 'restaurant') {
+                    if (n.includes('main') || n.includes('food') || n.includes('meal')) return 'CAT_REST_MAIN';
+                    return 'CAT_REST_GEN';
+                }
+                return 'CAT_REST_GEN'; // Default fallback
+            };
+            const categoryId = getCategoryId(type, category);
 
             // Upsert
             try {
                 await client.query(`
-          INSERT INTO inventory_items (id, name, category, stock_level, price, updated_at)
-          VALUES ($1, $2, $3, $4, $5, NOW())
+          INSERT INTO inventory_items (id, name, category, category_id, stock_level, price, selling_price, type, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
           ON CONFLICT (id) DO UPDATE SET
             name = EXCLUDED.name,
             category = EXCLUDED.category,
+            category_id = EXCLUDED.category_id,
             stock_level = EXCLUDED.stock_level,
             price = EXCLUDED.price,
+            selling_price = EXCLUDED.selling_price,
+            type = EXCLUDED.type,
             updated_at = NOW()
-        `, [id, String(name), String(category), qty, price]);
+        `, [id, String(name), String(category), qty, price, sellingPrice, type]);
 
                 imported++;
                 if (imported % 10 === 0) process.stdout.write('.');
+
 
             } catch (err: any) {
                 console.error(`\nFailed to import "${name}":`, err.message);

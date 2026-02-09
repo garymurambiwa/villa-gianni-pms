@@ -22,15 +22,22 @@ const K_SUBCATS = 'corepms_pos_subcategories';
 const readJSON = <T>(key: string, fallback: T): T => {
   try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; }
 };
-const writeJSON = (key: string, value: any) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+const writeJSON = (key: string, value: any) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { } };
 
 export const listCategories = (department?: 'Bar' | 'Restaurant'): MenuCategory[] => {
-  const rows = readJSON<MenuCategory[]>(K_CATEGORIES, []);
+  const DEFAULTS: MenuCategory[] = [
+    { category_id: 'CAT_BAR_GEN', category_name: 'General', department: 'Bar', sort_order: 0, buttonColor: '#4f46e5', textColor: '#ffffff' },
+    { category_id: 'CAT_REST_GEN', category_name: 'General', department: 'Restaurant', sort_order: 0, buttonColor: '#10b981', textColor: '#ffffff' },
+    { category_id: 'CAT_BAR_BEV', category_name: 'Beverages', department: 'Bar', sort_order: 1, buttonColor: '#3b82f6', textColor: '#ffffff' },
+    { category_id: 'CAT_REST_MAIN', category_name: 'Mains', department: 'Restaurant', sort_order: 1, buttonColor: '#f59e0b', textColor: '#ffffff' }
+  ];
+  const rows = readJSON<MenuCategory[]>(K_CATEGORIES, DEFAULTS);
+  if (rows.length === 0) return DEFAULTS;
   const filtered = department ? rows.filter(r => r.department === department) : rows;
-  return filtered.slice().sort((a,b)=> (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.category_name.localeCompare(b.category_name));
+  return filtered.slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.category_name.localeCompare(b.category_name));
 };
 
-export const addCategory = (payload: Omit<MenuCategory,'category_id'> & { category_id?: string }): MenuCategory => {
+export const addCategory = (payload: Omit<MenuCategory, 'category_id'> & { category_id?: string }): MenuCategory => {
   const id = payload.category_id || `CAT_${Date.now()}`;
   const row: MenuCategory = {
     category_id: id,
@@ -56,7 +63,7 @@ export const listSubcategories = (category_id?: string, parent_sub_id?: string):
   let filtered = rows;
   if (category_id) filtered = filtered.filter(r => r.category_id === category_id);
   if (typeof parent_sub_id !== 'undefined') filtered = filtered.filter(r => r.parent_sub_id === parent_sub_id);
-  return filtered.slice().sort((a,b)=> (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
+  return filtered.slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
 };
 
 export const addSubcategory = (payload: Omit<SubCategory, 'sub_id'> & { sub_id?: string }): SubCategory => {
@@ -99,7 +106,7 @@ export const listSubTreeByCategory = (category_id: string): SubTreeNode[] => {
   for (const n of nodes.values()) {
     if (n.parent_sub_id && nodes.has(n.parent_sub_id)) nodes.get(n.parent_sub_id)!.children.push(n); else roots.push(n);
   }
-  const sortTree = (arr: SubTreeNode[]) => arr.sort((a,b)=> (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name)).forEach(n => sortTree(n.children));
+  const sortTree = (arr: SubTreeNode[]) => arr.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name)).forEach(n => sortTree(n.children));
   sortTree(roots);
   return roots;
 };
