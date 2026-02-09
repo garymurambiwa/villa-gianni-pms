@@ -1190,44 +1190,33 @@ export const PosSettings: React.FC = () => {
         localStorage.setItem('corepms_pos_items', JSON.stringify(next));
         setItems(next);
 
-        // Sync imported items to Database
-        let dbSynced = 0;
-        let dbErrors: string[] = [];
+        // SYNC TO DATABASE (BLOCKING)
+        // ensureTablesExist and syncPosItemToDb are async
+        try {
+          toast({ title: 'Syncing to Cloud...', description: `Uploading ${parsed.length} items to database. Please wait...`, duration: 5000 });
+          await ensureTablesExist();
 
-        // Process DB sync in background to avoid blocking UI
-        (async () => {
-          try {
-            await ensureTablesExist(); // Ensure schema
-            toast({ title: 'Syncing to Database...', description: `Syncing ${parsed.length} imported items...` });
-            for (const item of parsed) {
-              const res = await syncPosItemToDb(item);
-              if (res.success) dbSynced++;
-              else if (res.error) dbErrors.push(`${item.name}: ${res.error}`);
-            }
+          let dbSynced = 0;
+          const dbErrors: string[] = [];
 
-            if (dbErrors.length > 0) {
-              toast({ title: 'Sync completed with errors', description: `Synced ${dbSynced}/${parsed.length} items. Check console for details.`, variant: 'destructive' });
-              console.warn('Import sync errors:', dbErrors);
-            } else {
-              toast({ title: 'Import Synced', description: `Successfully synced ${dbSynced} items to the database.` });
-            }
-
-            // Update summary with DB sync results
-            const finalSummary = {
-              imported: parsed.length,
-              created,
-              updated,
-              errors: [...errors, ...dbErrors],
-              total: next.length
-            };
-            setImportSummary(finalSummary);
-            setLastImportSummary(finalSummary);
-            localStorage.setItem('corepms_pos_last_import_summary', JSON.stringify(finalSummary));
-
-          } catch (err) {
-            console.error('Background sync failed:', err);
+          for (const item of parsed) {
+            const res = await syncPosItemToDb(item);
+            if (res.success) dbSynced++;
+            else if (res.error) dbErrors.push(`${item.name}: ${res.error}`);
           }
-        })();
+
+          if (dbErrors.length > 0) {
+            console.warn('Import sync errors:', dbErrors);
+            errors.push(...dbErrors.map(e => `Cloud Sync: ${e}`));
+            toast({ title: 'Import Complete with Errors', description: `Synced ${dbSynced}/${parsed.length} to cloud. Some failed.`, variant: 'destructive' });
+          } else {
+            toast({ title: 'Cloud Sync Successful', description: `All ${dbSynced} items verified in cloud database.` });
+          }
+        } catch (err) {
+          console.error('Cloud sync failed:', err);
+          errors.push(`Cloud Sync Critical Failure: ${String(err)}`);
+          toast({ title: 'Cloud Sync Failed', description: 'Could not connect to database.', variant: 'destructive' });
+        }
 
         const summary = { imported: parsed.length, created, updated, errors, total: next.length };
         setImportSummary(summary);

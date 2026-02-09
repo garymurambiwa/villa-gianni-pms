@@ -1,169 +1,251 @@
-import { Room, User } from '@/types';
-import { isManager } from '@/lib/permissions';
+import { Room, RoomStatus } from '@/types';
+import { db } from './db';
+import { v4 as uuidv4 } from 'uuid';
 
-const ROOMS_KEY = 'corepms_rooms';
-const ROOMS_AUDIT_KEY = 'corepms_rooms_audit';
+// In-memory cache for synchronous access
+let roomsCache: Room[] = [];
+let hasLoaded = false;
 
-type AuditAction = 'add' | 'update' | 'delete' | 'revert';
-export interface RoomAuditEntry {
-  id: string;
-  timestamp: string; // ISO
-  user?: Pick<User, 'id' | 'username' | 'role'> | null;
-  action: AuditAction;
-  roomId: string;
-  before?: Partial<Room> | null;
-  after?: Partial<Room> | null;
-  message?: string;
-}
-
-const readJSON = <T>(key: string, fallback: T): T => {
+// Initialize cache from DB
+export const refreshRooms = async (): Promise<Room[]> => {
   try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) as T : fallback;
-  } catch {
-    return fallback;
+    const res = await db.query('SELECT * FROM rooms ORDER BY number');
+    // Check if query succeeded (res has "rows")
+    if ('rows' in res && Array.isArray(res.rows)) {
+      // Map DB rows to Room objects
+      roomsCache = res.rows.map((r: any) => ({
+        id: r.id,
+        number: r.number,
+        type: r.type,
+        floor: Number(r.floor || 1),
+        rate: Number(r.rate || 0),
+        status: r.status as RoomStatus
+      }));
+    }
+    hasLoaded = true;
+    return roomsCache;
+  } catch (e) {
+    console.error('Failed to refresh rooms cache:', e);
+    return roomsCache; // Return stale cache on error
   }
 };
 
-const writeJSON = (key: string, value: any) => {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch { }
+export const getRooms = (): Room[] => {
+  if (!hasLoaded && roomsCache.length === 0) {
+    // Trigger async load if not loaded, but return empty/stale for now
+    refreshRooms().catch(console.error);
+  }
+  return roomsCache;
 };
 
-const isAlphanumeric = (s: string) => /^[a-zA-Z0-9-]+$/.test(s);
-
-export const getRooms = (): Room[] => readJSON<Room[]>(ROOMS_KEY, []);
-
-export const setRooms = (rooms: Room[]) => writeJSON(ROOMS_KEY, rooms);
-
-export const getAudit = (): RoomAuditEntry[] => readJSON<RoomAuditEntry[]>(ROOMS_AUDIT_KEY, []);
-
-const pushAudit = (entry: RoomAuditEntry) => {
-  const log = getAudit();
-  log.unshift(entry);
-  writeJSON(ROOMS_AUDIT_KEY, log);
+export const getRoom = (id: string): Room | undefined => {
+  return roomsCache.find(r => r.id === id);
 };
 
-export const validateRoom = (input: { number: string; type: string }): { ok: boolean; error?: string } => {
-  const number = String(input.number || '').trim();
-  const type = String(input.type || '').trim();
-  if (number.length < 3) return { ok: false, error: 'Room number must be at least 3 characters' };
-  if (!isAlphanumeric(number)) return { ok: false, error: 'Room number must be alphanumeric' };
-  if (!type) return { ok: false, error: 'Room name is required' };
-  if (type.length > 50) return { ok: false, error: 'Room name must be 50 characters or less' };
-  return { ok: true };
+export const setRooms = async (rooms: Room[]): Promise<void> => {
+  console.warn('setRooms called - this only updates local cache and does not persist to DB! Use add/updateRoom instead.');
+  roomsCache = rooms;
 };
 
-const uniqueNumber = (rooms: Room[], number: string, excludeId?: string) => {
-  return !rooms.some(r => r.number.toLowerCase() === number.toLowerCase() && r.id !== excludeId);
+export const addRoom = async (room: Omit<Room, 'id'>): Promise<Room> => {
+  const newRoom: Room = { ...room, id: uuidv4(), floor: room.floor || 1 };
+
+  // Optimistic update
+  roomsCache = [...roomsCache, newRoom].sort((a, b) => a.number.localeCompare(b.number));
+
+  // DB Insert
+  try {
+    await db.query(
+      'INSERT INTO rooms (id, number, type, floor, rate, status) VALUES (?, ?, ?, ?, ?, ?)',
+      [newRoom.id, newRoom.number, newRoom.type, newRoom.floor, newRoom.rate, newRoom.status]
+    );
+  } catch (e) {
+    console.error('Failed to insert room:', e);
+    roomsCache = roomsCache.filter(r => r.id !== newRoom.id);
+    throw e;
+  }
+
+  return newRoom;
 };
 
-export const addRoom = (input: Omit<Room, 'id' | 'status'> & { status?: Room['status'] }, actor?: User | null): { ok: boolean; error?: string; room?: Room } => {
-  if (!isManager(actor?.role)) return { ok: false, error: 'Unauthorized' };
-  const rooms = getRooms();
-  const check = validateRoom({ number: input.number, type: input.type });
-  if (!check.ok) return { ok: false, error: check.error };
-  if (!uniqueNumber(rooms, input.number)) return { ok: false, error: 'Duplicate room number' };
-  const room: Room = {
-    id: `R${Date.now()}`,
-    number: input.number.trim(),
-    type: input.type.trim(),
-    status: input.status || 'VC',
-    floor: input.floor || 1,
-    rate: input.rate || 0,
-  };
-  const next = [room, ...rooms];
-  setRooms(next);
-  pushAudit({ id: `AUD${Date.now()}`, timestamp: new Date().toISOString(), user: actor ? { id: actor.id, username: actor.username, role: actor.role } : null, action: 'add', roomId: room.id, after: room, message: 'Room added' });
-  return { ok: true, room };
+export const updateRoom = async (room: Room): Promise<Room> => {
+  // Optimistic update
+  const original = roomsCache.find(r => r.id === room.id);
+  roomsCache = roomsCache.map(r => r.id === room.id ? room : r).sort((a, b) => a.number.localeCompare(b.number));
+
+  // DB Update
+  try {
+    await db.query(
+      'UPDATE rooms SET number = ?, type = ?, floor = ?, rate = ?, status = ? WHERE id = ?',
+      [room.number, room.type, room.floor || 1, room.rate, room.status, room.id]
+    );
+  } catch (e) {
+    console.error('Failed to update room:', e);
+    if (original) {
+      roomsCache = roomsCache.map(r => r.id === room.id ? original : r).sort((a, b) => a.number.localeCompare(b.number));
+    }
+    throw e;
+  }
+
+  return room;
 };
 
-export const updateRoom = (id: string, patch: Partial<Room>, actor?: User | null): { ok: boolean; error?: string; room?: Room } => {
-  if (!isManager(actor?.role)) return { ok: false, error: 'Unauthorized' };
-  const rooms = getRooms();
-  const idx = rooms.findIndex(r => r.id === id);
-  if (idx === -1) return { ok: false, error: 'Room not found' };
-  const current = rooms[idx];
-  const nextNumber = patch.number !== undefined ? String(patch.number).trim() : current.number;
-  const nextType = patch.type !== undefined ? String(patch.type).trim() : current.type;
-  const check = validateRoom({ number: nextNumber, type: nextType });
-  if (!check.ok) return { ok: false, error: check.error };
-  if (!uniqueNumber(rooms, nextNumber, id)) return { ok: false, error: 'Duplicate room number' };
-  const updated: Room = { ...current, ...patch, number: nextNumber, type: nextType };
-  const next = [...rooms]; next[idx] = updated;
-  setRooms(next);
-  pushAudit({ id: `AUD${Date.now()}`, timestamp: new Date().toISOString(), user: actor ? { id: actor.id, username: actor.username, role: actor.role } : null, action: 'update', roomId: id, before: current, after: updated, message: 'Room updated' });
-  return { ok: true, room: updated };
+export const deleteRoom = async (id: string): Promise<void> => {
+  // Optimistic update
+  const original = roomsCache.find(r => r.id === id);
+  roomsCache = roomsCache.filter(r => r.id !== id);
+
+  // DB Delete
+  try {
+    await db.query('DELETE FROM rooms WHERE id = ?', [id]);
+  } catch (e) {
+    console.error('Failed to delete room:', e);
+    if (original) {
+      roomsCache = [...roomsCache, original].sort((a, b) => a.number.localeCompare(b.number));
+    }
+    throw e;
+  }
 };
 
-export const deleteRoom = (id: string, actor?: User | null): { ok: boolean; error?: string } => {
-  if (!isManager(actor?.role)) return { ok: false, error: 'Unauthorized' };
-  const rooms = getRooms();
-  const current = rooms.find(r => r.id === id);
-  if (!current) return { ok: false, error: 'Room not found' };
-  const next = rooms.filter(r => r.id !== id);
-  setRooms(next);
-  pushAudit({ id: `AUD${Date.now()}`, timestamp: new Date().toISOString(), user: actor ? { id: actor.id, username: actor.username, role: actor.role } : null, action: 'delete', roomId: id, before: current, message: 'Room deleted' });
-  return { ok: true };
+export const updateRoomStatus = async (id: string, status: RoomStatus): Promise<void> => {
+  const room = roomsCache.find(r => r.id === id);
+  if (room) {
+    await updateRoom({ ...room, status });
+  }
 };
 
-export const revertAudit = (auditId: string, actor?: User | null): { ok: boolean; error?: string } => {
-  if (!isManager(actor?.role)) return { ok: false, error: 'Unauthorized' };
-  const log = getAudit();
-  const entry = log.find(a => a.id === auditId);
-  if (!entry || !entry.before) return { ok: false, error: 'Revert target not found' };
-  const rooms = getRooms();
-  const idx = rooms.findIndex(r => r.id === entry.roomId);
-  if (idx === -1) return { ok: false, error: 'Room not found' };
-  rooms[idx] = { ...rooms[idx], ...entry.before } as Room;
-  setRooms(rooms);
-  pushAudit({ id: `AUD${Date.now()}`, timestamp: new Date().toISOString(), user: actor ? { id: actor.id, username: actor.username, role: actor.role } : null, action: 'revert', roomId: entry.roomId, before: entry.after, after: entry.before, message: 'Reverted change' });
-  return { ok: true };
-};
+export const resetToDefaultRooms = async (defaults: Omit<Room, 'id'>[]): Promise<void> => {
+  // Clear DB
+  await db.query('DELETE FROM rooms');
+  roomsCache = [];
 
-export const bulkDelete = (ids: string[], actor?: User | null): { ok: boolean; error?: string } => {
-  if (!isManager(actor?.role)) return { ok: false, error: 'Unauthorized' };
-  const rooms = getRooms();
-  const next = rooms.filter(r => !ids.includes(r.id));
-  setRooms(next);
-  ids.forEach(id => pushAudit({ id: `AUD${Date.now()}_${id}`, timestamp: new Date().toISOString(), user: actor ? { id: actor.id, username: actor.username, role: actor.role } : null, action: 'delete', roomId: id, message: 'Room deleted (bulk)' }));
-  return { ok: true };
-};
+  // Bulk Insert
+  for (const r of defaults) {
+    await addRoom(r);
+  }
 
-export const bulkUpdateStatus = (ids: string[], status: Room['status'], actor?: User | null): { ok: boolean; error?: string } => {
-  if (!isManager(actor?.role)) return { ok: false, error: 'Unauthorized' };
-  const rooms = getRooms();
-  const next = rooms.map(r => ids.includes(r.id) ? { ...r, status } : r);
-  setRooms(next);
-  ids.forEach(id => {
-    const before = rooms.find(r => r.id === id);
-    const after = next.find(r => r.id === id);
-    pushAudit({ id: `AUD${Date.now()}_${id}`, timestamp: new Date().toISOString(), user: actor ? { id: actor.id, username: actor.username, role: actor.role } : null, action: 'update', roomId: id, before, after, message: 'Status updated (bulk)' });
+  await pushAudit({
+    action: 'reset',
+    user: 'System',
+    message: 'Reset rooms to default configuration'
   });
-  return { ok: true };
 };
 
-export const resetToDefaultRooms = (rooms: Room[]): void => {
-  setRooms(rooms);
-  pushAudit({
-    id: `AUD${Date.now()}_MIGRATION`,
-    timestamp: new Date().toISOString(),
-    user: null, // System action
-    action: 'revert',
-    roomId: 'ALL',
-    message: 'System migration: Reset to default rooms'
-  });
+// ============================================================================
+// AUDIT LOGGING (DB-Backed)
+// ============================================================================
+
+export interface RoomAudit {
+  id: string;
+  timestamp: string;
+  userId?: string;
+  user?: string; // name
+  role?: string;
+  action: 'create' | 'update' | 'delete' | 'status_change' | 'reset';
+  roomId?: string;
+  roomNumber?: string;
+  before?: Partial<Room>;
+  after?: Partial<Room>;
+  message?: string;
+}
+
+export const getAudit = async (): Promise<RoomAudit[]> => {
+  const res = await db.query<any>('SELECT * FROM room_audits ORDER BY timestamp DESC LIMIT 100');
+  if ('rows' in res && Array.isArray(res.rows)) {
+    return res.rows.map((row: any) => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      userId: row.user_id,
+      user: row.user_username,
+      role: row.user_role,
+      action: row.action,
+      roomId: row.room_id,
+      before: typeof row.before_state === 'string' ? JSON.parse(row.before_state) : row.before_state,
+      after: typeof row.after_state === 'string' ? JSON.parse(row.after_state) : row.after_state,
+      message: row.message
+    }));
+  }
+  return [];
+};
+
+export const pushAudit = async (entry: Omit<RoomAudit, 'id' | 'timestamp'>): Promise<void> => {
+  try {
+    const id = uuidv4();
+    await db.query(
+      `INSERT INTO room_audits (id, user_id, user_username, user_role, action, room_id, before_state, after_state, message)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        entry.userId || null,
+        entry.user || null,
+        entry.role || null,
+        entry.action,
+        entry.roomId || null,
+        entry.before ? JSON.stringify(entry.before) : null,
+        entry.after ? JSON.stringify(entry.after) : null,
+        entry.message || null
+      ]
+    );
+  } catch (e) {
+    console.error('Failed to push room audit:', e);
+  }
+};
+
+export const revertAudit = async (auditId: string): Promise<boolean> => {
+  const res = await db.query<any>('SELECT * FROM room_audits WHERE id = ?', [auditId]);
+  if (!('rows' in res) || !res.rows.length) return false;
+
+  const audit = res.rows[0];
+  const before = typeof audit.before_state === 'string' ? JSON.parse(audit.before_state) : audit.before_state;
+
+  if (before && audit.room_id) {
+    // Log "reverting" message?
+
+    let success = false;
+
+    // For delete revert: Insert
+    if (audit.action === 'delete') {
+      const insertRes = await db.query(
+        'INSERT INTO rooms (id, number, type, floor, rate, status) VALUES (?, ?, ?, ?, ?, ?)',
+        [audit.room_id, before.number, before.type, before.floor, before.rate, before.status]
+      );
+      if (!('error' in insertRes)) success = true;
+    }
+    // For other actions: Update
+    else {
+      const updateRes = await db.query(
+        'UPDATE rooms SET number = ?, type = ?, floor = ?, rate = ?, status = ? WHERE id = ?',
+        [before.number, before.type, before.floor, before.rate, before.status, audit.room_id]
+      );
+      if (!('error' in updateRes)) success = true;
+    }
+
+    if (success) {
+      await refreshRooms();
+      await pushAudit({
+        action: 'update',
+        roomId: audit.room_id,
+        user: 'System',
+        message: `Reverted action ${audit.action} from audit ${auditId}`
+      });
+      return true;
+    }
+  }
+
+  return false;
 };
 
 export default {
   getRooms,
+  getRoom,
   setRooms,
   addRoom,
   updateRoom,
   deleteRoom,
-  bulkDelete,
-  bulkUpdateStatus,
-  getAudit,
-  revertAudit,
-  validateRoom,
+  updateRoomStatus,
   resetToDefaultRooms,
+  refreshRooms,
+  getAudit,
+  pushAudit,
+  revertAudit
 };

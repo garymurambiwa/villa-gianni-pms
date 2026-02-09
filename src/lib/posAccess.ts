@@ -9,7 +9,6 @@ export function shouldDenyPosSettings(
   user: AccessUser,
   session: AccessSession,
   prevPriv: { role?: string } | null | undefined,
-  isElectron: boolean,
   canManagePOS: (role?: string) => boolean
 ) {
   const uname = String((user as any)?.username || '').toLowerCase()
@@ -21,7 +20,6 @@ export function shouldDenyPosSettings(
   const reducedFromManager = rolePrev === 'posmanager' && roleNow !== 'posmanager' && roleNow !== 'admin'
   if (reducedFromAdmin || reducedFromManager) return 'privilege_reduced'
   const allowed = canManagePOS(user?.role)
-  if (isElectron && !allowed) return 'desktop_denied'
   if (!allowed) return 'denied'
   return null
 }

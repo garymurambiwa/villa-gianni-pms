@@ -1,7 +1,4 @@
-// Renderer-side DB helper that bridges to Electron main via window.native.db
-// OR connects directly to Neon (Serverless) when running in a browser.
-// Provides a unified interface for configuring the connection and running queries.
-
+// Web-only DB helper connecting to Neon (Serverless)
 import { Pool, neonConfig } from '@neondatabase/serverless';
 
 // Default connection for browser users (hardcoded to your Neon instance)
@@ -20,8 +17,6 @@ export interface DbConfig {
   ssl?: boolean;
 }
 
-const hasNativeDb = () => typeof window !== 'undefined' && (window as any).native && (window as any).native.db
-
 // Convert MySQL-style ? placeholders to PostgreSQL $1, $2, etc.
 function convertPlaceholders(sql: string): string {
   let idx = 0;
@@ -35,8 +30,6 @@ async function getBrowserPool() {
   if (browserPool) return browserPool;
 
   // Configure Neon to use direct WebSockets
-  // neonConfig.fetchConnectionCache = true; // Disable cache to prevent fetch NetworkErrors in some browsers
-
   // [FIX] Explicitly set WebSocket constructor for browsers that don't auto-detect it
   if (typeof WebSocket !== 'undefined') {
     neonConfig.webSocketConstructor = WebSocket;
@@ -52,106 +45,57 @@ async function getBrowserPool() {
 }
 
 export const db = {
-  async waitForReady(retries = 5, delay = 1000): Promise<boolean> {
-    if (!hasNativeDb()) {
-      // In browser mode, we assume "ready" means we can instantiate the pool
-      return true;
-    }
-
-    // Electron mode
-    for (let i = 0; i < retries; i++) {
-      try {
-        const test = await (window as any).native.db.testConnection()
-        if (test && test.ok) return true;
-      } catch { }
-      await new Promise(res => setTimeout(res, delay));
-    }
-    return false;
+  // Mock readiness check for web
+  async waitForReady(): Promise<boolean> {
+    return true;
   },
 
   async getConnectionString(): Promise<string> {
-    if (!hasNativeDb()) return BROWSER_DSN;
-    const res = await (window as any).native.db.getConnectionString()
-    return res?.connectionString || ''
+    return BROWSER_DSN;
   },
 
   async getConnectionConfig(): Promise<DbConfig | null> {
-    if (!hasNativeDb()) return null; // Not exposed in browser for security
-    return await (window as any).native.db.getConnectionConfig();
+    return null; // Not exposed in browser for security
   },
 
   async isConfigured(): Promise<boolean> {
-    if (!hasNativeDb()) return true;
-    try {
-      const conn = await this.getConnectionString()
-      return !!conn
-    } catch { return false }
+    return true;
   },
 
   async setConnectionString(conn: string): Promise<ExecResult> {
-    if (!hasNativeDb()) return { ok: false, error: 'Cannot set DB connection from web client.' }
-    const res = await (window as any).native.db.setConnectionString(conn)
-    return res && typeof res.ok === 'boolean' ? res : { ok: false, error: 'Unknown error' }
+    return { ok: false, error: 'Cannot set DB connection from web client.' }
   },
 
   async saveConnectionConfig(config: DbConfig): Promise<ExecResult> {
-    if (!hasNativeDb()) return { ok: false, error: 'Native DB bridge unavailable' };
-    return await (window as any).native.db.saveConnectionConfig(config);
+    return { ok: false, error: 'Native DB bridge unavailable' };
   },
 
   async testConnection(config?: DbConfig): Promise<{ ok: boolean; serverVersion?: string; error?: string }> {
-    if (!hasNativeDb()) {
-      try {
-        const pool = await getBrowserPool();
-        const res = await pool.query('SELECT version()');
-        return { ok: true, serverVersion: res.rows[0].version };
-      } catch (e: any) { return { ok: false, error: e.message } }
-    }
-    return await (window as any).native.db.testConnection(config)
+    try {
+      const pool = await getBrowserPool();
+      const res = await pool.query('SELECT version()');
+      return { ok: true, serverVersion: res.rows[0].version };
+    } catch (e: any) { return { ok: false, error: e.message } }
   },
 
   async query<Row = any>(sql: string, params: any[] = []): Promise<QueryResult<Row>> {
-    const start = performance.now();
     const pgSql = convertPlaceholders(sql);
-
-    // [WEB SUPPORT]: Direct Neon Connection
-    if (!hasNativeDb()) {
-      try {
-        const pool = await getBrowserPool();
-        const res = await pool.query(pgSql, params);
-        return { rows: res.rows, rowCount: res.rowCount || 0 };
-      } catch (e: any) {
-        console.error(`[DB-Web-Error] ${e.message}`, sql);
-        return { error: e.message };
-      }
-    }
-
-    // Electron mode
-    const ready = await this.waitForReady()
-    if (!ready) return { error: 'Database initialization timed out' }
-
     try {
-      const result = await (window as any).native.db.query(pgSql, params);
-      const duration = performance.now() - start;
-      if (duration > 500) console.warn(`[DB-Slow] ${duration.toFixed(0)}ms: ${sql.substring(0, 100)}...`);
-      return result;
+      const pool = await getBrowserPool();
+      const res = await pool.query(pgSql, params);
+      return { rows: res.rows, rowCount: res.rowCount || 0 };
     } catch (e: any) {
-      console.error(`[DB-Error] ${e.message}`, sql);
+      console.error(`[DB-Web-Error] ${e.message}`, sql);
       return { error: e.message };
     }
   },
 
   async exec(sql: string, actorUserId?: string): Promise<ExecResult> {
-    if (!hasNativeDb()) {
-      try {
-        const pool = await getBrowserPool();
-        await pool.query(convertPlaceholders(sql));
-        return { ok: true };
-      } catch (e: any) { return { ok: false, error: e.message } }
-    }
-    const ready = await this.waitForReady()
-    if (!ready) return { ok: false, error: 'Database initialization timed out' }
-    return await (window as any).native.db.exec(sql, actorUserId)
+    try {
+      const pool = await getBrowserPool();
+      await pool.query(convertPlaceholders(sql));
+      return { ok: true };
+    } catch (e: any) { return { ok: false, error: e.message } }
   },
 
   async transaction(operations: (string | { sql: string; params?: any[] })[], actorUserId?: string): Promise<ExecResult> {
@@ -165,34 +109,25 @@ export const db = {
       params: op.params
     }));
 
-    // [WEB SUPPORT]: Transaction
-    if (!hasNativeDb()) {
-      const pool = await getBrowserPool();
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        for (const op of pgOps) {
-          await client.query(op.sql, op.params);
-        }
-        await client.query('COMMIT');
-        return { ok: true };
-      } catch (e: any) {
-        await client.query('ROLLBACK');
-        return { ok: false, error: e.message };
-      } finally {
-        client.release();
+    const pool = await getBrowserPool();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const op of pgOps) {
+        await client.query(op.sql, op.params);
       }
+      await client.query('COMMIT');
+      return { ok: true };
+    } catch (e: any) {
+      await client.query('ROLLBACK');
+      return { ok: false, error: e.message };
+    } finally {
+      client.release();
     }
-
-    const ready = await this.waitForReady();
-    if (!ready) return { ok: false, error: 'Database initialization timed out' };
-
-    return await (window as any).native.db.transaction(pgOps);
   },
 
   async exportSqlDump(options?: { outFile?: string; actorUserId?: string }): Promise<{ ok: boolean; path?: string; error?: string; warning?: string }> {
-    if (!hasNativeDb()) return { ok: false, error: 'Export not supported in Browser Mode' }
-    return await (window as any).native.db.exportSqlDump(options || {})
+    return { ok: false, error: 'Export not supported in Browser Mode' }
   }
 }
 

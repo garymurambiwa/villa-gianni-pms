@@ -4,6 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { toast } from '@/hooks/use-toast';
 import { performFullSync, ensureTablesExist } from '@/lib/dbSync';
 import { RealTimeSyncService } from '@/lib/realTimeSyncService';
+import { refreshRooms } from '@/lib/roomService';
+import { refreshConfig as refreshRateConfig } from '@/lib/ratePlanService';
 import { useAuth } from './AuthContext';
 
 const DataContext = createContext<any>(null);
@@ -43,6 +45,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
         });
         setRooms(normalized);
+
+        // Prime the roomService cache
+        await refreshRooms();
+        await refreshRateConfig();
       }
 
       // Load reservations with guest info and room info joined

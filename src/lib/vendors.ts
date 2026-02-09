@@ -1,19 +1,38 @@
+import { db } from '@/lib/db';
+
 export interface Vendor { id: string; name: string; currency?: string; terms?: string }
 
-const VENDORS_KEY = 'corepms_vendors';
-const readJSON = <T>(k:string,f:T):T=>{ try{ const r=localStorage.getItem(k); return r? JSON.parse(r) as T : f; }catch{ return f; } };
-const writeJSON = (k:string,v:any)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} };
+// Migrated to DB-backed service
+export const listVendors = async (): Promise<Vendor[]> => {
+  try {
+    const res = await db.query('SELECT * FROM vendors ORDER BY name');
+    if ('rows' in res) {
+      return res.rows.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        currency: r.currency,
+        terms: r.terms
+      }));
+    }
+    return [];
+  } catch (e) {
+    console.error('Failed to list vendors:', e);
+    return [];
+  }
+};
 
-export const listVendors = (): Vendor[] => readJSON<Vendor[]>(VENDORS_KEY, [
-  { id:'V001', name:'ABC Supplies', currency:'USD', terms:'Net 30' },
-  { id:'V002', name:'Electric Co.', currency:'USD', terms:'Net 15' },
-  { id:'V003', name:'Laundry Services', currency:'USD', terms:'Net 30' },
-]);
-
-export const addVendor = (name: string, currency?: string, terms?: string): Vendor => {
-  const v = { id:`V${Date.now()}`, name, currency, terms } as Vendor;
-  const next = [v, ...listVendors()]; writeJSON(VENDORS_KEY, next); return v;
+export const addVendor = async (name: string, currency?: string, terms?: string): Promise<Vendor | null> => {
+  const id = `V${Date.now()}`;
+  try {
+    await db.query(
+      'INSERT INTO vendors (id, name, currency, terms, created_at) VALUES (?, ?, ?, ?, NOW())',
+      [id, name, currency || 'USD', terms || null]
+    );
+    return { id, name, currency, terms };
+  } catch (e) {
+    console.error('Failed to add vendor:', e);
+    return null;
+  }
 };
 
 export default { listVendors, addVendor };
-

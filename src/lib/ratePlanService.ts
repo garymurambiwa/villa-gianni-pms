@@ -1,3 +1,5 @@
+import { db } from './db';
+
 export type SeasonKey = 'low' | 'shoulder' | 'high';
 
 export interface RatePlanConfig {
@@ -35,41 +37,62 @@ const DEFAULT_RATE_PLAN: RatePlanConfig = {
     { key: 'high', name: 'Festive High', startMonthDay: '12-15', endMonthDay: '01-15', adjustment: 0.2 },
     { key: 'shoulder', name: 'Winter Shoulder', startMonthDay: '06-01', endMonthDay: '08-31', adjustment: 0.1 },
     { key: 'low', name: 'Base Season', startMonthDay: '02-01', endMonthDay: '05-31', adjustment: 0.0 },
-    // Note: remaining periods implicitly considered 'low' with 0 adjustment
   ],
 };
 
-const STORAGE_KEY = 'corepms_ratePlanConfig';
+const DB_KEY = 'rate_plan_config';
+let configCache: RatePlanConfig = DEFAULT_RATE_PLAN;
+let hasLoaded = false;
 let __listeners: Array<(cfg: RatePlanConfig) => void> = [];
-try {
-  window.addEventListener('storage', (e) => {
-    if (e.key === STORAGE_KEY) {
-      try {
-        const cfg = getConfig();
-        __listeners.forEach(fn => { try { fn(cfg) } catch {} });
-      } catch {}
+
+export const refreshConfig = async (): Promise<RatePlanConfig> => {
+  try {
+    const res = await db.query('SELECT value FROM system_configs WHERE key = ?', [DB_KEY]);
+    if ('rows' in res && res.rows.length > 0) {
+      const row = res.rows[0];
+      configCache = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+    } else {
+      // Init default if not exists
+      await saveConfig(DEFAULT_RATE_PLAN);
     }
-  });
-} catch {}
+    hasLoaded = true;
+    notifyListeners();
+    return configCache;
+  } catch (e) {
+    console.error('Failed to refresh rate config:', e);
+    return configCache;
+  }
+};
 
 export function getConfig(): RatePlanConfig {
+  if (!hasLoaded) {
+    refreshConfig().catch(console.error);
+  }
+  return configCache;
+}
+
+export async function saveConfig(config: RatePlanConfig) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_RATE_PLAN;
-    const parsed = JSON.parse(raw) as RatePlanConfig;
-    return parsed;
-  } catch {
-    return DEFAULT_RATE_PLAN;
+    // Upsert
+    // Postgres UPSERT: INSERT ... ON CONFLICT ...
+    const sql = `
+      INSERT INTO system_configs (key, value, description, updated_at, updated_by)
+      VALUES (?, ?::jsonb, ?, NOW(), ?)
+      ON CONFLICT (key) DO UPDATE 
+      SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by
+    `;
+    await db.query(sql, [DB_KEY, JSON.stringify(config), 'Rate Plan Configuration', 'System']);
+
+    configCache = config;
+    notifyListeners();
+  } catch (e) {
+    console.error('Failed to save rate config:', e);
+    throw e;
   }
 }
 
-export function saveConfig(config: RatePlanConfig) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-  } catch {
-    // noop
-  }
-  try { __listeners.forEach(fn => { try { fn(config) } catch {} }); } catch {}
+function notifyListeners() {
+  try { __listeners.forEach(fn => { try { fn(configCache) } catch { } }); } catch { }
 }
 
 function isDateInRange(date: Date, start: string, end: string): boolean {
@@ -119,12 +142,11 @@ export function listRoomTypes(config: RatePlanConfig = getConfig()): string[] {
 
 export function getRateBounds(roomType: string, config: RatePlanConfig = getConfig()): { min: number; max: number } {
   const base = config.baseRates[roomType];
-  
-  // If no base rate is configured for this room type, return a reasonable default range
+
   if (base == null || base === 0) {
-    return { min: 50, max: 1000 }; // Reasonable default range for hotels
+    return { min: 50, max: 1000 };
   }
-  
+
   const bounds = config.rateBounds?.[roomType];
   if (bounds && Number.isFinite(bounds.min) && Number.isFinite(bounds.max)) return bounds;
   const min = Math.max(0, Math.round(base * 0.5));
@@ -137,18 +159,22 @@ export function subscribeRateConfig(fn: (cfg: RatePlanConfig) => void): () => vo
   return () => { __listeners = __listeners.filter(x => x !== fn); };
 }
 
-export function logRateAudit(entry: { type: 'calc' | 'mapping'; roomType?: string; originRegion?: string; date?: string; suggested?: number; base?: number; regionAdjPct?: number; seasonAdjPct?: number }) {
+export async function logRateAudit(entry: { type: 'calc' | 'mapping'; roomType?: string; originRegion?: string; date?: string; suggested?: number; base?: number; regionAdjPct?: number; seasonAdjPct?: number }) {
   try {
-    const raw = localStorage.getItem('corepms_rateAudit');
-    const list = raw ? JSON.parse(raw) : [];
-    const next = [{ ts: new Date().toISOString(), ...entry }, ...list];
-    localStorage.setItem('corepms_rateAudit', JSON.stringify(next.slice(0, 500)));
-  } catch {}
+    const id = `AUDIT_RATE_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+    await db.query(
+      `INSERT INTO system_audits (id, action, entity_type, entity_id, user_id, details) VALUES (?, ?, ?, ?, ?, ?::jsonb)`,
+      [id, 'RATE_CALCULATION', 'RATE_PLAN', 'SYSTEM', 'SYSTEM', JSON.stringify(entry)]
+    );
+  } catch (e) {
+    console.error('Failed to log rate audit:', e);
+  }
 }
 
 export default {
   getConfig,
   saveConfig,
+  refreshConfig,
   getSeasonForDate,
   computeRate,
   computeRateBreakdown,

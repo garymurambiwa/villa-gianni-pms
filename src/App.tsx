@@ -55,74 +55,6 @@ const router = createHashRouter([
   { path: "*", element: <NotFound /> },
 ])
 
-const UpdateStatusBinder = () => {
-  useEffect(() => {
-    const w = window as any
-    if (!w.native || !w.native.update || !w.native.update.onStatus) return
-    const handler = (payload: any) => {
-      const stage = String(payload.stage || '')
-      const msg = payload.message || payload.error || ''
-      const pct = typeof payload.pct === 'number' ? ` (${payload.pct.toFixed(0)}%)` : ''
-      const title = stage === 'progress' ? 'Downloading update' : `Update: ${stage}`
-      toast({ title, description: `${msg}${pct}` })
-    }
-    try { w.native.update.onStatus(handler) } catch { }
-  }, [])
-  return null
-}
-
-import { FirstRunWizard } from "@/components/FirstRunWizard";
-import { useState } from "react";
-
-const SetupCheck = ({ children }: { children: React.ReactNode }) => {
-  const [checking, setChecking] = useState(true);
-  const [showWizard, setShowWizard] = useState(false);
-
-  useEffect(() => {
-    const check = async () => {
-      try {
-        const w = window as any;
-        if (w.native && w.native.db && w.native.db.isConfigured) {
-          const status = await w.native.db.isConfigured();
-          if (!status.configured || !status.firstRunCompleted) {
-            setShowWizard(true);
-          }
-        }
-      } catch (e) {
-        console.error("Setup check failed", e);
-      } finally {
-        setChecking(false);
-      }
-    };
-    check();
-  }, []);
-
-  if (checking) return null;
-  if (showWizard) return <FirstRunWizard onComplete={() => setShowWizard(false)} />;
-  return <>{children}</>;
-};
-
-const Heartbeat = () => {
-  const { user } = useAuth();
-  useEffect(() => {
-    if (!user) return;
-
-    const beat = async () => {
-      if (typeof window !== 'undefined' && window.native?.auth?.heartbeat) {
-        try { await window.native.auth.heartbeat(user.id); } catch { }
-      }
-    };
-
-    // Initial beat
-    beat();
-
-    // Loop every 60s
-    const interval = setInterval(beat, 60000);
-    return () => clearInterval(interval);
-  }, [user]);
-  return null;
-};
-
 const App = () => (
   <ThemeProvider defaultTheme="light">
     <QueryClientProvider client={queryClient}>
@@ -131,20 +63,16 @@ const App = () => (
         <Sonner />
         <AppProvider>
           <ErrorBoundary>
-            <SetupCheck>
-              <RouterProvider router={router} future={{ v7_startTransition: true }} />
-              <UpdateStatusBinder />
-              <Heartbeat />
-              <div
-                className="fixed bottom-3 right-3 z-50"
-                role="contentinfo"
-              >
-                <div className="px-2.5 py-1.5 rounded-md shadow-sm border bg-white/90 dark:bg-gray-900/90 border-gray-200 dark:border-gray-700">
-                  <VersionDisplay className="text-gray-700 dark:text-gray-200" />
-                </div>
+            <RouterProvider router={router} future={{ v7_startTransition: true }} />
+            <div
+              className="fixed bottom-3 right-3 z-50"
+              role="contentinfo"
+            >
+              <div className="px-2.5 py-1.5 rounded-md shadow-sm border bg-white/90 dark:bg-gray-900/90 border-gray-200 dark:border-gray-700">
+                <VersionDisplay className="text-gray-700 dark:text-gray-200" />
               </div>
-              <VirtualKeyboard />
-            </SetupCheck>
+            </div>
+            <VirtualKeyboard />
           </ErrorBoundary>
         </AppProvider>
       </TooltipProvider>

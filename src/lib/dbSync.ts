@@ -421,7 +421,6 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
     }
 
     return { success: true, synced: 2 };
-    return { success: true, synced: 2 };
   } catch (err: any) {
     const msg = err?.message || String(err);
     console.error('[dbSync] POS item sync CRITICAL FAILURE:', msg, item);

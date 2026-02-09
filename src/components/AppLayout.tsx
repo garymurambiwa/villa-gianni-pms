@@ -291,12 +291,11 @@ const AppLayout: React.FC = () => {
       case 'pos-settings': {
         // Session validation and privilege checks
         const sess = auth.getSession?.();
-        const isElectron = !!(typeof window !== 'undefined' && (window as any).native) || !!(typeof process !== 'undefined' && (process as any).versions?.electron);
         const prevPrivRaw = (() => { try { return localStorage.getItem('corepms_session_priv'); } catch { return null; } })();
         const prevPriv = (() => { try { return prevPrivRaw ? JSON.parse(prevPrivRaw) : null; } catch { return null; } })();
         const roleNow = normalizeRole(user?.role);
         const rolePrev = normalizeRole(prevPriv?.role);
-        const deny = shouldDenyPosSettings(user, sess, prevPriv, isElectron, canManagePOS);
+        const deny = shouldDenyPosSettings(user, sess, prevPriv, canManagePOS);
         if (deny) {
           const roleNow = normalizeRole(user?.role);
           const rolePrev = normalizeRole(prevPriv?.role);

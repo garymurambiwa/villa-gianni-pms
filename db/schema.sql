@@ -798,6 +798,179 @@ CREATE TABLE IF NOT EXISTS public.breakfast_package_seasonal_rates (
 -- Create indexes for breakfast packages performance
 CREATE INDEX IF NOT EXISTS breakfast_packages_code_idx ON public.breakfast_packages(code);
 CREATE INDEX IF NOT EXISTS breakfast_packages_active_idx ON public.breakfast_packages(is_active);
+
+-- ============================================================================
+-- ROOM AUDITS (V8)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.room_audits (
+  id VARCHAR(255) PRIMARY KEY,
+  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  user_id VARCHAR(255),
+  user_username VARCHAR(255),
+  user_role VARCHAR(50),
+  action VARCHAR(50) NOT NULL,
+  room_id VARCHAR(255),
+  before_state JSONB,
+  after_state JSONB,
+  message TEXT,
+  inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS room_audits_room_id_idx ON public.room_audits(room_id);
+CREATE INDEX IF NOT EXISTS room_audits_timestamp_idx ON public.room_audits(timestamp);
+
+-- ============================================================================
+-- SYSTEM CONFIGS (V8)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.system_configs (
+  key VARCHAR(255) PRIMARY KEY,
+  value JSONB NOT NULL,
+  description TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by VARCHAR(255)
+);
+
+-- ============================================================================
+-- MAINTENANCE (V9)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.assets (
+  id VARCHAR(255) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  location VARCHAR(255),
+  serial_number VARCHAR(255),
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS public.work_orders (
+  id VARCHAR(255) PRIMARY KEY,
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  room_number VARCHAR(50),
+  asset_id VARCHAR(255) REFERENCES public.assets(id),
+  priority VARCHAR(50) DEFAULT 'medium', -- low, medium, high
+  status VARCHAR(50) NOT NULL DEFAULT 'open', -- open, in_progress, closed
+  assigned_to VARCHAR(255),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ,
+  closed_at TIMESTAMPTZ
+);
+
+-- ============================================================================
+-- EXPENSES (V9)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.expenses (
+  id VARCHAR(255) PRIMARY KEY,
+  date DATE NOT NULL,
+  vendor_id VARCHAR(255) NOT NULL,
+  invoice_ref VARCHAR(255) NOT NULL,
+  payment_method VARCHAR(50) NOT NULL,
+  amount NUMERIC(12, 2) NOT NULL,
+  currency VARCHAR(10) DEFAULT 'USD',
+  gl_account_id VARCHAR(50) NOT NULL,
+  cost_center VARCHAR(100) NOT NULL,
+  description TEXT,
+  attachment_name VARCHAR(255),
+  attachment_url TEXT,
+  status VARCHAR(50) NOT NULL DEFAULT 'draft', -- draft, pending_approval, approved, posted
+  approved_by VARCHAR(255),
+  approved_at TIMESTAMPTZ,
+  posted_at TIMESTAMPTZ,
+  created_by VARCHAR(255),
+  comments JSONB DEFAULT '[]'::jsonb,
+  inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS expenses_date_idx ON public.expenses(date);
+CREATE INDEX IF NOT EXISTS expenses_status_idx ON public.expenses(status);
+
+-- ============================================================================
+-- COCKTAIL / F&B (V10)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.cocktail_ingredients (
+  id VARCHAR(255) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  unit VARCHAR(50) NOT NULL, -- ml, oz, cl, each
+  stock_qty NUMERIC(12, 4) DEFAULT 0,
+  threshold NUMERIC(12, 4),
+  cost_per_unit NUMERIC(12, 4),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.cocktail_recipes (
+  id VARCHAR(255) PRIMARY KEY,
+  item_id VARCHAR(255) NOT NULL, -- Link to POS item
+  name VARCHAR(255) NOT NULL,
+  ingredients JSONB NOT NULL DEFAULT '[]'::jsonb, -- Array of { ingredientId, qty, unit }
+  notes TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.cocktail_usage (
+  id VARCHAR(255) PRIMARY KEY,
+  item_id VARCHAR(255),
+  count INTEGER,
+  recipe_id VARCHAR(255),
+  ingredients_snapshot JSONB, -- Snapshot of recipe at time of usage
+  timestamp TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.cocktail_waste (
+  id VARCHAR(255) PRIMARY KEY,
+  ingredient_id VARCHAR(255) REFERENCES public.cocktail_ingredients(id),
+  qty NUMERIC(12, 4) NOT NULL,
+  reason TEXT,
+  bartender_id VARCHAR(255),
+  timestamp TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS cocktail_usage_ts_idx ON public.cocktail_usage(timestamp);
+
+-- ============================================================================
+-- PHASE 6: FINAL POLISH (V11)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.vendors (
+  id VARCHAR(255) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  currency VARCHAR(10) DEFAULT 'USD',
+  terms VARCHAR(255),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS public.z_readings (
+  id VARCHAR(255) PRIMARY KEY,
+  reading_number INTEGER NOT NULL,
+  shift_id VARCHAR(255) NOT NULL,
+  outlet VARCHAR(50) DEFAULT 'default',
+  data JSONB NOT NULL, -- Full report data
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.system_audits (
+  id VARCHAR(255) PRIMARY KEY,
+  timestamp TIMESTAMPTZ DEFAULT NOW(),
+  action VARCHAR(255) NOT NULL,
+  entity_type VARCHAR(100),
+  entity_id VARCHAR(255),
+  user_id VARCHAR(255),
+  details JSONB
+);
+
+CREATE INDEX IF NOT EXISTS z_readings_shift_idx ON public.z_readings(shift_id);
+CREATE INDEX IF NOT EXISTS system_audits_ts_idx ON public.system_audits(timestamp);
+CREATE INDEX IF NOT EXISTS system_audits_entity_idx ON public.system_audits(entity_type, entity_id);
+
+
+
+
 CREATE INDEX IF NOT EXISTS breakfast_package_seasonal_rates_package_idx ON public.breakfast_package_seasonal_rates(breakfast_package_id);
 CREATE INDEX IF NOT EXISTS breakfast_package_seasonal_rates_season_idx ON public.breakfast_package_seasonal_rates(season_key);
 
