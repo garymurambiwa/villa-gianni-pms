@@ -183,7 +183,7 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
     const list = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(list)) return [];
     return list.map((it: any) => {
-      const center = String(it.costCenter || '').toLowerCase();
+      const center = String(it.costCenter || it.type || '').toLowerCase();
       const category: 'food' | 'bar' = center === 'bar' ? 'bar' : 'food';
       const price = Number(it.sellingPrice ?? it.price ?? 0);
       const available = category === 'bar' ? !!it.visibility?.bar : !!it.visibility?.restaurant;

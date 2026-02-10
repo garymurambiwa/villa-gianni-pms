@@ -40,6 +40,7 @@ export interface InventoryItemRecord {
   cost_price?: number;
   reorder_level?: number;
   unit?: string;
+  visibility?: { bar: boolean; restaurant: boolean };
 }
 
 export interface FolioChargeRecord {
@@ -269,17 +270,18 @@ export async function syncInventoryItemToDb(item: InventoryItemRecord): Promise<
 
     // Use PostgreSQL UPSERT syntax
     const sql = `
-      INSERT INTO inventory_items (id, name, category, stock_level, price, inserted_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+      INSERT INTO inventory_items (id, name, category, stock_level, price, visibility, inserted_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
       ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
         category = EXCLUDED.category,
         stock_level = EXCLUDED.stock_level,
         price = EXCLUDED.price,
+        visibility = EXCLUDED.visibility,
         updated_at = NOW()
     `;
 
-    const result = await db.query(sql, [item.id, item.name, category, stockLevel, price]);
+    const result = await db.query(sql, [item.id, item.name, category, stockLevel, price, item.visibility ? JSON.stringify(item.visibility) : null]);
 
     if ('error' in result) {
       console.error('[dbSync] Inventory item sync failed:', (result as any).error);
@@ -408,7 +410,8 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
       name: String(item.name || ''),
       category: String(item.inventoryCategory || item.costCenter || 'general'),
       stock_level: Number(item.qtyInStock || 0),
-      price: Number(item.costPrice || 0)
+      price: Number(item.costPrice || 0),
+      visibility: item.visibility // Pass visibility
     };
     const invResult = await syncInventoryItemToDb(invItem);
 
