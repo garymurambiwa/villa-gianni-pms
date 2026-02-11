@@ -1208,10 +1208,29 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Default room types if none exist
 INSERT INTO public.rooms (id, number, type, status, rate, inserted_at, updated_at) VALUES
-  ('room_sample_1', '101', 'Standard', 'vacant', 2500.00, NOW(), NOW()),
-  ('room_sample_2', '102', 'Deluxe', 'vacant', 3500.00, NOW(), NOW()),
-  ('room_sample_3', '201', 'Suite', 'vacant', 5000.00, NOW(), NOW())
-ON CONFLICT (number) DO NOTHING;
+  -- Standard Rooms ($80)
+  ('room_101', '101', 'Standard Room', 'vacant', 80.00, NOW(), NOW()),
+  ('room_103', '103', 'Standard Room', 'vacant', 80.00, NOW(), NOW()),
+  ('room_105', '105', 'Standard Room', 'vacant', 80.00, NOW(), NOW()),
+  ('room_107', '107', 'Standard Room', 'vacant', 80.00, NOW(), NOW()),
+  ('room_108', '108', 'Standard Room', 'vacant', 80.00, NOW(), NOW()),
+
+  -- Executive Rooms ($100)
+  ('room_109', '109', 'Executive Room', 'vacant', 100.00, NOW(), NOW()),
+  ('room_106', '106', 'Executive Room', 'vacant', 100.00, NOW(), NOW()),
+  ('room_110', '110', 'Executive Room', 'vacant', 100.00, NOW(), NOW()),
+  ('room_112', '112', 'Executive Room', 'vacant', 100.00, NOW(), NOW()),
+
+  -- Executive Suites ($150)
+  ('room_111', '111', 'Executive Suite', 'vacant', 150.00, NOW(), NOW()),
+  ('room_104', '104', 'Executive Suite', 'vacant', 150.00, NOW(), NOW()),
+
+  -- Villa/Lodge ($300)
+  ('room_114', '114', 'Villa Self Catering', 'vacant', 300.00, NOW(), NOW()),
+  ('room_115', '115', 'Villa Self Catering', 'vacant', 300.00, NOW(), NOW()),
+  ('room_116', '116', 'New Lodge', 'vacant', 300.00, NOW(), NOW())
+ON CONFLICT (number) DO UPDATE 
+SET rate = EXCLUDED.rate, type = EXCLUDED.type;
 
 -- Default menu categories
 INSERT INTO public.menu_items (id, name, category, price, active, inserted_at) VALUES
