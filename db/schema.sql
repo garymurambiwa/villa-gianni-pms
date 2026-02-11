@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS public.inventory_items (
   cost numeric(12,2) NOT NULL DEFAULT 0,
   stock_level integer DEFAULT 0,
   price numeric(12,2) DEFAULT 0,
+  visibility text,
   inserted_at timestamptz NOT NULL DEFAULT NOW()
 );
 

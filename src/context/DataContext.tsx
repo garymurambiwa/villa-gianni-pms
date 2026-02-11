@@ -208,12 +208,45 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const invRes = await db.query('SELECT * FROM inventory_items');
-      if ('rows' in invRes) setInventory(invRes.rows);
+      const menuRes = await db.query('SELECT * FROM menu_items');
+
+      let mergedInventory: any[] = [];
+      if ('rows' in invRes && Array.isArray(invRes.rows)) {
+        const menuMap = new Map();
+        const menuNameMap = new Map();
+        if ('rows' in menuRes && Array.isArray(menuRes.rows)) {
+          menuRes.rows.forEach((m: any) => {
+            menuMap.set(m.id, m);
+            const n = String(m.name || '').trim().toLowerCase();
+            if (n) menuNameMap.set(n, m);
+          });
+        }
+
+        mergedInventory = invRes.rows.map((inv: any) => {
+          let menuItem = menuMap.get(inv.id);
+          if (!menuItem) {
+            const n = String(inv.name || '').trim().toLowerCase();
+            menuItem = menuNameMap.get(n);
+          }
+
+          return {
+            ...inv,
+            selling_price: menuItem ? Number(menuItem.price || 0) : Number(inv.price || 0),
+            type: menuItem ? menuItem.category : (inv.category || 'restaurant'),
+            active: menuItem ? menuItem.active : true,
+            category: menuItem ? menuItem.category : (inv.category || 'general')
+          };
+        });
+
+        setInventory(mergedInventory);
+      } else {
+        setInventory([]);
+      }
 
       // Sync inventory to localStorage for POS offline usage
-      if ('rows' in invRes && Array.isArray(invRes.rows)) {
+      if (mergedInventory.length > 0) {
         try {
-          localStorage.setItem('corepms_pos_items', JSON.stringify(invRes.rows));
+          localStorage.setItem('corepms_pos_items', JSON.stringify(mergedInventory));
           window.dispatchEvent(new Event('storage')); // Notify listeners
         } catch (e) {
           console.warn('Failed to sync inventory to localStorage', e);

@@ -38,7 +38,7 @@ const convertPOSItemsToInventory = (posItems: POSItem[]): InventoryItem[] => {
     quantity: item.qtyInStock || 0,
     unit: item.unit || 'units',
     reorderLevel: item.reorderLevel || 10,
-    cost: item.cost || item.price || 0
+    cost: Number(item.cost || item.price || 0)
   }));
 };
 
@@ -311,7 +311,7 @@ export const Inventory: React.FC = () => {
 
   // Print current filtered list by category
   const handlePrintByCategory = () => {
-    const rows = filteredItems.map(i => `<tr><td>${i.name}</td><td class=\"right\">${i.quantity}</td><td>${i.unit}</td><td class=\"right\">${i.cost.toFixed(2)}</td><td class=\"right\">${(i.quantity * i.cost).toFixed(2)}</td></tr>`).join('');
+    const rows = filteredItems.map(i => `<tr><td>${i.name}</td><td class=\"right\">${i.quantity}</td><td>${i.unit}</td><td class=\"right\">${Number(i.cost).toFixed(2)}</td><td class=\"right\">${(i.quantity * Number(i.cost)).toFixed(2)}</td></tr>`).join('');
     const brand = readReceiptBranding();
     const header = `
       ${brand.show_logo && brand.logo_url ? `<div style=\"text-align:center\"><img src=\"${brand.logo_url}\" alt=\"Logo\" style=\"max-width:120px\"/></div>` : ''}
@@ -346,7 +346,7 @@ export const Inventory: React.FC = () => {
   // Export current filtered list by category (CSV)
   const handleExportByCategory = () => {
     const headers = ['Item', 'Qty', 'Unit', 'UnitCost', 'TotalValue'];
-    const rows = filteredItems.map(i => [i.name, String(i.quantity), i.unit, i.cost.toFixed(2), (i.quantity * i.cost).toFixed(2)]);
+    const rows = filteredItems.map(i => [i.name, String(i.quantity), i.unit, Number(i.cost).toFixed(2), (i.quantity * Number(i.cost)).toFixed(2)]);
     const csv = [headers.join(','), ...rows.map(r => r.map(v => `\"${String(v).replace(/\"/g, '\"\"')}\"`).join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -597,9 +597,9 @@ export const Inventory: React.FC = () => {
                   <td className="px-6 py-4 text-sm text-right text-gray-600">
                     {item.reorderLevel} {item.unit}
                   </td>
-                  <td className="px-6 py-4 text-sm text-right text-gray-800">${item.cost.toFixed(2)}</td>
+                  <td className="px-6 py-4 text-sm text-right text-gray-800">${Number(item.cost).toFixed(2)}</td>
                   <td className="px-6 py-4 text-sm text-right font-semibold text-gray-800">
-                    ${(item.quantity * item.cost).toFixed(2)}
+                    ${(item.quantity * Number(item.cost)).toFixed(2)}
                   </td>
                   <td className="px-6 py-4 text-center">
                     {item.quantity <= item.reorderLevel ? (
