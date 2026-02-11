@@ -864,30 +864,31 @@ CREATE TABLE IF NOT EXISTS public.work_orders (
 -- EXPENSES (V9)
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS public.expenses (
-  id VARCHAR(255) PRIMARY KEY,
-  date DATE NOT NULL,
-  vendor_id VARCHAR(255) NOT NULL,
-  invoice_ref VARCHAR(255) NOT NULL,
-  payment_method VARCHAR(50) NOT NULL,
-  amount NUMERIC(12, 2) NOT NULL,
-  currency VARCHAR(10) DEFAULT 'USD',
-  gl_account_id VARCHAR(50) NOT NULL,
-  cost_center VARCHAR(100) NOT NULL,
-  description TEXT,
-  attachment_name VARCHAR(255),
-  attachment_url TEXT,
-  status VARCHAR(50) NOT NULL DEFAULT 'draft', -- draft, pending_approval, approved, posted
-  approved_by VARCHAR(255),
-  approved_at TIMESTAMPTZ,
-  posted_at TIMESTAMPTZ,
-  created_by VARCHAR(255),
-  comments JSONB DEFAULT '[]'::jsonb,
-  inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- [DUPLICATE V9 EXPENSES REMOVED/COMMENTED OUT to favor V6]
+-- CREATE TABLE IF NOT EXISTS public.expenses (
+--   id VARCHAR(255) PRIMARY KEY,
+--   date DATE NOT NULL,
+--   vendor_id VARCHAR(255) NOT NULL,
+--   invoice_ref VARCHAR(255) NOT NULL,
+--   payment_method VARCHAR(50) NOT NULL,
+--   amount NUMERIC(12, 2) NOT NULL,
+--   currency VARCHAR(10) DEFAULT 'USD',
+--   gl_account_id VARCHAR(50) NOT NULL,
+--   cost_center VARCHAR(100) NOT NULL,
+--   description TEXT,
+--   attachment_name VARCHAR(255),
+--   attachment_url TEXT,
+--   status VARCHAR(50) NOT NULL DEFAULT 'draft', -- draft, pending_approval, approved, posted
+--   approved_by VARCHAR(255),
+--   approved_at TIMESTAMPTZ,
+--   posted_at TIMESTAMPTZ,
+--   created_by VARCHAR(255),
+--   comments JSONB DEFAULT '[]'::jsonb,
+--   inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- );
 
-CREATE INDEX IF NOT EXISTS expenses_date_idx ON public.expenses(date);
-CREATE INDEX IF NOT EXISTS expenses_status_idx ON public.expenses(status);
+-- CREATE INDEX IF NOT EXISTS expenses_date_idx ON public.expenses(date);
+-- CREATE INDEX IF NOT EXISTS expenses_status_idx ON public.expenses(status);
 
 -- ============================================================================
 -- COCKTAIL / F&B (V10)
@@ -936,14 +937,15 @@ CREATE INDEX IF NOT EXISTS cocktail_usage_ts_idx ON public.cocktail_usage(timest
 -- PHASE 6: FINAL POLISH (V11)
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS public.vendors (
-  id VARCHAR(255) PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  currency VARCHAR(10) DEFAULT 'USD',
-  terms VARCHAR(255),
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ
-);
+-- [DUPLICATE V11 VENDORS REMOVED to favor V6]
+-- CREATE TABLE IF NOT EXISTS public.vendors (
+--   id VARCHAR(255) PRIMARY KEY,
+--   name VARCHAR(255) NOT NULL,
+--   currency VARCHAR(10) DEFAULT 'USD',
+--   terms VARCHAR(255),
+--   created_at TIMESTAMPTZ DEFAULT NOW(),
+--   updated_at TIMESTAMPTZ
+-- );
 
 CREATE TABLE IF NOT EXISTS public.z_readings (
   id VARCHAR(255) PRIMARY KEY,
