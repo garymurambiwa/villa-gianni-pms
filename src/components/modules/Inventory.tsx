@@ -46,8 +46,8 @@ const loadInventoryFromPOS = async (): Promise<{ items: InventoryItem[]; source:
   try {
     const isConfigured = await db.isConfigured();
     if (isConfigured) {
-      const res = await db.query<{ id: string; name: string; category: string; stock_level: number; price: number }>(
-        `SELECT id, name, category, stock_level, price FROM inventory_items`
+      const res = await db.query<{ id: string; name: string; category: string; stock_level: number; cost_price: number }>(
+        `SELECT id, name, category, stock_level, cost_price FROM products WHERE is_stock_item = true`
       );
       if ('rows' in res && Array.isArray(res.rows) && res.rows.length > 0) {
         return {
@@ -58,7 +58,7 @@ const loadInventoryFromPOS = async (): Promise<{ items: InventoryItem[]; source:
             quantity: Number(r.stock_level || 0),
             unit: 'units',
             reorderLevel: 10,
-            cost: Number(r.price || 0)
+            cost: Number(r.cost_price || 0)
           })),
           source: 'db'
         };
@@ -744,13 +744,13 @@ const GRVModal: React.FC<GRVModalProps> = ({ inventory, onClose, onSaved }) => {
           if (configured) {
             for (const r of rows) {
               if (!r.itemId || r.qty <= 0 || r.totalCost <= 0) continue;
-              const curRes = await db.query<{ stock_level: number; price: number }>(`SELECT stock_level, price FROM inventory_items WHERE id = ?`, [r.itemId]);
+              const curRes = await db.query<{ stock_level: number; cost_price: number }>(`SELECT stock_level, cost_price FROM products WHERE id = ?`, [r.itemId]);
               if ('rows' in curRes && curRes.rows && curRes.rows.length > 0) {
                 const curQty = Number(curRes.rows[0].stock_level || 0);
-                const curCost = Number(curRes.rows[0].price || 0);
+                const curCost = Number(curRes.rows[0].cost_price || 0);
                 const newQty = curQty + Number(r.qty);
                 const newAvgCost = newQty > 0 ? ((curQty * curCost) + Number(r.totalCost)) / newQty : curCost;
-                await db.query(`UPDATE inventory_items SET stock_level = ?, price = ? WHERE id = ?`, [newQty, Number(newAvgCost.toFixed(2)), r.itemId]);
+                await db.query(`UPDATE products SET stock_level = ?, cost_price = ? WHERE id = ?`, [newQty, Number(newAvgCost.toFixed(2)), r.itemId]);
                 await db.query(
                   `INSERT INTO inventory_movements (id, item_id, delta, reason, user_id) VALUES (?, ?, ?, ?, ?)`,
                   [`mov_${Date.now()}_${Math.random().toString(36).slice(2)}`, r.itemId, Number(r.qty), 'GRV', null]

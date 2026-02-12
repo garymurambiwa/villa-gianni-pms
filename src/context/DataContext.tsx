@@ -207,37 +207,47 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setPosOrders(normalized);
       }
 
-      const invRes = await db.query('SELECT * FROM inventory_items');
-      const menuRes = await db.query('SELECT * FROM menu_items');
-
+      const productsRes = await db.query('SELECT * FROM products ORDER BY name ASC');
       let mergedInventory: any[] = [];
-      if ('rows' in invRes && Array.isArray(invRes.rows)) {
-        const menuMap = new Map();
-        const menuNameMap = new Map();
-        if ('rows' in menuRes && Array.isArray(menuRes.rows)) {
-          menuRes.rows.forEach((m: any) => {
-            menuMap.set(m.id, m);
-            const n = String(m.name || '').trim().toLowerCase();
-            if (n) menuNameMap.set(n, m);
-          });
-        }
 
-        mergedInventory = invRes.rows.map((inv: any) => {
-          let menuItem = menuMap.get(inv.id);
-          if (!menuItem) {
-            const n = String(inv.name || '').trim().toLowerCase();
-            menuItem = menuNameMap.get(n);
+      if ('rows' in productsRes && Array.isArray(productsRes.rows)) {
+        mergedInventory = productsRes.rows.map((p: any) => {
+          // Parse visibility if stored as string JSON
+          let vis = p.visibility;
+          if (typeof vis === 'string') {
+            try { vis = JSON.parse(vis); } catch { vis = {}; }
           }
 
           return {
-            ...inv,
-            selling_price: menuItem ? Number(menuItem.price || 0) : Number(inv.price || 0),
-            type: menuItem ? menuItem.category : (inv.category || 'restaurant'),
-            active: menuItem ? menuItem.active : true,
-            category: menuItem ? menuItem.category : (inv.category || 'general')
+            ...p,
+            // Map unified fields to legacy frontend expected fields
+            selling_price: Number(p.price || 0),
+            sellingPrice: Number(p.price || 0), // camelCase for PosSettings
+            costPrice: Number(p.cost_price || 0),
+            qtyInStock: Number(p.stock_level || 0),
+            // 'type' is used for filtering (bar/restaurant/etc)
+            type: p.department || p.category || 'restaurant',
+            // Ensure category is set (sometimes used for display)
+            category: p.category || 'general',
+            active: p.active !== false,
+            visibility: vis,
+            isStockItem: p.is_stock_item,
+            // Map new extended fields (snake_case from DB -> camelCase for frontend)
+            category_id: p.category_id,
+            sub_id: p.sub_id,
+            parent_sub_id: p.parent_sub_id,
+            notes: p.notes,
+            barcodes: p.barcodes ? (typeof p.barcodes === 'string' ? JSON.parse(p.barcodes) : p.barcodes) : [],
+            cosPercent: Number(p.cos_percent || 0),
+            gpPercent: Number(p.gp_percent || 0),
+            gpAmount: Number(p.gp_amount || 0),
+            qtyReceived: Number(p.qty_received || 0),
+            imageBgColor: p.image_bg_color,
+            pictureData: p.picture_data
           };
         });
 
+        console.log(`[DataContext] Loaded ${mergedInventory.length} products`);
         setInventory(mergedInventory);
       } else {
         setInventory([]);
@@ -680,7 +690,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updateStock = async (itemId: string, stockLevel: number): Promise<boolean> => {
     try {
       // For now, just update the local state, the sync happens periodically
-      const sql = "UPDATE inventory_items SET stock_level = ? WHERE id = ?";
+      const sql = "UPDATE products SET stock_level = ? WHERE id = ?";
       const params = [Number(stockLevel || 0), itemId];
       const result = await db.query(sql, params);
       if ('error' in result) {
