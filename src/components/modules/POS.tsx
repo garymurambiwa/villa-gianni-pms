@@ -30,8 +30,20 @@ export const POS: React.FC = () => {
         id: i.id,
         name: i.name,
         price: Number(i.selling_price),
-        category: (i.type === 'bar' || i.type === 'restaurant') ? i.type : 'restaurant' // Default to restaurant if unknown
-      }));
+        category: (i.type === 'bar' || i.type === 'restaurant') ? i.type : 'restaurant', // Default to restaurant if unknown
+        // Helper for debugging visibility
+        visibility: i.visibility
+      }))
+      .filter((item: any) => {
+        // Only show items that are active and visible in the current view
+        // If visibility is not set (legacy/import), assume visible
+        // If visibility is set, respect the flag
+        // However, for now, we just rely on type/category mapping above.
+        // We can add stricter visibility checks here if needed:
+        // const isVisible = activeCategory === 'bar' ? item.visibility?.bar : item.visibility?.restaurant;
+        // return isVisible !== false; // Default to true if undefined
+        return true;
+      });
   }, [inventory]);
 
   const [activeCategory, setActiveCategory] = useState<'bar' | 'restaurant'>('restaurant');

@@ -1149,8 +1149,13 @@ export const PosSettings: React.FC = () => {
           const costPrice = Number(cols[costIdx] || 0);
           const qtyInStock = Number(cols[stockIdx] || 0);
           const qtyReceived = Number(cols[recvIdx] || 0);
-          const barVisible = String(cols[barIdx] || '').toLowerCase().startsWith('y');
-          const restaurantVisible = String(cols[restIdx] || '').toLowerCase().startsWith('y');
+          const parseBool = (val: string) => {
+            const v = String(val || '').trim().toLowerCase();
+            return ['y', 'yes', 'true', '1', 'on'].includes(v);
+          };
+
+          const barVisible = parseBool(cols[barIdx]);
+          const restaurantVisible = parseBool(cols[restIdx]);
           const cosPercent = Number(cols[cosIdx] || 0);
           const gpAmount = cols[gpAmtIdx] ? Number(cols[gpAmtIdx]) : sellingPrice - costPrice;
           const gpPercent = cols[gpPctIdx] ? Number(cols[gpPctIdx]) : (sellingPrice ? (gpAmount / sellingPrice) * 100 : 0);
