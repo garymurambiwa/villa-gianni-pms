@@ -208,24 +208,58 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
   }
 };
 
-export const getMenuItems = async (): Promise<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; description?: string }>> => {
+export const getMenuItems = async (): Promise<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; description?: string; category_id?: string; subCategory?: string; }>> => {
   try {
     const isConfigured = await db.isConfigured();
     if (isConfigured) {
-      const res = await db.query<{ id: string; name: string; category: string; price: number; active: number }>(
-        `SELECT id, name, category, price, active FROM menu_items WHERE active = true`
+      // Use products table as source of truth
+      const res = await db.query(
+        `SELECT id, name, price, department, category, active FROM products WHERE active = true`
       );
       if ('rows' in res && Array.isArray(res.rows)) {
-        return res.rows.map((r: any) => ({
-          id: String(r.id),
-          name: String(r.name),
-          price: Number(r.price || 0),
-          category: String(r.category).toLowerCase() === 'bar' ? 'bar' : 'food',
-          description: ''
-        }));
+        return res.rows
+          .map((r: any) => {
+            const rawCat = String(r.department || r.category || '').toLowerCase();
+            // Simple heuristic for Bar vs Food, defaulting to Food
+            const category: 'food' | 'bar' = (rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('cocktail')) ? 'bar' : 'food';
+            const price = Number(r.price || 0);
+
+            // Filter out items with no price to prevent $0.00 items cluttering POS
+            if (price <= 0) return null;
+
+            // Map imported products to default Categories to ensure they appear in POS tabs
+            // Otherwise, OrderModal filters them out if they don't match active category ID.
+            let category_id = undefined;
+            if (category === 'bar') {
+              if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink')) {
+                category_id = 'CAT_BAR_BEV';
+              } else {
+                category_id = 'CAT_BAR_GEN';
+              }
+            } else {
+              if (rawCat.includes('main') || rawCat.includes('entree')) {
+                category_id = 'CAT_REST_MAIN';
+              } else {
+                category_id = 'CAT_REST_GEN';
+              }
+            }
+
+            return {
+              id: String(r.id),
+              name: String(r.name),
+              price,
+              category,
+              description: '',
+              subCategory: r.category || r.department || '',
+              category_id
+            };
+          })
+          .filter((item): item is NonNullable<typeof item> => item !== null);
       }
     }
-  } catch { }
+  } catch (e) {
+    console.error('Failed to load menu items from DB', e);
+  }
   return getMenuItemsFromPOSStore();
 };
 // ============================================================================

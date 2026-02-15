@@ -8,10 +8,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { formatCurrency } from '@/lib/posIntegration';
-import { 
-  listIngredients, 
-  addIngredient, 
-  updateIngredient, 
+import {
+  listIngredients,
+  addIngredient,
+  updateIngredient,
   deleteIngredient,
   listRecipes,
   addRecipe,
@@ -38,7 +38,7 @@ const IngredientsPanel: React.FC = () => {
   const [ingredients, setIngredients] = React.useState<Ingredient[]>([]);
   const [showAddDialog, setShowAddDialog] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
-  
+
   // Form state
   const [name, setName] = React.useState('');
   const [unit, setUnit] = React.useState<'ml' | 'oz' | 'cl' | 'each'>('ml');
@@ -47,7 +47,7 @@ const IngredientsPanel: React.FC = () => {
   const [costPerUnit, setCostPerUnit] = React.useState<number>(0);
 
   React.useEffect(() => {
-    setIngredients(listIngredients());
+    listIngredients().then(setIngredients);
   }, []);
 
   const resetForm = () => {
@@ -59,7 +59,7 @@ const IngredientsPanel: React.FC = () => {
     setEditingId(null);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!name.trim()) {
       toast({ title: 'Name required', description: 'Enter ingredient name' });
       return;
@@ -75,14 +75,15 @@ const IngredientsPanel: React.FC = () => {
 
     try {
       if (editingId) {
-        updateIngredient(editingId, ingredientData);
+        await updateIngredient({ ...ingredientData, id: editingId } as any);
         toast({ title: 'Ingredient updated', description: `${name} has been updated` });
       } else {
-        addIngredient(ingredientData);
+        await addIngredient(ingredientData);
         toast({ title: 'Ingredient added', description: `${name} has been added to inventory` });
       }
-      
-      setIngredients(listIngredients());
+
+      const updated = await listIngredients();
+      setIngredients(updated);
       setShowAddDialog(false);
       resetForm();
     } catch (error) {
@@ -100,10 +101,11 @@ const IngredientsPanel: React.FC = () => {
     setShowAddDialog(true);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     try {
-      deleteIngredient(id);
-      setIngredients(listIngredients());
+      await deleteIngredient(id);
+      const updated = await listIngredients();
+      setIngredients(updated);
       toast({ title: 'Ingredient deleted', description: 'Ingredient removed from inventory' });
     } catch (error) {
       toast({ title: 'Error', description: String(error) });
@@ -168,17 +170,17 @@ const IngredientsPanel: React.FC = () => {
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit Ingredient' : 'Add New Ingredient'}</DialogTitle>
           </DialogHeader>
-          
+
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="text-xs font-medium">Name</label>
-              <Input 
-                value={name} 
+              <Input
+                value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g., Vodka, Simple Syrup, Lime Juice"
               />
             </div>
-            
+
             <div>
               <label className="text-xs font-medium">Unit</label>
               <Select value={unit} onValueChange={(v: any) => setUnit(v)}>
@@ -193,39 +195,39 @@ const IngredientsPanel: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div>
               <label className="text-xs font-medium">Current Stock</label>
-              <Input 
-                type="number" 
-                value={stockQty} 
+              <Input
+                type="number"
+                value={stockQty}
                 onChange={(e) => setStockQty(Number(e.target.value))}
                 placeholder="0"
               />
             </div>
-            
+
             <div>
               <label className="text-xs font-medium">Low Stock Threshold</label>
-              <Input 
-                type="number" 
-                value={threshold} 
+              <Input
+                type="number"
+                value={threshold}
                 onChange={(e) => setThreshold(Number(e.target.value))}
                 placeholder="0"
               />
             </div>
-            
+
             <div>
               <label className="text-xs font-medium">Cost per Unit</label>
-              <Input 
-                type="number" 
+              <Input
+                type="number"
                 step="0.01"
-                value={costPerUnit} 
+                value={costPerUnit}
                 onChange={(e) => setCostPerUnit(Number(e.target.value))}
                 placeholder="0.00"
               />
             </div>
           </div>
-          
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
             <Button onClick={handleSave}>{editingId ? 'Update' : 'Add'} Ingredient</Button>
@@ -242,15 +244,15 @@ const RecipesPanel: React.FC = () => {
   const [ingredients, setIngredients] = React.useState<Ingredient[]>([]);
   const [showAddDialog, setShowAddDialog] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
-  
+
   // Form state
   const [itemId, setItemId] = React.useState('');
   const [name, setName] = React.useState('');
   const [recipeIngredients, setRecipeIngredients] = React.useState<RecipeIngredient[]>([]);
 
   React.useEffect(() => {
-    setRecipes(listRecipes());
-    setIngredients(listIngredients());
+    listRecipes().then(setRecipes);
+    listIngredients().then(setIngredients);
   }, []);
 
   const resetForm = () => {
@@ -304,7 +306,7 @@ const RecipesPanel: React.FC = () => {
         addRecipe(recipeData);
         toast({ title: 'Recipe added', description: `${name} has been added` });
       }
-      
+
       setRecipes(listRecipes());
       setShowAddDialog(false);
       resetForm();
@@ -321,10 +323,11 @@ const RecipesPanel: React.FC = () => {
     setShowAddDialog(true);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     try {
-      deleteRecipe(id);
-      setRecipes(listRecipes());
+      await deleteRecipe(id);
+      const updated = await listRecipes();
+      setRecipes(updated);
       toast({ title: 'Recipe deleted', description: 'Recipe removed' });
     } catch (error) {
       toast({ title: 'Error', description: String(error) });
@@ -379,22 +382,22 @@ const RecipesPanel: React.FC = () => {
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit Recipe' : 'Add New Recipe'}</DialogTitle>
           </DialogHeader>
-          
+
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-medium">Recipe Name</label>
-                <Input 
-                  value={name} 
+                <Input
+                  value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g., Mojito, Old Fashioned"
                 />
               </div>
-              
+
               <div>
                 <label className="text-xs font-medium">POS Item ID</label>
-                <Input 
-                  value={itemId} 
+                <Input
+                  value={itemId}
                   onChange={(e) => setItemId(e.target.value)}
                   placeholder="e.g., MOJITO_001"
                 />
@@ -406,13 +409,13 @@ const RecipesPanel: React.FC = () => {
                 <label className="text-xs font-medium">Recipe Ingredients</label>
                 <Button size="sm" onClick={addRecipeIngredient}>Add Ingredient</Button>
               </div>
-              
+
               <div className="space-y-2 max-h-60 overflow-y-auto">
                 {recipeIngredients.map((ri, index) => (
                   <div key={index} className="grid grid-cols-12 gap-2 items-end">
                     <div className="col-span-5">
-                      <Select 
-                        value={ri.ingredientId} 
+                      <Select
+                        value={ri.ingredientId}
                         onValueChange={(v) => updateRecipeIngredient(index, 'ingredientId', v)}
                       >
                         <SelectTrigger>
@@ -427,20 +430,20 @@ const RecipesPanel: React.FC = () => {
                         </SelectContent>
                       </Select>
                     </div>
-                    
+
                     <div className="col-span-3">
-                      <Input 
-                        type="number" 
+                      <Input
+                        type="number"
                         step="0.1"
-                        value={ri.qty} 
+                        value={ri.qty}
                         onChange={(e) => updateRecipeIngredient(index, 'qty', Number(e.target.value))}
                         placeholder="Qty"
                       />
                     </div>
-                    
+
                     <div className="col-span-3">
-                      <Select 
-                        value={ri.unit} 
+                      <Select
+                        value={ri.unit}
                         onValueChange={(v: any) => updateRecipeIngredient(index, 'unit', v)}
                       >
                         <SelectTrigger>
@@ -454,11 +457,11 @@ const RecipesPanel: React.FC = () => {
                         </SelectContent>
                       </Select>
                     </div>
-                    
+
                     <div className="col-span-1">
-                      <Button 
-                        size="sm" 
-                        variant="destructive" 
+                      <Button
+                        size="sm"
+                        variant="destructive"
                         onClick={() => removeRecipeIngredient(index)}
                       >
                         ×
@@ -469,7 +472,7 @@ const RecipesPanel: React.FC = () => {
               </div>
             </div>
           </div>
-          
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
             <Button onClick={handleSave}>{editingId ? 'Update' : 'Add'} Recipe</Button>
@@ -488,10 +491,10 @@ const WasteLoggingPanel: React.FC = () => {
   const [wasteReason, setWasteReason] = React.useState('');
 
   React.useEffect(() => {
-    setIngredients(listIngredients());
+    listIngredients().then(setIngredients);
   }, []);
 
-  const handleLogWaste = () => {
+  const handleLogWaste = async () => {
     if (!selectedIngredient) {
       toast({ title: 'Ingredient required', description: 'Select an ingredient' });
       return;
@@ -508,19 +511,20 @@ const WasteLoggingPanel: React.FC = () => {
     }
 
     try {
-      logWaste(selectedIngredient, wasteQty, wasteReason.trim());
-      toast({ 
-        title: 'Waste logged', 
-        description: `${wasteQty} units of waste recorded` 
+      await logWaste(selectedIngredient, wasteQty, wasteReason.trim());
+      toast({
+        title: 'Waste logged',
+        description: `${wasteQty} units of waste recorded`
       });
-      
+
       // Reset form
       setSelectedIngredient('');
       setWasteQty(0);
       setWasteReason('');
-      
+
       // Refresh ingredients to show updated stock
-      setIngredients(listIngredients());
+      const updated = await listIngredients();
+      setIngredients(updated);
     } catch (error) {
       toast({ title: 'Error', description: String(error) });
     }
@@ -532,7 +536,7 @@ const WasteLoggingPanel: React.FC = () => {
       <p className="text-xs text-gray-600">
         Record spills, overpours, and other waste to maintain accurate inventory levels.
       </p>
-      
+
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="text-xs font-medium">Ingredient</label>
@@ -549,19 +553,19 @@ const WasteLoggingPanel: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        
+
         <div>
           <label className="text-xs font-medium">Waste Quantity</label>
-          <Input 
-            type="number" 
+          <Input
+            type="number"
             step="0.1"
-            value={wasteQty} 
+            value={wasteQty}
             onChange={(e) => setWasteQty(Number(e.target.value))}
             placeholder="0"
           />
         </div>
       </div>
-      
+
       <div>
         <label className="text-xs font-medium">Reason</label>
         <Select value={wasteReason} onValueChange={setWasteReason}>
@@ -578,7 +582,7 @@ const WasteLoggingPanel: React.FC = () => {
           </SelectContent>
         </Select>
       </div>
-      
+
       <Button onClick={handleLogWaste} className="w-full">
         Log Waste
       </Button>
@@ -590,13 +594,13 @@ const ReorderSuggestionsPanel: React.FC = () => {
   const [suggestions, setSuggestions] = React.useState<any[]>([]);
 
   React.useEffect(() => {
-    setSuggestions(getReorderSuggestions());
+    getReorderSuggestions().then(setSuggestions);
   }, []);
 
   return (
     <div className="space-y-4">
       <h5 className="font-medium">Reorder Suggestions</h5>
-      
+
       {suggestions.length === 0 ? (
         <p className="text-sm text-gray-600">All ingredients are well-stocked!</p>
       ) : (

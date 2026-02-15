@@ -24,26 +24,23 @@ export const POS: React.FC = () => {
 
   // Transform inventory to POS Menu Items
   const menuItems: MenuItem[] = useMemo(() => {
-    return (inventory || [])
+    console.log('[POS] Inventory raw:', inventory?.length, inventory?.[0]);
+    const items = (inventory || [])
       .filter((i: any) => i.selling_price && Number(i.selling_price) > 0)
-      .map((i: any) => ({
-        id: i.id,
-        name: i.name,
-        price: Number(i.selling_price),
-        category: (i.type === 'bar' || i.type === 'restaurant') ? i.type : 'restaurant', // Default to restaurant if unknown
-        // Helper for debugging visibility
-        visibility: i.visibility
-      }))
-      .filter((item: any) => {
-        // Only show items that are active and visible in the current view
-        // If visibility is not set (legacy/import), assume visible
-        // If visibility is set, respect the flag
-        // However, for now, we just rely on type/category mapping above.
-        // We can add stricter visibility checks here if needed:
-        // const isVisible = activeCategory === 'bar' ? item.visibility?.bar : item.visibility?.restaurant;
-        // return isVisible !== false; // Default to true if undefined
-        return true;
+      .map((i: any) => {
+        const typeLower = (i.type || i.category || '').toLowerCase();
+        // Relaxed category logic: if it contains 'bar', it's bar. Otherwise it's restaurant.
+        const category = (typeLower.includes('bar')) ? 'bar' : 'restaurant';
+        return {
+          id: i.id,
+          name: i.name,
+          price: Number(i.selling_price),
+          category,
+          visibility: { bar: true, restaurant: true } // Force visibility to TRUE for debugging
+        };
       });
+    console.log('[POS] MenuItems processed:', items.length, items[0]);
+    return items;
   }, [inventory]);
 
   const [activeCategory, setActiveCategory] = useState<'bar' | 'restaurant'>('restaurant');
@@ -256,6 +253,7 @@ export const POS: React.FC = () => {
               Bar
             </button>
           </div>
+
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {menuItems.filter(m => m.category === activeCategory).map(item => (
               <button

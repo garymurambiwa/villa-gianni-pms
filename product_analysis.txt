@@ -1,0 +1,17 @@
+Connected to DB
+Total products: 159
+Products with price > 0: 154
+Products with department 'restaurant' (case insensitive): 159
+Valid Restaurant Items (price > 0): 154
+Sample items with price <= 0:
+{"name":"PINA COLADA","price":"0.00","department":"Restaurant","category":"general"}
+{"name":"STRAWBERRY DAIQUIRY","price":"0.00","department":"Restaurant","category":"general"}
+{"name":"MARGARITA SYRUP","price":"0.00","department":"Restaurant","category":"general"}
+{"name":"System Verified Item","price":"0.00","department":"Restaurant","category":"general"}
+{"name":"MOJITO SYRUP","price":"0.00","department":"Restaurant","category":"general"}
+Sample VALID items:
+{"name":"MAZOE RASPBERRY","price":"0.14","department":"Restaurant","category":"general"}
+{"name":"MINERAL WATER","price":"0.17","department":"Restaurant","category":"general"}
+{"name":"ROBERTSON SWEET RED","price":"7.00","department":"Restaurant","category":"general"}
+{"name":"CASTLE LITE","price":"1.25","department":"Restaurant","category":"general"}
+{"name":"ST CLAIRS SODA WATER","price":"0.34","department":"Restaurant","category":"general"}

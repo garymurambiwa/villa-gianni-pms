@@ -1,7 +1,7 @@
 // Web-only DB helper connecting to Neon (Serverless)
 import { Pool, neonConfig } from '@neondatabase/serverless';
 
-// Default connection for browser users (hardcoded to your Neon instance)
+// Default connection for browser users (Neon with WebSocket support)
 const BROWSER_DSN = 'postgresql://neondb_owner:npg_r1fvxIDGLNA8@ep-empty-smoke-ahhjh27q-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require';
 
 type QueryResult<Row = any> = { rows: Row[]; rowCount: number } | { error: string }

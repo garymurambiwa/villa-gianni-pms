@@ -218,6 +218,29 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             try { vis = JSON.parse(vis); } catch { vis = {}; }
           }
 
+          // Derive category_id from department/category for POS filtering
+          // The Order Modal filters by category_id, so we must assign default categories
+          const rawCat = String(p.department || p.category || '').toLowerCase();
+          const costCenter = String(p.department || p.category || '').toLowerCase();
+          const isBar = costCenter.includes('bar') || rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('cocktail');
+
+          let derivedCategoryId = p.category_id; // Use existing if present
+          if (!derivedCategoryId) {
+            if (isBar) {
+              if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink')) {
+                derivedCategoryId = 'CAT_BAR_BEV';
+              } else {
+                derivedCategoryId = 'CAT_BAR_GEN';
+              }
+            } else {
+              if (rawCat.includes('main') || rawCat.includes('entree')) {
+                derivedCategoryId = 'CAT_REST_MAIN';
+              } else {
+                derivedCategoryId = 'CAT_REST_GEN';
+              }
+            }
+          }
+
           return {
             ...p,
             // Map unified fields to legacy frontend expected fields
@@ -227,13 +250,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             qtyInStock: Number(p.stock_level || 0),
             // 'type' is used for filtering (bar/restaurant/etc)
             type: p.department || p.category || 'restaurant',
-            // Ensure category is set (sometimes used for display)
-            category: p.category || 'general',
+            costCenter: isBar ? 'bar' : 'restaurant', // Normalized cost center
+            // CRITICAL: category must be the normalized department for OrderModal filtering
+            // OrderModal filters by: m.category === activeCategory (where activeCategory = 'bar' or 'restaurant')
+            category: isBar ? 'bar' : 'restaurant',
+            subCategory: p.category || p.department || '', // For Order Modal filtering
             active: p.active !== false,
             visibility: vis,
             isStockItem: p.is_stock_item,
             // Map new extended fields (snake_case from DB -> camelCase for frontend)
-            category_id: p.category_id,
+            category_id: derivedCategoryId,
             sub_id: p.sub_id,
             parent_sub_id: p.parent_sub_id,
             notes: p.notes,
@@ -2327,9 +2353,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Initialize vendor tables when context loads
   useEffect(() => {
-    ensureVendorTables();
-    ensurePosTables(); // Ensure POS tables
-    ensureUserTables(); // Initialize user tables as well
+    const initializeData = async () => {
+      await ensureVendorTables();
+      await ensurePosTables(); // Ensure POS tables
+      await ensureUserTables(); // Initialize user tables as well
+
+      // CRITICAL: Load all data from database and sync to localStorage
+      // This includes products with category_id mapping for POS visibility
+      await loadAllData();
+    };
+
+    initializeData();
   }, []);
 
   return (

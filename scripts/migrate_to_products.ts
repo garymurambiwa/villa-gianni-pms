@@ -20,11 +20,16 @@ function loadEnv() {
 
 loadEnv();
 
-const CONNECTION_STRING = 'postgresql://neondb_owner:npg_r1fvxIDGLNA8@ep-empty-smoke-ahhjh27q-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require';
+const CONNECTION_STRING = process.env.DATABASE_URL || process.argv[2];
+
+if (!CONNECTION_STRING) {
+    console.error("DATABASE_URL is missing. Please set it in .env or pass as argument.");
+    process.exit(1);
+}
 
 const pool = new Pool({
     connectionString: CONNECTION_STRING,
-    ssl: true
+    ssl: CONNECTION_STRING.includes('localhost') ? false : { rejectUnauthorized: false }
 });
 
 async function migrate() {
