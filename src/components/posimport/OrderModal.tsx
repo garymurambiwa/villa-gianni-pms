@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { formatCurrency, getMenuItemsFromPOSStore } from '@/lib/posIntegration';
 import menuCats from '@/lib/menuCategories';
@@ -57,6 +57,8 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const { toast } = useToast();
   const [subTree, setSubTree] = useState<any[]>([]);
   const [subPath, setSubPath] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // REMOVED: useEffect that was overriding menuItems prop with stale localStorage data
   // The dynamicMenu state is now correctly initialized from menuItems prop (lines 47-55)
@@ -137,6 +139,15 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   };
 
   const total = (Array.isArray(items) ? items : []).reduce((sum, item) => sum + item.subtotal, 0);
+
+  // Search: filter across ALL items when searching
+  const isSearching = searchQuery.trim().length > 0;
+  const searchResults = isSearching
+    ? (Array.isArray(dynamicMenu) ? dynamicMenu : []).filter(m =>
+      m.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
+    )
+    : [];
+
   const filteredDept = (Array.isArray(dynamicMenu) ? dynamicMenu : []).filter(m => m.category === activeCategory);
   const filteredMenu = filteredDept.filter(m => {
     if (!selectedCatId) return true;
@@ -160,6 +171,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
     });
   })();
 
+  // Items to display: search results or normal filtered menu
+  const displayItems = isSearching ? searchResults : subFilteredMenu;
+
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
@@ -169,48 +183,90 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
 
         <div className="flex h-[calc(90vh-200px)]">
           <div className="w-2/3 p-6 overflow-y-auto border-r">
-            <div className="flex gap-4 mb-6">
-              <Button
-                variant={activeCategory === 'food' ? 'default' : 'outline'}
-                onClick={() => setActiveCategory('food')}
-              >
-                Restaurant
-              </Button>
-              <Button
-                variant={activeCategory === 'bar' ? 'default' : 'outline'}
-                onClick={() => setActiveCategory('bar')}
-              >
-                Bar
-              </Button>
-            </div>
-
-            {/* Category row */}
-            <div className="mb-4 overflow-x-auto">
-              <div className="flex items-center gap-2">
-                {(() => {
-                  const dept = activeCategory === 'bar' ? 'Bar' : 'Restaurant';
-                  const cats = menuCats.listCategories(dept);
-                  if (cats.length) {
-                    return cats.map(c => {
-                      const style = c.buttonColor || c.textColor ? { backgroundColor: c.buttonColor, color: c.textColor, border: '1px solid #e5e7eb' } : undefined;
-                      return (
-                        <Button key={c.category_id} variant={selectedCatId === c.category_id ? 'default' : 'outline'} onClick={() => { setSelectedCatId(c.category_id); setSubPath([]); }} style={style}>
-                          {c.category_name}
-                        </Button>
-                      );
-                    });
-                  }
-                  // Fallback to derived names from menu items
-                  const names = Array.from(new Set(filteredDept.map(m => m.subCategory).filter(Boolean)));
-                  return names.map(name => (
-                    <Button key={String(name)} variant={selectedCatId === name ? 'default' : 'outline'} onClick={() => { setSelectedCatId(String(name)); setSubPath([]); }}>{String(name)}</Button>
-                  ));
-                })()}
+            {/* Search bar */}
+            <div className="mb-4 relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
               </div>
+              <input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Search items..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-10 py-2.5 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none transition-colors text-sm"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
             </div>
 
-            {/* Sub-category breadcrumb & row */}
-            {selectedCatId && String(selectedCatId).startsWith('CAT_') && (
+            {/* Search results indicator */}
+            {isSearching && (
+              <div className="mb-3 text-sm text-gray-500 flex items-center gap-2">
+                <span className="font-medium text-purple-600">{searchResults.length}</span> result{searchResults.length !== 1 ? 's' : ''} for "{searchQuery}"
+                {searchResults.length > 0 && (
+                  <span className="text-xs text-gray-400">(across all categories)</span>
+                )}
+              </div>
+            )}
+
+            {/* Department tabs - hidden when searching */}
+            {!isSearching && (
+              <div className="flex gap-4 mb-6">
+                <Button
+                  variant={activeCategory === 'food' ? 'default' : 'outline'}
+                  onClick={() => setActiveCategory('food')}
+                >
+                  Restaurant
+                </Button>
+                <Button
+                  variant={activeCategory === 'bar' ? 'default' : 'outline'}
+                  onClick={() => setActiveCategory('bar')}
+                >
+                  Bar
+                </Button>
+              </div>
+            )}
+
+            {/* Category row - hidden when searching */}
+            {!isSearching && (
+              <div className="mb-4 overflow-x-auto">
+                <div className="flex items-center gap-2">
+                  {(() => {
+                    const dept = activeCategory === 'bar' ? 'Bar' : 'Restaurant';
+                    const cats = menuCats.listCategories(dept);
+                    if (cats.length) {
+                      return cats.map(c => {
+                        const style = c.buttonColor || c.textColor ? { backgroundColor: c.buttonColor, color: c.textColor, border: '1px solid #e5e7eb' } : undefined;
+                        return (
+                          <Button key={c.category_id} variant={selectedCatId === c.category_id ? 'default' : 'outline'} onClick={() => { setSelectedCatId(c.category_id); setSubPath([]); }} style={style}>
+                            {c.category_name}
+                          </Button>
+                        );
+                      });
+                    }
+                    // Fallback to derived names from menu items
+                    const names = Array.from(new Set(filteredDept.map(m => m.subCategory).filter(Boolean)));
+                    return names.map(name => (
+                      <Button key={String(name)} variant={selectedCatId === name ? 'default' : 'outline'} onClick={() => { setSelectedCatId(String(name)); setSubPath([]); }}>{String(name)}</Button>
+                    ));
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* Sub-category breadcrumb & row - hidden when searching */}
+            {!isSearching && selectedCatId && String(selectedCatId).startsWith('CAT_') && (
               <div className="mb-4">
                 <div className="flex items-center gap-2 mb-2 text-sm">
                   <button className="px-2 py-1 rounded border" onClick={() => setSubPath([])}>All</button>
@@ -237,10 +293,24 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
             )}
 
             <div className="grid grid-cols-3 gap-4">
-              {subFilteredMenu.map(item => (
+              {displayItems.length === 0 && (
+                <div className="col-span-3 text-center py-12 text-gray-400">
+                  {isSearching ? (
+                    <div>
+                      <svg className="mx-auto h-12 w-12 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                      <p>No items found for "{searchQuery}"</p>
+                    </div>
+                  ) : (
+                    <p>No items in this category</p>
+                  )}
+                </div>
+              )}
+              {displayItems.map(item => (
                 <div
                   key={item.id}
-                  onClick={() => addItem(item)}
+                  onClick={() => { addItem(item); if (isSearching) setSearchQuery(''); }}
                   className="cursor-pointer bg-white rounded-lg shadow hover:shadow-lg transition-all p-3 border-2 border-transparent hover:border-purple-500"
                 >
                   {item.image ? (
@@ -249,6 +319,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                     <div className="w-full h-24 rounded mb-2" style={{ backgroundColor: (item as any).imageBgColor || '#ddd' }} />
                   )}
                   <div className="font-semibold text-sm">{item.name}</div>
+                  {isSearching && (
+                    <div className="text-xs text-gray-400">{(item as any).type === 'Bar' ? '🍺 Bar' : '🍴 Restaurant'}</div>
+                  )}
                   {item.description && (
                     <div className="text-xs text-gray-600 line-clamp-2">{item.description}</div>
                   )}
