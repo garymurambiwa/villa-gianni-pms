@@ -914,6 +914,8 @@ export const PosSettings: React.FC = () => {
 
       // Update local state immediately (optimistic UI)
       setItems(next);
+      // Persist to localStorage so performFullSync doesn't overwrite with stale data
+      try { localStorage.setItem('corepms_pos_items', JSON.stringify(next)); } catch { }
       setStockOpen(false);
       resetForm();
 
@@ -976,6 +978,8 @@ export const PosSettings: React.FC = () => {
     try {
       const next = items.filter((it: any) => it.id !== id);
       setItems(next);
+      // Persist to localStorage so performFullSync doesn't overwrite with stale data
+      try { localStorage.setItem('corepms_pos_items', JSON.stringify(next)); } catch { }
       log('STOCK_ITEM_DELETE', { id });
 
       // Delete from database asynchronously
