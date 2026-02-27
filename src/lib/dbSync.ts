@@ -49,6 +49,7 @@ export interface MenuItemRecord {
   id: string;
   name: string;
   category: string;
+  department?: string;
   price: number;
   active: boolean;
   cost_price?: number;
@@ -159,8 +160,7 @@ export async function syncProductToDb(item: ProductRecord): Promise<SyncResult> 
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW(), NOW())
       ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
-        category = EXCLUDED.category,
-        department = EXCLUDED.department,
+        /* Do NOT update department or category on conflict - set by import scripts only */
         price = EXCLUDED.price,
         cost_price = EXCLUDED.cost_price,
         stock_level = EXCLUDED.stock_level,
@@ -267,7 +267,7 @@ export async function syncMenuItemToDb(item: MenuItemRecord): Promise<SyncResult
     id: item.id,
     name: item.name,
     category: item.category,
-    department: item.category, // Default mapping
+    department: item.department || item.category || 'Restaurant', // Preserve actual department
     price: item.price,
     active: item.active !== false,
     cost_price: item.cost_price || 0,
@@ -341,6 +341,10 @@ export async function syncAllMenuItemsToDb(): Promise<SyncResult> {
     const errors: string[] = [];
 
     for (const item of items) {
+      // Derive department from item data (type holds original department like 'Bar'/'Restaurant')
+      const rawDept = String(item.type || item.department || item.costCenter || '').toLowerCase();
+      const dept = rawDept.includes('bar') ? 'Bar' : 'Restaurant';
+
       const menuItem: MenuItemRecord = {
         id: String(item.id),
         name: String(item.name || ''),
@@ -350,7 +354,8 @@ export async function syncAllMenuItemsToDb(): Promise<SyncResult> {
         cost_price: Number(item.costPrice || 0),
         category_id: item.category_id,
         sub_id: item.sub_id,
-        visibility: item.visibility
+        visibility: item.visibility,
+        department: dept
       };
 
       const result = await syncMenuItemToDb(menuItem);
@@ -391,7 +396,7 @@ export async function syncInventoryItemToDb(item: InventoryItemRecord): Promise<
     id: item.id,
     name: item.name,
     category: item.category,
-    department: 'Restaurant', // Default, difficult to know from inventory alone if not provided
+    department: (item as any).department || 'Restaurant', // Preserve actual department if provided
     price: item.price,
     active: true, // Inventory items usually active if they exist
     cost_price: item.cost_price || 0,
@@ -441,13 +446,18 @@ export async function syncAllInventoryItemsToDb(): Promise<SyncResult> {
     const errors: string[] = [];
 
     for (const item of items) {
+      // Derive department from item data
+      const rawDeptInv = String(item.type || item.department || item.costCenter || '').toLowerCase();
+      const deptInv = rawDeptInv.includes('bar') ? 'Bar' : 'Restaurant';
+
       const invItem: InventoryItemRecord = {
         id: String(item.id),
         name: String(item.name || ''),
         category: String(item.inventoryCategory || item.costCenter || 'general'),
         stock_level: Number(item.qtyInStock || 0),
-        price: Number(item.costPrice || item.sellingPrice || 0)
-      };
+        price: Number(item.costPrice || item.sellingPrice || 0),
+        department: deptInv
+      } as any;
 
       const result = await syncInventoryItemToDb(invItem);
       if (result.success) {
@@ -489,12 +499,16 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
       return { success: true, synced: 0 };
     }
 
+    // Derive department from item data (type holds original DB department like 'Bar'/'Restaurant')
+    const rawDeptPos = String(item.type || item.department || item.costCenter || '').toLowerCase();
+    const deptPos = rawDeptPos.includes('bar') ? 'Bar' : 'Restaurant';
+
     const product: ProductRecord = {
       id: String(item.id),
       name: String(item.name || ''),
       // Use explicit category if available, or fallback to costCenter/inventoryCategory
       category: String(item.costCenter || 'restaurant'),
-      department: 'Restaurant', // TODO: derive from category mapping?
+      department: deptPos,
       price: Number(item.sellingPrice || 0),
       cost_price: Number(item.costPrice || 0),
       stock_level: Number(item.qtyInStock || 0),

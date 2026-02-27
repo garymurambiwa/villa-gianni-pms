@@ -210,6 +210,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const productsRes = await db.query('SELECT * FROM products ORDER BY name ASC');
       let mergedInventory: any[] = [];
 
+
       if ('rows' in productsRes && Array.isArray(productsRes.rows)) {
         mergedInventory = productsRes.rows.map((p: any) => {
           // Parse visibility if stored as string JSON
@@ -251,9 +252,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // 'type' is used for filtering (bar/restaurant/etc)
             type: p.department || p.category || 'restaurant',
             costCenter: isBar ? 'bar' : 'restaurant', // Normalized cost center
-            // CRITICAL: category must be the normalized department for OrderModal filtering
-            // OrderModal filters by: m.category === activeCategory (where activeCategory = 'bar' or 'restaurant')
-            category: isBar ? 'bar' : 'restaurant',
+            // CRITICAL: category must match OrderModal's activeCategory type: 'food' | 'bar'
+            // OrderModal sets activeCategory='food' for Restaurant tab, 'bar' for Bar tab
+            // Then filters: m.category === activeCategory
+            category: isBar ? 'bar' : 'food',
             subCategory: p.category || p.department || '', // For Order Modal filtering
             active: p.active !== false,
             visibility: vis,
