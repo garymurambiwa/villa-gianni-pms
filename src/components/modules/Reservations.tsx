@@ -89,6 +89,34 @@ export const Reservations: React.FC = () => {
   const [rateSuggestion, setRateSuggestion] = useState<{ base: number; regionAdjPct: number; seasonAdjPct: number; total: number } | null>(null);
   const [outOfSyncRoomType, setOutOfSyncRoomType] = useState<boolean>(false);
 
+  // Reservation status filter & universal search
+  const [statusFilter, setStatusFilter] = useState<'all' | 'confirmed' | 'checked-in' | 'checked-out' | 'cancelled'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const displayReservations = React.useMemo(() => {
+    let list = reservations || [];
+    // Status filter
+    if (statusFilter !== 'all') {
+      list = list.filter((r: any) => {
+        const s = String(r.status || 'confirmed').toLowerCase();
+        return s === statusFilter;
+      });
+    }
+    // Universal text search
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter((r: any) =>
+        (r.guestName || '').toLowerCase().includes(q) ||
+        (r.email || '').toLowerCase().includes(q) ||
+        (r.phone || '').toLowerCase().includes(q) ||
+        (r.bookingSource || '').toLowerCase().includes(q) ||
+        (r.id || '').toLowerCase().includes(q) ||
+        (r.roomType || '').toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [reservations, statusFilter, searchQuery]);
+
   useEffect(() => {
     try {
       const cfg = ratePlanService.getConfig();
@@ -98,12 +126,12 @@ export const Reservations: React.FC = () => {
 
       setRoomTypeOptions(mergedOptions);
       setRoomTypeError(mergedOptions.length ? null : 'No room types configured. Please add them in Rate Management.');
-      
+
       // If a default rate is meaningful, prefill from base rate
       if (!formData.roomType && mergedOptions.length > 0) {
-         const nextType = mergedOptions[0] as string;
-         const baseRate = prevRateFromConfig(nextType, cfg);
-         setFormData(prev => ({ ...prev, roomType: nextType, rate: prev.rate || baseRate }));
+        const nextType = mergedOptions[0] as string;
+        const baseRate = prevRateFromConfig(nextType, cfg);
+        setFormData(prev => ({ ...prev, roomType: nextType, rate: prev.rate || baseRate }));
       }
     } catch {
       setRoomTypeOptions([]);
@@ -130,20 +158,24 @@ export const Reservations: React.FC = () => {
       { id: 'utmCampaign', label: 'UTM Campaign', type: 'text' }
     ],
     ota: [
-      { id: 'otaProvider', label: 'OTA Provider', type: 'combobox', required: true, options: [
-        { value: 'Booking.com', label: 'Booking.com' },
-        { value: 'Expedia', label: 'Expedia' },
-        { value: 'Airbnb', label: 'Airbnb' },
-        { value: 'Agoda', label: 'Agoda' }
-      ] },
+      {
+        id: 'otaProvider', label: 'OTA Provider', type: 'combobox', required: true, options: [
+          { value: 'Booking.com', label: 'Booking.com' },
+          { value: 'Expedia', label: 'Expedia' },
+          { value: 'Airbnb', label: 'Airbnb' },
+          { value: 'Agoda', label: 'Agoda' }
+        ]
+      },
       { id: 'reservationId', label: 'OTA Reservation ID', type: 'text', required: true }
     ],
     agent: [
-      { id: 'agencyName', label: 'Agency Name', type: 'combobox', required: true, options: [
-        { value: 'Global Travel Co', label: 'Global Travel Co' },
-        { value: 'Premier Agents Ltd', label: 'Premier Agents Ltd' },
-        { value: 'Sunset Tours', label: 'Sunset Tours' }
-      ] },
+      {
+        id: 'agencyName', label: 'Agency Name', type: 'combobox', required: true, options: [
+          { value: 'Global Travel Co', label: 'Global Travel Co' },
+          { value: 'Premier Agents Ltd', label: 'Premier Agents Ltd' },
+          { value: 'Sunset Tours', label: 'Sunset Tours' }
+        ]
+      },
       { id: 'partnerCode', label: 'Partner Code', type: 'text', required: true },
       { id: 'contactEmail', label: 'Contact Email', type: 'email' }
     ],
@@ -219,7 +251,7 @@ export const Reservations: React.FC = () => {
   const buildReservationPrintHTML = async (data: any) => {
     const ci = new Date(data.checkIn);
     const co = new Date(data.checkOut);
-    const nights = (!isNaN(ci.getTime()) && !isNaN(co.getTime())) ? Math.max(0, Math.ceil((co.getTime() - ci.getTime()) / (1000*60*60*24))) : 0;
+    const nights = (!isNaN(ci.getTime()) && !isNaN(co.getTime())) ? Math.max(0, Math.ceil((co.getTime() - ci.getTime()) / (1000 * 60 * 60 * 24))) : 0;
     const totalBase = Number(data.rate || 0) * (nights || 1);
     const calc = await taxSvc.calculateTaxesForAmount(Number(totalBase), 'accommodation');
     const tb = { subtotal: calc.subtotal, tax: calc.taxTotal, total: calc.total };
@@ -313,8 +345,8 @@ export const Reservations: React.FC = () => {
     if (!w) return;
     w.document.write(doc);
     w.document.close();
-    try { w.focus(); } catch {}
-    try { w.print(); } catch {}
+    try { w.focus(); } catch { }
+    try { w.print(); } catch { }
   };
 
   // Autosave draft in localStorage
@@ -326,7 +358,7 @@ export const Reservations: React.FC = () => {
         const parsed = JSON.parse(saved);
         setFormData(prev => ({ ...prev, ...parsed }));
       }
-    } catch {}
+    } catch { }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
@@ -341,7 +373,7 @@ export const Reservations: React.FC = () => {
           setLastAutosaveToastAt(now);
         }
       }
-    } catch {}
+    } catch { }
   }, [formData, editingReservationId, lastAutosaveToastAt, toast]);
 
   useEffect(() => {
@@ -349,14 +381,14 @@ export const Reservations: React.FC = () => {
       try {
         const cfg = ratePlanService.getConfig();
         const configOptions = Object.keys(cfg.baseRates || {});
-        
+
         // Merge with room types found in actual rooms database to ensure availability
         const dbRoomTypes = rooms ? Array.from(new Set(rooms.map((r: any) => r.type).filter(Boolean))) : [];
         const mergedOptions = Array.from(new Set([...configOptions, ...dbRoomTypes])).sort();
-        
+
         setRoomTypeOptions(mergedOptions);
         setOutOfSyncRoomType(!!(formData.roomType && !mergedOptions.includes(formData.roomType)));
-        
+
         if (mergedOptions.length === 0) {
           setRoomTypeError('No room types configured. Please add them in Rate Management.');
         } else {
@@ -366,14 +398,14 @@ export const Reservations: React.FC = () => {
         console.error('Failed to sync room types:', err);
         // Fallback to basic if crash, but keep existing if available
         if (roomTypeOptions.length === 0) {
-           setRoomTypeOptions(['Standard King', 'Standard Twin', 'Deluxe Queen', 'Suite']);
+          setRoomTypeOptions(['Standard King', 'Standard Twin', 'Deluxe Queen', 'Suite']);
         }
       }
     };
     applySync();
     const unsub = ratePlanService.subscribeRateConfig(() => applySync());
     const interval = setInterval(applySync, 15 * 60 * 1000);
-    return () => { try { unsub(); } catch {}; clearInterval(interval); };
+    return () => { try { unsub(); } catch { }; clearInterval(interval); };
   }, [formData.roomType, rooms]);
 
   useEffect(() => {
@@ -389,7 +421,7 @@ export const Reservations: React.FC = () => {
     if (!formData.roomType || !formData.originRegion || !formData.checkIn) { setRateSuggestion(null); return; }
     const breakdown = ratePlanService.computeRateBreakdown({ roomType: formData.roomType, originRegion: formData.originRegion, date: formData.checkIn });
     setRateSuggestion(breakdown);
-    try { ratePlanService.logRateAudit({ type: 'calc', roomType: formData.roomType, originRegion: formData.originRegion, date: formData.checkIn, suggested: breakdown.total, base: breakdown.base, regionAdjPct: breakdown.regionAdjPct, seasonAdjPct: breakdown.seasonAdjPct }); } catch {}
+    try { ratePlanService.logRateAudit({ type: 'calc', roomType: formData.roomType, originRegion: formData.originRegion, date: formData.checkIn, suggested: breakdown.total, base: breakdown.base, regionAdjPct: breakdown.regionAdjPct, seasonAdjPct: breakdown.seasonAdjPct }); } catch { }
     const bounds = ratePlanService.getRateBounds(formData.roomType);
     const val = Number(formData.rate || 0);
     if (val > 0 && (val < bounds.min || val > bounds.max)) {
@@ -414,8 +446,8 @@ export const Reservations: React.FC = () => {
           idDocumentType: res.idDocumentType || 'Passport',
           nationalityCode: res.nationalityCode || '',
           nationalityName: res.nationalityName || '',
-          checkIn: (() => { const d = new Date(res.checkIn); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10); })(),
-          checkOut: (() => { const d = new Date(res.checkOut); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10); })(),
+          checkIn: (() => { const d = new Date(res.checkIn); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10); })(),
+          checkOut: (() => { const d = new Date(res.checkOut); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10); })(),
           originRegion: (res as any).originRegion || '',
           roomType: res.roomType,
           roomPreference: res.roomPreference || 'Non-smoking',
@@ -450,12 +482,12 @@ export const Reservations: React.FC = () => {
     try {
       const params = new URLSearchParams(window.location.search);
       const utmUpdate: any = {};
-      ['utm_source','utm_medium','utm_campaign','utm_term','utm_content'].forEach(k => {
+      ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'].forEach(k => {
         const val = params.get(k);
         if (val) utmUpdate[camelCase(k)] = val;
       });
       if (Object.keys(utmUpdate).length) setFormData(prev => ({ ...prev, ...utmUpdate, bookingSource: prev.bookingSource || 'website' }));
-    } catch {}
+    } catch { }
   }, [reservations]);
 
   function camelCase(input: string) {
@@ -466,10 +498,10 @@ export const Reservations: React.FC = () => {
     const { name, value, type } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: type === 'checkbox' 
-        ? (e.target as HTMLInputElement).checked 
-        : name === 'rate' || name === 'adults' || name === 'children' 
-          ? (value === '' ? 0 : parseInt(value)) 
+      [name]: type === 'checkbox'
+        ? (e.target as HTMLInputElement).checked
+        : name === 'rate' || name === 'adults' || name === 'children'
+          ? (value === '' ? 0 : parseInt(value))
           : value
     }));
 
@@ -602,7 +634,7 @@ export const Reservations: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
-    
+
     // Run full validation
     const errors: Record<string, string> = {};
     if (!(formData.guestName || '').trim()) errors.guestName = 'Guest name is required';
@@ -613,7 +645,7 @@ export const Reservations: React.FC = () => {
     if (!formData.roomType) errors.roomType = 'Room type is required';
     if ((formData.adults || 0) < 1) errors.adults = 'At least 1 adult is required';
     if ((formData.rate || 0) <= 0) errors.rate = 'Rate must be greater than 0';
-    
+
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       setFormError('Please correct the highlighted fields');
@@ -765,72 +797,112 @@ export const Reservations: React.FC = () => {
           {reservationsLastSyncAt && (
             <span className="text-xs text-gray-500">Last sync: {new Date(reservationsLastSyncAt).toLocaleTimeString()}</span>
           )}
-        <button
-          onClick={() => {
-            setEditingReservationId(null);
-            setFormData({
-              roomId: '',
-              guestName: '',
-              email: '',
-              phone: '',
-              idDocumentNumber: '',
-              idDocumentType: 'Passport',
-              nationalityCode: '',
-              nationalityName: '',
-              checkIn: '',
-              checkOut: '',
-              originRegion: '',
-              roomType: '',
-              roomPreference: 'Non-smoking',
-              bookingName: '',
-              bookingType: 'Individual',
-              companyName: '',
-              bookingSource: '',
-              partnerCode: '',
-              utmSource: '',
-              utmMedium: '',
-              utmCampaign: '',
-              utmTerm: '',
-              utmContent: '',
-              paymentMethod: 'Credit Card',
-              settleAtCheckout: true,
-              rate: 0,
-              packageCode: 'RO',
-              taxInclusive: false,
-              adults: 2,
-              children: 0,
-              paymentInfoSource: '',
-              paymentVerified: false,
-              paymentInstructions: '',
-              termsAccepted: false,
-              signatureDataUrl: ''
-            });
-            setShowNewForm(!showNewForm);
-          }}
-          className="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700"
-        >
-          {showNewForm ? 'Close Form' : '+ New Reservation'}
-        </button>
+          <button
+            onClick={() => {
+              setEditingReservationId(null);
+              setFormData({
+                roomId: '',
+                guestName: '',
+                email: '',
+                phone: '',
+                idDocumentNumber: '',
+                idDocumentType: 'Passport',
+                nationalityCode: '',
+                nationalityName: '',
+                checkIn: '',
+                checkOut: '',
+                originRegion: '',
+                roomType: '',
+                roomPreference: 'Non-smoking',
+                bookingName: '',
+                bookingType: 'Individual',
+                companyName: '',
+                bookingSource: '',
+                partnerCode: '',
+                utmSource: '',
+                utmMedium: '',
+                utmCampaign: '',
+                utmTerm: '',
+                utmContent: '',
+                paymentMethod: 'Credit Card',
+                settleAtCheckout: true,
+                rate: 0,
+                packageCode: 'RO',
+                taxInclusive: false,
+                adults: 2,
+                children: 0,
+                paymentInfoSource: '',
+                paymentVerified: false,
+                paymentInstructions: '',
+                termsAccepted: false,
+                signatureDataUrl: ''
+              });
+              setShowNewForm(!showNewForm);
+            }}
+            className="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700"
+          >
+            {showNewForm ? 'Close Form' : '+ New Reservation'}
+          </button>
         </div>
       </div>
 
-      {/* View Toggle */}
+      {/* Status Tabs + Search + View Toggle */}
       {!showNewForm && (
-        <div className="flex justify-end mb-4 px-6">
-          <div className="bg-gray-100 p-1 rounded-lg flex">
-            <button
-              onClick={() => setViewMode('list')}
-              className={`px-4 py-2 text-sm rounded-md font-medium transition-colors ${viewMode === 'list' ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
-            >
-              List View
-            </button>
-            <button
-              onClick={() => setViewMode('grid')}
-              className={`px-4 py-2 text-sm rounded-md font-medium transition-colors ${viewMode === 'grid' ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
-            >
-              Grid View
-            </button>
+        <div className="space-y-3 mb-4">
+          {/* Status filter tabs */}
+          <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-lg">
+            {[
+              { key: 'all' as const, label: 'All', count: (reservations || []).length },
+              { key: 'confirmed' as const, label: 'Confirmed', count: (reservations || []).filter((r: any) => String(r.status || 'confirmed').toLowerCase() === 'confirmed').length },
+              { key: 'checked-in' as const, label: 'In-House', count: (reservations || []).filter((r: any) => String(r.status || '').toLowerCase() === 'checked-in').length },
+              { key: 'checked-out' as const, label: 'Checked Out', count: (reservations || []).filter((r: any) => String(r.status || '').toLowerCase() === 'checked-out').length },
+              { key: 'cancelled' as const, label: 'Cancelled', count: (reservations || []).filter((r: any) => String(r.status || '').toLowerCase() === 'cancelled').length },
+            ].map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setStatusFilter(tab.key)}
+                className={`px-4 py-2 text-sm rounded-md font-medium transition-colors ${statusFilter === tab.key
+                    ? 'bg-white shadow text-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                  }`}
+              >
+                {tab.label} ({tab.count})
+              </button>
+            ))}
           </div>
+
+          {/* Search + view toggle row */}
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                placeholder="Search by guest name, email, phone, room type, or booking source…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 border rounded-lg bg-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+            <div className="bg-gray-100 p-1 rounded-lg flex">
+              <button
+                onClick={() => setViewMode('list')}
+                className={`px-4 py-2 text-sm rounded-md font-medium transition-colors ${viewMode === 'list' ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
+              >
+                List
+              </button>
+              <button
+                onClick={() => setViewMode('grid')}
+                className={`px-4 py-2 text-sm rounded-md font-medium transition-colors ${viewMode === 'grid' ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
+              >
+                Grid
+              </button>
+            </div>
+          </div>
+          {displayReservations.length === 0 && (reservations || []).length > 0 && (
+            <p className="text-center text-sm text-gray-500 py-2">No reservations match your current filters.</p>
+          )}
         </div>
       )}
 
@@ -850,18 +922,18 @@ export const Reservations: React.FC = () => {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-semibold text-gray-700">Guest Information</h4>
-                  <Button variant="outline" onClick={()=> setLookupOpen(true)} aria-label="Open guest lookup">Guest Lookup</Button>
+                  <Button variant="outline" onClick={() => setLookupOpen(true)} aria-label="Open guest lookup">Guest Lookup</Button>
                 </div>
-                <input 
-                type="text" 
-                name="guestName"
-                value={formData.guestName}
-                onChange={handleInputChange}
-                placeholder="Guest Name *" 
-                className={`w-full px-4 py-2 border rounded-lg mb-2 ${fieldErrors.guestName ? 'border-red-500' : ''}`}
-                required
-              />
-              {fieldErrors.guestName && <p className="text-xs text-red-600 mb-2">{fieldErrors.guestName}</p>}
+                <input
+                  type="text"
+                  name="guestName"
+                  value={formData.guestName}
+                  onChange={handleInputChange}
+                  placeholder="Guest Name *"
+                  className={`w-full px-4 py-2 border rounded-lg mb-2 ${fieldErrors.guestName ? 'border-red-500' : ''}`}
+                  required
+                />
+                {fieldErrors.guestName && <p className="text-xs text-red-600 mb-2">{fieldErrors.guestName}</p>}
                 {/* Nationality and ID Type */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
                   <NationalitySelect
@@ -869,9 +941,9 @@ export const Reservations: React.FC = () => {
                     onChange={(code, country) => {
                       // Automatically set the origin region based on nationality
                       const region = getRegionForCountry(code);
-                      setFormData(prev => ({ 
-                        ...prev, 
-                        nationalityCode: code, 
+                      setFormData(prev => ({
+                        ...prev,
+                        nationalityCode: code,
                         nationalityName: country?.name || '',
                         originRegion: region
                       }));
@@ -893,21 +965,21 @@ export const Reservations: React.FC = () => {
                     </select>
                   </div>
                 </div>
-                <input 
-                  type="email" 
+                <input
+                  type="email"
                   name="email"
                   value={formData.email}
                   onChange={handleInputChange}
-                  placeholder="Email" 
-                  className="w-full px-4 py-2 border rounded-lg mb-2" 
+                  placeholder="Email"
+                  className="w-full px-4 py-2 border rounded-lg mb-2"
                 />
-                <input 
-                  type="tel" 
+                <input
+                  type="tel"
                   name="phone"
                   value={formData.phone}
                   onChange={handleInputChange}
-                  placeholder="Phone Number" 
-                  className="w-full px-4 py-2 border rounded-lg mb-2" 
+                  placeholder="Phone Number"
+                  className="w-full px-4 py-2 border rounded-lg mb-2"
                 />
                 <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="idDocumentNumber">
                   ID/Passport Number <span className="text-red-600" aria-hidden="true">*</span>
@@ -931,11 +1003,11 @@ export const Reservations: React.FC = () => {
                   <p id="idDocError" className="text-xs text-red-600 mt-1">{idDocError}</p>
                 )}
               </div>
-              
+
               <div>
-              <h4 className="font-semibold text-gray-700 mb-2">Booking Information</h4>
+                <h4 className="font-semibold text-gray-700 mb-2">Booking Information</h4>
                 {/* Origin Region (searchable dropdown) */}
-                <OriginRegionSelect 
+                <OriginRegionSelect
                   value={formData.originRegion}
                   onChange={(val) => setFormData(prev => ({ ...prev, originRegion: val }))}
                 />
@@ -953,7 +1025,7 @@ export const Reservations: React.FC = () => {
                           openBookingSourceDialog(val);
                         } else {
                           setBookingSourceDialogOpen(false);
-                          try { roomTypeRef.current?.focus(); } catch {}
+                          try { roomTypeRef.current?.focus(); } catch { }
                         }
                       }}
                       onKeyDown={(e) => {
@@ -972,19 +1044,19 @@ export const Reservations: React.FC = () => {
                       <option value="walk-in">Walk-in</option>
                     </select>
                   </div>
-                  
+
                 </div>
-                
-                <input 
-                  type="text" 
+
+                <input
+                  type="text"
                   name="bookingName"
                   value={formData.bookingName}
                   onChange={handleInputChange}
-                  placeholder="Booking Name (if different from guest)" 
-                  className="w-full px-4 py-2 border rounded-lg mb-2" 
+                  placeholder="Booking Name (if different from guest)"
+                  className="w-full px-4 py-2 border rounded-lg mb-2"
                   ref={bookingNameRef}
                 />
-                <select 
+                <select
                   name="bookingType"
                   value={formData.bookingType}
                   onChange={handleInputChange}
@@ -994,32 +1066,32 @@ export const Reservations: React.FC = () => {
                   <option value="Group">Group</option>
                 </select>
                 {formData.bookingType === 'Group' && (
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     name="companyName"
                     value={formData.companyName}
                     onChange={handleInputChange}
-                    placeholder="Company Name *" 
-                    className="w-full px-4 py-2 border rounded-lg" 
+                    placeholder="Company Name *"
+                    className="w-full px-4 py-2 border rounded-lg"
                     required
                   />
                 )}
               </div>
-              
+
               <div>
                 <h4 className="font-semibold text-gray-700 mb-2">Room Selection</h4>
-                
+
                 <div className="mb-4">
-                   <label className="block text-sm font-medium text-gray-700 mb-1">Assigned Room <span className="text-red-600">*</span></label>
-                   <div className="flex gap-2">
-                     <Input 
-                       value={formData.roomId ? (rooms.find((r:any) => r.id === formData.roomId)?.number || 'Unknown') : 'No Room Selected'} 
-                       readOnly 
-                       className={`bg-gray-50 ${!formData.roomId ? 'border-red-500' : ''}`}
-                     />
-                     <Button type="button" onClick={() => setRoomGridOpen(true)}>Select Room</Button>
-                   </div>
-                   {!formData.roomId && <p className="text-xs text-red-600 mt-1">Please select a vacant room from the grid.</p>}
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Assigned Room <span className="text-red-600">*</span></label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={formData.roomId ? (rooms.find((r: any) => r.id === formData.roomId)?.number || 'Unknown') : 'No Room Selected'}
+                      readOnly
+                      className={`bg-gray-50 ${!formData.roomId ? 'border-red-500' : ''}`}
+                    />
+                    <Button type="button" onClick={() => setRoomGridOpen(true)}>Select Room</Button>
+                  </div>
+                  {!formData.roomId && <p className="text-xs text-red-600 mt-1">Please select a vacant room from the grid.</p>}
                 </div>
 
                 <div className="flex items-center gap-2 mb-2">
@@ -1032,7 +1104,7 @@ export const Reservations: React.FC = () => {
                         setRoomTypeOptions(options);
                         setOutOfSyncRoomType(!!(formData.roomType && !options.includes(formData.roomType)));
                         ratePlanService.logRateAudit({ type: 'mapping', roomType: formData.roomType });
-                      } catch {}
+                      } catch { }
                     }}
                     className="text-xs px-2 py-1 border rounded"
                   >
@@ -1040,7 +1112,7 @@ export const Reservations: React.FC = () => {
                   </button>
                   {outOfSyncRoomType && <span className="text-xs text-red-600">Selected room type is not in Rate Management</span>}
                 </div>
-                <select 
+                <select
                   name="roomType"
                   value={formData.roomType}
                   onChange={handleInputChange}
@@ -1062,80 +1134,80 @@ export const Reservations: React.FC = () => {
                 )}
                 <div className="flex gap-2 mb-2">
                   <label className="flex items-center">
-                    <input 
-                      type="radio" 
+                    <input
+                      type="radio"
                       name="roomPreference"
                       value="Non-smoking"
                       checked={formData.roomPreference === 'Non-smoking'}
                       onChange={handleInputChange}
-                      className="mr-2" 
+                      className="mr-2"
                     />
                     Non-smoking
                   </label>
                   <label className="flex items-center">
-                    <input 
-                      type="radio" 
+                    <input
+                      type="radio"
                       name="roomPreference"
                       value="Smoking"
                       checked={formData.roomPreference === 'Smoking'}
                       onChange={handleInputChange}
-                      className="mr-2" 
+                      className="mr-2"
                     />
                     Smoking
                   </label>
                 </div>
                 <div className="flex gap-4">
-                  <input 
-                    type="number" 
+                  <input
+                    type="number"
                     name="adults"
                     value={formData.adults}
                     onChange={handleInputChange}
-                    placeholder="Adults *" 
+                    placeholder="Adults *"
                     className={`w-1/2 px-4 py-2 border rounded-lg ${fieldErrors.adults ? 'border-red-500' : ''}`}
                     min="1"
                     required
                   />
                   {fieldErrors.adults && <p className="text-xs text-red-600 mb-2">{fieldErrors.adults}</p>}
-                  <input 
-                    type="number" 
+                  <input
+                    type="number"
                     name="children"
                     value={formData.children}
                     onChange={handleInputChange}
-                    placeholder="Children" 
-                    className="w-1/2 px-4 py-2 border rounded-lg" 
+                    placeholder="Children"
+                    className="w-1/2 px-4 py-2 border rounded-lg"
                     min="0"
                   />
                 </div>
               </div>
-              
+
               <div>
                 <h4 className="font-semibold text-gray-700 mb-2">Stay Details</h4>
-                <input 
-                  type="date" 
+                <input
+                  type="date"
                   name="checkIn"
                   value={formData.checkIn}
                   onChange={handleInputChange}
-                  placeholder="Check-In *" 
+                  placeholder="Check-In *"
                   className={`w-full px-4 py-2 border rounded-lg mb-2 ${fieldErrors.checkIn ? 'border-red-500' : ''}`}
                   required
                 />
                 {fieldErrors.checkIn && <p className="text-xs text-red-600 mb-2">{fieldErrors.checkIn}</p>}
-                <input 
-                  type="date" 
+                <input
+                  type="date"
                   name="checkOut"
                   value={formData.checkOut}
                   onChange={handleInputChange}
-                  placeholder="Check-Out *" 
+                  placeholder="Check-Out *"
                   className={`w-full px-4 py-2 border rounded-lg mb-2 ${fieldErrors.checkOut ? 'border-red-500' : ''}`}
                   required
                 />
                 {fieldErrors.checkOut && <p className="text-xs text-red-600 mb-2">{fieldErrors.checkOut}</p>}
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   name="rate"
                   value={formData.rate}
                   onChange={handleInputChange}
-                  placeholder="Rate *" 
+                  placeholder="Rate *"
                   className={`w-full px-4 py-2 border rounded-lg ${fieldErrors.rate ? 'border-red-500' : ''} ${rateSuggestion && Math.abs(Number(formData.rate || 0) - Number(rateSuggestion.total || 0)) > Math.max(5, Math.round(Number(rateSuggestion.total || 0) * 0.05)) ? 'border-yellow-500' : ''}`}
                   required
                 />
@@ -1143,13 +1215,13 @@ export const Reservations: React.FC = () => {
                 {rateSuggestion && (
                   <div className="text-xs text-gray-700 mb-2">
                     <div>Suggested: <span className="font-semibold">{formatCurrency(rateSuggestion.total)}</span></div>
-                    <div>Base: {formatCurrency(rateSuggestion.base)} • Region: {Math.round(rateSuggestion.regionAdjPct*100)}% • Season: {Math.round(rateSuggestion.seasonAdjPct*100)}%</div>
+                    <div>Base: {formatCurrency(rateSuggestion.base)} • Region: {Math.round(rateSuggestion.regionAdjPct * 100)}% • Season: {Math.round(rateSuggestion.seasonAdjPct * 100)}%</div>
                     {Math.abs(Number(formData.rate || 0) - Number(rateSuggestion.total || 0)) > Math.max(5, Math.round(Number(rateSuggestion.total || 0) * 0.05)) && (
                       <div className="text-yellow-700">Entered rate deviates from standard pricing</div>
                     )}
                   </div>
                 )}
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2 mb-2">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Meal Plan</label>
@@ -1185,21 +1257,21 @@ export const Reservations: React.FC = () => {
                       const totalRate = (typeof computeTotalRate === 'function' ? computeTotalRate : (b: any) => Number(b) || 0)(formData.rate, formData.packageCode, packageOptions, 'RO');
                       const totalStay = totalRate * nights;
                       const taxRate = 0.1; // 10% assumption or from settings
-                      
+
                       let displaySubtotal = 0;
                       let displayTax = 0;
                       let displayTotal = 0;
-                      
+
                       if (formData.taxInclusive) {
-                         displaySubtotal = totalStay / (1 + taxRate);
-                         displayTax = totalStay - displaySubtotal;
-                         displayTotal = totalStay;
+                        displaySubtotal = totalStay / (1 + taxRate);
+                        displayTax = totalStay - displaySubtotal;
+                        displayTotal = totalStay;
                       } else {
-                         displaySubtotal = totalStay;
-                         displayTax = totalStay * taxRate;
-                         displayTotal = totalStay + displayTax;
+                        displaySubtotal = totalStay;
+                        displayTax = totalStay * taxRate;
+                        displayTotal = totalStay + displayTax;
                       }
-                      
+
                       return (
                         <>
                           <p className="text-gray-700">Nights: <span className="font-medium">{nights}</span></p>
@@ -1208,7 +1280,7 @@ export const Reservations: React.FC = () => {
                           <p className="text-gray-700">Total Nightly Rate: <span className="font-medium">{formatCurrency(totalRate)}</span></p>
                           <div className="mt-1 border-t pt-1">
                             <p className="text-gray-700">Subtotal: <span className="font-medium">{formatCurrency(displaySubtotal)}</span></p>
-                            <p className="text-gray-700">Tax ({Math.round(taxRate*100)}%): <span className="font-medium">{formatCurrency(displayTax)}</span></p>
+                            <p className="text-gray-700">Tax ({Math.round(taxRate * 100)}%): <span className="font-medium">{formatCurrency(displayTax)}</span></p>
                             <p className="text-gray-800 text-base">Total: <span className="font-bold">{formatCurrency(displayTotal)}</span></p>
                           </div>
                         </>
@@ -1217,40 +1289,40 @@ export const Reservations: React.FC = () => {
                   </div>
                 )}
               </div>
-              
+
               <div>
                 <h4 className="font-semibold text-gray-700 mb-2">Payment Options</h4>
                 <div className="flex gap-2 mb-2">
                   <label className="flex items-center">
-                    <input 
-                      type="radio" 
+                    <input
+                      type="radio"
                       name="paymentMethod"
                       value="Credit Card"
                       checked={formData.paymentMethod === 'Credit Card'}
                       onChange={handleInputChange}
-                      className="mr-2" 
+                      className="mr-2"
                     />
                     Credit Card
                   </label>
                   <label className="flex items-center">
-                    <input 
-                      type="radio" 
+                    <input
+                      type="radio"
                       name="paymentMethod"
                       value="Cash"
                       checked={formData.paymentMethod === 'Cash'}
                       onChange={handleInputChange}
-                      className="mr-2" 
+                      className="mr-2"
                     />
                     Cash
                   </label>
                 </div>
                 <label className="flex items-center">
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     name="settleAtCheckout"
                     checked={formData.settleAtCheckout}
                     onChange={handleInputChange}
-                    className="mr-2" 
+                    className="mr-2"
                   />
                   Settle Bill At Checkout
                 </label>
@@ -1297,7 +1369,7 @@ export const Reservations: React.FC = () => {
               </div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button 
+              <button
                 type="submit"
                 disabled={!isFormValid()}
                 className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:text-gray-600 disabled:cursor-not-allowed"
@@ -1405,7 +1477,7 @@ export const Reservations: React.FC = () => {
 
       <GuestLookupModal
         open={lookupOpen}
-        onClose={()=> setLookupOpen(false)}
+        onClose={() => setLookupOpen(false)}
         onSelect={({ guest, reservation }) => {
           setFormData(prev => ({
             ...prev,
@@ -1422,154 +1494,153 @@ export const Reservations: React.FC = () => {
 
       {viewMode === 'grid' ? (
         <div className="bg-white rounded-xl shadow-lg p-4 h-[calc(100vh-300px)] flex flex-col">
-           <RoomGrid 
-             onCellClick={(roomId, date) => {
-               setFormData(prev => ({
-                 ...prev,
-                 roomId,
-                 checkIn: format(date, 'yyyy-MM-dd'),
-                 checkOut: format(addDays(date, 1), 'yyyy-MM-dd')
-               }));
-               setShowNewForm(true);
-               window.scrollTo({ top: 0, behavior: 'smooth' });
-             }}
-           />
+          <RoomGrid
+            onCellClick={(roomId, date) => {
+              setFormData(prev => ({
+                ...prev,
+                roomId,
+                checkIn: format(date, 'yyyy-MM-dd'),
+                checkOut: format(addDays(date, 1), 'yyyy-MM-dd')
+              }));
+              setShowNewForm(true);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+          />
         </div>
       ) : (
-      <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Guest Name</th>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Room Type</th>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Check-In</th>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Check-Out</th>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Booking Type</th>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Status</th>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Payment</th>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {reservations.map(res => (
-              <tr key={res.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 text-sm text-gray-800">{String(res.guestName || '')}</td>
-                <td className="px-6 py-4 text-sm text-gray-600">{String(res.roomType || '')}</td>
-                <td className="px-6 py-4 text-sm text-gray-600">{String(res.checkIn || '')}</td>
-                <td className="px-6 py-4 text-sm text-gray-600">{String(res.checkOut || '')}</td>
-                <td className="px-6 py-4 text-sm text-gray-600">
-                  {String(res.bookingType || 'Individual')}
-                  {((res as any).companyName) && <span className="block text-xs text-gray-500">{String((res as any).companyName || '')}</span>}
-                </td>
-                <td className="px-6 py-4">
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                    String(res.status || '') === 'confirmed' ? 'bg-green-100 text-green-800' :
-                    String(res.status || '') === 'checked-in' ? 'bg-blue-100 text-blue-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {(() => { const st = String(res.status || ''); return st ? st.charAt(0).toUpperCase() + st.slice(1) : ''; })()}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
-                  <div>{String(res.paymentMethod || 'Credit Card')}</div>
-                  <div className="text-xs mt-1">
-                    <span className={`inline-block px-2 py-1 rounded font-semibold ${(res as any).paymentVerified ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                      {res.paymentVerified ? 'Verified' : 'Not Verified'}
+        <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-gray-100">
+              <tr>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Guest Name</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Room Type</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Check-In</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Check-Out</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Booking Type</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Status</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Payment</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {displayReservations.map(res => (
+                <tr key={res.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 text-sm text-gray-800">{String(res.guestName || '')}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600">{String(res.roomType || '')}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600">{String(res.checkIn || '')}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600">{String(res.checkOut || '')}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600">
+                    {String(res.bookingType || 'Individual')}
+                    {((res as any).companyName) && <span className="block text-xs text-gray-500">{String((res as any).companyName || '')}</span>}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${String(res.status || '') === 'confirmed' ? 'bg-green-100 text-green-800' :
+                      String(res.status || '') === 'checked-in' ? 'bg-blue-100 text-blue-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                      {(() => { const st = String(res.status || ''); return st ? st.charAt(0).toUpperCase() + st.slice(1) : ''; })()}
                     </span>
-                    {((res as any).paymentInfoSource) && (
-                      <span className="ml-2 text-gray-500">{String((res as any).paymentInfoSource || '')}</span>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-600">
+                    <div>{String(res.paymentMethod || 'Credit Card')}</div>
+                    <div className="text-xs mt-1">
+                      <span className={`inline-block px-2 py-1 rounded font-semibold ${(res as any).paymentVerified ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        {res.paymentVerified ? 'Verified' : 'Not Verified'}
+                      </span>
+                      {((res as any).paymentInfoSource) && (
+                        <span className="ml-2 text-gray-500">{String((res as any).paymentInfoSource || '')}</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-600">
+                    {res.status !== 'checked-in' && (
+                      <button
+                        onClick={() => {
+                          setEditingReservationId(res.id);
+                          setFormData({
+                            roomId: '', // Will be set when room is selected
+                            guestName: res.guestName,
+                            email: res.email || '',
+                            phone: res.phone || '',
+                            idDocumentNumber: (res as any).idDocumentNumberEncrypted ? decryptSensitive((res as any).idDocumentNumberEncrypted) : '',
+                            idDocumentType: res.idDocumentType || 'Passport',
+                            nationalityCode: res.nationalityCode || '',
+                            nationalityName: res.nationalityName || '',
+                            checkIn: (() => { const d = new Date(res.checkIn); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10); })(),
+                            checkOut: (() => { const d = new Date(res.checkOut); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10); })(),
+                            originRegion: (res as any).originRegion || '',
+                            roomType: res.roomType,
+                            roomPreference: res.roomPreference || 'Non-smoking',
+                            bookingName: res.bookingName || '',
+                            bookingType: res.bookingType || 'Individual',
+                            companyName: res.companyName || '',
+                            bookingSource: res.bookingSource || '',
+                            partnerCode: res.partnerCode || '',
+                            utmSource: res.utmSource || '',
+                            utmMedium: res.utmMedium || '',
+                            utmCampaign: res.utmCampaign || '',
+                            utmTerm: res.utmTerm || '',
+                            utmContent: res.utmContent || '',
+                            paymentMethod: res.paymentMethod || 'Credit Card',
+                            settleAtCheckout: res.settleAtCheckout !== false,
+                            rate: res.rate,
+                            adults: res.adults,
+                            children: res.children || 0,
+                            paymentInfoSource: res.paymentInfoSource || '',
+                            paymentVerified: !!res.paymentVerified,
+                            paymentInstructions: '',
+                            termsAccepted: !!res.termsAccepted,
+                            signatureDataUrl: '',
+                            packageCode: (res as any).packageCode || 'RO',
+                            taxInclusive: !!(res as any).taxInclusive
+                          });
+                          setShowNewForm(true);
+                        }}
+                        className="text-blue-600 hover:text-blue-800 font-medium"
+                      >
+                        Edit
+                      </button>
                     )}
-                  </div>
-                </td>
-                <td className="px-6 py-4 text-sm text-gray-600">
-                  {res.status !== 'checked-in' && (
                     <button
-                      onClick={() => {
-                        setEditingReservationId(res.id);
-                        setFormData({
-                          roomId: '', // Will be set when room is selected
+                      onClick={async () => {
+                        const html = await buildReservationPrintHTML({
                           guestName: res.guestName,
-                          email: res.email || '',
-                          phone: res.phone || '',
-                          idDocumentNumber: (res as any).idDocumentNumberEncrypted ? decryptSensitive((res as any).idDocumentNumberEncrypted) : '',
-                          idDocumentType: res.idDocumentType || 'Passport',
-                          nationalityCode: res.nationalityCode || '',
-                          nationalityName: res.nationalityName || '',
-                          checkIn: (() => { const d = new Date(res.checkIn); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10); })(),
-                          checkOut: (() => { const d = new Date(res.checkOut); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10); })(),
-                          originRegion: (res as any).originRegion || '',
-                          roomType: res.roomType,
-                          roomPreference: res.roomPreference || 'Non-smoking',
-                          bookingName: res.bookingName || '',
-                          bookingType: res.bookingType || 'Individual',
-                          companyName: res.companyName || '',
-                          bookingSource: res.bookingSource || '',
-                          partnerCode: res.partnerCode || '',
-                          utmSource: res.utmSource || '',
-                          utmMedium: res.utmMedium || '',
-                          utmCampaign: res.utmCampaign || '',
-                          utmTerm: res.utmTerm || '',
-                          utmContent: res.utmContent || '',
-                          paymentMethod: res.paymentMethod || 'Credit Card',
-                          settleAtCheckout: res.settleAtCheckout !== false,
-                          rate: res.rate,
+                          bookingName: (res as any).bookingName || res.guestName,
+                          nationalityName: (res as any).nationalityName,
+                          nationalityCode: (res as any).nationalityCode,
+                          idDocumentType: (res as any).idDocumentType || 'Passport',
+                          checkIn: res.checkIn,
+                          checkOut: res.checkOut,
                           adults: res.adults,
                           children: res.children || 0,
-                          paymentInfoSource: res.paymentInfoSource || '',
-                          paymentVerified: !!res.paymentVerified,
-                          paymentInstructions: '',
-                          termsAccepted: !!res.termsAccepted,
-                          signatureDataUrl: '',
-                          packageCode: (res as any).packageCode || 'RO',
-                          taxInclusive: !!(res as any).taxInclusive
+                          roomType: res.roomType,
+                          roomPreference: (res as any).roomPreference || 'Non-smoking',
+                          bookingSource: (res as any).bookingSource || '',
+                          partnerCode: (res as any).partnerCode || '',
+                          rate: res.rate,
+                          paymentInstructions: (res as any).paymentInstructions || ''
                         });
-                        setShowNewForm(true);
+                        const doc = applySettingsToHTML('Reservation Details', html);
+                        const w = window.open('', '_blank');
+                        if (!w) return;
+                        w.document.write(doc);
+                        w.document.close();
+                        try { w.focus(); } catch { }
+                        try { w.print(); } catch { }
                       }}
-                      className="text-blue-600 hover:text-blue-800 font-medium"
+                      className="ml-3 text-indigo-600 hover:text-indigo-800 font-medium"
                     >
-                      Edit
+                      Print
                     </button>
-                  )}
-                  <button
-                    onClick={async () => {
-                      const html = await buildReservationPrintHTML({
-                        guestName: res.guestName,
-                        bookingName: (res as any).bookingName || res.guestName,
-                        nationalityName: (res as any).nationalityName,
-                        nationalityCode: (res as any).nationalityCode,
-                        idDocumentType: (res as any).idDocumentType || 'Passport',
-                        checkIn: res.checkIn,
-                        checkOut: res.checkOut,
-                        adults: res.adults,
-                        children: res.children || 0,
-                        roomType: res.roomType,
-                        roomPreference: (res as any).roomPreference || 'Non-smoking',
-                        bookingSource: (res as any).bookingSource || '',
-                        partnerCode: (res as any).partnerCode || '',
-                        rate: res.rate,
-                        paymentInstructions: (res as any).paymentInstructions || ''
-                      });
-                      const doc = applySettingsToHTML('Reservation Details', html);
-                      const w = window.open('', '_blank');
-                      if (!w) return;
-                      w.document.write(doc);
-                      w.document.close();
-                      try { w.focus(); } catch {}
-                      try { w.print(); } catch {}
-                    }}
-                    className="ml-3 text-indigo-600 hover:text-indigo-800 font-medium"
-                  >
-                    Print
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
-      <RoomGridModal 
-        isOpen={roomGridOpen} 
+      <RoomGridModal
+        isOpen={roomGridOpen}
         onClose={() => setRoomGridOpen(false)}
         onSelectRoom={(roomId) => {
           setFormData(prev => ({ ...prev, roomId }));

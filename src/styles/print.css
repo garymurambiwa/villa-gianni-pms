@@ -25,6 +25,7 @@
    @MEDIA PRINT - Core Print Styles
    ============================================================================ */
 @media print {
+
   /* Page Setup */
   @page {
     size: A4 portrait;
@@ -77,6 +78,15 @@
     max-width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
+  }
+
+  /* Remove scrollbars and overflow clipping for print */
+  * {
+    overflow: visible !important;
+  }
+
+  ::-webkit-scrollbar {
+    display: none !important;
   }
 
   /* ============================================================================
@@ -210,7 +220,8 @@
   }
 
   .report-table thead {
-    display: table-header-group; /* Repeat header on each page */
+    display: table-header-group;
+    /* Repeat header on each page */
   }
 
   .report-table thead th {
@@ -400,22 +411,61 @@
      TYPOGRAPHY UTILITIES
      ============================================================================ */
 
-  .print-text-xs { font-size: 8pt; }
-  .print-text-sm { font-size: 9pt; }
-  .print-text-base { font-size: 10pt; }
-  .print-text-lg { font-size: 11pt; }
-  .print-text-xl { font-size: 12pt; }
-  .print-text-2xl { font-size: 14pt; }
+  .print-text-xs {
+    font-size: 8pt;
+  }
 
-  .print-font-normal { font-weight: 400; }
-  .print-font-medium { font-weight: 500; }
-  .print-font-semibold { font-weight: 600; }
-  .print-font-bold { font-weight: 700; }
+  .print-text-sm {
+    font-size: 9pt;
+  }
 
-  .print-text-muted { color: var(--print-text-muted); }
-  .print-text-secondary { color: var(--print-text-secondary); }
-  .print-text-primary { color: var(--print-text-primary); }
-  .print-text-brand { color: var(--print-brand-primary); }
+  .print-text-base {
+    font-size: 10pt;
+  }
+
+  .print-text-lg {
+    font-size: 11pt;
+  }
+
+  .print-text-xl {
+    font-size: 12pt;
+  }
+
+  .print-text-2xl {
+    font-size: 14pt;
+  }
+
+  .print-font-normal {
+    font-weight: 400;
+  }
+
+  .print-font-medium {
+    font-weight: 500;
+  }
+
+  .print-font-semibold {
+    font-weight: 600;
+  }
+
+  .print-font-bold {
+    font-weight: 700;
+  }
+
+  .print-text-muted {
+    color: var(--print-text-muted);
+  }
+
+  .print-text-secondary {
+    color: var(--print-text-secondary);
+  }
+
+  .print-text-primary {
+    color: var(--print-text-primary);
+  }
+
+  .print-text-brand {
+    color: var(--print-brand-primary);
+  }
 
   /* ============================================================================
      POWERED BY FOOTER
@@ -437,7 +487,8 @@
 @media screen {
   .report-preview {
     background: white;
-    max-width: 210mm; /* A4 width */
+    max-width: 210mm;
+    /* A4 width */
     margin: 20px auto;
     padding: 20mm;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
