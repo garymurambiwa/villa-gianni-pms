@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useData } from '@/context/DataContext';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateForCSV, toDisplayId, escapeCSV } from '@/lib/csvUtils';
+import { ALL_DEPARTMENTS } from '@/lib/usaliCategories';
 
 interface Vendor {
   id: string;
@@ -864,13 +865,9 @@ const VendorManagement: React.FC = () => {
                                       <SelectValue placeholder="Select dept" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      <SelectItem value="Front Office">Front Office</SelectItem>
-                                      <SelectItem value="Housekeeping">Housekeeping</SelectItem>
-                                      <SelectItem value="Food & Beverage">Food & Beverage</SelectItem>
-                                      <SelectItem value="Maintenance">Maintenance</SelectItem>
-                                      <SelectItem value="Sales & Marketing">Sales & Marketing</SelectItem>
-                                      <SelectItem value="Administration">Administration</SelectItem>
-                                      <SelectItem value="Other">Other</SelectItem>
+                                      {ALL_DEPARTMENTS.map(d => (
+                                        <SelectItem key={d} value={d}>{d}</SelectItem>
+                                      ))}
                                     </SelectContent>
                                   </Select>
                                   {batchErrors[index]?.department && (
@@ -1099,13 +1096,9 @@ const VendorManagement: React.FC = () => {
                           <SelectValue placeholder="Select department" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="Front Office">Front Office</SelectItem>
-                          <SelectItem value="Housekeeping">Housekeeping</SelectItem>
-                          <SelectItem value="Food & Beverage">Food & Beverage</SelectItem>
-                          <SelectItem value="Maintenance">Maintenance</SelectItem>
-                          <SelectItem value="Sales & Marketing">Sales & Marketing</SelectItem>
-                          <SelectItem value="Administration">Administration</SelectItem>
-                          <SelectItem value="Other">Other</SelectItem>
+                          {ALL_DEPARTMENTS.map(d => (
+                            <SelectItem key={d} value={d}>{d}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>

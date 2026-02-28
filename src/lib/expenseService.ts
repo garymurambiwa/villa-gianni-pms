@@ -282,26 +282,39 @@ export const departmentalBreakdown = async (from: string, to: string): Promise<{
 };
 
 export const getUSALIIncomeStatement = async (from: string, to: string, budgets?: { month?: string } | undefined) => {
-  // Departments considered: Rooms, F&B
-  const depts = ['Rooms', 'F&B'];
-  const undistributed = ['Administration', 'Sales & Marketing'];
+  // USALI department definitions
+  const opDepts = ['Rooms', 'Food & Beverage', 'Spa', 'Other Operated Departments'];
+  const undistributed = ['Administrative & General', 'Sales & Marketing', 'Property Operations & Maintenance', 'Utilities', 'Information & Telecom'];
+
+  // Legacy name normaliser (maps old names like 'F&B' → 'Food & Beverage', 'Administration' → 'Administrative & General')
+  const legacyMap: Record<string, string> = {
+    'Administration': 'Administrative & General', 'F&B': 'Food & Beverage',
+    'Food': 'Food & Beverage', 'Beverage': 'Food & Beverage', 'Sales': 'Sales & Marketing',
+    'Marketing': 'Sales & Marketing', 'Maintenance': 'Property Operations & Maintenance',
+    'POM': 'Property Operations & Maintenance', 'IT': 'Information & Telecom',
+    'Telecom': 'Information & Telecom', 'Other': 'Other Operated Departments',
+  };
+  const norm = (d: string) => legacyMap[d] || d;
+
   // Revenue from GL ledger
   const tb = gl.getTrialBalance(from, to);
   const accs = gl.getAccounts();
   const cat = (id: string) => accs.find(a => a.id === id)?.category;
   const revenue = tb.filter(a => cat(a.accountId) === 'Revenue').reduce((s, a) => s + (-a.balance), 0);
 
-  // Expenses by GL accounts with department flags (FROM LEDGER)
+  // Expenses by GL accounts
   const ledger = gl.getLedger().filter(e => e.date >= from && e.date <= to);
-  const getDept = (accId: string) => accs.find(a => a.id === accId)?.department;
+  const getDept = (accId: string) => norm(accs.find(a => a.id === accId)?.department || 'Administrative & General');
   const expenseLines = ledger.flatMap(e => e.lines).filter(l => accs.find(a => a.id === l.accountId)?.category === 'Expense');
 
   const deptExp: Record<string, number> = {};
   const undExp: Record<string, number> = {};
   expenseLines.forEach(l => {
-    const d = getDept(l.accountId) || 'Undistributed';
-    const amt = l.debit - l.credit; // expense posted as debit
-    if (depts.includes(d)) deptExp[d] = (deptExp[d] || 0) + amt; else if (undistributed.includes(d)) undExp[d] = (undExp[d] || 0) + amt; else undExp['Administration'] = (undExp['Administration'] || 0) + amt;
+    const d = getDept(l.accountId);
+    const amt = l.debit - l.credit;
+    if (opDepts.includes(d)) deptExp[d] = (deptExp[d] || 0) + amt;
+    else if (undistributed.includes(d)) undExp[d] = (undExp[d] || 0) + amt;
+    else undExp['Administrative & General'] = (undExp['Administrative & General'] || 0) + amt;
   });
 
   const deptExpenseTotal = Object.values(deptExp).reduce((s, v) => s + v, 0);
@@ -315,17 +328,9 @@ export const getUSALIIncomeStatement = async (from: string, to: string, budgets?
   const ytdActualFrom = `${to.slice(0, 4)}-01-01`;
   const ytdRevenue = gl.getTrialBalance(ytdActualFrom, to).filter(a => cat(a.accountId) === 'Revenue').reduce((s, a) => s + (-a.balance), 0);
 
-  // Expenses for YTD - we fetch from DB or GL? 
-  // USALI usually strictly follows GL. But we have expenseTxn rows.
-  // The original implementation used filterExpenses for YTD comparisons of *unposted*?
-  // Actually, original used filterExpenses for budget tracking.
-  // We will assume GL is the source of truth for financial statements if posted.
-  // But for simple "Expenses" tracking we used ExpenseTxn. 
-  // Let's stick to ExpensesTxn for YTD to match original logic but keep it async:
-
   const ytdExpRows = await filterExpenses({ from: ytdActualFrom, to });
-  const ytdDeptExpTotal = ytdExpRows.filter(r => depts.includes(r.costCenter)).reduce((s, r) => s + r.amount, 0);
-  const ytdUndTotal = ytdExpRows.filter(r => undistributed.includes(r.costCenter)).reduce((s, r) => s + r.amount, 0);
+  const ytdDeptExpTotal = ytdExpRows.filter(r => opDepts.includes(norm(r.costCenter))).reduce((s, r) => s + r.amount, 0);
+  const ytdUndTotal = ytdExpRows.filter(r => undistributed.includes(norm(r.costCenter))).reduce((s, r) => s + r.amount, 0);
 
   const ytdDeptProfit = ytdRevenue - ytdDeptExpTotal;
   const ytdGOP = ytdDeptProfit - ytdUndTotal;
@@ -335,15 +340,15 @@ export const getUSALIIncomeStatement = async (from: string, to: string, budgets?
   const prevTo = `${prevYear}${to.slice(4)}`;
   const ytdPrevRevenue = gl.getTrialBalance(`${prevYear}-01-01`, prevTo).filter(a => cat(a.accountId) === 'Revenue').reduce((s, a) => s + (-a.balance), 0);
   const ytdPrevExpRows = await filterExpenses({ from: `${prevYear}-01-01`, to: prevTo });
-  const ytdPrevDeptExpTotal = ytdPrevExpRows.filter(r => depts.includes(r.costCenter)).reduce((s, r) => s + r.amount, 0);
-  const ytdPrevUndTotal = ytdPrevExpRows.filter(r => undistributed.includes(r.costCenter)).reduce((s, r) => s + r.amount, 0);
+  const ytdPrevDeptExpTotal = ytdPrevExpRows.filter(r => opDepts.includes(norm(r.costCenter))).reduce((s, r) => s + r.amount, 0);
+  const ytdPrevUndTotal = ytdPrevExpRows.filter(r => undistributed.includes(norm(r.costCenter))).reduce((s, r) => s + r.amount, 0);
   const ytdPrevDeptProfit = ytdPrevRevenue - ytdPrevDeptExpTotal;
   const ytdPrevGOP = ytdPrevDeptProfit - ytdPrevUndTotal;
 
   const result = {
     month,
     revenue: Number(revenue.toFixed(2)),
-    departmentalExpenses: depts.map(cc => ({ costCenter: cc, amount: Number((deptExp[cc] || 0).toFixed(2)) })),
+    departmentalExpenses: opDepts.map(cc => ({ costCenter: cc, amount: Number((deptExp[cc] || 0).toFixed(2)) })),
     departmentalProfit: Number(deptProfit.toFixed(2)),
     undistributedExpenses: undistributed.map(cc => ({ costCenter: cc, amount: Number((undExp[cc] || 0).toFixed(2)) })),
     GOP: Number(GOP.toFixed(2)),
