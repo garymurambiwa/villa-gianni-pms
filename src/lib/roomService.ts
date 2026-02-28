@@ -9,7 +9,7 @@ let hasLoaded = false;
 // Initialize cache from DB
 export const refreshRooms = async (): Promise<Room[]> => {
   try {
-    const res = await db.query('SELECT * FROM rooms ORDER BY number');
+    const res = await db.query('SELECT * FROM rooms WHERE is_active != false ORDER BY number');
     // Check if query succeeded (res has "rows")
     if ('rows' in res && Array.isArray(res.rows)) {
       // Map DB rows to Room objects
@@ -95,11 +95,11 @@ export const deleteRoom = async (id: string): Promise<void> => {
   const original = roomsCache.find(r => r.id === id);
   roomsCache = roomsCache.filter(r => r.id !== id);
 
-  // DB Delete
+  // Soft-delete: mark as inactive to preserve FK references
   try {
-    await db.query('DELETE FROM rooms WHERE id = ?', [id]);
+    await db.query('UPDATE rooms SET is_active = false WHERE id = ?', [id]);
   } catch (e) {
-    console.error('Failed to delete room:', e);
+    console.error('Failed to soft-delete room:', e);
     if (original) {
       roomsCache = [...roomsCache, original].sort((a, b) => a.number.localeCompare(b.number));
     }
