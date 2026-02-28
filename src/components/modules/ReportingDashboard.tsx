@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { printDocument } from '@/lib/posIntegration';
-import { buildFlashReport, buildPosReconciliation, buildPurchaseReceivingLog, buildMonthlyPL, buildAgedAR, buildInventoryCOGS, buildHousekeepingStatus, buildDailyTax, buildCashBankDeposits, buildTrialBalance, buildDepartmentalSummary, buildArrivalsDepartures, buildHighBalance, buildProcurementVariance, buildFixedAssetRecon, exportCSV, exportXLS, generateReportHTML, ReportType, exportMonthlyWorkbookXLS } from '@/lib/reporting';
+import { buildFlashReport, buildPosReconciliation, buildPurchaseReceivingLog, buildMonthlyPL, buildAgedAR, buildInventoryCOGS, buildHousekeepingStatus, buildDailyTax, buildCashBankDeposits, buildTrialBalance, buildDepartmentalSummary, buildArrivalsDepartures, buildHighBalance, buildProcurementVariance, buildFixedAssetRecon, buildOpenBills, buildAgedPayables, buildPurchaseOrderHistory, buildPaymentHistory, buildVendorPaymentSummary, buildExpensesByDepartment, buildExpenseSummary, buildDetailedLineItemExport, exportCSV, exportXLS, generateReportHTML, ReportType, exportMonthlyWorkbookXLS } from '@/lib/reporting';
 import { useAuth } from '@/context/AuthContext';
 import { canViewReport } from '@/lib/permissions';
 
@@ -33,6 +33,16 @@ const ReportingDashboard: React.FC = () => {
       case 'high-balance': data = buildHighBalance(threshold, dailyDate); break;
       case 'proc-variance': data = buildProcurementVariance(month); break;
       case 'fa-recon': data = buildFixedAssetRecon(month); break;
+      // Vendor reports
+      case 'open-bills': data = buildOpenBills(); break;
+      case 'aged-payables': data = buildAgedPayables(dailyDate); break;
+      case 'po-history': data = buildPurchaseOrderHistory(month + '-01', month + '-31'); break;
+      case 'payment-history': data = buildPaymentHistory(month + '-01', month + '-31'); break;
+      case 'vendor-payment-summary': data = buildVendorPaymentSummary(month + '-01', month + '-31'); break;
+      case 'expenses-by-dept': data = buildExpensesByDepartment(month + '-01', month + '-31'); break;
+      case 'expense-summary-daily': data = buildExpenseSummary('daily', month + '-01', month + '-31'); break;
+      case 'expense-summary-monthly': { const yr = month.slice(0, 4); data = buildExpenseSummary('monthly', yr + '-01-01', yr + '-12-31'); break; }
+      case 'line-item-export': data = buildDetailedLineItemExport(month + '-01', month + '-31'); break;
     }
     if (data) setDataset(data);
   }, [reportType, dailyDate, month]);
@@ -70,6 +80,16 @@ const ReportingDashboard: React.FC = () => {
     { key: 'dept-summary', label: 'Monthly: Departmental Summary (USALI)' },
     { key: 'proc-variance', label: 'Monthly: Procurement Variance' },
     { key: 'fa-recon', label: 'Monthly: Fixed Asset Reconciliation' },
+    // Vendor reports
+    { key: 'open-bills', label: 'Vendor: Open Bills' },
+    { key: 'aged-payables', label: 'Vendor: Aged Payables' },
+    { key: 'po-history', label: 'Vendor: Purchase Order History' },
+    { key: 'payment-history', label: 'Vendor: Payment History & Check Register' },
+    { key: 'vendor-payment-summary', label: 'Vendor: Payment Summary by Vendor' },
+    { key: 'expenses-by-dept', label: 'Vendor: Expenses by Department' },
+    { key: 'expense-summary-daily', label: 'Vendor: Daily Expense Summary' },
+    { key: 'expense-summary-monthly', label: 'Vendor: Monthly Expense Summary' },
+    { key: 'line-item-export', label: 'Vendor: Detailed Line-Item Export' },
   ].filter(o => allowed(o.key));
 
   // Consolidated monthly export

@@ -3,7 +3,7 @@ import { readReceiptBranding } from './printSettings';
 import roomSvc from '@/lib/roomService';
 import expenseSvc from '@/lib/expenseService';
 
-export type ReportType = 'flash' | 'pos-recon' | 'purchase-log' | 'pl' | 'aged-ar' | 'inventory-cogs';
+export type ReportType = 'flash' | 'pos-recon' | 'purchase-log' | 'pl' | 'aged-ar' | 'inventory-cogs' | 'housekeeping' | 'daily-tax' | 'cash-bank' | 'trial-balance' | 'dept-summary' | 'arrivals-departures' | 'high-balance' | 'proc-variance' | 'fa-recon' | 'open-bills' | 'aged-payables' | 'po-history' | 'payment-history' | 'vendor-payment-summary' | 'expenses-by-dept' | 'expense-summary-daily' | 'expense-summary-monthly' | 'line-item-export';
 
 export interface DateRange { start: string; end: string }
 
@@ -632,6 +632,288 @@ export const buildInventoryCOGS = (monthISO: string) => {
     { metric: 'COGS', value: Number(cogs || 0) }
   ];
   return { title: `Inventory & COGS — ${monthISO}`, columns: ['Metric', 'Value'], rows };
+};
+
+// ============================================================================
+// VENDOR REPORTING SUITE
+// ============================================================================
+
+// Open Bills Report — unpaid/partially-paid vendor expenses
+export const buildOpenBills = () => {
+  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const payments: any[] = readJSON('corepms_vendor_payments', []);
+  const paymentsByVendor: Record<string, number> = {};
+  payments.forEach(p => { paymentsByVendor[p.vendor_id] = (paymentsByVendor[p.vendor_id] || 0) + Number(p.amount_paid || 0); });
+
+  const openBills = expenses
+    .filter(e => e.status !== 'paid' && e.status !== 'cleared')
+    .map(e => {
+      const totalPaid = paymentsByVendor[e.vendor_id] || 0;
+      const outstanding = Number(e.total_cost || 0) - totalPaid;
+      return { ...e, outstanding: Math.max(0, outstanding) };
+    })
+    .filter(e => e.outstanding > 0);
+
+  const rows = openBills.map(b => ({
+    vendor: b.vendor_name || b.vendor_id,
+    reference: b.reference_number || b.id?.slice(0, 8),
+    date: b.expense_date,
+    description: b.description,
+    total: Number(b.total_cost || 0).toFixed(2),
+    outstanding: b.outstanding.toFixed(2),
+    department: b.department,
+    status: b.status,
+  }));
+
+  const totalOutstanding = openBills.reduce((s, b) => s + b.outstanding, 0);
+  return {
+    title: 'Open Bills Report',
+    columns: ['Vendor', 'Reference', 'Date', 'Description', 'Total', 'Outstanding', 'Department', 'Status'],
+    rows,
+    summary: { totalOutstanding: totalOutstanding.toFixed(2), count: openBills.length },
+  };
+};
+
+// Aged Payables Summary — aging buckets: Current, 1-30, 31-60, 61-90, 90+
+export const buildAgedPayables = (asOfISO: string = new Date().toISOString().slice(0, 10)) => {
+  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const asOf = new Date(asOfISO);
+  const diffDays = (d: string) => Math.floor((asOf.getTime() - new Date(d).getTime()) / 86400000);
+
+  const buckets = { current: 0, '1_30': 0, '31_60': 0, '61_90': 0, over90: 0 };
+  const vendorBuckets: Record<string, typeof buckets> = {};
+
+  expenses.filter(e => e.status !== 'paid' && e.status !== 'cleared').forEach(e => {
+    const days = diffDays(e.expense_date);
+    const amt = Number(e.total_cost || 0);
+    const vName = e.vendor_name || e.vendor_id;
+    if (!vendorBuckets[vName]) vendorBuckets[vName] = { current: 0, '1_30': 0, '31_60': 0, '61_90': 0, over90: 0 };
+    const b = vendorBuckets[vName];
+    if (days <= 0) { b.current += amt; buckets.current += amt; }
+    else if (days <= 30) { b['1_30'] += amt; buckets['1_30'] += amt; }
+    else if (days <= 60) { b['31_60'] += amt; buckets['31_60'] += amt; }
+    else if (days <= 90) { b['61_90'] += amt; buckets['61_90'] += amt; }
+    else { b.over90 += amt; buckets.over90 += amt; }
+  });
+
+  const rows = Object.entries(vendorBuckets).map(([vendor, b]) => ({
+    vendor,
+    current: b.current.toFixed(2),
+    '1-30': b['1_30'].toFixed(2),
+    '31-60': b['31_60'].toFixed(2),
+    '61-90': b['61_90'].toFixed(2),
+    '90+': b.over90.toFixed(2),
+    total: (b.current + b['1_30'] + b['31_60'] + b['61_90'] + b.over90).toFixed(2),
+  }));
+
+  return {
+    title: `Aged Payables Summary — as of ${asOfISO}`,
+    columns: ['Vendor', 'Current', '1-30', '31-60', '61-90', '90+', 'Total'],
+    rows,
+    totals: {
+      current: buckets.current.toFixed(2), '1-30': buckets['1_30'].toFixed(2),
+      '31-60': buckets['31_60'].toFixed(2), '61-90': buckets['61_90'].toFixed(2),
+      '90+': buckets.over90.toFixed(2),
+      total: (buckets.current + buckets['1_30'] + buckets['31_60'] + buckets['61_90'] + buckets.over90).toFixed(2),
+    },
+  };
+};
+
+// Purchase Order History (uses expense records as purchase proxies)
+export const buildPurchaseOrderHistory = (from: string, to: string) => {
+  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to)
+    .sort((a, b) => b.expense_date.localeCompare(a.expense_date));
+
+  const rows = filtered.map(e => ({
+    date: e.expense_date,
+    vendor: e.vendor_name || e.vendor_id,
+    reference: e.reference_number || e.id?.slice(0, 8),
+    description: e.description,
+    quantity: e.quantity || 1,
+    unitCost: Number(e.unit_cost || 0).toFixed(2),
+    total: Number(e.total_cost || 0).toFixed(2),
+    department: e.department,
+    category: e.category,
+    status: e.status,
+  }));
+
+  const grandTotal = filtered.reduce((s, e) => s + Number(e.total_cost || 0), 0);
+  return {
+    title: `Purchase Order History — ${from} to ${to}`,
+    columns: ['Date', 'Vendor', 'Reference', 'Description', 'Qty', 'Unit Cost', 'Total', 'Department', 'Category', 'Status'],
+    rows,
+    summary: { grandTotal: grandTotal.toFixed(2), count: filtered.length },
+  };
+};
+
+// Payment History + Check Register
+export const buildPaymentHistory = (from: string, to: string) => {
+  const payments: any[] = readJSON('corepms_vendor_payments', []);
+  const filtered = payments.filter(p => {
+    const d = typeof p.payment_date === 'string' ? p.payment_date : new Date(p.payment_date).toISOString().slice(0, 10);
+    return d >= from && d <= to;
+  }).sort((a, b) => String(b.payment_date).localeCompare(String(a.payment_date)));
+
+  const rows = filtered.map((p, i) => ({
+    checkNo: `PAY-${String(i + 1).padStart(4, '0')}`,
+    date: typeof p.payment_date === 'string' ? p.payment_date : new Date(p.payment_date).toISOString().slice(0, 10),
+    vendor: p.vendor_name || p.vendor_id,
+    method: p.payment_method,
+    reference: p.reference_number || '',
+    amount: Number(p.amount_paid || 0).toFixed(2),
+    notes: p.notes || '',
+  }));
+
+  const totalPaid = filtered.reduce((s, p) => s + Number(p.amount_paid || 0), 0);
+  return {
+    title: `Payment History & Check Register — ${from} to ${to}`,
+    columns: ['Check No.', 'Date', 'Vendor', 'Method', 'Reference', 'Amount', 'Notes'],
+    rows,
+    summary: { totalPaid: totalPaid.toFixed(2), count: filtered.length },
+  };
+};
+
+// Vendor Payment Summary — totals per vendor for a period
+export const buildVendorPaymentSummary = (from: string, to: string) => {
+  const payments: any[] = readJSON('corepms_vendor_payments', []);
+  const filtered = payments.filter(p => {
+    const d = typeof p.payment_date === 'string' ? p.payment_date : new Date(p.payment_date).toISOString().slice(0, 10);
+    return d >= from && d <= to;
+  });
+
+  const byVendor: Record<string, { total: number; count: number; methods: Set<string> }> = {};
+  filtered.forEach(p => {
+    const v = p.vendor_name || p.vendor_id;
+    if (!byVendor[v]) byVendor[v] = { total: 0, count: 0, methods: new Set() };
+    byVendor[v].total += Number(p.amount_paid || 0);
+    byVendor[v].count += 1;
+    byVendor[v].methods.add(p.payment_method || 'Unknown');
+  });
+
+  const rows = Object.entries(byVendor)
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([vendor, data]) => ({
+      vendor,
+      payments: data.count,
+      methods: Array.from(data.methods).join(', '),
+      totalPaid: data.total.toFixed(2),
+    }));
+
+  const grandTotal = Object.values(byVendor).reduce((s, d) => s + d.total, 0);
+  return {
+    title: `Vendor Payment Summary — ${from} to ${to}`,
+    columns: ['Vendor', 'Payments', 'Methods Used', 'Total Paid'],
+    rows,
+    summary: { grandTotal: grandTotal.toFixed(2), vendorCount: rows.length },
+  };
+};
+
+// Expenses by Department / Date Range
+export const buildExpensesByDepartment = (from: string, to: string) => {
+  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to);
+
+  const byDept: Record<string, { total: number; count: number; categories: Record<string, number> }> = {};
+  filtered.forEach(e => {
+    const d = e.department || 'Unassigned';
+    if (!byDept[d]) byDept[d] = { total: 0, count: 0, categories: {} };
+    byDept[d].total += Number(e.total_cost || 0);
+    byDept[d].count += 1;
+    const cat = e.category || 'Other';
+    byDept[d].categories[cat] = (byDept[d].categories[cat] || 0) + Number(e.total_cost || 0);
+  });
+
+  const grandTotal = filtered.reduce((s, e) => s + Number(e.total_cost || 0), 0);
+  const rows = Object.entries(byDept)
+    .sort((a, b) => b[1].total - a[1].total)
+    .flatMap(([dept, data]) => {
+      const deptRow = {
+        department: dept,
+        category: '— ALL —',
+        count: data.count,
+        total: data.total.toFixed(2),
+        pct: grandTotal > 0 ? ((data.total / grandTotal) * 100).toFixed(1) + '%' : '0%',
+      };
+      const catRows = Object.entries(data.categories).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => ({
+        department: '',
+        category: `  └ ${cat}`,
+        count: '',
+        total: amt.toFixed(2),
+        pct: data.total > 0 ? ((amt / data.total) * 100).toFixed(1) + '%' : '0%',
+      }));
+      return [deptRow, ...catRows];
+    });
+
+  return {
+    title: `Expenses by Department — ${from} to ${to}`,
+    columns: ['Department', 'Category', 'Count', 'Total', '% Share'],
+    rows,
+    summary: { grandTotal: grandTotal.toFixed(2), departments: Object.keys(byDept).length },
+  };
+};
+
+// Daily / Monthly Expense Summaries
+export const buildExpenseSummary = (period: 'daily' | 'monthly', from: string, to: string) => {
+  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to);
+
+  const byPeriod: Record<string, { total: number; count: number }> = {};
+  filtered.forEach(e => {
+    const key = period === 'daily' ? e.expense_date : (e.expense_date || '').slice(0, 7);
+    if (!byPeriod[key]) byPeriod[key] = { total: 0, count: 0 };
+    byPeriod[key].total += Number(e.total_cost || 0);
+    byPeriod[key].count += 1;
+  });
+
+  const rows = Object.entries(byPeriod)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([p, d]) => ({
+      period: p,
+      transactions: d.count,
+      total: d.total.toFixed(2),
+      average: d.count > 0 ? (d.total / d.count).toFixed(2) : '0.00',
+    }));
+
+  const grandTotal = filtered.reduce((s, e) => s + Number(e.total_cost || 0), 0);
+  return {
+    title: `${period === 'daily' ? 'Daily' : 'Monthly'} Expense Summary — ${from} to ${to}`,
+    columns: ['Period', 'Transactions', 'Total', 'Avg per Transaction'],
+    rows,
+    summary: { grandTotal: grandTotal.toFixed(2), periods: rows.length, avgPerPeriod: rows.length > 0 ? (grandTotal / rows.length).toFixed(2) : '0.00' },
+  };
+};
+
+// Detailed Line-Item Export — every expense row with all fields
+export const buildDetailedLineItemExport = (from: string, to: string) => {
+  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to)
+    .sort((a, b) => a.expense_date.localeCompare(b.expense_date));
+
+  const rows = filtered.map((e, i) => ({
+    id: `EXP-${String(i + 1).padStart(4, '0')}`,
+    date: e.expense_date,
+    vendor: e.vendor_name || e.vendor_id,
+    reference: e.reference_number || '',
+    description: e.description,
+    department: e.department,
+    category: e.category,
+    quantity: e.quantity || 1,
+    unitCost: Number(e.unit_cost || 0).toFixed(2),
+    taxRate: `${Number(e.tax_rate || 0)}%`,
+    taxAmount: Number(e.tax_amount || 0).toFixed(2),
+    total: Number(e.total_cost || 0).toFixed(2),
+    status: e.status,
+  }));
+
+  const grandTotal = filtered.reduce((s, e) => s + Number(e.total_cost || 0), 0);
+  const totalTax = filtered.reduce((s, e) => s + Number(e.tax_amount || 0), 0);
+  return {
+    title: `Detailed Line-Item Export — ${from} to ${to}`,
+    columns: ['ID', 'Date', 'Vendor', 'Reference', 'Description', 'Department', 'Category', 'Qty', 'Unit Cost', 'Tax Rate', 'Tax', 'Total', 'Status'],
+    rows,
+    summary: { grandTotal: grandTotal.toFixed(2), totalTax: totalTax.toFixed(2), count: filtered.length },
+  };
 };
 
 // Export helpers
