@@ -637,8 +637,22 @@ export const buildInventoryCOGS = (monthISO: string) => {
 // Export helpers
 export const exportCSV = (columns: string[], rows: any[], filename: string) => {
   const esc = (v: any) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  // Auto-format ISO date strings to DDMMYYYY-HHMMSS
+  const fmtVal = (v: any) => {
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}(T|\s)/.test(v)) {
+      try {
+        const d = new Date(v);
+        if (!isNaN(d.getTime())) {
+          const p = new Intl.DateTimeFormat('en-ZA', { timeZone: 'Africa/Johannesburg', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);
+          const g = (t: string) => p.find(x => x.type === t)?.value || '00';
+          return `${g('day')}${g('month')}${g('year')}-${g('hour')}${g('minute')}${g('second')}`;
+        }
+      } catch { }
+    }
+    return v;
+  };
   const header = columns.map(esc).join(',');
-  const body = rows.map(r => columns.map(c => esc(r[c.toLowerCase()] ?? r[c] ?? '')).join(',')).join('\n');
+  const body = rows.map(r => columns.map(c => esc(fmtVal(r[c.toLowerCase()] ?? r[c] ?? ''))).join(',')).join('\n');
   const blob = new Blob([header + '\n' + body], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = filename.endsWith('.csv') ? filename : (filename + '.csv'); a.click(); URL.revokeObjectURL(url);

@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useData } from '@/context/DataContext';
 import { useToast } from '@/hooks/use-toast';
+import { formatDateForCSV, toDisplayId, escapeCSV } from '@/lib/csvUtils';
 
 interface Vendor {
   id: string;
@@ -141,7 +142,7 @@ const VendorManagement: React.FC = () => {
       toast({ title: 'Validation Error', description: 'Vendor name is required', variant: 'destructive' });
       return;
     }
-    
+
     const success = await addVendor(vendorForm);
     if (success) {
       toast({ title: 'Success', description: `Vendor "${vendorForm.name}" created successfully` });
@@ -163,19 +164,19 @@ const VendorManagement: React.FC = () => {
 
   const handleAddExpense = async () => {
     if (!expenseForm.vendor_id || !expenseForm.description.trim() || expenseForm.unit_cost <= 0 || !expenseForm.department.trim()) {
-      toast({ 
-        title: 'Validation Error', 
-        description: 'Please select a vendor, enter description, select department, and unit cost must be greater than 0', 
-        variant: 'destructive' 
+      toast({
+        title: 'Validation Error',
+        description: 'Please select a vendor, enter description, select department, and unit cost must be greater than 0',
+        variant: 'destructive'
       });
       return;
     }
-    
+
     const expenseData = {
       ...expenseForm,
       total_cost: expenseForm.quantity * expenseForm.unit_cost
     };
-    
+
     const success = await addVendorExpense(expenseData);
     if (success) {
       toast({ title: 'Success', description: 'Expense added successfully' });
@@ -255,7 +256,7 @@ const VendorManagement: React.FC = () => {
     const newExpenses = [...batchExpenses];
     newExpenses[index] = { ...newExpenses[index], [field]: value };
     setBatchExpenses(newExpenses);
-    
+
     // Clear error for this field if it exists
     if (batchErrors[index] && batchErrors[index][field]) {
       const newErrors = [...batchErrors];
@@ -267,33 +268,33 @@ const VendorManagement: React.FC = () => {
   const validateBatchExpenses = () => {
     const errors = [];
     let hasErrors = false;
-    
+
     batchExpenses.forEach((expense, index) => {
       const expenseErrors: any = {};
-      
+
       if (!expense.description.trim()) {
         expenseErrors.description = 'Description is required';
         hasErrors = true;
       }
-      
+
       if (expense.unit_cost <= 0) {
         expenseErrors.unit_cost = 'Unit cost must be greater than 0';
         hasErrors = true;
       }
-      
+
       if (!expense.department.trim()) {
         expenseErrors.department = 'Department is required';
         hasErrors = true;
       }
-      
+
       if (!expense.category.trim()) {
         expenseErrors.category = 'Category is required';
         hasErrors = true;
       }
-      
+
       errors[index] = expenseErrors;
     });
-    
+
     setBatchErrors(errors);
     return !hasErrors;
   };
@@ -307,7 +308,7 @@ const VendorManagement: React.FC = () => {
       });
       return;
     }
-    
+
     if (!validateBatchExpenses()) {
       const errorMessages = batchErrors
         .map((errors, index) => {
@@ -319,13 +320,13 @@ const VendorManagement: React.FC = () => {
         })
         .filter(Boolean)
         .join('\n');
-      
+
       setBatchSubmitError(errorMessages);
       return;
     }
-    
+
     setBatchSubmitError('');
-    
+
     // Submit all expenses
     const results = [];
     for (let i = 0; i < batchExpenses.length; i++) {
@@ -345,35 +346,35 @@ const VendorManagement: React.FC = () => {
         status: expense.status,
         total_cost: expense.quantity * expense.unit_cost
       };
-      
+
       const success = await addVendorExpense(expenseData);
       results.push({ index: i, success, expense: expense.description });
     }
-    
+
     // Count successes and failures
     const successful = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
-    
+
     if (successful > 0) {
       toast({
         title: 'Success',
         description: `${successful} expense${successful !== 1 ? 's' : ''} added successfully`
       });
     }
-    
+
     if (failed > 0) {
       const failedDetails = results
         .filter(r => !r.success)
         .map(r => `Expense "${r.expense}"`)
         .join(', ');
-      
+
       toast({
         title: 'Some Expenses Failed',
         description: `${failed} expense${failed !== 1 ? 's' : ''} could not be added: ${failedDetails}`,
         variant: 'destructive'
       });
     }
-    
+
     // Reset form if all successful
     if (successful === batchExpenses.length) {
       setBatchVendorId('');
@@ -513,19 +514,19 @@ const VendorManagement: React.FC = () => {
   // Function to group expenses by department and category for USALI P&L reporting
   const groupExpensesByDepartmentAndCategory = (expenses: VendorExpense[]) => {
     const grouped = {} as Record<string, Record<string, number>>;
-    
+
     expenses.forEach(expense => {
       if (!grouped[expense.department]) {
         grouped[expense.department] = {};
       }
-      
+
       if (!grouped[expense.department][expense.category]) {
         grouped[expense.department][expense.category] = 0;
       }
-      
+
       grouped[expense.department][expense.category] += expense.total_cost;
     });
-    
+
     return grouped;
   };
 
@@ -550,37 +551,38 @@ const VendorManagement: React.FC = () => {
       });
       return;
     }
-    
-    // Create CSV content
+
+    // Create CSV content with sequential display IDs & DDMMYYYY date formatting
     const headers = [
-      'ID', 'Vendor', 'Description', 'Quantity', 'Unit Cost', 'Total Cost', 
+      'ID', 'Display ID', 'Vendor', 'Description', 'Quantity', 'Unit Cost', 'Total Cost',
       'Tax Amount', 'Expense Date', 'Reference #', 'Category', 'Department', 'Status'
     ];
-    
+
     const csvContent = [
       headers.join(','),
-      ...filteredExpenses.map(expense => [
-        expense.id,
-        `"${expense.vendor_name}"`,
-        `"${expense.description}"`,
+      ...filteredExpenses.map((expense, idx) => [
+        escapeCSV(expense.id),
+        toDisplayId(idx + 1, 'EXP'),
+        escapeCSV(expense.vendor_name),
+        escapeCSV(expense.description),
         expense.quantity,
         expense.unit_cost,
         expense.total_cost,
         expense.tax_amount,
-        expense.expense_date,
-        expense.reference_number ? `"${expense.reference_number}"` : 'N/A',
+        formatDateForCSV(expense.expense_date),
+        expense.reference_number ? escapeCSV(expense.reference_number) : 'N/A',
         expense.category,
         expense.department,
         expense.status
       ].join(','))
     ].join('\n');
-    
+
     // Create and download file
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `vendor_expenses_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `vendor_expenses_${formatDateForCSV(new Date())}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -605,7 +607,7 @@ const VendorManagement: React.FC = () => {
                 <Input
                   id="name"
                   value={vendorForm.name}
-                  onChange={(e) => setVendorForm({...vendorForm, name: e.target.value})}
+                  onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })}
                   placeholder="Enter vendor name"
                 />
               </div>
@@ -614,7 +616,7 @@ const VendorManagement: React.FC = () => {
                 <Input
                   id="contact_person"
                   value={vendorForm.contact_person}
-                  onChange={(e) => setVendorForm({...vendorForm, contact_person: e.target.value})}
+                  onChange={(e) => setVendorForm({ ...vendorForm, contact_person: e.target.value })}
                   placeholder="Contact person"
                 />
               </div>
@@ -623,7 +625,7 @@ const VendorManagement: React.FC = () => {
                 <Input
                   id="phone"
                   value={vendorForm.phone}
-                  onChange={(e) => setVendorForm({...vendorForm, phone: e.target.value})}
+                  onChange={(e) => setVendorForm({ ...vendorForm, phone: e.target.value })}
                   placeholder="Phone number"
                 />
               </div>
@@ -633,7 +635,7 @@ const VendorManagement: React.FC = () => {
                   id="email"
                   type="email"
                   value={vendorForm.email}
-                  onChange={(e) => setVendorForm({...vendorForm, email: e.target.value})}
+                  onChange={(e) => setVendorForm({ ...vendorForm, email: e.target.value })}
                   placeholder="Email address"
                 />
               </div>
@@ -642,7 +644,7 @@ const VendorManagement: React.FC = () => {
                 <Input
                   id="address"
                   value={vendorForm.address}
-                  onChange={(e) => setVendorForm({...vendorForm, address: e.target.value})}
+                  onChange={(e) => setVendorForm({ ...vendorForm, address: e.target.value })}
                   placeholder="Address"
                 />
               </div>
@@ -651,15 +653,15 @@ const VendorManagement: React.FC = () => {
                 <Input
                   id="tax_id"
                   value={vendorForm.tax_id}
-                  onChange={(e) => setVendorForm({...vendorForm, tax_id: e.target.value})}
+                  onChange={(e) => setVendorForm({ ...vendorForm, tax_id: e.target.value })}
                   placeholder="Tax ID"
                 />
               </div>
               <div>
                 <Label htmlFor="payment_terms">Payment Terms</Label>
-                <Select 
-                  value={vendorForm.payment_terms} 
-                  onValueChange={(value) => setVendorForm({...vendorForm, payment_terms: value})}
+                <Select
+                  value={vendorForm.payment_terms}
+                  onValueChange={(value) => setVendorForm({ ...vendorForm, payment_terms: value })}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -678,15 +680,15 @@ const VendorManagement: React.FC = () => {
                   id="credit_limit"
                   type="number"
                   value={vendorForm.credit_limit}
-                  onChange={(e) => setVendorForm({...vendorForm, credit_limit: parseFloat(e.target.value) || 0})}
+                  onChange={(e) => setVendorForm({ ...vendorForm, credit_limit: parseFloat(e.target.value) || 0 })}
                   placeholder="Credit limit"
                 />
               </div>
               <div>
                 <Label htmlFor="status">Status</Label>
-                <Select 
-                  value={vendorForm.status} 
-                  onValueChange={(value) => setVendorForm({...vendorForm, status: value})}
+                <Select
+                  value={vendorForm.status}
+                  onValueChange={(value) => setVendorForm({ ...vendorForm, status: value })}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -712,7 +714,7 @@ const VendorManagement: React.FC = () => {
           <TabsTrigger value="expenses">Expenses</TabsTrigger>
           <TabsTrigger value="payments">Payments</TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="vendors" className="space-y-4">
           <Card>
             <CardHeader>
@@ -753,7 +755,7 @@ const VendorManagement: React.FC = () => {
             </CardContent>
           </Card>
         </TabsContent>
-        
+
         <TabsContent value="expenses" className="space-y-4">
           <div className="flex flex-col md:flex-row justify-between gap-4">
             <div>
@@ -781,8 +783,8 @@ const VendorManagement: React.FC = () => {
                   <div className="space-y-6">
                     <div>
                       <Label htmlFor="batch_vendor_id">Vendor *</Label>
-                      <Select 
-                        value={batchVendorId} 
+                      <Select
+                        value={batchVendorId}
                         onValueChange={(value) => setBatchVendorId(value)}
                       >
                         <SelectTrigger>
@@ -795,13 +797,13 @@ const VendorManagement: React.FC = () => {
                         </SelectContent>
                       </Select>
                     </div>
-                                            
+
                     <div>
                       <div className="flex justify-between items-center mb-4">
                         <h3 className="text-lg font-medium">Expense Entries ({batchExpenses.length})</h3>
                         <Button onClick={addBatchExpenseLine} size="sm">Add Expense Line</Button>
                       </div>
-                                              
+
                       <div className="border rounded-lg overflow-hidden">
                         <table className="w-full">
                           <thead className="bg-gray-50">
@@ -854,8 +856,8 @@ const VendorManagement: React.FC = () => {
                                   )}
                                 </td>
                                 <td className="px-4 py-2">
-                                  <Select 
-                                    value={expense.department} 
+                                  <Select
+                                    value={expense.department}
                                     onValueChange={(value) => updateBatchExpense(index, 'department', value)}
                                   >
                                     <SelectTrigger className={batchErrors[index]?.department ? 'border-red-500' : ''}>
@@ -876,8 +878,8 @@ const VendorManagement: React.FC = () => {
                                   )}
                                 </td>
                                 <td className="px-4 py-2">
-                                  <Select 
-                                    value={expense.category} 
+                                  <Select
+                                    value={expense.category}
                                     onValueChange={(value) => updateBatchExpense(index, 'category', value)}
                                   >
                                     <SelectTrigger className={batchErrors[index]?.category ? 'border-red-500' : ''}>
@@ -913,8 +915,8 @@ const VendorManagement: React.FC = () => {
                                   />
                                 </td>
                                 <td className="px-4 py-2">
-                                  <Select 
-                                    value={expense.status} 
+                                  <Select
+                                    value={expense.status}
                                     onValueChange={(value) => {
                                       updateBatchExpense(index, 'status', value);
                                       // If status changes to 'paid', move the expense to payments
@@ -934,8 +936,8 @@ const VendorManagement: React.FC = () => {
                                   </Select>
                                 </td>
                                 <td className="px-4 py-2">
-                                  <Button 
-                                    variant="outline" 
+                                  <Button
+                                    variant="outline"
                                     size="sm"
                                     onClick={() => removeBatchExpense(index)}
                                     disabled={batchExpenses.length <= 1}
@@ -949,7 +951,7 @@ const VendorManagement: React.FC = () => {
                         </table>
                       </div>
                     </div>
-                    
+
                     {batchSubmitError && (
                       <div className="bg-red-50 border border-red-200 rounded-md p-4">
                         <div className="flex">
@@ -971,10 +973,10 @@ const VendorManagement: React.FC = () => {
                         </div>
                       </div>
                     )}
-                    
+
                     <div className="flex justify-between items-center pt-4 border-t">
                       <div className="text-sm text-gray-500">
-                        Total Expenses: {batchExpenses.length} | 
+                        Total Expenses: {batchExpenses.length} |
                         Estimated Total: ${batchExpenses.reduce((sum, exp) => sum + (exp.quantity * exp.unit_cost), 0).toFixed(2)}
                       </div>
                       <div className="flex space-x-2">
@@ -998,9 +1000,9 @@ const VendorManagement: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="md:col-span-2">
                       <Label htmlFor="vendor_id">Vendor *</Label>
-                      <Select 
-                        value={expenseForm.vendor_id} 
-                        onValueChange={(value) => setExpenseForm({...expenseForm, vendor_id: value})}
+                      <Select
+                        value={expenseForm.vendor_id}
+                        onValueChange={(value) => setExpenseForm({ ...expenseForm, vendor_id: value })}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Select a vendor" />
@@ -1017,7 +1019,7 @@ const VendorManagement: React.FC = () => {
                       <Input
                         id="description"
                         value={expenseForm.description}
-                        onChange={(e) => setExpenseForm({...expenseForm, description: e.target.value})}
+                        onChange={(e) => setExpenseForm({ ...expenseForm, description: e.target.value })}
                         placeholder="Expense description"
                       />
                     </div>
@@ -1028,7 +1030,7 @@ const VendorManagement: React.FC = () => {
                         type="number"
                         min="1"
                         value={expenseForm.quantity}
-                        onChange={(e) => setExpenseForm({...expenseForm, quantity: parseInt(e.target.value) || 1})}
+                        onChange={(e) => setExpenseForm({ ...expenseForm, quantity: parseInt(e.target.value) || 1 })}
                       />
                     </div>
                     <div>
@@ -1039,7 +1041,7 @@ const VendorManagement: React.FC = () => {
                         step="0.01"
                         min="0"
                         value={expenseForm.unit_cost}
-                        onChange={(e) => setExpenseForm({...expenseForm, unit_cost: parseFloat(e.target.value) || 0})}
+                        onChange={(e) => setExpenseForm({ ...expenseForm, unit_cost: parseFloat(e.target.value) || 0 })}
                       />
                     </div>
                     <div>
@@ -1048,7 +1050,7 @@ const VendorManagement: React.FC = () => {
                         id="expense_date"
                         type="date"
                         value={expenseForm.expense_date}
-                        onChange={(e) => setExpenseForm({...expenseForm, expense_date: e.target.value})}
+                        onChange={(e) => setExpenseForm({ ...expenseForm, expense_date: e.target.value })}
                       />
                     </div>
                     <div>
@@ -1056,7 +1058,7 @@ const VendorManagement: React.FC = () => {
                       <Input
                         id="category"
                         value={expenseForm.category}
-                        onChange={(e) => setExpenseForm({...expenseForm, category: e.target.value})}
+                        onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value })}
                         placeholder="Expense category"
                       />
                     </div>
@@ -1069,14 +1071,14 @@ const VendorManagement: React.FC = () => {
                         min="0"
                         max="100"
                         value={expenseForm.tax_rate}
-                        onChange={(e) => setExpenseForm({...expenseForm, tax_rate: parseFloat(e.target.value) || 0})}
+                        onChange={(e) => setExpenseForm({ ...expenseForm, tax_rate: parseFloat(e.target.value) || 0 })}
                       />
                     </div>
                     <div>
                       <Label htmlFor="tax_inclusive">Tax Type</Label>
-                      <Select 
-                        value={expenseForm.tax_inclusive ? 'inclusive' : 'exclusive'} 
-                        onValueChange={(value) => setExpenseForm({...expenseForm, tax_inclusive: value === 'inclusive'})}
+                      <Select
+                        value={expenseForm.tax_inclusive ? 'inclusive' : 'exclusive'}
+                        onValueChange={(value) => setExpenseForm({ ...expenseForm, tax_inclusive: value === 'inclusive' })}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -1089,9 +1091,9 @@ const VendorManagement: React.FC = () => {
                     </div>
                     <div>
                       <Label htmlFor="department">Department *</Label>
-                      <Select 
-                        value={expenseForm.department} 
-                        onValueChange={(value) => setExpenseForm({...expenseForm, department: value})}
+                      <Select
+                        value={expenseForm.department}
+                        onValueChange={(value) => setExpenseForm({ ...expenseForm, department: value })}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Select department" />
@@ -1109,9 +1111,9 @@ const VendorManagement: React.FC = () => {
                     </div>
                     <div>
                       <Label htmlFor="category">Expense Category *</Label>
-                      <Select 
-                        value={expenseForm.category} 
-                        onValueChange={(value) => setExpenseForm({...expenseForm, category: value})}
+                      <Select
+                        value={expenseForm.category}
+                        onValueChange={(value) => setExpenseForm({ ...expenseForm, category: value })}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Select category" />
@@ -1133,15 +1135,15 @@ const VendorManagement: React.FC = () => {
                       <Input
                         id="reference_number"
                         value={expenseForm.reference_number}
-                        onChange={(e) => setExpenseForm({...expenseForm, reference_number: e.target.value})}
+                        onChange={(e) => setExpenseForm({ ...expenseForm, reference_number: e.target.value })}
                         placeholder="Reference number"
                       />
                     </div>
                     <div>
                       <Label htmlFor="status">Status</Label>
-                      <Select 
-                        value={expenseForm.status} 
-                        onValueChange={(value) => setExpenseForm({...expenseForm, status: value})}
+                      <Select
+                        value={expenseForm.status}
+                        onValueChange={(value) => setExpenseForm({ ...expenseForm, status: value })}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -1162,7 +1164,7 @@ const VendorManagement: React.FC = () => {
               </Dialog>
             </div>
           </div>
-          
+
           <Card>
             <CardHeader>
               <CardTitle>Expense List</CardTitle>
@@ -1190,7 +1192,7 @@ const VendorManagement: React.FC = () => {
                     // Check if this is a batch parent expense
                     const isBatchParent = expense.is_batch_parent;
                     const batchDetails = expense.batch_details ? JSON.parse(expense.batch_details) : null;
-                    
+
                     return (
                       <React.Fragment key={expense.id}>
                         <TableRow>
@@ -1200,7 +1202,7 @@ const VendorManagement: React.FC = () => {
                             {isBatchParent ? (
                               <div>
                                 <div className="font-medium">{expense.description}</div>
-                                <button 
+                                <button
                                   className="text-blue-600 hover:text-blue-800 text-sm underline"
                                   onClick={() => {
                                     const expanded = [...expandedBatchRows];
@@ -1228,8 +1230,8 @@ const VendorManagement: React.FC = () => {
                           <TableCell>${expense.tax_amount.toFixed(2)}</TableCell>
                           <TableCell>{typeof expense.expense_date === 'string' ? expense.expense_date : new Date(expense.expense_date).toISOString().split('T')[0]}</TableCell>
                           <TableCell>
-                            <Select 
-                              value={expense.status} 
+                            <Select
+                              value={expense.status}
                               onValueChange={(value) => updateExpenseStatus(expense.id, value)}
                             >
                               <SelectTrigger className="w-32">
@@ -1243,8 +1245,8 @@ const VendorManagement: React.FC = () => {
                             </Select>
                           </TableCell>
                           <TableCell>
-                            <Button 
-                              variant="outline" 
+                            <Button
+                              variant="outline"
                               size="sm"
                               onClick={() => handleEditExpense(expense)}
                               disabled={expense.status === 'paid' || expense.status === 'cleared'}
@@ -1253,7 +1255,7 @@ const VendorManagement: React.FC = () => {
                             </Button>
                           </TableCell>
                         </TableRow>
-                        
+
                         {/* Expanded batch details */}
                         {isBatchParent && expandedBatchRows.includes(expense.id) && batchDetails && (
                           <TableRow>
@@ -1300,7 +1302,7 @@ const VendorManagement: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
-              
+
               {vendorExpenses.length > 0 && (
                 <div className="mt-4 border-t pt-4">
                   <div className="flex justify-end space-x-8">
@@ -1310,7 +1312,7 @@ const VendorManagement: React.FC = () => {
                       <p className="text-xl font-bold">Grand Total: ${calculateGrandTotal(filteredExpenses).toFixed(2)}</p>
                     </div>
                   </div>
-                  
+
                   {/* P&L Reporting Section - USALI Standard */}
                   <div className="mt-8 border-t pt-4">
                     <h3 className="text-lg font-semibold mb-4">P&L Report by Department and Category (USALI Standard)</h3>
@@ -1324,7 +1326,7 @@ const VendorManagement: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
-                          {Object.entries(groupExpensesByDepartmentAndCategory(filteredExpenses)).map(([dept, categories]) => 
+                          {Object.entries(groupExpensesByDepartmentAndCategory(filteredExpenses)).map(([dept, categories]) =>
                             Object.entries(categories).map(([cat, amount], idx) => (
                               <tr key={`${dept}-${cat}`} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{dept}</td>
@@ -1342,7 +1344,7 @@ const VendorManagement: React.FC = () => {
             </CardContent>
           </Card>
         </TabsContent>
-        
+
         <TabsContent value="payments" className="space-y-4">
           <Card>
             <CardHeader>
