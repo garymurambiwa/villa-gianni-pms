@@ -10,7 +10,7 @@ export interface DateRange { start: string; end: string }
 const readJSON = <T>(key: string, fallback: T): T => { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; } };
 
 export const getLastNightAuditBundle = () => readJSON<any>('corepms_nightAudit_lastReports', null);
-export const getBusinessDate = () => readJSON<string>('corepms_business_date', new Date().toISOString().slice(0,10));
+export const getBusinessDate = () => readJSON<string>('corepms_business_date', new Date().toISOString().slice(0, 10));
 
 // Helper function to get historical night audit data for year-over-year comparison
 export const getHistoricalNightAuditBundle = (date: string) => {
@@ -19,7 +19,7 @@ export const getHistoricalNightAuditBundle = (date: string) => {
     const specificKey = `corepms_nightAudit_reports_${date}`;
     const specificData = readJSON<any>(specificKey, null);
     if (specificData) return specificData;
-    
+
     // Fallback to last reports if specific date not found
     return null;
   } catch {
@@ -38,58 +38,58 @@ export const getSameDateLastYear = (dateStr: string): string => {
 export const buildFlashReport = (forDate?: string) => {
   const b = getLastNightAuditBundle();
   const date = forDate || b?.date || getBusinessDate();
-  const cashCard = readJSON<Record<string,number>>('corepms_shift_totals', { cash: 0, card: 0 });
-  
+  const cashCard = readJSON<Record<string, number>>('corepms_shift_totals', { cash: 0, card: 0 });
+
   // Get year-over-year comparison data
   const lastYearDate = getSameDateLastYear(date);
   const lastYearBundle = getHistoricalNightAuditBundle(lastYearDate);
-  
+
   // Get last year's folio charges for F&B breakdown
-  const lastYearFolioCharges = lastYearBundle ? 
-    readJSON<any[]>(`corepms_folioCharges_${lastYearDate}`, []) : 
+  const lastYearFolioCharges = lastYearBundle ?
+    readJSON<any[]>(`corepms_folioCharges_${lastYearDate}`, []) :
     readJSON<any[]>('corepms_folioCharges', []);
-  
+
   // Filter last year's charges for the same date
-  const lastYearCharges = lastYearFolioCharges.filter((c: any) => 
-    c.date === lastYearDate || 
+  const lastYearCharges = lastYearFolioCharges.filter((c: any) =>
+    c.date === lastYearDate ||
     (c.business_date && c.business_date === lastYearDate)
   );
-  
+
   // Get detailed F&B breakdown from folio charges
   const folioCharges = readJSON<any[]>('corepms_folioCharges', []);
   const businessDate = forDate || getBusinessDate();
-  
+
   // Filter charges for the current business date
-  const todaysCharges = folioCharges.filter((c: any) => 
-    c.date === businessDate || 
+  const todaysCharges = folioCharges.filter((c: any) =>
+    c.date === businessDate ||
     (c.business_date && c.business_date === businessDate)
   );
-  
+
   // Separate Food and Bar revenue based on POS categories and descriptions
   // This logic ensures no double-counting by processing charges in a specific order
-  
+
   // First, identify all F&B charges for the business date
-  const fbCharges = todaysCharges.filter((c: any) => 
+  const fbCharges = todaysCharges.filter((c: any) =>
     String(c.category || '').toLowerCase() === 'f&b'
   );
-  
+
   // Track processed charge IDs to prevent double counting
   const processedChargeIds = new Set<string>();
-  
+
   // Calculate Food Revenue - explicit food identifiers first
   const foodRevenue = fbCharges
     .filter((c: any) => {
       const desc = String(c.description || '').toLowerCase();
       const chargeId = String(c.id || '');
-      
+
       // Skip if already processed
       if (processedChargeIds.has(chargeId)) return false;
-      
+
       // Explicitly food-related keywords
-      const isExplicitlyFood = 
-        desc.includes('restaurant') || 
-        desc.includes('dinner') || 
-        desc.includes('lunch') || 
+      const isExplicitlyFood =
+        desc.includes('restaurant') ||
+        desc.includes('dinner') ||
+        desc.includes('lunch') ||
         desc.includes('breakfast') ||
         desc.includes('brunch') ||
         desc.includes('meal') ||
@@ -100,13 +100,13 @@ export const buildFlashReport = (forDate?: string) => {
         desc.includes('snack') ||
         desc.includes('buffet') ||
         desc.includes('room service meal'); // More specific room service
-      
+
       // Explicitly bar-related keywords (to exclude from food)
-      const isExplicitlyBar = 
-        desc.includes('bar') || 
-        desc.includes('beer') || 
-        desc.includes('wine') || 
-        desc.includes('spirit') || 
+      const isExplicitlyBar =
+        desc.includes('bar') ||
+        desc.includes('beer') ||
+        desc.includes('wine') ||
+        desc.includes('spirit') ||
         desc.includes('liquor') ||
         desc.includes('cocktail') ||
         desc.includes('martini') ||
@@ -120,32 +120,32 @@ export const buildFlashReport = (forDate?: string) => {
         desc.includes('gin') ||
         desc.includes('champagne') ||
         desc.includes('alcohol');
-      
+
       // Mark as processed if it's explicitly food and not bar
       if (isExplicitlyFood && !isExplicitlyBar) {
         processedChargeIds.add(chargeId);
         return true;
       }
-      
+
       return false;
     })
     .reduce((sum: number, c: any) => sum + Number(c.amount || 0), 0);
-  
+
   // Calculate Bar Revenue - explicit bar identifiers
   const barRevenue = fbCharges
     .filter((c: any) => {
       const desc = String(c.description || '').toLowerCase();
       const chargeId = String(c.id || '');
-      
+
       // Skip if already processed
       if (processedChargeIds.has(chargeId)) return false;
-      
+
       // Explicitly bar-related keywords
-      const isExplicitlyBar = 
-        desc.includes('bar') || 
-        desc.includes('beer') || 
-        desc.includes('wine') || 
-        desc.includes('spirit') || 
+      const isExplicitlyBar =
+        desc.includes('bar') ||
+        desc.includes('beer') ||
+        desc.includes('wine') ||
+        desc.includes('spirit') ||
         desc.includes('liquor') ||
         desc.includes('cocktail') ||
         desc.includes('martini') ||
@@ -161,17 +161,17 @@ export const buildFlashReport = (forDate?: string) => {
         desc.includes('alcohol') ||
         desc.includes('drink') ||
         desc.includes('beverage');
-      
+
       // Mark as processed
       if (isExplicitlyBar) {
         processedChargeIds.add(chargeId);
         return true;
       }
-      
+
       return false;
     })
     .reduce((sum: number, c: any) => sum + Number(c.amount || 0), 0);
-  
+
   // Any remaining unprocessed F&B charges go to Food (fallback)
   const remainingFbRevenue = fbCharges
     .filter((c: any) => {
@@ -179,32 +179,32 @@ export const buildFlashReport = (forDate?: string) => {
       return !processedChargeIds.has(chargeId);
     })
     .reduce((sum: number, c: any) => sum + Number(c.amount || 0), 0);
-  
+
   // Add remaining revenue to food (conservative approach)
   const finalFoodRevenue = foodRevenue + remainingFbRevenue;
-  
+
   // Use the already calculated values
   const finalBarRevenue = barRevenue;
-  
+
   // Calculate last year's F&B breakdown using the same logic
-  const lastYearFbCharges = lastYearCharges.filter((c: any) => 
+  const lastYearFbCharges = lastYearCharges.filter((c: any) =>
     String(c.category || '').toLowerCase() === 'f&b'
   );
-  
+
   const lastYearProcessedChargeIds = new Set<string>();
-  
+
   // Calculate Last Year Food Revenue
   const lastYearFoodRevenue = lastYearFbCharges
     .filter((c: any) => {
       const desc = String(c.description || '').toLowerCase();
       const chargeId = String(c.id || '');
-      
+
       if (lastYearProcessedChargeIds.has(chargeId)) return false;
-      
-      const isExplicitlyFood = 
-        desc.includes('restaurant') || 
-        desc.includes('dinner') || 
-        desc.includes('lunch') || 
+
+      const isExplicitlyFood =
+        desc.includes('restaurant') ||
+        desc.includes('dinner') ||
+        desc.includes('lunch') ||
         desc.includes('breakfast') ||
         desc.includes('brunch') ||
         desc.includes('meal') ||
@@ -215,12 +215,12 @@ export const buildFlashReport = (forDate?: string) => {
         desc.includes('snack') ||
         desc.includes('buffet') ||
         desc.includes('room service meal');
-      
-      const isExplicitlyBar = 
-        desc.includes('bar') || 
-        desc.includes('beer') || 
-        desc.includes('wine') || 
-        desc.includes('spirit') || 
+
+      const isExplicitlyBar =
+        desc.includes('bar') ||
+        desc.includes('beer') ||
+        desc.includes('wine') ||
+        desc.includes('spirit') ||
         desc.includes('liquor') ||
         desc.includes('cocktail') ||
         desc.includes('martini') ||
@@ -234,29 +234,29 @@ export const buildFlashReport = (forDate?: string) => {
         desc.includes('gin') ||
         desc.includes('champagne') ||
         desc.includes('alcohol');
-      
+
       if (isExplicitlyFood && !isExplicitlyBar) {
         lastYearProcessedChargeIds.add(chargeId);
         return true;
       }
-      
+
       return false;
     })
     .reduce((sum: number, c: any) => sum + Number(c.amount || 0), 0);
-  
+
   // Calculate Last Year Bar Revenue
   const lastYearBarRevenue = lastYearFbCharges
     .filter((c: any) => {
       const desc = String(c.description || '').toLowerCase();
       const chargeId = String(c.id || '');
-      
+
       if (lastYearProcessedChargeIds.has(chargeId)) return false;
-      
-      const isExplicitlyBar = 
-        desc.includes('bar') || 
-        desc.includes('beer') || 
-        desc.includes('wine') || 
-        desc.includes('spirit') || 
+
+      const isExplicitlyBar =
+        desc.includes('bar') ||
+        desc.includes('beer') ||
+        desc.includes('wine') ||
+        desc.includes('spirit') ||
         desc.includes('liquor') ||
         desc.includes('cocktail') ||
         desc.includes('martini') ||
@@ -272,16 +272,16 @@ export const buildFlashReport = (forDate?: string) => {
         desc.includes('alcohol') ||
         desc.includes('drink') ||
         desc.includes('beverage');
-      
+
       if (isExplicitlyBar) {
         lastYearProcessedChargeIds.add(chargeId);
         return true;
       }
-      
+
       return false;
     })
     .reduce((sum: number, c: any) => sum + Number(c.amount || 0), 0);
-  
+
   // Remaining last year F&B charges go to Food
   const lastYearRemainingFbRevenue = lastYearFbCharges
     .filter((c: any) => {
@@ -289,41 +289,45 @@ export const buildFlashReport = (forDate?: string) => {
       return !lastYearProcessedChargeIds.has(chargeId);
     })
     .reduce((sum: number, c: any) => sum + Number(c.amount || 0), 0);
-  
+
   const finalLastYearFoodRevenue = lastYearFoodRevenue + lastYearRemainingFbRevenue;
   const finalLastYearBarRevenue = lastYearBarRevenue;
-  
+
   // Calculate last year's departmental expenses
-  const lastYearDeptExpenses = lastYearBundle ? 
-    (lastYearBundle.roomRevenue + lastYearBundle.fbRevenue) * 0.35 : 
+  const lastYearDeptExpenses = lastYearBundle ?
+    (lastYearBundle.roomRevenue + lastYearBundle.fbRevenue) * 0.35 :
     0;
-  
-  // Calculate total departmental expenses from various sources
-  // This includes F&B costs, administrative expenses, maintenance, utilities, etc.
+
+  // Calculate total departmental expenses from GL ledger
+  // These are now populated real-time when vendor expenses are created
   const deptExpenses = (() => {
-    // Try to get from localStorage first (could be set by expense entry system)
-    const storedExpenses = readJSON<number>('corepms_dept_expenses_total', 0);
-    if (storedExpenses > 0) {
-      return storedExpenses;
-    }
-    
-    // Fallback: estimate based on revenue (typical hotel industry ratios)
-    // Usually departmental expenses are 30-40% of total revenue
-    const totalRevenueEstimate = Number(b?.roomRevenue || 0) + finalFoodRevenue + finalBarRevenue;
-    const estimatedExpenses = totalRevenueEstimate * 0.35; // 35% industry average
-    
-    // Store the estimate for future use
+    // Read from GL ledger — expense accounts for the current date
     try {
-      localStorage.setItem('corepms_dept_expenses_total', String(estimatedExpenses.toFixed(2)));
-    } catch {}
-    
-    return estimatedExpenses;
+      const ledger = gl.getLedger().filter(e => e.date === date);
+      const accs = gl.getAccounts();
+      const expenseTotal = ledger
+        .flatMap(e => e.lines)
+        .filter(l => {
+          const acc = accs.find(a => a.id === l.accountId);
+          return acc?.category === 'Expense';
+        })
+        .reduce((sum, l) => sum + (l.debit || 0), 0);
+      if (expenseTotal > 0) return expenseTotal;
+    } catch { }
+
+    // Fallback: check localStorage cache
+    const storedExpenses = readJSON<number>('corepms_dept_expenses_total', 0);
+    if (storedExpenses > 0) return storedExpenses;
+
+    // Last resort: estimate based on revenue (35% industry average)
+    const totalRevenueEstimate = Number(b?.roomRevenue || 0) + finalFoodRevenue + finalBarRevenue;
+    return totalRevenueEstimate * 0.35;
   })();
-  
+
   // Validate that our separated revenues match the original F&B total
   const originalFbRevenue = Number(b?.fbRevenue || 0);
   const calculatedFbTotal = finalFoodRevenue + finalBarRevenue;
-  
+
   // Log discrepancy warning if significant difference (>5%)
   if (Math.abs(originalFbRevenue - calculatedFbTotal) > (originalFbRevenue * 0.05)) {
     console.warn('F&B Revenue discrepancy detected:', {
@@ -334,104 +338,104 @@ export const buildFlashReport = (forDate?: string) => {
       bar: barRevenue
     });
   }
-  
+
   // Calculate totals for current period
   const currentTotalRevenue = Number(b?.roomRevenue || 0) + calculatedFbTotal;
-  
+
   // Calculate totals for last year
   const lastYearTotalFbRevenue = finalLastYearFoodRevenue + finalLastYearBarRevenue;
-  const lastYearTotalRevenue = lastYearBundle ? 
+  const lastYearTotalRevenue = lastYearBundle ?
     (Number(lastYearBundle.roomRevenue || 0) + lastYearTotalFbRevenue) : 0;
-  
+
   // Get last year's cash/card data
-  const lastYearCashCard = lastYearBundle ? 
-    readJSON<Record<string,number>>(`corepms_shift_totals_${lastYearDate}`, { cash: 0, card: 0 }) :
+  const lastYearCashCard = lastYearBundle ?
+    readJSON<Record<string, number>>(`corepms_shift_totals_${lastYearDate}`, { cash: 0, card: 0 }) :
     { cash: 0, card: 0 };
-  
+
   const rows = [
     // Room Revenue with YoY comparison
-    { 
-      metric: 'Room Revenue', 
+    {
+      metric: 'Room Revenue',
       today: Number(b?.roomRevenue || 0),
       lastYear: Number(lastYearBundle?.roomRevenue || 0),
       difference: Number(b?.roomRevenue || 0) - Number(lastYearBundle?.roomRevenue || 0)
     },
     // Food Revenue with YoY comparison
-    { 
-      metric: 'Food Revenue', 
+    {
+      metric: 'Food Revenue',
       today: Number(finalFoodRevenue.toFixed(2)),
       lastYear: Number(finalLastYearFoodRevenue.toFixed(2)),
       difference: Number(finalFoodRevenue.toFixed(2)) - Number(finalLastYearFoodRevenue.toFixed(2))
     },
     // Bar Revenue with YoY comparison
-    { 
-      metric: 'Bar Revenue', 
+    {
+      metric: 'Bar Revenue',
       today: Number(finalBarRevenue.toFixed(2)),
       lastYear: Number(finalLastYearBarRevenue.toFixed(2)),
       difference: Number(finalBarRevenue.toFixed(2)) - Number(finalLastYearBarRevenue.toFixed(2))
     },
     // Total F&B Revenue with YoY comparison
-    { 
-      metric: 'Total F&B Revenue', 
+    {
+      metric: 'Total F&B Revenue',
       today: Number(calculatedFbTotal.toFixed(2)),
       lastYear: Number(lastYearTotalFbRevenue.toFixed(2)),
       difference: Number(calculatedFbTotal.toFixed(2)) - Number(lastYearTotalFbRevenue.toFixed(2))
     },
     // Total Revenue with YoY comparison
-    { 
-      metric: 'Total Revenue', 
+    {
+      metric: 'Total Revenue',
       today: Number(currentTotalRevenue.toFixed(2)),
       lastYear: Number(lastYearTotalRevenue.toFixed(2)),
       difference: Number(currentTotalRevenue.toFixed(2)) - Number(lastYearTotalRevenue.toFixed(2))
     },
     // Total Departmental Expenses with YoY comparison
-    { 
-      metric: 'Total Departmental Expenses', 
+    {
+      metric: 'Total Departmental Expenses',
       today: Number(deptExpenses.toFixed(2)),
       lastYear: Number(lastYearDeptExpenses.toFixed(2)),
       difference: Number(deptExpenses.toFixed(2)) - Number(lastYearDeptExpenses.toFixed(2))
     },
     // Occupancy % with YoY comparison
-    { 
-      metric: 'Occupancy %', 
+    {
+      metric: 'Occupancy %',
       today: Number(b?.occupancy || 0),
       lastYear: Number(lastYearBundle?.occupancy || 0),
       difference: Number(b?.occupancy || 0) - Number(lastYearBundle?.occupancy || 0)
     },
     // ADR with YoY comparison
-    { 
-      metric: 'ADR', 
+    {
+      metric: 'ADR',
       today: Number(b?.avgDailyRate || 0),
       lastYear: Number(lastYearBundle?.avgDailyRate || 0),
       difference: Number(b?.avgDailyRate || 0) - Number(lastYearBundle?.avgDailyRate || 0)
     },
     // RevPAR with YoY comparison
-    { 
-      metric: 'RevPAR', 
+    {
+      metric: 'RevPAR',
       today: Number(b?.revPAR || 0),
       lastYear: Number(lastYearBundle?.revPAR || 0),
       difference: Number(b?.revPAR || 0) - Number(lastYearBundle?.revPAR || 0)
     },
     // Cash Receipts with YoY comparison
-    { 
-      metric: 'Cash Receipts', 
+    {
+      metric: 'Cash Receipts',
       today: Number(cashCard.cash || 0),
       lastYear: Number(lastYearCashCard.cash || 0),
       difference: Number(cashCard.cash || 0) - Number(lastYearCashCard.cash || 0)
     },
     // Card Receipts with YoY comparison
-    { 
-      metric: 'Card Receipts', 
+    {
+      metric: 'Card Receipts',
       today: Number(cashCard.card || 0),
       lastYear: Number(lastYearCashCard.card || 0),
       difference: Number(cashCard.card || 0) - Number(lastYearCashCard.card || 0)
     }
   ];
-  
-  return { 
-    title: `Manager's Flash Report — ${date}`, 
+
+  return {
+    title: `Manager's Flash Report — ${date}`,
     subtitle: `Year-over-Year Comparison (vs ${lastYearDate})`,
-    columns: ['Metric', 'Today', 'Same Day Last Year', 'Difference'], 
+    columns: ['Metric', 'Today', 'Same Day Last Year', 'Difference'],
     rows,
     metadata: {
       foodRevenue: Number(finalFoodRevenue.toFixed(2)),
@@ -458,15 +462,15 @@ export const buildPosReconciliation = (forDate?: string) => {
   const ended = readJSON<any[]>('corepms_endedShifts', []);
   const rows = ended.map(s => ({ cashier: s.openedBy || s.id, outlet: s.department || 'POS', sales: Number(s.totals?.total || s.totalSales || 0), cash: Number(s.totals?.cash || s.cashPayments || 0), card: Number(s.totals?.card || s.cardPayments || 0), overShort: Number((s.report_data?.cashDifference || 0)) }));
   const date = forDate || getBusinessDate();
-  return { title: `POS Sales & Cashier Reconciliation — ${date}`, columns: ['Cashier','Outlet','Sales','Cash','Card','Over/Short'], rows };
+  return { title: `POS Sales & Cashier Reconciliation — ${date}`, columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'Card', 'Over/Short'], rows };
 };
 
 // Daily Purchase & Receiving Log (simple placeholder using expenses and vendors if present)
 export const buildPurchaseReceivingLog = (forDate?: string) => {
   const purchases = readJSON<any[]>('corepms_purchases', []);
   const date = forDate || getBusinessDate();
-  const rows = purchases.filter(p => p.date === date).map(p => ({ item: p.itemName || p.item || 'Item', vendor: p.vendorName || p.vendorId || 'Vendor', po: p.poId || p.po || '-', unitCost: Number(p.unitCost || 0), qty: Number(p.quantity || 0), total: Number((Number(p.unitCost||0) * Number(p.quantity||0)).toFixed(2)) }));
-  return { title: `Daily Purchase & Receiving — ${date}`, columns: ['Item','Vendor','PO','Unit Cost','Qty','Total Value'], rows };
+  const rows = purchases.filter(p => p.date === date).map(p => ({ item: p.itemName || p.item || 'Item', vendor: p.vendorName || p.vendorId || 'Vendor', po: p.poId || p.po || '-', unitCost: Number(p.unitCost || 0), qty: Number(p.quantity || 0), total: Number((Number(p.unitCost || 0) * Number(p.quantity || 0)).toFixed(2)) }));
+  return { title: `Daily Purchase & Receiving — ${date}`, columns: ['Item', 'Vendor', 'PO', 'Unit Cost', 'Qty', 'Total Value'], rows };
 };
 
 // Housekeeping Status (daily snapshot from room service)
@@ -475,54 +479,54 @@ export const buildHousekeepingStatus = () => {
   const byStatus: Record<string, number> = {};
   rooms.forEach(r => { byStatus[r.status] = (byStatus[r.status] || 0) + 1; });
   const rows = Object.entries(byStatus).map(([status, count]) => ({ status, count }));
-  const date = new Date().toISOString().slice(0,10);
-  return { title: `Housekeeping Status — ${date}`, columns: ['Status','Count'], rows };
+  const date = new Date().toISOString().slice(0, 10);
+  return { title: `Housekeeping Status — ${date}`, columns: ['Status', 'Count'], rows };
 };
 
 // Daily Tax Report (sum of TAX account for date from GL)
 export const buildDailyTax = (forDate?: string) => {
-  const date = forDate || new Date().toISOString().slice(0,10);
+  const date = forDate || new Date().toISOString().slice(0, 10);
   const ledger = gl.getLedger().filter(e => e.date === date);
   const taxAcc = gl.getMappings().TAX || 'TAX';
-  const totalTax = ledger.flatMap(e => e.lines).filter(l => l.accountId === taxAcc).reduce((s,l)=> s + (l.debit || 0) + (l.credit || 0), 0);
+  const totalTax = ledger.flatMap(e => e.lines).filter(l => l.accountId === taxAcc).reduce((s, l) => s + (l.debit || 0) + (l.credit || 0), 0);
   const rows = [{ metric: 'Tax Collected', value: Number(totalTax.toFixed(2)) }];
-  return { title: `Daily Tax Report — ${date}`, columns: ['Metric','Value'], rows };
+  return { title: `Daily Tax Report — ${date}`, columns: ['Metric', 'Value'], rows };
 };
 
 // Cash & Bank Deposits (daily totals for CASH/BANK accounts)
 export const buildCashBankDeposits = (forDate?: string) => {
-  const date = forDate || new Date().toISOString().slice(0,10);
+  const date = forDate || new Date().toISOString().slice(0, 10);
   const ledger = gl.getLedger().filter(e => e.date === date);
   const cashAcc = gl.getMappings().CASH || '1000';
   const bankAcc = gl.getMappings().BANK || '1100';
   const lines = ledger.flatMap(e => e.lines);
-  const cashTotal = lines.filter(l => l.accountId === cashAcc).reduce((s,l)=> s + (l.debit || 0) + (l.credit || 0), 0);
-  const bankTotal = lines.filter(l => l.accountId === bankAcc).reduce((s,l)=> s + (l.debit || 0) + (l.credit || 0), 0);
+  const cashTotal = lines.filter(l => l.accountId === cashAcc).reduce((s, l) => s + (l.debit || 0) + (l.credit || 0), 0);
+  const bankTotal = lines.filter(l => l.accountId === bankAcc).reduce((s, l) => s + (l.debit || 0) + (l.credit || 0), 0);
   const rows = [
     { account: 'Cash', total: Number(cashTotal.toFixed(2)) },
     { account: 'Bank', total: Number(bankTotal.toFixed(2)) }
   ];
-  return { title: `Cash & Bank Deposits — ${date}`, columns: ['Account','Total'], rows };
+  return { title: `Cash & Bank Deposits — ${date}`, columns: ['Account', 'Total'], rows };
 };
 
 // Trial Balance (monthly)
 export const buildTrialBalance = (monthISO: string) => {
-  const [y,m] = monthISO.split('-');
+  const [y, m] = monthISO.split('-');
   const start = `${y}-${m}-01`;
   const endDate = new Date(Number(y), Number(m));
-  const end = endDate.toISOString().slice(0,10);
+  const end = endDate.toISOString().slice(0, 10);
   const tb = gl.getTrialBalance(start, end);
   const rows = tb.map(a => ({ accountId: a.accountId, name: a.name, debit: a.debit, credit: a.credit, balance: a.balance }));
-  return { title: `Trial Balance — ${monthISO}`, columns: ['Account','Name','Debit','Credit','Balance'], rows };
+  return { title: `Trial Balance — ${monthISO}`, columns: ['Account', 'Name', 'Debit', 'Credit', 'Balance'], rows };
 };
 
 // Monthly Operating Departmental Summary (USALI)
-export const buildDepartmentalSummary = (monthISO: string) => {
-  const [y,m] = monthISO.split('-');
+export const buildDepartmentalSummary = async (monthISO: string) => {
+  const [y, m] = monthISO.split('-');
   const start = `${y}-${m}-01`;
   const endDate = new Date(Number(y), Number(m));
-  const end = endDate.toISOString().slice(0,10);
-  const usali = expenseSvc.getUSALIIncomeStatement(start, end);
+  const end = endDate.toISOString().slice(0, 10);
+  const usali = await expenseSvc.getUSALIIncomeStatement(start, end);
   const rows: Array<any> = [];
   rows.push({ section: 'Revenue', metric: 'Total Revenue', amount: Number(usali.revenue || 0) });
   usali.departmentalExpenses.forEach(d => rows.push({ section: 'Departmental Expenses', metric: d.costCenter, amount: d.amount }));
@@ -532,20 +536,20 @@ export const buildDepartmentalSummary = (monthISO: string) => {
   if (usali.budget) {
     rows.push({ section: 'Budget', metric: 'Budget Revenue', amount: Number(usali.budget.revenue || 0) });
   }
-  return { title: `Operating Departmental Summary (USALI) — ${monthISO}`, columns: ['Section','Metric','Amount'], rows };
+  return { title: `Operating Departmental Summary (USALI) — ${monthISO}`, columns: ['Section', 'Metric', 'Amount'], rows };
 };
 
 // Arrivals / Departures (daily)
 export const buildArrivalsDepartures = (forDate?: string) => {
   const date = forDate || getBusinessDate();
   const reservations = readJSON<any[]>('corepms_reservations', []);
-  const arrivals = reservations.filter(r => (r.checkIn || '').slice(0,10) === date);
-  const departures = reservations.filter(r => (r.checkOut || '').slice(0,10) === date);
+  const arrivals = reservations.filter(r => (r.checkIn || '').slice(0, 10) === date);
+  const departures = reservations.filter(r => (r.checkOut || '').slice(0, 10) === date);
   const rows = [
-    ...arrivals.map(r => ({ type: 'Arrival', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', time: (r.checkIn || '').slice(11,16) || '—' })),
-    ...departures.map(r => ({ type: 'Departure', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', time: (r.checkOut || '').slice(11,16) || '—' }))
+    ...arrivals.map(r => ({ type: 'Arrival', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', time: (r.checkIn || '').slice(11, 16) || '—' })),
+    ...departures.map(r => ({ type: 'Departure', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', time: (r.checkOut || '').slice(11, 16) || '—' }))
   ];
-  return { title: `Arrivals & Departures — ${date}`, columns: ['Type','Guest','Room','Time'], rows };
+  return { title: `Arrivals & Departures — ${date}`, columns: ['Type', 'Guest', 'Room', 'Time'], rows };
 };
 
 // High Balance (daily) across folios and city ledger transfers
@@ -559,16 +563,16 @@ export const buildHighBalance = (threshold?: number, forDate?: string) => {
   cityLedger.forEach(tx => { const key = tx.guestId || tx.accountName || 'unknown'; ledgerAgg[key] = (ledgerAgg[key] || 0) + Number(tx.amount || 0); });
   const ledgerRows = Object.entries(ledgerAgg).filter(([_, amt]) => amt >= th).map(([key, amt]) => ({ source: 'City Ledger', id: key, name: key, balance: Number(amt.toFixed(2)) }));
   const rows = [...folioRows, ...ledgerRows];
-  return { title: `High Balance — ${date} (Threshold: $${th})`, columns: ['Source','ID','Name','Balance'], rows };
+  return { title: `High Balance — ${date} (Threshold: $${th})`, columns: ['Source', 'ID', 'Name', 'Balance'], rows };
 };
 
 // Procurement Variance (monthly) using AP invoices vs Purchase Orders
 export const buildProcurementVariance = (monthISO: string) => {
-  const [y,m] = monthISO.split('-');
+  const [y, m] = monthISO.split('-');
   const start = `${y}-${m}-01`;
   const endDate = new Date(Number(y), Number(m));
-  const end = endDate.toISOString().slice(0,10);
-  const invoices = readJSON<any[]>('corepms_ap_invoices', []).filter(i => (i.invoice_date || '').slice(0,10) >= start && (i.invoice_date || '').slice(0,10) <= end);
+  const end = endDate.toISOString().slice(0, 10);
+  const invoices = readJSON<any[]>('corepms_ap_invoices', []).filter(i => (i.invoice_date || '').slice(0, 10) >= start && (i.invoice_date || '').slice(0, 10) <= end);
   const pos = readJSON<any[]>('corepms_purchase_orders', []);
   const poById: Record<string, number> = {}; pos.forEach(p => { const id = p.po_id || p.id; poById[id] = Number(p.amount || p.total_amount || 0); });
   const rows = invoices.map(inv => {
@@ -579,21 +583,21 @@ export const buildProcurementVariance = (monthISO: string) => {
     const flagged = Math.abs(variancePct) > 10;
     return { invoice: inv.invoice_number || inv.invoiceNumber || inv.invoice_id || '—', vendor: inv.vendor_id || inv.vendorId || '—', poId, invoiceAmount: invAmt, poAmount: poAmt, variancePct, flagged };
   });
-  return { title: `Procurement Variance — ${monthISO}`, columns: ['Invoice','Vendor','PO','Invoice Amount','PO Amount','Variance %','Flagged'], rows };
+  return { title: `Procurement Variance — ${monthISO}`, columns: ['Invoice', 'Vendor', 'PO', 'Invoice Amount', 'PO Amount', 'Variance %', 'Flagged'], rows };
 };
 
 // Fixed Asset Register Reconciliation (monthly stub)
 export const buildFixedAssetRecon = (monthISO: string) => {
   const assets = readJSON<any[]>('corepms_fixed_assets', []);
   const rows = assets.length === 0 ? [{ assetId: '—', name: 'Dataset not available', status: 'N/A' }] : assets.map(a => ({ assetId: a.id || a.asset_id || '—', name: a.name || 'Asset', status: 'OK' }));
-  return { title: `Fixed Asset Register Reconciliation — ${monthISO}`, columns: ['Asset ID','Name','Status'], rows };
+  return { title: `Fixed Asset Register Reconciliation — ${monthISO}`, columns: ['Asset ID', 'Name', 'Status'], rows };
 };
 
 // Monthly Profit & Loss (USALI-style summary using GL trial balance)
 export const buildMonthlyPL = (monthISO: string) => {
-  const [y,m] = monthISO.split('-');
+  const [y, m] = monthISO.split('-');
   const start = `${y}-${m}-01`;
-  const end = new Date(Number(y), Number(m)).toISOString().slice(0,10); // first day of next month
+  const end = new Date(Number(y), Number(m)).toISOString().slice(0, 10); // first day of next month
   const pl = gl.getPLStatement(start, end);
   const rows = [
     { category: 'Revenue', amount: Number(pl.revenue || 0) },
@@ -601,7 +605,7 @@ export const buildMonthlyPL = (monthISO: string) => {
     { category: 'GOP (Revenue - Expense)', amount: Number((pl.revenue - pl.expense).toFixed(2)) },
     { category: 'Net Income', amount: Number(pl.netIncome || 0) }
   ];
-  return { title: `Profit & Loss — ${monthISO}`, columns: ['Category','Amount'], rows };
+  return { title: `Profit & Loss — ${monthISO}`, columns: ['Category', 'Amount'], rows };
 };
 
 // Aged Accounts Receivable (City Ledger Aging)
@@ -609,17 +613,17 @@ export const buildAgedAR = (asOf?: string) => {
   const date = asOf || getBusinessDate();
   const ledger = readJSON<any[]>('corepms_city_ledger', []);
   const now = new Date(date);
-  const ageDays = (d: string) => Math.floor((now.getTime() - new Date(d).getTime()) / (1000*60*60*24));
-  const rows = ledger.map(t => ({ account: t.guestName || t.accountName || 'Account', reference: t.reason || t.reference || '', date: t.date, amount: Number(t.amount || 0), bucket: (() => { const a = ageDays(t.date || date); return a<=30?'0-30':a<=60?'31-60':a<=90?'61-90':'90+'; })() }));
-  return { title: `Aged Accounts Receivable — ${date}`, columns: ['Account','Reference','Date','Amount','Aging'], rows };
+  const ageDays = (d: string) => Math.floor((now.getTime() - new Date(d).getTime()) / (1000 * 60 * 60 * 24));
+  const rows = ledger.map(t => ({ account: t.guestName || t.accountName || 'Account', reference: t.reason || t.reference || '', date: t.date, amount: Number(t.amount || 0), bucket: (() => { const a = ageDays(t.date || date); return a <= 30 ? '0-30' : a <= 60 ? '31-60' : a <= 90 ? '61-90' : '90+'; })() }));
+  return { title: `Aged Accounts Receivable — ${date}`, columns: ['Account', 'Reference', 'Date', 'Amount', 'Aging'], rows };
 };
 
 // Inventory & COGS (simple summary using purchases and opening/ending balances if present)
 export const buildInventoryCOGS = (monthISO: string) => {
   const opening = readJSON<number>('corepms_inventory_opening', 0);
   const ending = readJSON<number>('corepms_inventory_ending', 0);
-  const purchases = readJSON<any[]>('corepms_purchases', []).filter(p => (p.date||'').startsWith(monthISO));
-  const purchasesTotal = purchases.reduce((s, p) => s + Number((Number(p.unitCost||0)*Number(p.quantity||0)) || 0), 0);
+  const purchases = readJSON<any[]>('corepms_purchases', []).filter(p => (p.date || '').startsWith(monthISO));
+  const purchasesTotal = purchases.reduce((s, p) => s + Number((Number(p.unitCost || 0) * Number(p.quantity || 0)) || 0), 0);
   const cogs = Number((opening + purchasesTotal - ending).toFixed(2));
   const rows = [
     { metric: 'Opening Inventory', value: Number(opening || 0) },
@@ -627,17 +631,17 @@ export const buildInventoryCOGS = (monthISO: string) => {
     { metric: 'Ending Inventory', value: Number(ending || 0) },
     { metric: 'COGS', value: Number(cogs || 0) }
   ];
-  return { title: `Inventory & COGS — ${monthISO}`, columns: ['Metric','Value'], rows };
+  return { title: `Inventory & COGS — ${monthISO}`, columns: ['Metric', 'Value'], rows };
 };
 
 // Export helpers
 export const exportCSV = (columns: string[], rows: any[], filename: string) => {
-  const esc = (v: any) => '"' + String(v ?? '').replace(/"/g,'""') + '"';
+  const esc = (v: any) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
   const header = columns.map(esc).join(',');
   const body = rows.map(r => columns.map(c => esc(r[c.toLowerCase()] ?? r[c] ?? '')).join(',')).join('\n');
   const blob = new Blob([header + '\n' + body], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = filename.endsWith('.csv')?filename:(filename+'.csv'); a.click(); URL.revokeObjectURL(url);
+  const a = document.createElement('a'); a.href = url; a.download = filename.endsWith('.csv') ? filename : (filename + '.csv'); a.click(); URL.revokeObjectURL(url);
 };
 
 // Excel-compatible XML Spreadsheet (.xls)
@@ -649,7 +653,7 @@ export const exportXLS = (columns: string[], rows: any[], filename: string) => {
   const content = xmlHeader + th + tr + xmlFooter;
   const blob = new Blob([content], { type: 'application/vnd.ms-excel' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = filename.endsWith('.xls')?filename:(filename+'.xls'); a.click(); URL.revokeObjectURL(url);
+  const a = document.createElement('a'); a.href = url; a.download = filename.endsWith('.xls') ? filename : (filename + '.xls'); a.click(); URL.revokeObjectURL(url);
 };
 
 export const exportXLSMulti = (sheets: Array<{ name: string; columns: string[]; rows: any[] }>, filename: string) => {
@@ -664,7 +668,7 @@ export const exportXLSMulti = (sheets: Array<{ name: string; columns: string[]; 
   const content = xmlHeader + ws + xmlFooter;
   const blob = new Blob([content], { type: 'application/vnd.ms-excel' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = filename.endsWith('.xls')?filename:(filename+'.xls'); a.click(); URL.revokeObjectURL(url);
+  const a = document.createElement('a'); a.href = url; a.download = filename.endsWith('.xls') ? filename : (filename + '.xls'); a.click(); URL.revokeObjectURL(url);
 };
 
 export const exportMonthlyWorkbookXLS = (monthISO: string, filename?: string) => {
@@ -709,7 +713,7 @@ export const sqlProvider: ReportsProvider = {
 };
 
 export const getProvider = (): ReportsProvider => {
-  try { const flag = localStorage.getItem('corepms_reports_use_sql'); if (flag === 'on') return sqlProvider; } catch {}
+  try { const flag = localStorage.getItem('corepms_reports_use_sql'); if (flag === 'on') return sqlProvider; } catch { }
   return localProvider;
 };
 
@@ -743,7 +747,7 @@ export const generateReportHTML = (title: string, columns: string[], rows: any[]
   const brand = readReceiptBranding();
   const opts = options || {};
   const colDefs = columns.map(c => ({ key: c.toLowerCase(), label: c, align: 'left' as const }));
-  
+
   return generateDetailedReportHTML({
     title,
     columns: colDefs,

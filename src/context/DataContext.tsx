@@ -7,6 +7,7 @@ import { RealTimeSyncService } from '@/lib/realTimeSyncService';
 import { refreshRooms } from '@/lib/roomService';
 import { refreshConfig as refreshRateConfig } from '@/lib/ratePlanService';
 import { useAuth } from './AuthContext';
+import gl from '@/lib/glAccounting';
 
 const DataContext = createContext<any>(null);
 
@@ -2141,12 +2142,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         id, vendor_id, description, quantity, unit_cost, tax_amount, tax_rate, tax_inclusive, expense_date, reference_number, category, department, status, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
 
+      const quantity = parseInt(expenseData.quantity) || 1;
+      const unitCost = parseFloat(expenseData.unit_cost) || 0;
+      const totalCost = quantity * unitCost;
+
       const params = [
         expenseId,
         expenseData.vendor_id,
         expenseData.description,
-        parseInt(expenseData.quantity) || 1,
-        parseFloat(expenseData.unit_cost) || 0,
+        quantity,
+        unitCost,
         parseFloat(expenseData.tax_amount) || 0,
         parseFloat(expenseData.tax_rate) || 0,
         expenseData.tax_inclusive || false,
@@ -2163,6 +2168,35 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toast({ title: 'Database Write Failed', description: 'Vendor expense could not be saved', variant: 'destructive' });
         return false;
       }
+
+      // POST TO GL LEDGER — bridge vendor expenses into the reporting/P&L engine
+      try {
+        const accs = gl.getAccounts();
+        // Find an expense account (USALI: departmental expense or fallback 5000-series)
+        const dept = String(expenseData.department || '').toLowerCase();
+        let expAccId = accs.find(a => a.category === 'Expense' && a.name.toLowerCase().includes(dept))?.id
+          || accs.find(a => a.category === 'Expense')?.id
+          || '5000';
+        // AP (Accounts Payable) as credit side — liability
+        let apAccId = accs.find(a => a.category === 'Liability' && a.name.toLowerCase().includes('payable'))?.id
+          || accs.find(a => a.category === 'Liability')?.id
+          || '2000';
+
+        gl.appendLedger({
+          id: `GL_${expenseId}`,
+          date: expenseData.expense_date || new Date().toISOString().split('T')[0],
+          reference: `Vendor Expense: ${expenseData.description || ''}`.slice(0, 100),
+          lines: [
+            { accountId: expAccId, description: expenseData.description || 'Vendor expense', debit: totalCost, credit: 0 },
+            { accountId: apAccId, description: `AP - ${expenseData.vendor_id || 'Vendor'}`, debit: 0, credit: totalCost }
+          ]
+        });
+      } catch (glErr) {
+        console.warn('[DataContext] GL posting failed (non-blocking):', glErr);
+      }
+
+      // Notify report views to refresh
+      try { window.dispatchEvent(new CustomEvent('vendor:data:updated')); } catch { }
 
       // Reload vendor expenses
       await loadVendorExpenses();
@@ -2205,6 +2239,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
 
+      // Notify report views to refresh
+      try { window.dispatchEvent(new CustomEvent('vendor:data:updated')); } catch { }
+
       // Reload vendor expenses
       await loadVendorExpenses();
       return true;
@@ -2225,6 +2262,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toast({ title: 'Database Write Failed', description: 'Vendor expense could not be deleted', variant: 'destructive' });
         return false;
       }
+
+      // Notify report views to refresh
+      try { window.dispatchEvent(new CustomEvent('vendor:data:updated')); } catch { }
 
       // Reload vendor expenses
       await loadVendorExpenses();
