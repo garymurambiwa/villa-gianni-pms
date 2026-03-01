@@ -113,7 +113,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                     department: exp.department,
                     totalAmount: 0,
                     netAmount: 0,
-                    date: exp.expense_date,
+                    date: String(exp.expense_date || ''),
                     status: exp.status,
                     lines: [],
                     creditNotes: [],
@@ -130,7 +130,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                         department: exp.department,
                         totalAmount: 0,
                         netAmount: 0,
-                        date: exp.expense_date,
+                        date: String(exp.expense_date || ''),
                         status: exp.status,
                         lines: [],
                         creditNotes: [],
@@ -172,17 +172,17 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
         }
 
         // Date range
-        if (dateFrom) result = result.filter(g => g.date >= dateFrom);
-        if (dateTo) result = result.filter(g => g.date <= dateTo);
+        if (dateFrom) result = result.filter(g => String(g.date || '') >= dateFrom);
+        if (dateTo) result = result.filter(g => String(g.date || '') <= dateTo);
 
         // Text search
         if (searchQuery.trim()) {
             const q = searchQuery.toLowerCase();
             result = result.filter(g =>
-                g.vendorName.toLowerCase().includes(q) ||
-                g.referenceNumber.toLowerCase().includes(q) ||
-                g.department.toLowerCase().includes(q) ||
-                g.lines.some(l => l.description.toLowerCase().includes(q))
+                String(g.vendorName || '').toLowerCase().includes(q) ||
+                String(g.referenceNumber || '').toLowerCase().includes(q) ||
+                String(g.department || '').toLowerCase().includes(q) ||
+                g.lines.some(l => String(l.description || '').toLowerCase().includes(q))
             );
         }
 
@@ -190,11 +190,11 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
         result.sort((a, b) => {
             let cmp = 0;
             switch (sortField) {
-                case 'date': cmp = a.date.localeCompare(b.date); break;
-                case 'vendor': cmp = a.vendorName.localeCompare(b.vendorName); break;
+                case 'date': cmp = String(a.date || '').localeCompare(String(b.date || '')); break;
+                case 'vendor': cmp = String(a.vendorName || '').localeCompare(String(b.vendorName || '')); break;
                 case 'amount': cmp = a.netAmount - b.netAmount; break;
-                case 'reference': cmp = a.referenceNumber.localeCompare(b.referenceNumber); break;
-                case 'department': cmp = a.department.localeCompare(b.department); break;
+                case 'reference': cmp = String(a.referenceNumber || '').localeCompare(String(b.referenceNumber || '')); break;
+                case 'department': cmp = String(a.department || '').localeCompare(String(b.department || '')); break;
             }
             return sortDir === 'asc' ? cmp : -cmp;
         });
@@ -368,10 +368,10 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                                         </TableCell>
                                         <TableCell>
                                             <span className={`px-2 py-1 rounded-full text-xs font-medium ${group.status === 'paid' ? 'bg-green-100 text-green-700' :
-                                                    group.status === 'approved' ? 'bg-blue-100 text-blue-700' :
-                                                        'bg-yellow-100 text-yellow-700'
+                                                group.status === 'approved' ? 'bg-blue-100 text-blue-700' :
+                                                    'bg-yellow-100 text-yellow-700'
                                                 }`}>
-                                                {group.status.charAt(0).toUpperCase() + group.status.slice(1)}
+                                                {String(group.status || '').charAt(0).toUpperCase() + String(group.status || '').slice(1)}
                                             </span>
                                         </TableCell>
                                         <TableCell onClick={e => e.stopPropagation()}>

@@ -1173,37 +1173,218 @@ const VendorManagement: React.FC = () => {
               </DialogContent>
             </Dialog>
           </div>
-        </div>
 
-        {expenseViewMode === 'invoice' && (
-          <ExpenseInvoiceView
-            expenses={filteredExpenses}
-            onDeleteExpense={async (id) => {
-              await deleteVendorExpense(id);
-            }}
-            onAddCreditNote={async (expense, creditData) => {
-              await addVendorExpense({
-                vendor_id: expense.vendor_id,
-                description: creditData.description || `Credit note for ${expense.reference_number}`,
-                quantity: 1,
-                unit_cost: Math.abs(creditData.total_cost || 0),
-                tax_amount: 0,
-                tax_rate: 0,
-                tax_inclusive: false,
-                expense_date: new Date().toISOString().split('T')[0],
-                reference_number: expense.reference_number,
-                category: expense.category,
-                department: expense.department,
-                status: 'approved',
-              });
-            }}
-          />
-        )}
+          {expenseViewMode === 'invoice' && (
+            <ExpenseInvoiceView
+              expenses={filteredExpenses}
+              onDeleteExpense={async (id) => {
+                await deleteVendorExpense(id);
+              }}
+              onAddCreditNote={async (expense, creditData) => {
+                await addVendorExpense({
+                  vendor_id: expense.vendor_id,
+                  description: creditData.description || `Credit note for ${expense.reference_number}`,
+                  quantity: 1,
+                  unit_cost: Math.abs(creditData.total_cost || 0),
+                  tax_amount: 0,
+                  tax_rate: 0,
+                  tax_inclusive: false,
+                  expense_date: new Date().toISOString().split('T')[0],
+                  reference_number: expense.reference_number,
+                  category: expense.category,
+                  department: expense.department,
+                  status: 'approved',
+                });
+              }}
+            />
+          )}
 
-        {expenseViewMode === 'flat' && (
+          {expenseViewMode === 'flat' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Expense List</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Department</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Qty</TableHead>
+                      <TableHead>Unit Cost</TableHead>
+                      <TableHead>Total Cost</TableHead>
+                      <TableHead>Tax Amount</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredExpenses.map((expense: VendorExpense) => {
+                      // Check if this is a batch parent expense
+                      const isBatchParent = expense.is_batch_parent;
+                      const batchDetails = expense.batch_details ? JSON.parse(expense.batch_details) : null;
+
+                      return (
+                        <React.Fragment key={expense.id}>
+                          <TableRow>
+                            <TableCell>{expense.id}</TableCell>
+                            <TableCell>{expense.vendor_name}</TableCell>
+                            <TableCell>
+                              {isBatchParent ? (
+                                <div>
+                                  <div className="font-medium">{expense.description}</div>
+                                  <button
+                                    className="text-blue-600 hover:text-blue-800 text-sm underline"
+                                    onClick={() => {
+                                      const expanded = [...expandedBatchRows];
+                                      const index = expanded.indexOf(expense.id);
+                                      if (index > -1) {
+                                        expanded.splice(index, 1);
+                                      } else {
+                                        expanded.push(expense.id);
+                                      }
+                                      setExpandedBatchRows(expanded);
+                                    }}
+                                  >
+                                    {expandedBatchRows.includes(expense.id) ? 'Hide Items' : `View ${batchDetails?.length || 0} Items`}
+                                  </button>
+                                </div>
+                              ) : (
+                                expense.description
+                              )}
+                            </TableCell>
+                            <TableCell>{expense.department}</TableCell>
+                            <TableCell>{expense.category}</TableCell>
+                            <TableCell>{expense.quantity}</TableCell>
+                            <TableCell>${expense.unit_cost.toFixed(2)}</TableCell>
+                            <TableCell>${expense.total_cost.toFixed(2)}</TableCell>
+                            <TableCell>${expense.tax_amount.toFixed(2)}</TableCell>
+                            <TableCell>{typeof expense.expense_date === 'string' ? expense.expense_date : new Date(expense.expense_date).toISOString().split('T')[0]}</TableCell>
+                            <TableCell>
+                              <Select
+                                value={expense.status}
+                                onValueChange={(value) => updateExpenseStatus(expense.id, value)}
+                              >
+                                <SelectTrigger className="w-32">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="pending">Pending</SelectItem>
+                                  <SelectItem value="approved">Approved</SelectItem>
+                                  <SelectItem value="paid">Paid</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleEditExpense(expense)}
+                                disabled={expense.status === 'paid' || expense.status === 'cleared'}
+                              >
+                                {expense.status === 'paid' || expense.status === 'cleared' ? 'Locked' : 'Edit'}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+
+                          {/* Expanded batch details */}
+                          {isBatchParent && expandedBatchRows.includes(expense.id) && batchDetails && (
+                            <TableRow>
+                              <TableCell colSpan={12} className="bg-gray-50 p-0">
+                                <div className="p-4 border-l-4 border-blue-500 ml-4">
+                                  <h4 className="font-medium mb-2">Individual Line Items:</h4>
+                                  <table className="w-full">
+                                    <thead>
+                                      <tr className="bg-gray-100">
+                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Description</th>
+                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Qty</th>
+                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Unit Cost</th>
+                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Total</th>
+                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Department</th>
+                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Category</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {batchDetails.map((item: any, index: number) => (
+                                        <tr key={index} className="border-b">
+                                          <td className="px-2 py-1 text-sm">{item.description}</td>
+                                          <td className="px-2 py-1 text-sm">{item.quantity}</td>
+                                          <td className="px-2 py-1 text-sm">${item.unit_cost.toFixed(2)}</td>
+                                          <td className="px-2 py-1 text-sm">${(item.quantity * item.unit_cost).toFixed(2)}</td>
+                                          <td className="px-2 py-1 text-sm">{item.department}</td>
+                                          <td className="px-2 py-1 text-sm">{item.category}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                    {filteredExpenses.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={12} className="text-center text-gray-500 py-8">
+                          No expenses found. {searchTerm ? 'Try a different search term.' : 'Add an expense to get started.'}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+
+                {vendorExpenses.length > 0 && (
+                  <div className="mt-4 border-t pt-4">
+                    <div className="flex justify-end space-x-8">
+                      <div>
+                        <p className="text-lg font-semibold">Subtotal: ${calculateSubtotal(filteredExpenses).toFixed(2)}</p>
+                        <p className="text-lg font-semibold">Tax Total: ${calculateTaxTotal(filteredExpenses).toFixed(2)}</p>
+                        <p className="text-xl font-bold">Grand Total: ${calculateGrandTotal(filteredExpenses).toFixed(2)}</p>
+                      </div>
+                    </div>
+
+                    {/* P&L Reporting Section - USALI Standard */}
+                    <div className="mt-8 border-t pt-4">
+                      <h3 className="text-lg font-semibold mb-4">P&L Report by Department and Category (USALI Standard)</h3>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Department</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {Object.entries(groupExpensesByDepartmentAndCategory(filteredExpenses)).map(([dept, categories]) =>
+                              Object.entries(categories).map(([cat, amount], idx) => (
+                                <tr key={`${dept}-${cat}`} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{dept}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{cat}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">${amount.toFixed(2)}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="payments" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Expense List</CardTitle>
+              <CardTitle>Vendor Payments</CardTitle>
             </CardHeader>
             <CardContent>
               <Table>
@@ -1211,220 +1392,38 @@ const VendorManagement: React.FC = () => {
                   <TableRow>
                     <TableHead>ID</TableHead>
                     <TableHead>Vendor</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Department</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Qty</TableHead>
-                    <TableHead>Unit Cost</TableHead>
-                    <TableHead>Total Cost</TableHead>
-                    <TableHead>Tax Amount</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
+                    <TableHead>Amount Paid</TableHead>
+                    <TableHead>Payment Date</TableHead>
+                    <TableHead>Method</TableHead>
+                    <TableHead>Reference #</TableHead>
+                    <TableHead>Notes</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredExpenses.map((expense: VendorExpense) => {
-                    // Check if this is a batch parent expense
-                    const isBatchParent = expense.is_batch_parent;
-                    const batchDetails = expense.batch_details ? JSON.parse(expense.batch_details) : null;
-
-                    return (
-                      <React.Fragment key={expense.id}>
-                        <TableRow>
-                          <TableCell>{expense.id}</TableCell>
-                          <TableCell>{expense.vendor_name}</TableCell>
-                          <TableCell>
-                            {isBatchParent ? (
-                              <div>
-                                <div className="font-medium">{expense.description}</div>
-                                <button
-                                  className="text-blue-600 hover:text-blue-800 text-sm underline"
-                                  onClick={() => {
-                                    const expanded = [...expandedBatchRows];
-                                    const index = expanded.indexOf(expense.id);
-                                    if (index > -1) {
-                                      expanded.splice(index, 1);
-                                    } else {
-                                      expanded.push(expense.id);
-                                    }
-                                    setExpandedBatchRows(expanded);
-                                  }}
-                                >
-                                  {expandedBatchRows.includes(expense.id) ? 'Hide Items' : `View ${batchDetails?.length || 0} Items`}
-                                </button>
-                              </div>
-                            ) : (
-                              expense.description
-                            )}
-                          </TableCell>
-                          <TableCell>{expense.department}</TableCell>
-                          <TableCell>{expense.category}</TableCell>
-                          <TableCell>{expense.quantity}</TableCell>
-                          <TableCell>${expense.unit_cost.toFixed(2)}</TableCell>
-                          <TableCell>${expense.total_cost.toFixed(2)}</TableCell>
-                          <TableCell>${expense.tax_amount.toFixed(2)}</TableCell>
-                          <TableCell>{typeof expense.expense_date === 'string' ? expense.expense_date : new Date(expense.expense_date).toISOString().split('T')[0]}</TableCell>
-                          <TableCell>
-                            <Select
-                              value={expense.status}
-                              onValueChange={(value) => updateExpenseStatus(expense.id, value)}
-                            >
-                              <SelectTrigger className="w-32">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="pending">Pending</SelectItem>
-                                <SelectItem value="approved">Approved</SelectItem>
-                                <SelectItem value="paid">Paid</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleEditExpense(expense)}
-                              disabled={expense.status === 'paid' || expense.status === 'cleared'}
-                            >
-                              {expense.status === 'paid' || expense.status === 'cleared' ? 'Locked' : 'Edit'}
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-
-                        {/* Expanded batch details */}
-                        {isBatchParent && expandedBatchRows.includes(expense.id) && batchDetails && (
-                          <TableRow>
-                            <TableCell colSpan={12} className="bg-gray-50 p-0">
-                              <div className="p-4 border-l-4 border-blue-500 ml-4">
-                                <h4 className="font-medium mb-2">Individual Line Items:</h4>
-                                <table className="w-full">
-                                  <thead>
-                                    <tr className="bg-gray-100">
-                                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Description</th>
-                                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Qty</th>
-                                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Unit Cost</th>
-                                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Total</th>
-                                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Department</th>
-                                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Category</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {batchDetails.map((item: any, index: number) => (
-                                      <tr key={index} className="border-b">
-                                        <td className="px-2 py-1 text-sm">{item.description}</td>
-                                        <td className="px-2 py-1 text-sm">{item.quantity}</td>
-                                        <td className="px-2 py-1 text-sm">${item.unit_cost.toFixed(2)}</td>
-                                        <td className="px-2 py-1 text-sm">${(item.quantity * item.unit_cost).toFixed(2)}</td>
-                                        <td className="px-2 py-1 text-sm">{item.department}</td>
-                                        <td className="px-2 py-1 text-sm">{item.category}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                  {filteredExpenses.length === 0 && (
+                  {vendorPayments.map((payment: VendorPayment) => (
+                    <TableRow key={payment.id}>
+                      <TableCell>{payment.id}</TableCell>
+                      <TableCell>{payment.vendor_name}</TableCell>
+                      <TableCell>${payment.amount_paid.toFixed(2)}</TableCell>
+                      <TableCell>{typeof payment.payment_date === 'string' ? payment.payment_date : new Date(payment.payment_date).toISOString().split('T')[0]}</TableCell>
+                      <TableCell>{payment.payment_method}</TableCell>
+                      <TableCell>{payment.reference_number}</TableCell>
+                      <TableCell>{payment.notes}</TableCell>
+                    </TableRow>
+                  ))}
+                  {vendorPayments.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={12} className="text-center text-gray-500 py-8">
-                        No expenses found. {searchTerm ? 'Try a different search term.' : 'Add an expense to get started.'}
+                      <TableCell colSpan={7} className="text-center text-gray-500 py-8">
+                        No payments found.
                       </TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
-
-              {vendorExpenses.length > 0 && (
-                <div className="mt-4 border-t pt-4">
-                  <div className="flex justify-end space-x-8">
-                    <div>
-                      <p className="text-lg font-semibold">Subtotal: ${calculateSubtotal(filteredExpenses).toFixed(2)}</p>
-                      <p className="text-lg font-semibold">Tax Total: ${calculateTaxTotal(filteredExpenses).toFixed(2)}</p>
-                      <p className="text-xl font-bold">Grand Total: ${calculateGrandTotal(filteredExpenses).toFixed(2)}</p>
-                    </div>
-                  </div>
-
-                  {/* P&L Reporting Section - USALI Standard */}
-                  <div className="mt-8 border-t pt-4">
-                    <h3 className="text-lg font-semibold mb-4">P&L Report by Department and Category (USALI Standard)</h3>
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Department</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {Object.entries(groupExpensesByDepartmentAndCategory(filteredExpenses)).map(([dept, categories]) =>
-                            Object.entries(categories).map(([cat, amount], idx) => (
-                              <tr key={`${dept}-${cat}`} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{dept}</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{cat}</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">${amount.toFixed(2)}</td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
             </CardContent>
           </Card>
-        )}
-      </TabsContent>
-
-      <TabsContent value="payments" className="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Vendor Payments</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Vendor</TableHead>
-                  <TableHead>Amount Paid</TableHead>
-                  <TableHead>Payment Date</TableHead>
-                  <TableHead>Method</TableHead>
-                  <TableHead>Reference #</TableHead>
-                  <TableHead>Notes</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {vendorPayments.map((payment: VendorPayment) => (
-                  <TableRow key={payment.id}>
-                    <TableCell>{payment.id}</TableCell>
-                    <TableCell>{payment.vendor_name}</TableCell>
-                    <TableCell>${payment.amount_paid.toFixed(2)}</TableCell>
-                    <TableCell>{typeof payment.payment_date === 'string' ? payment.payment_date : new Date(payment.payment_date).toISOString().split('T')[0]}</TableCell>
-                    <TableCell>{payment.payment_method}</TableCell>
-                    <TableCell>{payment.reference_number}</TableCell>
-                    <TableCell>{payment.notes}</TableCell>
-                  </TableRow>
-                ))}
-                {vendorPayments.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-center text-gray-500 py-8">
-                      No payments found.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </TabsContent>
-    </Tabs>
+        </TabsContent>
+      </Tabs>
     </div >
   );
 };
