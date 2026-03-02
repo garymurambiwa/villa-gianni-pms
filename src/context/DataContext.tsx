@@ -491,6 +491,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const deleteRoom = async (roomId: string): Promise<boolean> => {
+    try {
+      const result = await db.query('DELETE FROM rooms WHERE id = ?', [roomId]);
+      if ('error' in result) {
+        console.error('Room delete failed:', (result as any).error);
+        toast({ title: 'Delete Failed', description: (result as any).error, variant: 'destructive' });
+        return false;
+      }
+      console.log('[DataContext] Room deleted:', roomId);
+      await loadAllData();
+      return true;
+    } catch (e: any) {
+      console.error('Delete room error:', e?.message || e);
+      toast({ title: 'Delete Failed', description: e?.message || 'Could not delete room', variant: 'destructive' });
+      return false;
+    }
+  };
+
   const createReservation = async (resData: any): Promise<{ success: boolean; error?: string }> => {
     try {
       // Step 1: Create or find guest first
@@ -2462,7 +2480,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <DataContext.Provider value={{
       rooms, guests, reservations, posOrders, inventory, folioCharges,
       vendors, vendorExpenses, vendorPayments,
-      addRoom, updateRoom, createReservation, updateReservation, savePosOrder, closePosOrder, updateGuest, updateStock,
+      addRoom, updateRoom, deleteRoom, createReservation, updateReservation, savePosOrder, closePosOrder, updateGuest, updateStock,
       checkInGuest, checkOutGuest, updateRoomStatus, addFolioCharge,
       recordFolioCharge, recordFolioPayment, removeFolioCharge,
       bulkUpdateRoomStatus, bulkDeleteRooms, getRoomAudit, revertRoomChange,
