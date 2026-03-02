@@ -730,7 +730,7 @@ export const PosSettings: React.FC = () => {
   };
 
   // Use inventory from DataContext instead of localStorage
-  const { inventory } = useData();
+  const { inventory, refreshData } = useData();
 
   React.useEffect(() => {
     if ((isManager || isAdminRole) && inventory) {
@@ -928,6 +928,8 @@ export const PosSettings: React.FC = () => {
             // Optionally revert state here if needed
           } else {
             toast({ title: 'Saved', description: 'Item saved to database.' });
+            // Reload inventory from DB so DataContext stays in sync
+            refreshData?.();
           }
         }).catch(err => {
           console.warn('[PosSettings] Database sync error:', err);
@@ -989,6 +991,7 @@ export const PosSettings: React.FC = () => {
           toast({ title: 'Delete sync failed', description: result.error, variant: 'destructive' });
         } else {
           toast({ title: 'Deleted', description: 'Item removed from database.' });
+          refreshData?.();
         }
       }).catch(err => {
         console.warn('[PosSettings] Database delete error:', err);
