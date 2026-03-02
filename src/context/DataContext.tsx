@@ -441,6 +441,56 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const updateRoom = async (roomId: string, patch: Partial<any>): Promise<any> => {
+    try {
+      const setClauses: string[] = [];
+      const params: any[] = [];
+
+      if (patch.number !== undefined) {
+        setClauses.push('number = ?');
+        params.push(String(patch.number));
+      }
+      if (patch.type !== undefined) {
+        setClauses.push('type = ?');
+        params.push(String(patch.type));
+      }
+      if (patch.rate !== undefined) {
+        setClauses.push('rate = ?');
+        params.push(Number(patch.rate || 0));
+      }
+      if (patch.floor !== undefined) {
+        setClauses.push('floor = ?');
+        params.push(Number(patch.floor || 1));
+      }
+      if (patch.status !== undefined) {
+        setClauses.push('status = ?');
+        params.push(String(patch.status));
+      }
+
+      if (setClauses.length === 0) {
+        return { error: 'No fields to update' };
+      }
+
+      params.push(roomId);
+      const sql = `UPDATE rooms SET ${setClauses.join(', ')} WHERE id = ?`;
+      const result = await db.query(sql, params);
+
+      if ('error' in result) {
+        console.error('Room update failed:', (result as any).error);
+        toast({ title: 'Update Failed', description: (result as any).error, variant: 'destructive' });
+        return { error: (result as any).error };
+      }
+
+      console.log('[DataContext] Room updated:', roomId, patch);
+      await loadAllData();
+      return { success: true };
+    } catch (e: any) {
+      console.error('Update room error:', e?.message || e);
+      toast({ title: 'Update Failed', description: e?.message || 'Could not update room', variant: 'destructive' });
+      return { error: e?.message || 'Unknown error' };
+    }
+  };
+
   const createReservation = async (resData: any): Promise<{ success: boolean; error?: string }> => {
     try {
       // Step 1: Create or find guest first
@@ -2412,7 +2462,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <DataContext.Provider value={{
       rooms, guests, reservations, posOrders, inventory, folioCharges,
       vendors, vendorExpenses, vendorPayments,
-      addRoom, createReservation, updateReservation, savePosOrder, closePosOrder, updateGuest, updateStock,
+      addRoom, updateRoom, createReservation, updateReservation, savePosOrder, closePosOrder, updateGuest, updateStock,
       checkInGuest, checkOutGuest, updateRoomStatus, addFolioCharge,
       recordFolioCharge, recordFolioPayment, removeFolioCharge,
       bulkUpdateRoomStatus, bulkDeleteRooms, getRoomAudit, revertRoomChange,
