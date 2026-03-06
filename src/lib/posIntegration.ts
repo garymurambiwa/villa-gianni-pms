@@ -183,8 +183,21 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
     const list = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(list)) return [];
     return list.map((it: any) => {
-      const center = String(it.costCenter || it.type || '').toLowerCase();
-      const category: 'food' | 'bar' = center === 'bar' ? 'bar' : 'food';
+      const costCenter = String(it.costCenter || it.type || '').toLowerCase();
+      const rawCat = String(it.department || it.category || '').toLowerCase();
+      const isBar = costCenter.includes('bar') ||
+        rawCat.includes('bar') ||
+        rawCat.includes('beverage') ||
+        rawCat.includes('cocktail') ||
+        rawCat.includes('beer') ||
+        rawCat.includes('wine') ||
+        rawCat.includes('cider') ||
+        rawCat.includes('liquor') ||
+        rawCat.includes('spirit') ||
+        rawCat.includes('drink') ||
+        rawCat.includes('alcohol');
+
+      const category: 'food' | 'bar' = isBar ? 'bar' : 'food';
       const price = Number(it.sellingPrice ?? it.price ?? 0);
       const available = category === 'bar' ? !!it.visibility?.bar : !!it.visibility?.restaurant;
       return {
@@ -221,7 +234,18 @@ export const getMenuItems = async (): Promise<Array<{ id: string; name: string; 
           .map((r: any) => {
             const rawCat = String(r.department || r.category || '').toLowerCase();
             // Simple heuristic for Bar vs Food, defaulting to Food
-            const category: 'food' | 'bar' = (rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('cocktail')) ? 'bar' : 'food';
+            const isBar = rawCat.includes('bar') ||
+              rawCat.includes('beverage') ||
+              rawCat.includes('cocktail') ||
+              rawCat.includes('beer') ||
+              rawCat.includes('wine') ||
+              rawCat.includes('cider') ||
+              rawCat.includes('liquor') ||
+              rawCat.includes('spirit') ||
+              rawCat.includes('drink') ||
+              rawCat.includes('alcohol');
+
+            const category: 'food' | 'bar' = isBar ? 'bar' : 'food';
             const price = Number(r.price || 0);
 
             // Filter out items with no price to prevent $0.00 items cluttering POS
@@ -229,18 +253,20 @@ export const getMenuItems = async (): Promise<Array<{ id: string; name: string; 
 
             // Map imported products to default Categories to ensure they appear in POS tabs
             // Otherwise, OrderModal filters them out if they don't match active category ID.
-            let category_id = undefined;
-            if (category === 'bar') {
-              if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink')) {
-                category_id = 'CAT_BAR_BEV';
+            let category_id = r.category_id || undefined;
+            if (!category_id) {
+              if (category === 'bar') {
+                if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice')) {
+                  category_id = 'CAT_BAR_BEV';
+                } else {
+                  category_id = 'CAT_BAR_GEN';
+                }
               } else {
-                category_id = 'CAT_BAR_GEN';
-              }
-            } else {
-              if (rawCat.includes('main') || rawCat.includes('entree')) {
-                category_id = 'CAT_REST_MAIN';
-              } else {
-                category_id = 'CAT_REST_GEN';
+                if (rawCat.includes('main') || rawCat.includes('entree')) {
+                  category_id = 'CAT_REST_MAIN';
+                } else {
+                  category_id = 'CAT_REST_GEN';
+                }
               }
             }
 

@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { db } from '../lib/db';
 import { v4 as uuidv4 } from 'uuid';
 import { toast } from '@/hooks/use-toast';
-import { performFullSync, ensureTablesExist } from '@/lib/dbSync';
+import dbSync, { performFullSync, ensureTablesExist, loadCategoriesFromDb } from '@/lib/dbSync';
+import menuCats from '@/lib/menuCategories';
 import { RealTimeSyncService } from '@/lib/realTimeSyncService';
 import { refreshRooms } from '@/lib/roomService';
 import { refreshConfig as refreshRateConfig } from '@/lib/ratePlanService';
@@ -55,11 +56,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Load reservations with guest info and room info joined
       const resRes = await db.query(`
         SELECT r.*, g.full_name as guest_name, g.email as guest_email, g.phone as guest_phone,
-               rm.number as room_number
+  rm.number as room_number
         FROM reservations r
         LEFT JOIN guests g ON r.guest_id = g.id
         LEFT JOIN rooms rm ON r.room_id = rm.id
-      `);
+  `);
       let normalizedReservations: any[] = [];
       if ('rows' in resRes) {
         // Normalize reservation data for UI compatibility
@@ -78,7 +79,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const year = rawCheckIn.getFullYear();
               const month = String(rawCheckIn.getMonth() + 1).padStart(2, '0');
               const day = String(rawCheckIn.getDate()).padStart(2, '0');
-              checkIn = `${year}-${month}-${day}`;
+              checkIn = `${year} -${month} -${day} `;
             } else {
               checkIn = String(rawCheckIn);
             }
@@ -94,7 +95,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const year = rawCheckOut.getFullYear();
               const month = String(rawCheckOut.getMonth() + 1).padStart(2, '0');
               const day = String(rawCheckOut.getDate()).padStart(2, '0');
-              checkOut = `${year}-${month}-${day}`;
+              checkOut = `${year} -${month} -${day} `;
             } else {
               checkOut = String(rawCheckOut);
             }
@@ -193,6 +194,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setGuests(normalizedGuests);
       }
 
+      // Load POS Categories
+      try {
+        const { categories, subcategories } = await loadCategoriesFromDb();
+        if (categories.length > 0) {
+          menuCats.setCategories(categories as any);
+        }
+        if (subcategories.length > 0) {
+          menuCats.setSubcategories(subcategories as any);
+        }
+      } catch (err) {
+        console.warn('[DataContext] Failed to load POS categories from DB', err);
+      }
+
       // Load POS & Inventory Data
       const posRes = await db.query('SELECT * FROM pos_orders WHERE LOWER(status) = ?', ['open']);
       if ('rows' in posRes) {
@@ -224,12 +238,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // The Order Modal filters by category_id, so we must assign default categories
           const rawCat = String(p.department || p.category || '').toLowerCase();
           const costCenter = String(p.department || p.category || '').toLowerCase();
-          const isBar = costCenter.includes('bar') || rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('cocktail');
+          const isBar = costCenter.includes('bar') ||
+            rawCat.includes('bar') ||
+            rawCat.includes('beverage') ||
+            rawCat.includes('cocktail') ||
+            rawCat.includes('beer') ||
+            rawCat.includes('wine') ||
+            rawCat.includes('cider') ||
+            rawCat.includes('liquor') ||
+            rawCat.includes('spirit') ||
+            rawCat.includes('drink') ||
+            rawCat.includes('alcohol');
 
           let derivedCategoryId = p.category_id; // Use existing if present
           if (!derivedCategoryId) {
             if (isBar) {
-              if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink')) {
+              if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice')) {
                 derivedCategoryId = 'CAT_BAR_BEV';
               } else {
                 derivedCategoryId = 'CAT_BAR_GEN';
@@ -421,7 +445,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addRoom = async (roomData: any): Promise<boolean> => {
     try {
       // Generate unique ID for the room
-      const roomId = `R${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const roomId = `R${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
       const sql = "INSERT INTO rooms (id, number, type, floor, rate, status) VALUES (?, ?, ?, ?, ?, ?)";
       const params = [roomId, String(roomData.number || ''), String(roomData.type || ''), Number(roomData.floor || 1), Number(roomData.rate || 0), 'VC'];
       const result = await db.query(sql, params);
@@ -472,7 +496,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       params.push(roomId);
-      const sql = `UPDATE rooms SET ${setClauses.join(', ')} WHERE id = ?`;
+      const sql = `UPDATE rooms SET ${setClauses.join(', ')} WHERE id = ? `;
       const result = await db.query(sql, params);
 
       if ('error' in result) {
@@ -530,7 +554,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // If no existing guest found, create a new one
         if (!guestId) {
-          const newGuestId = `G${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+          const newGuestId = `G${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
           const guestSql = "INSERT INTO guests (id, full_name, email, phone) VALUES (?, ?, ?, ?)";
           const guestParams = [newGuestId, guestName, guestEmail, guestPhone];
           const guestResult = await db.query(guestSql, guestParams);
@@ -545,21 +569,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Step 2: Create the reservation with the guest_id
-      const reservationId = `RES${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const reservationId = `RES${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
       // Prepare id_document_enc (required field) - encrypt if provided, use placeholder if not
       const idDocumentEnc = resData.idDocumentNumber
         ? String(resData.idDocumentNumber)
         : 'NOT_PROVIDED';
 
-      const sql = `INSERT INTO reservations (
-        id, guest_id, room_id, check_in_date, check_out_date, status, 
-        source, id_document_enc, id_document_type, nationality_code, nationality_name,
-        booking_source, partner_code, utm_source, utm_medium, utm_campaign, utm_term, utm_content,
-        terms_accepted, confirmed_at, signature_encrypted, payment_info_source, payment_verified, package_code,
-        room_type, rate, adults, children, room_preference, booking_name, booking_type,
-        company_name, payment_method, settle_at_checkout, origin_region, inserted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+      const sql = `INSERT INTO reservations(
+    id, guest_id, room_id, check_in_date, check_out_date, status,
+    source, id_document_enc, id_document_type, nationality_code, nationality_name,
+    booking_source, partner_code, utm_source, utm_medium, utm_campaign, utm_term, utm_content,
+    terms_accepted, confirmed_at, signature_encrypted, payment_info_source, payment_verified, package_code,
+    room_type, rate, adults, children, room_preference, booking_name, booking_type,
+    company_name, payment_method, settle_at_checkout, origin_region, inserted_at
+  ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
 
       const params = [
         reservationId,
@@ -624,13 +648,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         : 'NOT_PROVIDED';
 
       const sql = `UPDATE reservations SET
-        check_in_date = ?, check_out_date = ?, status = ?,
-        id_document_enc = ?, id_document_type = ?, nationality_code = ?, nationality_name = ?,
-        booking_source = ?, partner_code = ?, utm_source = ?, utm_medium = ?, utm_campaign = ?, utm_term = ?, utm_content = ?,
-        terms_accepted = ?, payment_info_source = ?, payment_verified = ?, package_code = ?,
-        room_type = ?, rate = ?, adults = ?, children = ?, room_preference = ?, booking_name = ?, booking_type = ?,
-        company_name = ?, payment_method = ?, settle_at_checkout = ?, origin_region = ?
-      WHERE id = ?`;
+check_in_date = ?, check_out_date = ?, status = ?,
+  id_document_enc = ?, id_document_type = ?, nationality_code = ?, nationality_name = ?,
+  booking_source = ?, partner_code = ?, utm_source = ?, utm_medium = ?, utm_campaign = ?, utm_term = ?, utm_content = ?,
+  terms_accepted = ?, payment_info_source = ?, payment_verified = ?, package_code = ?,
+  room_type = ?, rate = ?, adults = ?, children = ?, room_preference = ?, booking_name = ?, booking_type = ?,
+  company_name = ?, payment_method = ?, settle_at_checkout = ?, origin_region = ?
+    WHERE id = ? `;
 
       const params = [
         resData.checkIn,
@@ -723,7 +747,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       // Generate unique ID for the POS order
-      const orderId = `POS${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const orderId = `POS${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
       // PostgreSQL uses ON CONFLICT instead of ON DUPLICATE KEY UPDATE
       // First try to update existing order, if not found, insert new one
       const updateSql = "UPDATE pos_orders SET items = ?::jsonb, total_amount = ?, status = ? WHERE table_number = ? AND status = 'open' RETURNING id";
@@ -739,14 +763,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.error('POS order insert details:', { params: insertParams, error: (insertResult as any).error });
           const dbError = (insertResult as any).error?.message || (insertResult as any).error || 'Unknown DB Error';
           setPosOrders((prev: any[]) => prev.filter((p: any) => String(p.table_number) !== provisional.table_number || String(p.status) !== 'OPEN'));
-          toast({ title: 'Database Write Failed', description: `POS order insert failed: ${dbError}`, variant: 'destructive' });
+          toast({ title: 'Database Write Failed', description: `POS order insert failed: ${dbError} `, variant: 'destructive' });
           return false;
         }
       } else if ('error' in updateResult) {
         console.error('POS order update details:', { params: updateParams, error: (updateResult as any).error });
         const dbError = (updateResult as any).error?.message || (updateResult as any).error || 'Unknown DB Error';
         setPosOrders((prev: any[]) => prev.filter((p: any) => String(p.table_number) !== provisional.table_number || String(p.status) !== 'OPEN'));
-        toast({ title: 'Database Write Failed', description: `POS order update failed: ${dbError}`, variant: 'destructive' });
+        toast({ title: 'Database Write Failed', description: `POS order update failed: ${dbError} `, variant: 'destructive' });
         return false;
       }
 
@@ -808,12 +832,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const checkInGuest = async (reservationId: string, roomId: string, options: { rateOverride?: number; packageCode?: string; taxInclusive?: boolean } = {}): Promise<boolean> => {
     try {
       // Update reservation status to checked-in and assign room
-      const resSql = `UPDATE reservations SET 
-        status = 'checked-in', 
-        room_id = ?,
-        rate = COALESCE(?, rate),
-        package_code = COALESCE(?, package_code)
-      WHERE id = ?`;
+      const resSql = `UPDATE reservations SET
+status = 'checked-in',
+  room_id = ?,
+  rate = COALESCE(?, rate),
+  package_code = COALESCE(?, package_code)
+      WHERE id = ? `;
       const resParams = [
         roomId,
         options.rateOverride || null,
@@ -900,7 +924,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // FRONT OFFICE - Add folio charge
   const addFolioCharge = async (chargeData: { guestId: string; amount: number; code?: string; description?: string; date: string; category?: string }): Promise<boolean> => {
     try {
-      const chargeId = `CHG${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const chargeId = `CHG${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
       const newCharge = {
         id: chargeId,
         guestId: chargeData.guestId,
@@ -953,7 +977,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // POS - Record folio charge (returns charge ID)
   const recordFolioCharge = async (chargeData: { guestId: string; amount: number; description: string; date: string; category?: string }): Promise<string | null> => {
     try {
-      const chargeId = `CHG${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const chargeId = `CHG${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
       const newCharge = {
         id: chargeId,
         guestId: chargeData.guestId,
@@ -1004,11 +1028,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // POS - Record folio payment (for settlement)
   const recordFolioPayment = async (paymentData: { guestId: string; amount: number; description: string; date: string; method?: string }): Promise<string | null> => {
     try {
-      const paymentId = `PAY${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const paymentId = `PAY${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
       const newPayment = {
         id: paymentId,
         guestId: paymentData.guestId,
-        description: paymentData.description || `Payment - ${paymentData.method || 'Cash'}`,
+        description: paymentData.description || `Payment - ${paymentData.method || 'Cash'} `,
         amount: -Math.abs(Number(paymentData.amount || 0)), // Negative for payments
         date: paymentData.date,
         category: 'Payment',
@@ -1080,7 +1104,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!roomIds || roomIds.length === 0) return true;
 
       const placeholders = roomIds.map(() => '?').join(',');
-      const sql = `UPDATE rooms SET status = ? WHERE id IN (${placeholders})`;
+      const sql = `UPDATE rooms SET status = ? WHERE id IN(${placeholders})`;
       const params = [status, ...roomIds];
 
       const result = await db.query(sql, params);
@@ -1105,7 +1129,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!roomIds || roomIds.length === 0) return true;
 
       const placeholders = roomIds.map(() => '?').join(',');
-      const sql = `DELETE FROM rooms WHERE id IN (${placeholders})`;
+      const sql = `DELETE FROM rooms WHERE id IN(${placeholders})`;
 
       const result = await db.query(sql, roomIds);
       if ('error' in result) {
@@ -1193,90 +1217,90 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Create or ensure city_ledger table structure
       try {
         // First, try to create the table if it doesn't exist
-        await db.query(`CREATE TABLE IF NOT EXISTS city_ledger_accounts (
-          id TEXT PRIMARY KEY,
-          account_name TEXT NOT NULL,  // Changed from 'name' to 'account_name' to match existing constraint
-          type TEXT NOT NULL,
-          credit_limit DECIMAL(10,2),
-          payment_terms TEXT,
-          status TEXT DEFAULT 'Active',
-          activated_on DATE,
-          contact_name TEXT,
-          contact_phone TEXT,
-          contact_email TEXT,
-          address TEXT,
-          billing_cycle TEXT,
-          balance DECIMAL(10,2) DEFAULT 0,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )`);
+        await db.query(`CREATE TABLE IF NOT EXISTS city_ledger_accounts(
+    id TEXT PRIMARY KEY,
+    account_name TEXT NOT NULL,  // Changed from 'name' to 'account_name' to match existing constraint
+    type TEXT NOT NULL,
+    credit_limit DECIMAL(10, 2),
+    payment_terms TEXT,
+    status TEXT DEFAULT 'Active',
+    activated_on DATE,
+    contact_name TEXT,
+    contact_phone TEXT,
+    contact_email TEXT,
+    address TEXT,
+    billing_cycle TEXT,
+    balance DECIMAL(10, 2) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
       } catch (createErr) {
         console.warn('Could not create table, may already exist:', createErr);
       }
 
       // Add columns if they don't exist (PostgreSQL specific)
       try {
-        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT '';`);
+        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT ''; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
       try {
-        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'Corporate';`);
+        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'Corporate'; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
       try {
-        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS contact_name TEXT;`);
+        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS contact_name TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
       try {
-        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS contact_phone TEXT;`);
+        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS contact_phone TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
       try {
-        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS contact_email TEXT;`);
+        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS contact_email TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
       try {
-        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS address TEXT;`);
+        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS address TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
       try {
-        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS billing_cycle TEXT;`);
+        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS billing_cycle TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
       try {
-        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS balance DECIMAL(10,2) DEFAULT 0;`);
+        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS balance DECIMAL(10, 2) DEFAULT 0; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
       try {
-        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
       try {
-        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await db.query(`ALTER TABLE city_ledger_accounts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Create city_ledger_transactions table if it doesn't exist
       try {
-        await db.query(`CREATE TABLE IF NOT EXISTS city_ledger_transactions (
-          id TEXT PRIMARY KEY,
-          account_id TEXT,
-          date_field DATE NOT NULL,  -- Changed from 'date' to 'date_field' to avoid conflict with reserved keyword
-          reference TEXT,            -- Added reference column
+        await db.query(`CREATE TABLE IF NOT EXISTS city_ledger_transactions(
+    id TEXT PRIMARY KEY,
+    account_id TEXT,
+    date_field DATE NOT NULL, --Changed from 'date' to 'date_field' to avoid conflict with reserved keyword
+          reference TEXT, --Added reference column
           description TEXT NOT NULL,
-          debit DECIMAL(10,2),
-          credit DECIMAL(10,2),
-          transaction_type TEXT DEFAULT 'general',  -- Added transaction_type column with default
+  debit DECIMAL(10, 2),
+    credit DECIMAL(10, 2),
+      transaction_type TEXT DEFAULT 'general', --Added transaction_type column with default
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )`);
       } catch (createErr) {
@@ -1285,56 +1309,56 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Add columns if they don't exist for transactions table
       try {
-        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Ensure critical columns exist (including date column)
       try {
-        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS date_field DATE;`);
+        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS date_field DATE; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // For backward compatibility, also add the 'date' column if it doesn't exist
       try {
-        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS date DATE;`);
+        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS date DATE; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Ensure reference column exists
       try {
-        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS reference TEXT;`);
+        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS reference TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Ensure description column exists
       try {
-        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS description TEXT;`);
+        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS description TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Ensure debit column exists
       try {
-        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS debit DECIMAL(10,2);`);
+        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS debit DECIMAL(10, 2); `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Ensure credit column exists
       try {
-        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS credit DECIMAL(10,2);`);
+        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS credit DECIMAL(10, 2); `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Ensure transaction_type column exists with default value
       try {
-        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS transaction_type TEXT DEFAULT 'general';`);
+        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS transaction_type TEXT DEFAULT 'general'; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
@@ -1342,7 +1366,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Ensure foreign key constraint exists
       try {
         // Add account_id column if missing
-        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS account_id TEXT;`);
+        await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS account_id TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
@@ -1350,20 +1374,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Create the foreign key constraint if it doesn't exist
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD CONSTRAINT IF NOT EXISTS fk_transaction_account 
-                       FOREIGN KEY (account_id) REFERENCES city_ledger_accounts(id);`);
+                       FOREIGN KEY(account_id) REFERENCES city_ledger_accounts(id); `);
       } catch (e) {
         // Constraint may already exist, which is fine
       }
 
       // Create city_ledger_notes table if it doesn't exist
       try {
-        await db.query(`CREATE TABLE IF NOT EXISTS city_ledger_notes (
-          id TEXT PRIMARY KEY,
-          account_id TEXT,
-          date_field DATE NOT NULL,  -- Changed from 'date' to 'date_field' to avoid conflict with reserved keyword
+        await db.query(`CREATE TABLE IF NOT EXISTS city_ledger_notes(
+        id TEXT PRIMARY KEY,
+        account_id TEXT,
+        date_field DATE NOT NULL, --Changed from 'date' to 'date_field' to avoid conflict with reserved keyword
           author TEXT,
-          text TEXT NOT NULL,
-          note_type TEXT DEFAULT 'general',  -- Added note_type column with default
+  text TEXT NOT NULL,
+    note_type TEXT DEFAULT 'general', --Added note_type column with default
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )`);
       } catch (createErr) {
@@ -1372,42 +1396,42 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Add columns if they don't exist for notes table
       try {
-        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Ensure critical columns exist (including date column)
       try {
-        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS date_field DATE;`);
+        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS date_field DATE; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // For backward compatibility, also add the 'date' column if it doesn't exist
       try {
-        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS date DATE;`);
+        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS date DATE; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Ensure author column exists
       try {
-        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS author TEXT;`);
+        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS author TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Ensure text column exists
       try {
-        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS text TEXT;`);
+        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS text TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Ensure note_type column exists with default value
       try {
-        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS note_type TEXT DEFAULT 'general';`);
+        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS note_type TEXT DEFAULT 'general'; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
@@ -1415,7 +1439,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Ensure foreign key constraint exists
       try {
         // Add account_id column if missing
-        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS account_id TEXT;`);
+        await db.query(`ALTER TABLE city_ledger_notes ADD COLUMN IF NOT EXISTS account_id TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
@@ -1423,7 +1447,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Create the foreign key constraint if it doesn't exist
       try {
         await db.query(`ALTER TABLE city_ledger_notes ADD CONSTRAINT IF NOT EXISTS fk_note_account 
-                       FOREIGN KEY (account_id) REFERENCES city_ledger_accounts(id);`);
+                       FOREIGN KEY(account_id) REFERENCES city_ledger_accounts(id); `);
       } catch (e) {
         // Constraint may already exist, which is fine
       }
@@ -1487,12 +1511,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // CITY LEDGER - Add a new city ledger account
   const addCityLedgerAccount = async (accountData: any): Promise<boolean> => {
     try {
-      const accountId = `CL${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const accountId = `CL${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
-      const sql = `INSERT INTO city_ledger_accounts (
-        id, account_name, type, credit_limit, payment_terms, status, activated_on, contact_name, 
-        contact_phone, contact_email, address, billing_cycle, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
+      const sql = `INSERT INTO city_ledger_accounts(
+      id, account_name, type, credit_limit, payment_terms, status, activated_on, contact_name,
+      contact_phone, contact_email, address, billing_cycle, created_at, updated_at
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
 
       const params = [
         accountId,
@@ -1547,7 +1571,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Add updated_at to the fields to update
       fields.push('updated_at = NOW()');
-      const sql = `UPDATE city_ledger_accounts SET ${fields.join(', ')} WHERE id = ?`;
+      const sql = `UPDATE city_ledger_accounts SET ${fields.join(', ')} WHERE id = ? `;
       values.push(accountId);
 
       const result = await db.query(sql, values);
@@ -1570,11 +1594,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // CITY LEDGER - Add a transaction to a city ledger account
   const addCityLedgerTransaction = async (accountId: string, transactionData: any): Promise<boolean> => {
     try {
-      const transactionId = `TX${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const transactionId = `TX${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
-      const sql = `INSERT INTO city_ledger_transactions (
-        id, account_id, date_field, reference, description, debit, credit, transaction_type, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+      const sql = `INSERT INTO city_ledger_transactions(
+      id, account_id, date_field, reference, description, debit, credit, transaction_type, created_at
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
 
       const params = [
         transactionId,
@@ -1607,11 +1631,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // CITY LEDGER - Add a note to a city ledger account
   const addCityLedgerNote = async (accountId: string, noteData: any): Promise<boolean> => {
     try {
-      const noteId = `NOTE${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const noteId = `NOTE${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
-      const sql = `INSERT INTO city_ledger_notes (
-        id, account_id, date_field, author, text, note_type, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, NOW())`;
+      const sql = `INSERT INTO city_ledger_notes(
+      id, account_id, date_field, author, text, note_type, created_at
+    ) VALUES(?, ?, ?, ?, ?, ?, NOW())`;
 
       const params = [
         noteId,
@@ -1644,24 +1668,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       // Create pos_orders table
       await db.query(`
-        CREATE TABLE IF NOT EXISTS pos_orders (
-          id VARCHAR(36) PRIMARY KEY,
-          table_number VARCHAR(20),
-          items JSONB,
-          total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
-          status VARCHAR(50) NOT NULL DEFAULT 'open',
-          created_at TIMESTAMP NOT NULL DEFAULT NOW()
-        );
-      `);
+        CREATE TABLE IF NOT EXISTS pos_orders(
+      id VARCHAR(36) PRIMARY KEY,
+      table_number VARCHAR(20),
+      items JSONB,
+      total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      status VARCHAR(50) NOT NULL DEFAULT 'open',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+`);
 
       // Create table_status table if it doesn't exist
       await db.query(`
-        CREATE TABLE IF NOT EXISTS table_status (
-          table_id VARCHAR(20) PRIMARY KEY,
-          status VARCHAR(50) DEFAULT 'open',
-          last_update TIMESTAMP DEFAULT NOW()
-        );
-      `);
+        CREATE TABLE IF NOT EXISTS table_status(
+  table_id VARCHAR(20) PRIMARY KEY,
+  status VARCHAR(50) DEFAULT 'open',
+  last_update TIMESTAMP DEFAULT NOW()
+);
+`);
 
       console.log('POS tables created/verified successfully');
     } catch (e: any) {
@@ -1673,134 +1697,134 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const ensureVendorTables = async () => {
     try {
       // Create vendors table
-      await db.query(`CREATE TABLE IF NOT EXISTS vendors (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        contact_person TEXT,
-        phone TEXT,
-        email TEXT,
-        address TEXT,
-        tax_id TEXT,
-        payment_terms TEXT DEFAULT 'Net 30',
-        credit_limit REAL DEFAULT 0,
-        current_balance REAL DEFAULT 0,
-        status TEXT DEFAULT 'active',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )`);
+      await db.query(`CREATE TABLE IF NOT EXISTS vendors(
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  contact_person TEXT,
+  phone TEXT,
+  email TEXT,
+  address TEXT,
+  tax_id TEXT,
+  payment_terms TEXT DEFAULT 'Net 30',
+  credit_limit REAL DEFAULT 0,
+  current_balance REAL DEFAULT 0,
+  status TEXT DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`);
 
       // Add contact_person column to vendors if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS contact_person TEXT;`);
+        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS contact_person TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add phone column to vendors if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS phone TEXT;`);
+        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS phone TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add email column to vendors if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS email TEXT;`);
+        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS email TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add address column to vendors if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS address TEXT;`);
+        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS address TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add tax_id column to vendors if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS tax_id TEXT;`);
+        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS tax_id TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add payment_terms column to vendors if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS payment_terms TEXT DEFAULT 'Net 30';`);
+        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS payment_terms TEXT DEFAULT 'Net 30'; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add credit_limit column to vendors if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS credit_limit REAL DEFAULT 0;`);
+        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS credit_limit REAL DEFAULT 0; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add current_balance column to vendors if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS current_balance REAL DEFAULT 0;`);
+        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS current_balance REAL DEFAULT 0; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add status column to vendors if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';`);
+        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add created_at column to vendors if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add updated_at column to vendors if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await db.query(`ALTER TABLE vendors ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Create vendor expenses table
-      await db.query(`CREATE TABLE IF NOT EXISTS vendor_expenses (
-        id TEXT PRIMARY KEY,
-        vendor_id TEXT NOT NULL,
-        description TEXT NOT NULL,
-        quantity INTEGER DEFAULT 1,
-        unit_cost REAL NOT NULL,
-        total_cost REAL GENERATED ALWAYS AS (quantity * unit_cost) STORED,
-        tax_amount REAL DEFAULT 0,
-        tax_rate REAL DEFAULT 0,
-        tax_inclusive BOOLEAN DEFAULT FALSE,
-        expense_date DATE NOT NULL,
-        reference_number TEXT,
-        category TEXT,
-        department TEXT,
-        status TEXT DEFAULT 'pending',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
-      )`);
+      await db.query(`CREATE TABLE IF NOT EXISTS vendor_expenses(
+  id TEXT PRIMARY KEY,
+  vendor_id TEXT NOT NULL,
+  description TEXT NOT NULL,
+  quantity INTEGER DEFAULT 1,
+  unit_cost REAL NOT NULL,
+  total_cost REAL GENERATED ALWAYS AS(quantity * unit_cost) STORED,
+  tax_amount REAL DEFAULT 0,
+  tax_rate REAL DEFAULT 0,
+  tax_inclusive BOOLEAN DEFAULT FALSE,
+  expense_date DATE NOT NULL,
+  reference_number TEXT,
+  category TEXT,
+  department TEXT,
+  status TEXT DEFAULT 'pending',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
+)`);
 
       // Create vendor payments table
-      await db.query(`CREATE TABLE IF NOT EXISTS vendor_payments (
-        id TEXT PRIMARY KEY,
-        vendor_id TEXT NOT NULL,
-        expense_ids TEXT, -- Comma-separated expense IDs
+      await db.query(`CREATE TABLE IF NOT EXISTS vendor_payments(
+  id TEXT PRIMARY KEY,
+  vendor_id TEXT NOT NULL,
+  expense_ids TEXT, --Comma - separated expense IDs
         amount_paid REAL NOT NULL,
-        payment_date DATE NOT NULL,
-        payment_method TEXT,
-        reference_number TEXT,
-        notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
-      )`);
+  payment_date DATE NOT NULL,
+  payment_method TEXT,
+  reference_number TEXT,
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
+)`);
 
       // Add updated_at trigger for vendors table if not exists
       try {
@@ -1808,16 +1832,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!('error' in vendorTriggerCheck) && 'rows' in vendorTriggerCheck && (vendorTriggerCheck.rows || []).length === 0) {
           await db.query(`CREATE OR REPLACE FUNCTION update_updated_at_column()
             RETURNS TRIGGER AS $$
-            BEGIN
-              NEW.updated_at = CURRENT_TIMESTAMP;
+BEGIN
+NEW.updated_at = CURRENT_TIMESTAMP;
               RETURN NEW;
-            END;
+END;
             $$ language 'plpgsql';
           
             CREATE TRIGGER vendors_updated_at_trigger
               BEFORE UPDATE ON vendors
               FOR EACH ROW
-              EXECUTE FUNCTION update_updated_at_column();`);
+              EXECUTE FUNCTION update_updated_at_column(); `);
         }
       } catch (e) {
         // Trigger may already exist, which is fine
@@ -1830,7 +1854,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await db.query(`CREATE TRIGGER vendor_expenses_updated_at_trigger
             BEFORE UPDATE ON vendor_expenses
             FOR EACH ROW
-            EXECUTE FUNCTION update_updated_at_column();`);
+            EXECUTE FUNCTION update_updated_at_column(); `);
         }
       } catch (e) {
         // Trigger may already exist, which is fine
@@ -1843,7 +1867,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await db.query(`CREATE TRIGGER vendor_payments_updated_at_trigger
             BEFORE UPDATE ON vendor_payments
             FOR EACH ROW
-            EXECUTE FUNCTION update_updated_at_column();`);
+            EXECUTE FUNCTION update_updated_at_column(); `);
         }
       } catch (e) {
         // Trigger may already exist, which is fine
@@ -1851,91 +1875,91 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Add department column to vendor_expenses if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS department TEXT;`);
+        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS department TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add category column to vendor_expenses if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS category TEXT;`);
+        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS category TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add vendor_id column to vendor_payments if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS vendor_id TEXT NOT NULL;`);
+        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS vendor_id TEXT NOT NULL; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add expense_ids column to vendor_payments if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS expense_ids TEXT;`);
+        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS expense_ids TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add amount_paid column to vendor_payments if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS amount_paid REAL NOT NULL;`);
+        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS amount_paid REAL NOT NULL; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add payment_date column to vendor_payments if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS payment_date DATE NOT NULL;`);
+        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS payment_date DATE NOT NULL; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add payment_method column to vendor_payments if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS payment_method TEXT;`);
+        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS payment_method TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add reference_number column to vendor_payments if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS reference_number TEXT;`);
+        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS reference_number TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add notes column to vendor_payments if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS notes TEXT;`);
+        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS notes TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add created_at column to vendor_expenses if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add updated_at column to vendor_expenses if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add created_at column to vendor_payments if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add updated_at column to vendor_payments if it doesn't exist
       try {
-        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
@@ -1946,15 +1970,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const fkCheck = await db.query(`
           SELECT conname 
           FROM pg_constraint 
-          WHERE conrelid = 'vendor_payments'::regclass 
+          WHERE conrelid = 'vendor_payments':: regclass 
           AND contype = 'f' 
-          AND confrelid = 'vendors'::regclass
+          AND confrelid = 'vendors':: regclass
         `);
 
         if (('rows' in fkCheck) && (!fkCheck.rows || fkCheck.rows.length === 0)) {
           // Add foreign key constraint if it doesn't exist
           try {
-            await db.query(`ALTER TABLE vendor_payments ADD CONSTRAINT fk_vendor_payments_vendor_id FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE;`);
+            await db.query(`ALTER TABLE vendor_payments ADD CONSTRAINT fk_vendor_payments_vendor_id FOREIGN KEY(vendor_id) REFERENCES vendors(id) ON DELETE CASCADE; `);
           } catch (e) {
             // Foreign key may already exist, which is fine
           }
@@ -1995,7 +2019,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if ('error' in retryResult) {
           console.error('Load vendors failed after retry:', retryResult.error);
           const dbError = (retryResult as any).error?.message || (retryResult as any).error || 'Unknown Error';
-          toast({ title: 'Database Read Failed', description: `Could not load vendors: ${dbError}`, variant: 'destructive' });
+          toast({ title: 'Database Read Failed', description: `Could not load vendors: ${dbError} `, variant: 'destructive' });
           return;
         }
 
@@ -2005,7 +2029,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (e: any) {
       console.error('Load vendors error:', e?.message || e);
-      toast({ title: 'Database Read Failed', description: `Could not load vendors: ${e?.message || e}`, variant: 'destructive' });
+      toast({ title: 'Database Read Failed', description: `Could not load vendors: ${e?.message || e} `, variant: 'destructive' });
     }
   };
 
@@ -2031,7 +2055,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (expenses.length > 0) {
         const vendorIds = [...new Set(expenses.map(expense => expense.vendor_id))];
         if (vendorIds.length > 0) {
-          const vendorNamesQuery = `SELECT id, name FROM vendors WHERE id IN (${vendorIds.map(() => '?').join(',')})`;
+          const vendorNamesQuery = `SELECT id, name FROM vendors WHERE id IN(${vendorIds.map(() => '?').join(',')})`;
           const vendorsResult = await db.query(vendorNamesQuery, vendorIds);
 
           if (!('error' in vendorsResult)) {
@@ -2077,7 +2101,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (payments.length > 0) {
         const vendorIds = [...new Set(payments.map(payment => payment.vendor_id))];
         if (vendorIds.length > 0) {
-          const vendorNamesQuery = `SELECT id, name FROM vendors WHERE id IN (${vendorIds.map(() => '?').join(',')})`;
+          const vendorNamesQuery = `SELECT id, name FROM vendors WHERE id IN(${vendorIds.map(() => '?').join(',')})`;
           const vendorsResult = await db.query(vendorNamesQuery, vendorIds);
 
           if (!('error' in vendorsResult)) {
@@ -2104,11 +2128,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // VENDORS - Add a new vendor
   const addVendor = async (vendorData: any): Promise<boolean> => {
     try {
-      const vendorId = `VND${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const vendorId = `VND${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
-      const sql = `INSERT INTO vendors (
-        id, name, contact_person, phone, email, address, tax_id, payment_terms, credit_limit, current_balance, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
+      const sql = `INSERT INTO vendors(
+  id, name, contact_person, phone, email, address, tax_id, payment_terms, credit_limit, current_balance, status, created_at, updated_at
+) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
 
       const params = [
         vendorId,
@@ -2144,10 +2168,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // VENDORS - Update a vendor
   const updateVendor = async (vendorId: string, vendorData: any): Promise<boolean> => {
     try {
-      const sql = `UPDATE vendors SET 
-        name = ?, contact_person = ?, phone = ?, email = ?, address = ?, tax_id = ?, 
-        payment_terms = ?, credit_limit = ?, current_balance = ?, status = ?, updated_at = NOW()
-        WHERE id = ?`;
+      const sql = `UPDATE vendors SET
+name = ?, contact_person = ?, phone = ?, email = ?, address = ?, tax_id = ?,
+  payment_terms = ?, credit_limit = ?, current_balance = ?, status = ?, updated_at = NOW()
+        WHERE id = ? `;
 
       const params = [
         vendorData.name,
@@ -2183,7 +2207,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // VENDORS - Delete a vendor
   const deleteVendor = async (vendorId: string): Promise<boolean> => {
     try {
-      const sql = `DELETE FROM vendors WHERE id = ?`;
+      const sql = `DELETE FROM vendors WHERE id = ? `;
       const result = await db.query(sql, [vendorId]);
       if ('error' in result) {
         console.error('Vendor delete failed:', result.error);
@@ -2204,11 +2228,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // VENDORS - Add a new expense
   const addVendorExpense = async (expenseData: any): Promise<boolean> => {
     try {
-      const expenseId = `EXP${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const expenseId = `EXP${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
-      const sql = `INSERT INTO vendor_expenses (
-        id, vendor_id, description, quantity, unit_cost, tax_amount, tax_rate, tax_inclusive, expense_date, reference_number, category, department, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
+      const sql = `INSERT INTO vendor_expenses(
+    id, vendor_id, description, quantity, unit_cost, tax_amount, tax_rate, tax_inclusive, expense_date, reference_number, category, department, status, created_at, updated_at
+  ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
 
       const quantity = parseInt(expenseData.quantity) || 1;
       const unitCost = parseFloat(expenseData.unit_cost) || 0;
@@ -2251,12 +2275,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           || '2000';
 
         gl.appendLedger({
-          id: `GL_${expenseId}`,
+          id: `GL_${expenseId} `,
           date: expenseData.expense_date || new Date().toISOString().split('T')[0],
-          reference: `Vendor Expense: ${expenseData.description || ''}`.slice(0, 100),
+          reference: `Vendor Expense: ${expenseData.description || ''} `.slice(0, 100),
           lines: [
             { accountId: expAccId, description: expenseData.description || 'Vendor expense', debit: totalCost, credit: 0 },
-            { accountId: apAccId, description: `AP - ${expenseData.vendor_id || 'Vendor'}`, debit: 0, credit: totalCost }
+            { accountId: apAccId, description: `AP - ${expenseData.vendor_id || 'Vendor'} `, debit: 0, credit: totalCost }
           ]
         });
       } catch (glErr) {
@@ -2279,10 +2303,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // VENDORS - Update an expense
   const updateVendorExpense = async (expenseId: string, expenseData: any): Promise<boolean> => {
     try {
-      const sql = `UPDATE vendor_expenses SET 
-        vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax_rate = ?, tax_inclusive = ?, 
-        expense_date = ?, reference_number = ?, category = ?, department = ?, status = ?, updated_at = NOW()
-        WHERE id = ?`;
+      const sql = `UPDATE vendor_expenses SET
+vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax_rate = ?, tax_inclusive = ?,
+  expense_date = ?, reference_number = ?, category = ?, department = ?, status = ?, updated_at = NOW()
+        WHERE id = ? `;
 
       const params = [
         expenseData.vendor_id,
@@ -2323,7 +2347,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // VENDORS - Delete an expense
   const deleteVendorExpense = async (expenseId: string): Promise<boolean> => {
     try {
-      const sql = `DELETE FROM vendor_expenses WHERE id = ?`;
+      const sql = `DELETE FROM vendor_expenses WHERE id = ? `;
       const result = await db.query(sql, [expenseId]);
       if ('error' in result) {
         console.error('Vendor expense delete failed:', result.error);
@@ -2347,11 +2371,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // VENDORS - Process a vendor payment
   const payVendor = async (paymentData: any): Promise<boolean> => {
     try {
-      const paymentId = `VPAY${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const paymentId = `VPAY${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
-      const sql = `INSERT INTO vendor_payments (
-        id, vendor_id, expense_ids, amount_paid, payment_date, payment_method, reference_number, notes, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
+      const sql = `INSERT INTO vendor_payments(
+    id, vendor_id, expense_ids, amount_paid, payment_date, payment_method, reference_number, notes, created_at, updated_at
+  ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
 
       const params = [
         paymentId,
@@ -2375,7 +2399,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (paymentData.expense_ids) {
         const expenseIds = paymentData.expense_ids.split(',').map((id: string) => id.trim());
         const placeholders = expenseIds.map(() => '?').join(',');
-        await db.query(`UPDATE vendor_expenses SET status = 'paid' WHERE id IN (${placeholders})`, expenseIds);
+        await db.query(`UPDATE vendor_expenses SET status = 'paid' WHERE id IN(${placeholders})`, expenseIds);
       }
 
       // Reload vendor payments and expenses
@@ -2394,26 +2418,26 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const ensureUserTables = async () => {
     try {
       // Create users table
-      await db.query(`CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        username TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        email TEXT UNIQUE,
-        role TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )`);
+      await db.query(`CREATE TABLE IF NOT EXISTS users(
+    id TEXT PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    email TEXT UNIQUE,
+    role TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
 
       // Add email column if it doesn't exist
       try {
-        await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;`);
+        await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
 
       // Add updated_at column if it doesn't exist
       try {
-        await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`);
+        await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
       } catch (e) {
         // Column may already exist, which is fine
       }
@@ -2428,15 +2452,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // USER MANAGEMENT - Add a new user
   const addUser = async (userData: any): Promise<boolean> => {
     try {
-      const userId = `USR${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const userId = `USR${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
       // Hash the password (in a real app, use bcrypt or similar)
       // For now, we'll store the password as-is for simplicity
       const hashedPassword = userData.password; // In real app, hash this
 
-      const sql = `INSERT INTO users (
-        id, username, password_hash, email, role, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, NOW(), NOW())`;
+      const sql = `INSERT INTO users(
+    id, username, password_hash, email, role, created_at, updated_at
+  ) VALUES(?, ?, ?, ?, ?, NOW(), NOW())`;
 
       const params = [
         userId,

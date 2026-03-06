@@ -1135,9 +1135,14 @@ export const FrontOffice: React.FC = () => {
                           <TableCell className="font-bold">{roomNumber}</TableCell>
                           <TableCell>
                             <div className="font-medium">{res.guestName}</div>
-                          </TableCell>
-                          <TableCell>{format(new Date(res.checkOut), 'MMM d, yyyy')}</TableCell>
-                          <TableCell className="text-green-600">
+                            <TableCell>
+                              {(() => {
+                                try {
+                                  const d = new Date(res.checkOut);
+                                  return isNaN(d.getTime()) ? '-' : format(d, 'MMM d, yyyy');
+                                } catch { return '-'; }
+                              })()}
+                            </TableCell>
                             ${(res.rate || 0).toFixed(2)}
                           </TableCell>
                           <TableCell><Badge variant="secondary">{getResPackage(res)}</Badge></TableCell>
@@ -1197,7 +1202,14 @@ export const FrontOffice: React.FC = () => {
                         <TableRow key={res.id}>
                           <TableCell className="font-medium">{res.guestName}</TableCell>
                           <TableCell>{roomNumber}</TableCell>
-                          <TableCell>{format(new Date(res.checkOut), 'MMM d, yyyy')}</TableCell>
+                          <TableCell>
+                            {(() => {
+                              try {
+                                const d = new Date(res.checkOut);
+                                return isNaN(d.getTime()) ? '-' : format(d, 'MMM d, yyyy');
+                              } catch { return '-'; }
+                            })()}
+                          </TableCell>
                           <TableCell className="text-green-600">
                             ${(res.rate || 0).toFixed(2)}
                           </TableCell>
@@ -1243,7 +1255,14 @@ export const FrontOffice: React.FC = () => {
                           <TableCell>{g?.name || c.guestId}</TableCell>
                           <TableCell>${c.amount.toFixed(2)}</TableCell>
                           <TableCell>{c.code || '-'}</TableCell>
-                          <TableCell>{format(new Date(c.date), 'MMM d, yyyy')}</TableCell>
+                          <TableCell>
+                            {(() => {
+                              try {
+                                const d = new Date(c.date);
+                                return isNaN(d.getTime()) ? '-' : format(d, 'MMM d, yyyy');
+                              } catch { return '-'; }
+                            })()}
+                          </TableCell>
                         </TableRow>
                       );
                     })
@@ -1886,8 +1905,22 @@ export const FrontOffice: React.FC = () => {
                       </td>
                       <td>{res.roomType}</td>
                       <td className="text-center font-medium">{getRoomAssignment(res)}</td>
-                      <td className="text-center">{format(new Date(res.checkIn), 'MMM d')}</td>
-                      <td className="text-center">{format(new Date(res.checkOut), 'MMM d')}</td>
+                      <td className="text-center">
+                        {(() => {
+                          try {
+                            const d = new Date(res.checkIn);
+                            return isNaN(d.getTime()) ? '-' : format(d, 'MMM d');
+                          } catch { return '-'; }
+                        })()}
+                      </td>
+                      <td className="text-center">
+                        {(() => {
+                          try {
+                            const d = new Date(res.checkOut);
+                            return isNaN(d.getTime()) ? '-' : format(d, 'MMM d');
+                          } catch { return '-'; }
+                        })()}
+                      </td>
                       <td className="text-center">{nights}</td>
                       <td className="text-center">
                         {res.adults || 1}{res.children ? `+${res.children}` : ''}

@@ -54,20 +54,26 @@ export const POSFrontOffice: React.FC = () => {
       const entry = { step, error: String((error && (error.message || error)) || 'Unknown'), ctx, at: new Date().toISOString() };
       const raw = localStorage.getItem('corepms_payment_errors');
       const list = raw ? JSON.parse(raw) : [];
-      localStorage.setItem('corepms_payment_errors', JSON.stringify([entry, ...list].slice(0,500)));
-    } catch {}
+      localStorage.setItem('corepms_payment_errors', JSON.stringify([entry, ...list].slice(0, 500)));
+    } catch { }
   };
 
-  // Fix the menuItems type mismatch by making image optional
   const [menuItems, setMenuItems] = useState<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; image?: string }>>([]);
   useEffect(() => {
     const refresh = async () => {
-      try { 
-        const list = await getMenuItems(); 
+      try {
+        const list = await getMenuItems();
         // Add empty image property to ensure type compatibility
         const safeList = Array.isArray(list) ? list : [];
+        console.log("[POS Items Debug - Retrieved]", safeList.length, "items");
+        if (safeList.length > 0) {
+          console.log("[POS Items Debug - Example]", safeList[0]);
+          const barItems = safeList.filter((i: any) => i.category === 'bar');
+          console.log("[POS Items Debug - Bar Count]", barItems.length);
+          console.log("[POS Items Debug - Sample Bar Items]", barItems.slice(0, 5));
+        }
         const listWithImages = safeList.map((item: any) => ({ ...item, image: item.image || '' }));
-        setMenuItems(listWithImages); 
+        setMenuItems(listWithImages);
       } catch (err) { console.error('Menu refresh failed', err); }
     };
     // Initial and periodic refresh (every 60s) to meet 5-minute SLA comfortably
@@ -97,25 +103,25 @@ export const POSFrontOffice: React.FC = () => {
         if (s.sortDir) setSortDir(s.sortDir);
         if (s.pageSize) setPageSize(s.pageSize);
       }
-    } catch {}
+    } catch { }
   }, []);
 
   useEffect(() => {
     try {
       const payload = { search, statusFilter, sortKey, sortDir, pageSize };
       localStorage.setItem('corepms_pos_table_controls', JSON.stringify(payload));
-    } catch {}
+    } catch { }
   }, [search, statusFilter, sortKey, sortDir, pageSize]);
 
   // Persist and restore table states (run after database init)
   useEffect(() => {
     // Only restore if we're not still loading from database
     if (typeof mountLoading !== 'undefined' && mountLoading) return;
-    
+
     try {
       const raw = localStorage.getItem('corepms_pos_table_states');
       const savedStates = raw ? JSON.parse(raw) : {};
-      
+
       setTables(prev => {
         const safePrev = Array.isArray(prev) ? prev : [];
         return safePrev.map(table => {
@@ -125,9 +131,9 @@ export const POSFrontOffice: React.FC = () => {
           if (saved) {
             // Only restore if the saved state is more recent or if database didn't set it to occupied
             // This prevents database initialization from overriding manually cleared tables
-            const shouldRestore = saved.status === 'available' || 
-                                 (saved.status === 'occupied' && saved.currentBill);
-            
+            const shouldRestore = saved.status === 'available' ||
+              (saved.status === 'occupied' && saved.currentBill);
+
             if (shouldRestore) {
               nextTable = {
                 ...table,
@@ -136,7 +142,7 @@ export const POSFrontOffice: React.FC = () => {
               };
             }
           }
-          
+
           // Fix for Table State Anomaly:
           // If table is occupied but has no active bill, reset to available.
           if (nextTable.status === 'occupied' && !nextTable.currentBill) {
@@ -145,11 +151,11 @@ export const POSFrontOffice: React.FC = () => {
             // Ensure DB is consistent
             updateTableStatus(table.id, 'available');
           }
-          
+
           return nextTable;
         });
       });
-    } catch {}
+    } catch { }
   }, [mountLoading]);
 
   // Persist table states whenever they change
@@ -164,7 +170,7 @@ export const POSFrontOffice: React.FC = () => {
         return acc;
       }, {} as Record<string, any>);
       localStorage.setItem('corepms_pos_table_states', JSON.stringify(tableStates));
-    } catch {}
+    } catch { }
   }, [tables]);
 
   const receiptSettings = readReceiptBranding();
@@ -221,7 +227,7 @@ export const POSFrontOffice: React.FC = () => {
               statusMap[r.table_id] = 'suspended';
             }
           });
-          
+
           setTables(prev => {
             const safePrev = Array.isArray(prev) ? prev : [];
             return safePrev.map(t => {
@@ -252,7 +258,7 @@ export const POSFrontOffice: React.FC = () => {
         `,
         [tableId, mapped]
       );
-    } catch {}
+    } catch { }
   }, []);
 
   const handleTableClick = useCallback((tableId: string) => {
@@ -289,7 +295,7 @@ export const POSFrontOffice: React.FC = () => {
     });
     // Audit
     const entry = createAuditEntry('CLEAR_BILL', 'TABLE', tableId, 'server-1');
-    try { const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([entry, ...list].slice(0, 50))); } catch {}
+    try { const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([entry, ...list].slice(0, 50))); } catch { }
     updateTableStatus(tableId, 'available');
   }, [closePosOrder, updateTableStatus]);
 
@@ -390,7 +396,7 @@ export const POSFrontOffice: React.FC = () => {
     try {
       const entry = createAuditEntry('TRANSFER_BILL', 'TABLE', sourceId, 'server-1', { to: destId });
       const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([entry, ...list].slice(0, 50)));
-    } catch {}
+    } catch { }
     updateTableStatus(sourceId, 'available');
     updateTableStatus(destId, 'occupied');
   }, []);
@@ -411,7 +417,7 @@ export const POSFrontOffice: React.FC = () => {
       return safePrev.map(t => selectedIds.includes(t.id) ? { ...t, status: 'suspended' } : t);
     });
     const entries = selectedIds.map(id => createAuditEntry('SUSPEND_TABLE', 'TABLE', id, 'server-1'));
-    try { const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([...entries, ...list].slice(0, 50))); } catch {}
+    try { const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([...entries, ...list].slice(0, 50))); } catch { }
     setSelectedIds([]);
   }, [selectedIds]);
 
@@ -421,7 +427,7 @@ export const POSFrontOffice: React.FC = () => {
       return safePrev.map(t => selectedIds.includes(t.id) ? { ...t, status: 'available' } : t);
     });
     const entries = selectedIds.map(id => createAuditEntry('RESUME_TABLE', 'TABLE', id, 'server-1'));
-    try { const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([...entries, ...list].slice(0, 50))); } catch {}
+    try { const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([...entries, ...list].slice(0, 50))); } catch { }
     setSelectedIds([]);
   }, [selectedIds]);
 
@@ -431,7 +437,7 @@ export const POSFrontOffice: React.FC = () => {
       return safePrev.map(t => selectedIds.includes(t.id) ? { ...t, currentBill: undefined, status: 'available' } : t);
     });
     const entries = selectedIds.map(id => createAuditEntry('CLEAR_BILL', 'TABLE', id, 'server-1'));
-    try { const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([...entries, ...list].slice(0, 50))); } catch {}
+    try { const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([...entries, ...list].slice(0, 50))); } catch { }
     setSelectedIds([]);
   }, [selectedIds]);
 
@@ -457,7 +463,7 @@ export const POSFrontOffice: React.FC = () => {
   const saveOrder = async (bill: any) => {
     const safeTables = Array.isArray(tables) ? tables : [];
     const prev = safeTables;
-    const next = safeTables.map(t => 
+    const next = safeTables.map(t =>
       t.id === bill.tableId ? { ...t, status: 'occupied' as const, currentBill: bill } : t
     );
     setTables(next);
@@ -528,7 +534,7 @@ export const POSFrontOffice: React.FC = () => {
       await closePosOrder(bill.tableId);
     }
 
-    setTables(prev => prev.map(t => 
+    setTables(prev => prev.map(t =>
       t.id === bill.tableId ? { ...t, status: 'available', currentBill: undefined } : t
     ));
     // Update database status (legacy fallback)
@@ -541,7 +547,7 @@ export const POSFrontOffice: React.FC = () => {
       const raw = localStorage.getItem('corepms_closed_bills'); const list = raw ? JSON.parse(raw) : [];
       localStorage.setItem('corepms_closed_bills', JSON.stringify([record, ...list].filter(r => {
         const age = Date.now() - new Date(r.closedAt).getTime();
-        return age < 24*60*60*1000;
+        return age < 24 * 60 * 60 * 1000;
       }).slice(0, 500)));
     } catch (err) { logPaymentError('closed_bill_log', err, { billId: bill.id }); }
 
@@ -551,7 +557,7 @@ export const POSFrontOffice: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
-      
+
       <div className="p-6">
         {(isLoading || mountLoading) && (
           <div className="bg-white rounded-xl shadow p-6 text-center text-gray-600">Loading...</div>
@@ -594,31 +600,31 @@ export const POSFrontOffice: React.FC = () => {
               </Button>
             </div>
             <div className="flex items-center gap-3">
-               <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
-                 <SelectTrigger className="w-28">
-                   <SelectValue placeholder="Page size" />
-                 </SelectTrigger>
-                 <SelectContent>
-                   <SelectItem value="6">6</SelectItem>
-                   <SelectItem value="12">12</SelectItem>
-                   <SelectItem value="18">18</SelectItem>
-                   <SelectItem value="24">24</SelectItem>
-                 </SelectContent>
-               </Select>
-               <div className="text-sm text-gray-600">Page {page} / {totalPages}</div>
-               <div className="flex gap-2">
-                 <Button variant="outline" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</Button>
-                 <Button variant="outline" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</Button>
-               </div>
-               {/* Bulk actions */}
-               <div className="flex gap-2">
-                 <Button variant="outline" onClick={selectAllVisible}>Select All</Button>
-                 <Button variant="outline" onClick={deselectAll}>Deselect</Button>
-                 <Button variant="secondary" onClick={bulkSuspend} disabled={!selectedIds.length}>Suspend</Button>
-                 <Button variant="secondary" onClick={bulkResume} disabled={!selectedIds.length}>Resume</Button>
-                 <Button variant="destructive" onClick={bulkClear} disabled={!selectedIds.length}>Clear</Button>
-               </div>
-             </div>
+              <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+                <SelectTrigger className="w-28">
+                  <SelectValue placeholder="Page size" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="6">6</SelectItem>
+                  <SelectItem value="12">12</SelectItem>
+                  <SelectItem value="18">18</SelectItem>
+                  <SelectItem value="24">24</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="text-sm text-gray-600">Page {page} / {totalPages}</div>
+              <div className="flex gap-2">
+                <Button variant="outline" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</Button>
+                <Button variant="outline" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+              </div>
+              {/* Bulk actions */}
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={selectAllVisible}>Select All</Button>
+                <Button variant="outline" onClick={deselectAll}>Deselect</Button>
+                <Button variant="secondary" onClick={bulkSuspend} disabled={!selectedIds.length}>Suspend</Button>
+                <Button variant="secondary" onClick={bulkResume} disabled={!selectedIds.length}>Resume</Button>
+                <Button variant="destructive" onClick={bulkClear} disabled={!selectedIds.length}>Clear</Button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -626,9 +632,9 @@ export const POSFrontOffice: React.FC = () => {
           <div className="lg:col-span-2">
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4 md:gap-6">
               {(visibleTables || []).map(table => (
-                <TableCard 
-                  key={table.id} 
-                  table={table as any} 
+                <TableCard
+                  key={table.id}
+                  table={table as any}
                   onClick={() => handleTableClick(table.id)}
                   onToggleSuspend={() => toggleSuspend(table.id)}
                   onClearBill={() => clearBill(table.id)}
@@ -682,7 +688,7 @@ export const POSFrontOffice: React.FC = () => {
                   </div>
                   <div>
                     <Label>Reason</Label>
-                    <Select value={voidReason} onValueChange={(v)=> setVoidReason(v)}>
+                    <Select value={voidReason} onValueChange={(v) => setVoidReason(v)}>
                       <SelectTrigger className="mt-1">
                         <SelectValue placeholder="Select a reason" />
                       </SelectTrigger>
@@ -698,7 +704,7 @@ export const POSFrontOffice: React.FC = () => {
                   </div>
                   <div>
                     <Label>Manager ID</Label>
-                    <Input value={managerId} onChange={(e)=> setManagerId(e.target.value)} placeholder="e.g., MGR-001" />
+                    <Input value={managerId} onChange={(e) => setManagerId(e.target.value)} placeholder="e.g., MGR-001" />
                   </div>
                 </div>
                 <DialogFooter>
@@ -780,13 +786,13 @@ export const POSFrontOffice: React.FC = () => {
                     if (!currentBill) return;
                     const amount = Number((currentBill.total / splitCount).toFixed(2));
                     try {
-                      const payload = { billId: currentBill.id, splits: Array.from({ length: splitCount }).map((_, i) => ({ label: `Split ${i+1}`, amount })) };
+                      const payload = { billId: currentBill.id, splits: Array.from({ length: splitCount }).map((_, i) => ({ label: `Split ${i + 1}`, amount })) };
                       const raw = localStorage.getItem('corepms_pos_splits');
                       const list = raw ? JSON.parse(raw) : [];
                       localStorage.setItem('corepms_pos_splits', JSON.stringify([payload, ...list].slice(0, 50)));
                       const entry = createAuditEntry('SPLIT_BILL_PREP', 'BILL', currentBill.id, user?.id || 'server-1', payload);
-                      try { const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([entry, ...list].slice(0, 50))); } catch {}
-                    } catch {}
+                      try { const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([entry, ...list].slice(0, 50))); } catch { }
+                    } catch { }
                     setSplitOpen(false);
                   }}>Prepare</Button>
                 </DialogFooter>
@@ -821,8 +827,8 @@ export const POSFrontOffice: React.FC = () => {
       </div>
 
       {orderModal?.open && (
-        <OrderModal 
-          tableNumber={Number(orderModal.tableId.replace('t',''))}
+        <OrderModal
+          tableNumber={Number(orderModal.tableId.replace('t', ''))}
           bill={null}
           onClose={() => setOrderModal(null)}
           onSave={saveOrder}

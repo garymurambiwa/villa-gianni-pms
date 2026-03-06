@@ -32,7 +32,7 @@ export const transferService = {
                 `SELECT id, room_id, guest_id, folio_id FROM reservations WHERE id = ?`,
                 [reservationId]
             );
-            if (!resQuery.rows.length) return { ok: false, error: 'Reservation not found' };
+            if (!resQuery || !resQuery.rows || !resQuery.rows.length) return { ok: false, error: 'Reservation not found' };
             const reservation = resQuery.rows[0];
             const oldRoomId = reservation.room_id;
 
@@ -44,7 +44,7 @@ export const transferService = {
                 `SELECT id, number, status FROM rooms WHERE id = ?`,
                 [targetRoomId]
             );
-            if (!roomQuery.rows.length) return { ok: false, error: 'Target room not found' };
+            if (!roomQuery || !roomQuery.rows || !roomQuery.rows.length) return { ok: false, error: 'Target room not found' };
             const targetRoom = roomQuery.rows[0];
 
             // 3. Begin Transaction

@@ -1,3 +1,5 @@
+import { syncCategoryToDb, deleteCategoryFromDb, syncSubcategoryToDb, deleteSubcategoryFromDb } from './dbSync';
+
 export interface MenuCategory {
   category_id: string;
   category_name: string;
@@ -51,11 +53,19 @@ export const addCategory = (payload: Omit<MenuCategory, 'category_id'> & { categ
   const existIdx = list.findIndex(c => c.category_id === id);
   const next = existIdx >= 0 ? list.map(c => c.category_id === id ? row : c) : [row, ...list];
   writeJSON(K_CATEGORIES, next);
+  syncCategoryToDb(row).catch(err => console.error('[menuCats] DB sync failed:', err));
   return row;
 };
 
 export const setCategories = (rows: MenuCategory[]) => writeJSON(K_CATEGORIES, rows);
 export const getCategoryById = (id: string): MenuCategory | undefined => listCategories().find(c => c.category_id === id);
+
+export const deleteCategory = (category_id: string) => {
+  const list = readJSON<MenuCategory[]>(K_CATEGORIES, []);
+  const next = list.filter(c => c.category_id !== category_id);
+  writeJSON(K_CATEGORIES, next);
+  deleteCategoryFromDb(category_id).catch(err => console.error('[menuCats] DB delete failed:', err));
+};
 
 // SubCategories CRUD and tree helpers
 export const listSubcategories = (category_id?: string, parent_sub_id?: string): SubCategory[] => {
@@ -73,6 +83,7 @@ export const addSubcategory = (payload: Omit<SubCategory, 'sub_id'> & { sub_id?:
   const existIdx = list.findIndex(s => s.sub_id === id);
   const next = existIdx >= 0 ? list.map(s => s.sub_id === id ? row : s) : [row, ...list];
   writeJSON(K_SUBCATS, next);
+  syncSubcategoryToDb(row).catch(err => console.error('[menuCats] DB sync sub failed:', err));
   return row;
 };
 
@@ -80,6 +91,7 @@ export const updateSubcategory = (row: SubCategory) => {
   const list = readJSON<SubCategory[]>(K_SUBCATS, []);
   const next = list.map(s => s.sub_id === row.sub_id ? { ...s, ...row } : s);
   writeJSON(K_SUBCATS, next);
+  syncSubcategoryToDb(row).catch(err => console.error('[menuCats] DB sync sub failed:', err));
 };
 
 export const deleteSubcategory = (sub_id: string) => {
@@ -93,6 +105,9 @@ export const deleteSubcategory = (sub_id: string) => {
   addDesc(sub_id);
   const next = list.filter(s => !toDelete.has(s.sub_id));
   writeJSON(K_SUBCATS, next);
+  Array.from(toDelete).forEach(id => {
+    deleteSubcategoryFromDb(id).catch(err => console.error('[menuCats] DB delete sub failed:', err));
+  });
 };
 
 export const setSubcategories = (rows: SubCategory[]) => writeJSON(K_SUBCATS, rows);
@@ -114,6 +129,7 @@ export const listSubTreeByCategory = (category_id: string): SubTreeNode[] => {
 export default {
   listCategories,
   addCategory,
+  deleteCategory,
   setCategories,
   getCategoryById,
   // subcategories

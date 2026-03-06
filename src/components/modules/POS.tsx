@@ -28,9 +28,11 @@ export const POS: React.FC = () => {
     const items = (inventory || [])
       .filter((i: any) => i.selling_price && Number(i.selling_price) > 0)
       .map((i: any) => {
-        const typeLower = (i.type || i.category || '').toLowerCase();
-        // Relaxed category logic: if it contains 'bar', it's bar. Otherwise it's restaurant.
-        const category = (typeLower.includes('bar')) ? 'bar' : 'restaurant';
+        const rawCat = String(i.type || i.category || i.department || '').toLowerCase();
+        const costCenter = String(i.costCenter || '').toLowerCase();
+        // Relaxed category logic: rely on mapped costCenter or check broad bar terms
+        const isBar = costCenter === 'bar' || rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink');
+        const category = isBar ? 'bar' : 'restaurant';
         return {
           id: i.id,
           name: i.name,

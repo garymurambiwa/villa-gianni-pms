@@ -586,6 +586,125 @@ export async function performFullSync(): Promise<SyncResult> {
   }
 }
 
+// ============================================================================
+// CATEGORIES SYNC
+// ============================================================================
+
+export async function syncCategoryToDb(category: any): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+
+    const sql = `
+      INSERT INTO menu_categories (
+        category_id, category_name, department, sort_order, button_color, text_color, updated_at, inserted_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+      ON CONFLICT (category_id) DO UPDATE SET
+        category_name = EXCLUDED.category_name,
+        department = EXCLUDED.department,
+        sort_order = EXCLUDED.sort_order,
+        button_color = EXCLUDED.button_color,
+        text_color = EXCLUDED.text_color,
+        updated_at = NOW()
+    `;
+    const params = [
+      category.category_id, category.category_name, category.department,
+      category.sort_order || 0, category.buttonColor || null, category.textColor || null
+    ];
+    const res = await db.query(sql, params);
+    if ('error' in res) throw new Error((res as any).error);
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    console.error('[dbSync] Category sync error:', err);
+    return { success: false, error: String(err) };
+  }
+}
+
+export async function deleteCategoryFromDb(categoryId: string): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+    await db.query('DELETE FROM menu_categories WHERE category_id = $1', [categoryId]);
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    return { success: false, error: String(err) };
+  }
+}
+
+export async function syncSubcategoryToDb(sub: any): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+
+    const sql = `
+      INSERT INTO menu_subcategories (
+        sub_id, name, category_id, parent_sub_id, description, sort_order, updated_at, inserted_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+      ON CONFLICT (sub_id) DO UPDATE SET
+        name = EXCLUDED.name,
+        category_id = EXCLUDED.category_id,
+        parent_sub_id = EXCLUDED.parent_sub_id,
+        description = EXCLUDED.description,
+        sort_order = EXCLUDED.sort_order,
+        updated_at = NOW()
+    `;
+    const params = [
+      sub.sub_id, sub.name, sub.category_id, sub.parent_sub_id || null,
+      sub.description || null, sub.sort_order || 0
+    ];
+    const res = await db.query(sql, params);
+    if ('error' in res) throw new Error((res as any).error);
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    console.error('[dbSync] Subcategory sync error:', err);
+    return { success: false, error: String(err) };
+  }
+}
+
+export async function deleteSubcategoryFromDb(subId: string): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+    await db.query('DELETE FROM menu_subcategories WHERE sub_id = $1', [subId]);
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    return { success: false, error: String(err) };
+  }
+}
+
+export async function loadCategoriesFromDb(): Promise<{ categories: any[], subcategories: any[] }> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { categories: [], subcategories: [] };
+
+    const catRes = await db.query('SELECT * FROM menu_categories ORDER BY sort_order ASC, category_name ASC');
+    const subRes = await db.query('SELECT * FROM menu_subcategories ORDER BY sort_order ASC, name ASC');
+
+    const categories = 'rows' in catRes ? catRes.rows.map(r => ({
+      category_id: r.category_id,
+      category_name: r.category_name,
+      department: r.department,
+      sort_order: r.sort_order,
+      buttonColor: r.button_color,
+      textColor: r.text_color
+    })) : [];
+
+    const subcategories = 'rows' in subRes ? subRes.rows.map(r => ({
+      sub_id: r.sub_id,
+      name: r.name,
+      category_id: r.category_id,
+      parent_sub_id: r.parent_sub_id,
+      description: r.description,
+      sort_order: r.sort_order
+    })) : [];
+
+    return { categories, subcategories };
+  } catch (err) {
+    console.error('[dbSync] Load categories error:', err);
+    return { categories: [], subcategories: [] };
+  }
+}
+
 /**
  * Check if database tables exist and create them if needed
  * This ensures proper table structure before syncing
@@ -620,6 +739,34 @@ export async function ensureTablesExist(): Promise<boolean> {
         price NUMERIC(12,2) NOT NULL DEFAULT 0,
         inserted_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Create menu_categories table
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS menu_categories (
+        category_id VARCHAR(50) PRIMARY KEY,
+        category_name VARCHAR(100) NOT NULL,
+        department VARCHAR(50) NOT NULL,
+        sort_order INTEGER DEFAULT 0,
+        button_color VARCHAR(20),
+        text_color VARCHAR(20),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        inserted_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Create menu_subcategories table
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS menu_subcategories (
+        sub_id VARCHAR(50) PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        category_id VARCHAR(50),
+        parent_sub_id VARCHAR(50),
+        description TEXT,
+        sort_order INTEGER DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT NOW(),
+        inserted_at TIMESTAMP DEFAULT NOW()
       )
     `);
 

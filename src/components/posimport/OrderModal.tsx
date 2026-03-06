@@ -60,9 +60,17 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // REMOVED: useEffect that was overriding menuItems prop with stale localStorage data
-  // The dynamicMenu state is now correctly initialized from menuItems prop (lines 47-55)
-  // which contains database products with proper category_id mapping
+  // Sync dynamicMenu with menuItems prop when it changes (asynchronously via FrontOffice API)
+  useEffect(() => {
+    if (menuItems && menuItems.length > 0) {
+      setDynamicMenu(menuItems);
+    } else {
+      const fromStore = getMenuItemsFromPOSStore() as any[];
+      if (Array.isArray(fromStore) && fromStore.length > 0) {
+        setDynamicMenu(fromStore);
+      }
+    }
+  }, [menuItems]);
 
   // Build categories for current department and select first by default
   useEffect(() => {
@@ -152,9 +160,42 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const filteredMenu = filteredDept.filter(m => {
     if (!selectedCatId) return true;
     // Match either explicit category_id or fallback subCategory name
-    return (m.category_id && menuCats.getCategoryById(selectedCatId || '')?.category_id === m.category_id)
+    // If it's the general fallback category, allow items that don't have a specific category mapped
+    if (selectedCatId === 'CAT_BAR_GEN' && m.category === 'bar' && !m.subCategory && !m.category_id) return true;
+    if (selectedCatId === 'CAT_REST_GEN' && m.category === 'food' && !m.subCategory && !m.category_id) return true;
+
+    const currentDeptCats = menuCats.listCategories(activeCategory === 'bar' ? 'Bar' : 'Restaurant');
+    const firstCatId = currentDeptCats[0]?.category_id;
+
+    // Check if the item's mapped category or subcategory actually exists in the POS categories
+    const isOrphan = !currentDeptCats.some(cat =>
+      cat.category_id === m.category_id ||
+      cat.category_name === m.subCategory ||
+      cat.category_id === m.subCategory
+    );
+
+    // If it's an orphan (i.e. belongs to a deleted category like CAT_BAR_GEN), show it in the first tab
+    if (isOrphan && selectedCatId === firstCatId && m.category === activeCategory) {
+      return true;
+    }
+
+    const match = (m.category_id && menuCats.getCategoryById(selectedCatId || '')?.category_id === m.category_id)
       || (!!m.subCategory && menuCats.getCategoryById(selectedCatId || '')?.category_name === m.subCategory)
-      || (!!m.subCategory && selectedCatId === m.subCategory);
+      || (!!m.subCategory && selectedCatId === m.subCategory)
+      || (m.category_id === selectedCatId);
+
+    if (activeCategory === 'bar') {
+      console.log('[OrderModal Debug]', {
+        itemName: m.name,
+        itemCat: m.category,
+        itemSubCat: m.subCategory,
+        itemCatId: m.category_id,
+        selectedCatId,
+        match
+      });
+    }
+
+    return match;
   });
 
   const subFilteredMenu = (() => {
