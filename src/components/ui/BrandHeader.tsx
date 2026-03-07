@@ -74,7 +74,7 @@ const BrandHeader: React.FC = () => {
   const fontSize = `${settings.sizePx}px`;
   const responsiveSizeClass = 'text-2xl md:text-3xl';
 
-  const defaultLogo = `${import.meta.env.BASE_URL || '/'}logo.jpg`;
+  const defaultLogo = import.meta.env.VITE_HOTEL_LOGO_URL || `${import.meta.env.BASE_URL || '/'}logo.png`;
   const logoSrc = settings.logoDataUrl || defaultLogo;
   const isSvg = String(logoSrc).startsWith('data:image/svg') || String(logoSrc).endsWith('.svg');
 

@@ -44,7 +44,7 @@ export const Header: React.FC = () => {
   };
   type BrandSettings = { logoDataUrl?: string };
   const settings = readJSON<BrandSettings>('corepms_brand_settings', {} as BrandSettings);
-  const defaultLogo = '/logo.png';
+  const defaultLogo = import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png';
   const logoSrc = settings.logoDataUrl || defaultLogo;
 
   return (

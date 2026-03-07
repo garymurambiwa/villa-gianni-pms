@@ -70,12 +70,12 @@ export const readReceiptBranding = (): ReceiptBranding => {
 
   const defaults: ReceiptBranding = {
     restaurant_name: import.meta.env.VITE_HOTEL_NAME || 'Company Name',
-    address: '4 Saint Annes Road, Avondale',
-    phone: '+263 24 2335324, +263 24 2307355',
-    logo_url: '/logo.png',
+    address: import.meta.env.VITE_HOTEL_ADDRESS || '',
+    phone: import.meta.env.VITE_HOTEL_PHONE || '',
+    logo_url: import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png',
     show_logo: true,
-    footer_text: 'Charm and elegance with a homely feel...',
-    tax_rate: 14.5, // Standard VAT if applicable, or kept as 15 from before
+    footer_text: import.meta.env.VITE_HOTEL_RECEIPT_FOOTER || '',
+    tax_rate: 14.5,
     paper_size: '80mm'
   };
 

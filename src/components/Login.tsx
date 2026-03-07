@@ -86,7 +86,7 @@ export const Login: React.FC = () => {
       <div
         className="min-h-screen flex items-center justify-center p-4 relative"
         style={{
-          backgroundImage: 'url(https://d64gsuwffb70l.cloudfront.net/6902597c3f1b2e5af1fa50b6_1761984216938_8ca99844.webp)',
+          backgroundImage: `url(${import.meta.env.VITE_HOTEL_LOGIN_BG_URL || 'https://d64gsuwffb70l.cloudfront.net/6902597c3f1b2e5af1fa50b6_1761984216938_8ca99844.webp'})`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           backgroundRepeat: 'no-repeat'
@@ -95,7 +95,7 @@ export const Login: React.FC = () => {
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
         <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-8 w-full max-w-md border border-gray-200 relative z-10">
           <div className="text-center mb-8">
-            <img src="/logo.png" alt={import.meta.env.VITE_HOTEL_NAME || 'Hotel Logo'} className="h-32 mx-auto mb-6 object-contain" />
+            <img src={import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png'} alt={import.meta.env.VITE_HOTEL_NAME || 'Hotel Logo'} className="h-32 mx-auto mb-6 object-contain" />
             <h1 className="text-2xl font-bold text-gray-900 mb-2">{import.meta.env.VITE_HOTEL_NAME || 'Hotel Name'}</h1>
             <p className="text-gray-600 mb-2">Boutique Hotel</p>
           </div>
