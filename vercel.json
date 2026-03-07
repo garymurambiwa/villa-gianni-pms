@@ -2,20 +2,15 @@
     "version": 2,
     "buildCommand": "npm run build",
     "outputDirectory": "dist",
-    "installCommand": "npm install",
+    "installCommand": "npm install --production=false",
     "framework": null,
-    "functions": {
-        "server/index.cjs": {
-            "runtime": "nodejs20.x"
-        }
-    },
     "rewrites": [
         {
             "source": "/api/(.*)",
-            "destination": "/server/index.cjs"
+            "destination": "/api/db.cjs"
         },
         {
-            "source": "/((?!api/.*).*)",
+            "source": "/((?!api/).*)$",
             "destination": "/index.html"
         }
     ]
