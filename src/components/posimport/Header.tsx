@@ -60,7 +60,7 @@ export const Header: React.FC = () => {
                   ) : null}
                   <img
                     src={logoSrc}
-                    alt="Villa Gianni"
+                    alt={import.meta.env.VITE_HOTEL_NAME || 'Hotel Logo'}
                     className="w-[120px] sm:w-[150px] md:w-[180px] h-auto object-contain"
                     srcSet={`${logoSrc} 1x`}
                     loading="eager"

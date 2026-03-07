@@ -95,8 +95,8 @@ export const Login: React.FC = () => {
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
         <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-8 w-full max-w-md border border-gray-200 relative z-10">
           <div className="text-center mb-8">
-            <img src="/logo.png" alt="Villa Gianni" className="h-32 mx-auto mb-6 object-contain" />
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">Villa Gianni</h1>
+            <img src="/logo.png" alt={import.meta.env.VITE_HOTEL_NAME || 'Hotel Logo'} className="h-32 mx-auto mb-6 object-contain" />
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">{import.meta.env.VITE_HOTEL_NAME || 'Hotel Name'}</h1>
             <p className="text-gray-600 mb-2">Boutique Hotel</p>
           </div>
 

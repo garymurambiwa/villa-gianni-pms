@@ -69,7 +69,7 @@ export const readReceiptBranding = (): ReceiptBranding => {
   if (__brandCache) return __brandCache.value;
 
   const defaults: ReceiptBranding = {
-    restaurant_name: 'Villa Gianni',
+    restaurant_name: import.meta.env.VITE_HOTEL_NAME || 'Company Name',
     address: '4 Saint Annes Road, Avondale',
     phone: '+263 24 2335324, +263 24 2307355',
     logo_url: '/logo.png',

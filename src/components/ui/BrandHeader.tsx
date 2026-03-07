@@ -19,7 +19,7 @@ const readJSON = <T,>(key: string, fallback: T): T => {
 const writeJSON = (key: string, value: any) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { } };
 
 const DEFAULT: BrandSettings = {
-  name: 'Villa Gianni',
+  name: import.meta.env.VITE_HOTEL_NAME || 'Hotel Management',
   font: 'Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
   color: '#60a5fa', // text-blue-400
   sizePx: 24,
@@ -88,7 +88,7 @@ const BrandHeader: React.FC = () => {
             )}
             <img
               src={logoSrc.includes('logo.jpg') ? '/logo.png' : logoSrc} /* Prefer new PNG if default */
-              alt="Villa Gianni"
+              alt={settings.name || 'Hotel Logo'}
               className="w-[120px] sm:w-[150px] md:w-[180px] h-auto object-contain"
               loading="eager"
             />

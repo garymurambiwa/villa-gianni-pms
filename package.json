@@ -23,7 +23,8 @@
     "env:validate": "node scripts/env-validate.js",
     "preview": "vite preview",
     "icons:generate": "node scripts/generate-icons.cjs",
-    "cleanup:mock": "node scripts/cleanup-mock-data.js"
+    "cleanup:mock": "node scripts/cleanup-mock-data.js",
+    "db:init-new": "node scripts/init_new_hotel_db.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
