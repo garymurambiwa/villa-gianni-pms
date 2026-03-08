@@ -87,6 +87,13 @@ export const pmsAuthDb = {
       CREATE INDEX IF NOT EXISTS idx_login_attempts_user ON login_attempts(user_username);
       CREATE INDEX IF NOT EXISTS idx_login_attempts_ts ON login_attempts(ts);
     `;
+    const createAppSettings = `
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key VARCHAR(255) PRIMARY KEY,
+        value TEXT,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
     await db.exec(createUsers);
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT false`); } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT`); } catch { }
@@ -263,11 +270,44 @@ export const pmsAuthDb = {
     await db.exec(createInventoryMovements);
     await db.exec(createSuppliers);
     await db.exec(createTaxes);
+    await db.exec(createAppSettings);
   },
 
   async recordAccessAttempt(user_username: string, event: string, detail?: Record<string, any>) {
     const sql = `INSERT INTO access_logs (user_username, event, detail) VALUES (?, ?, ?)`;
     await db.query(sql, [user_username, event, detail ? JSON.stringify(detail) : null]);
+  },
+
+  async getAppSetting(key: string): Promise<string | null> {
+    try {
+      const res = await db.query<{ value: string }>(`SELECT value FROM app_settings WHERE key = ?`, [key]);
+      if ('error' in res || !res.rows || res.rows.length === 0) return null;
+      return res.rows[0].value;
+    } catch {
+      return null;
+    }
+  },
+
+  async setAppSetting(key: string, value: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const sql = `INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
+      const res = await db.query(sql, [key, value]);
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to set setting' };
+    }
+  },
+
+
+  async getAllAppSettings(): Promise<Record<string, string>> {
+    try {
+      const res = await db.query<{ key: string; value: string }>(`SELECT key, value FROM app_settings`);
+      if ('error' in res || !res.rows) return {};
+      return res.rows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {} as Record<string, string>);
+    } catch {
+      return {};
+    }
   },
 
   async listAccessLogs(filters?: { limit?: number; username?: string; event?: string; from?: string; to?: string }): Promise<AccessLog[]> {

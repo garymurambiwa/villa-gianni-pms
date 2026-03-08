@@ -14,6 +14,7 @@ import { Inventory } from './modules/Inventory';
 import { Reports } from './modules/Reports';
 import { Users } from './modules/Users';
 import VersionControl from './modules/VersionControl';
+import SystemSettings from './modules/SystemSettings';
 import ErrorBoundary from './ErrorBoundary';
 import LoadingSpinner from './ui/LoadingSpinner';
 import { Button } from './ui/button';
@@ -366,6 +367,15 @@ const AppLayout: React.FC = () => {
         return canManageStaff(user?.role)
           ? <Users />
           : renderAccessDenied('You do not have permission to access Users.', 'dashboard', 'Back to Dashboard');
+      }
+      case 'settings': {
+        return isAdmin(user?.role)
+          ? (
+            <ErrorBoundary fallbackTitle="System Settings Error" fallbackMessage="Please reload or contact support.">
+              <SystemSettings />
+            </ErrorBoundary>
+          )
+          : renderAccessDenied('You do not have permission to access System Settings.', 'dashboard', 'Back to Dashboard');
       }
       case 'versioncontrol': {
         return isAdmin(user?.role)

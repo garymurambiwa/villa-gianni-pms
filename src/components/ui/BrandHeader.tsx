@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { useSettings } from '@/hooks/useSettings';
 // Removed local Customize button; customization moves to FO Settings.
 
 type BrandSettings = {
@@ -61,6 +62,7 @@ const fileToDataUrl = (file: File): Promise<string | null> => {
 
 const BrandHeader: React.FC = () => {
   const { user } = useAuth();
+  const { settings: appSettings } = useSettings();
   const [settings, setSettings] = React.useState<BrandSettings>(() => readJSON<BrandSettings>(K_BRAND, DEFAULT));
   // Listen for updates from FO Settings to keep header in sync
   React.useEffect(() => {
@@ -75,7 +77,7 @@ const BrandHeader: React.FC = () => {
   const responsiveSizeClass = 'text-2xl md:text-3xl';
 
   const defaultLogo = import.meta.env.VITE_HOTEL_LOGO_URL || `${import.meta.env.BASE_URL || '/'}logo.png`;
-  const logoSrc = settings.logoDataUrl || defaultLogo;
+  const logoSrc = appSettings.logoUrl || settings.logoDataUrl || defaultLogo;
   const isSvg = String(logoSrc).startsWith('data:image/svg') || String(logoSrc).endsWith('.svg');
 
   return (
@@ -88,7 +90,7 @@ const BrandHeader: React.FC = () => {
             )}
             <img
               src={logoSrc.includes('logo.jpg') ? '/logo.png' : logoSrc} /* Prefer new PNG if default */
-              alt={settings.name || 'Hotel Logo'}
+              alt={appSettings.hotelName || settings.name || 'Hotel Logo'}
               className="w-[120px] sm:w-[150px] md:w-[180px] h-auto object-contain"
               loading="eager"
             />

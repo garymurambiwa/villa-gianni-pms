@@ -20,6 +20,7 @@ import { useEffect } from "react";
 import { toast } from "@/hooks/use-toast";
 import VersionDisplay from "@/components/ui/VersionDisplay";
 import { VirtualKeyboard } from "@/components/ui/VirtualKeyboard";
+import { SettingsProvider } from "@/hooks/useSettings";
 
 import { DEFAULT_ROOMS } from "@/data/defaultRooms";
 import { resetToDefaultRooms } from "@/lib/roomService";
@@ -52,6 +53,7 @@ const router = createHashRouter([
   { path: "/pos", element: <ModuleAlias module="pos" /> },
   { path: "/pos-settings", element: <ModuleAlias module="pos-settings" /> },
   { path: "/users", element: <ModuleAlias module="users" /> },
+  { path: "/settings", element: <ModuleAlias module="settings" /> },
   { path: "*", element: <NotFound /> },
 ])
 
@@ -61,20 +63,22 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <AppProvider>
-          <ErrorBoundary>
-            <RouterProvider router={router} future={{ v7_startTransition: true }} />
-            <div
-              className="fixed bottom-3 right-3 z-50"
-              role="contentinfo"
-            >
-              <div className="px-2.5 py-1.5 rounded-md shadow-sm border bg-white/90 dark:bg-gray-900/90 border-gray-200 dark:border-gray-700">
-                <VersionDisplay className="text-gray-700 dark:text-gray-200" />
+        <SettingsProvider>
+          <AppProvider>
+            <ErrorBoundary>
+              <RouterProvider router={router} future={{ v7_startTransition: true }} />
+              <div
+                className="fixed bottom-3 right-3 z-50"
+                role="contentinfo"
+              >
+                <div className="px-2.5 py-1.5 rounded-md shadow-sm border bg-white/90 dark:bg-gray-900/90 border-gray-200 dark:border-gray-700">
+                  <VersionDisplay className="text-gray-700 dark:text-gray-200" />
+                </div>
               </div>
-            </div>
-            <VirtualKeyboard />
-          </ErrorBoundary>
-        </AppProvider>
+              <VirtualKeyboard />
+            </ErrorBoundary>
+          </AppProvider>
+        </SettingsProvider>
       </TooltipProvider>
     </QueryClientProvider>
   </ThemeProvider>

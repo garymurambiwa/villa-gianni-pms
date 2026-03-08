@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { logger } from '@/lib/logger';
 import VersionDisplay from '@/components/ui/VersionDisplay';
+import { useSettings } from '@/hooks/useSettings';
 
 export const Login: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const { login } = useAuth();
+  const { settings: appSettings } = useSettings();
   const [loading, setLoading] = useState(false);
   const [dbModalOpen, setDbModalOpen] = useState(false);
   const [dbHost, setDbHost] = useState('192.168.100.18');
@@ -86,7 +88,7 @@ export const Login: React.FC = () => {
       <div
         className="min-h-screen flex items-center justify-center p-4 relative"
         style={{
-          backgroundImage: `url(${import.meta.env.VITE_HOTEL_LOGIN_BG_URL || 'https://d64gsuwffb70l.cloudfront.net/6902597c3f1b2e5af1fa50b6_1761984216938_8ca99844.webp'})`,
+          backgroundImage: `url(${appSettings.backgroundImageUrl || import.meta.env.VITE_HOTEL_LOGIN_BG_URL || 'https://d64gsuwffb70l.cloudfront.net/6902597c3f1b2e5af1fa50b6_1761984216938_8ca99844.webp'})`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           backgroundRepeat: 'no-repeat'
@@ -95,9 +97,9 @@ export const Login: React.FC = () => {
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
         <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-8 w-full max-w-md border border-gray-200 relative z-10">
           <div className="text-center mb-8">
-            <img src={import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png'} alt={import.meta.env.VITE_HOTEL_NAME || 'Hotel Logo'} className="h-32 mx-auto mb-6 object-contain" />
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">{import.meta.env.VITE_HOTEL_NAME || 'Hotel Name'}</h1>
-            <p className="text-gray-600 mb-2">Boutique Hotel</p>
+            <img src={appSettings.logoUrl || import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png'} alt={appSettings.hotelName || import.meta.env.VITE_HOTEL_NAME || 'Hotel Logo'} className="h-32 mx-auto mb-6 object-contain" />
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">{appSettings.hotelName || import.meta.env.VITE_HOTEL_NAME || 'Hotel Name'}</h1>
+            {appSettings.hotelTagline && <p className="text-gray-600 mb-2">{appSettings.hotelTagline}</p>}
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">

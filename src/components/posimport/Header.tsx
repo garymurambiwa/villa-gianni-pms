@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useShift } from '../../contexts/ShiftContext';
+import { useSettings } from '../../hooks/useSettings';
 import { Button } from '../ui/button';
 import { StartShiftModal } from './StartShiftModal';
 import { ShiftReportModal } from './ShiftReportModal';
@@ -11,6 +12,7 @@ import { canManagePOS } from '../../lib/permissions';
 
 export const Header: React.FC = () => {
   const { user, logout } = useAuth();
+  const { settings: appSettings } = useSettings();
   const { activeShift, generateXReading, getTotals } = useShift();
   const [showStartModal, setShowStartModal] = useState(false);
   const [showClosureModal, setShowClosureModal] = useState(false);
@@ -45,7 +47,7 @@ export const Header: React.FC = () => {
   type BrandSettings = { logoDataUrl?: string };
   const settings = readJSON<BrandSettings>('corepms_brand_settings', {} as BrandSettings);
   const defaultLogo = import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png';
-  const logoSrc = settings.logoDataUrl || defaultLogo;
+  const logoSrc = appSettings.logoUrl || settings.logoDataUrl || defaultLogo;
 
   return (
     <>
@@ -63,7 +65,7 @@ export const Header: React.FC = () => {
                   ) : null}
                   <img
                     src={logoSrc}
-                    alt={import.meta.env.VITE_HOTEL_NAME || 'Hotel Logo'}
+                    alt={appSettings.hotelName || import.meta.env.VITE_HOTEL_NAME || 'Hotel Logo'}
                     className="w-[120px] sm:w-[150px] md:w-[180px] h-auto object-contain"
                     srcSet={`${logoSrc} 1x`}
                     loading="eager"

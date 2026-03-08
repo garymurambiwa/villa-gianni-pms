@@ -134,6 +134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
     { id: 'fo-setting', name: 'FO Setting', icon: '⚙️', roles: ['admin', 'manager', 'frontdesk', 'auditor', 'posmanager', 'housekeeping', 'cashier', 'barman', 'supervisor'], section: 'Back Office' },
     { id: 'users', name: 'User Management', icon: '👥', roles: ['admin', 'supervisor'], section: 'Back Office' },
     { id: 'tasks', name: 'Tasks', icon: '✅', roles: ['admin', 'manager', 'frontdesk', 'auditor', 'posmanager', 'housekeeping', 'cashier', 'barman', 'supervisor'], section: 'Back Office' },
+    { id: 'settings', name: 'System Settings', icon: '🛠️', roles: ['admin'], section: 'Back Office' },
     { id: 'versioncontrol', name: 'Version Control', icon: '🔄', roles: ['admin', 'manager', 'supervisor'], section: 'Back Office' },
     { id: 'maintenance', name: 'Maintenance', icon: '🛠️', roles: ['admin', 'manager', 'supervisor', 'maintenance', 'housekeeping'], section: 'Back Office' },
     { id: 'printer-config', name: 'Printer Configuration', icon: '🖨️', roles: ['admin', 'manager', 'supervisor'], section: 'Back Office' },
