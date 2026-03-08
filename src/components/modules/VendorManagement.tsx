@@ -12,6 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDateForCSV, toDisplayId, escapeCSV } from '@/lib/csvUtils';
 import { ALL_DEPARTMENTS } from '@/lib/usaliCategories';
 import { ExpenseInvoiceView } from '@/components/modules/ExpenseInvoiceView';
+import { RecordVendorBill } from '@/components/modules/RecordVendorBill';
 
 interface Vendor {
   id: string;
@@ -90,6 +91,7 @@ const VendorManagement: React.FC = () => {
   const [batchSubmitError, setBatchSubmitError] = useState('');
   const [expandedBatchRows, setExpandedBatchRows] = useState<string[]>([]);
   const [expenseViewMode, setExpenseViewMode] = useState<'flat' | 'invoice'>('invoice');
+  const [isRecordingBill, setIsRecordingBill] = useState(false);
 
   // Vendor form state
   const [vendorForm, setVendorForm] = useState({
@@ -760,624 +762,634 @@ const VendorManagement: React.FC = () => {
         </TabsContent>
 
         <TabsContent value="expenses" className="space-y-4">
-          <div className="flex flex-col md:flex-row justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <h2 className="text-xl font-semibold">Vendor Expenses</h2>
-              <div className="bg-gray-100 p-1 rounded-lg flex">
-                <button
-                  onClick={() => setExpenseViewMode('invoice')}
-                  className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${expenseViewMode === 'invoice' ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
-                >
-                  Invoice View
-                </button>
-                <button
-                  onClick={() => setExpenseViewMode('flat')}
-                  className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${expenseViewMode === 'flat' ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
-                >
-                  Flat List
-                </button>
-              </div>
-            </div>
-            <div className="mt-2">
-              <Input
-                placeholder="Search by vendor name, description, reference #, or ID..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="max-w-md"
-              />
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={() => window.print()} variant="outline">Print All Expenses</Button>
-            <Button onClick={() => exportExpensesToCSV()} variant="outline">Export CSV</Button>
-            <Dialog open={showBatchExpenseModal} onOpenChange={setShowBatchExpenseModal}>
-              <DialogTrigger asChild>
-                <Button variant="secondary">Batch Enter Expenses</Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>Batch Enter Expenses</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-6">
-                  <div>
-                    <Label htmlFor="batch_vendor_id">Vendor *</Label>
-                    <Select
-                      value={batchVendorId}
-                      onValueChange={(value) => setBatchVendorId(value)}
+          {isRecordingBill ? (
+            <RecordVendorBill
+              onCancel={() => setIsRecordingBill(false)}
+              onSuccess={() => { setIsRecordingBill(false); loadVendorPayments(); }}
+            />
+          ) : (
+            <>
+              <div className="flex flex-col md:flex-row justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-xl font-semibold">Vendor Expenses</h2>
+                  <div className="bg-gray-100 p-1 rounded-lg flex">
+                    <button
+                      onClick={() => setExpenseViewMode('invoice')}
+                      className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${expenseViewMode === 'invoice' ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
                     >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a vendor for all expenses" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {vendors.map((vendor: Vendor) => (
-                          <SelectItem key={vendor.id} value={vendor.id}>{vendor.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      Invoice View
+                    </button>
+                    <button
+                      onClick={() => setExpenseViewMode('flat')}
+                      className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${expenseViewMode === 'flat' ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
+                    >
+                      Flat List
+                    </button>
                   </div>
+                </div>
+                <div className="mt-2">
+                  <Input
+                    placeholder="Search by vendor name, description, reference #, or ID..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="max-w-md"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={() => window.print()} variant="outline">Print All Expenses</Button>
+                <Button onClick={() => exportExpensesToCSV()} variant="outline">Export CSV</Button>
+                <Button onClick={() => setIsRecordingBill(true)} className="bg-blue-600 hover:bg-blue-700 text-white">Record Bill</Button>
+                <Dialog open={showBatchExpenseModal} onOpenChange={setShowBatchExpenseModal}>
+                  <DialogTrigger asChild>
+                    <Button variant="secondary">Batch Enter</Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>Batch Enter Expenses</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-6">
+                      <div>
+                        <Label htmlFor="batch_vendor_id">Vendor *</Label>
+                        <Select
+                          value={batchVendorId}
+                          onValueChange={(value) => setBatchVendorId(value)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a vendor for all expenses" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {vendors.map((vendor: Vendor) => (
+                              <SelectItem key={vendor.id} value={vendor.id}>{vendor.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
 
-                  <div>
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-lg font-medium">Expense Entries ({batchExpenses.length})</h3>
-                      <Button onClick={addBatchExpenseLine} size="sm">Add Expense Line</Button>
-                    </div>
-
-                    <div className="border rounded-lg overflow-hidden">
-                      <table className="w-full">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Description *</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Qty</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Unit Cost *</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Department *</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Category *</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Date</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Ref #</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Status</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {batchExpenses.map((expense, index) => (
-                            <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                              <td className="px-4 py-2">
-                                <Input
-                                  value={expense.description}
-                                  onChange={(e) => updateBatchExpense(index, 'description', e.target.value)}
-                                  placeholder="Description"
-                                  className={batchErrors[index]?.description ? 'border-red-500' : ''}
-                                />
-                                {batchErrors[index]?.description && (
-                                  <p className="text-red-500 text-xs mt-1">{batchErrors[index].description}</p>
-                                )}
-                              </td>
-                              <td className="px-4 py-2">
-                                <Input
-                                  type="number"
-                                  min="1"
-                                  value={expense.quantity}
-                                  onChange={(e) => updateBatchExpense(index, 'quantity', parseInt(e.target.value) || 1)}
-                                  className="w-24"
-                                />
-                              </td>
-                              <td className="px-4 py-2">
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={expense.unit_cost}
-                                  onChange={(e) => updateBatchExpense(index, 'unit_cost', parseFloat(e.target.value) || 0)}
-                                  className={`w-32 ${batchErrors[index]?.unit_cost ? 'border-red-500' : ''}`}
-                                />
-                                {batchErrors[index]?.unit_cost && (
-                                  <p className="text-red-500 text-xs mt-1">{batchErrors[index].unit_cost}</p>
-                                )}
-                              </td>
-                              <td className="px-4 py-2">
-                                <Select
-                                  value={expense.department}
-                                  onValueChange={(value) => updateBatchExpense(index, 'department', value)}
-                                >
-                                  <SelectTrigger className={batchErrors[index]?.department ? 'border-red-500' : ''}>
-                                    <SelectValue placeholder="Select dept" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {ALL_DEPARTMENTS.map(d => (
-                                      <SelectItem key={d} value={d}>{d}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                {batchErrors[index]?.department && (
-                                  <p className="text-red-500 text-xs mt-1">{batchErrors[index].department}</p>
-                                )}
-                              </td>
-                              <td className="px-4 py-2">
-                                <Select
-                                  value={expense.category}
-                                  onValueChange={(value) => updateBatchExpense(index, 'category', value)}
-                                >
-                                  <SelectTrigger className={batchErrors[index]?.category ? 'border-red-500' : ''}>
-                                    <SelectValue placeholder="Select category" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="Cost of Goods Sold">Cost of Goods Sold</SelectItem>
-                                    <SelectItem value="Payroll">Payroll</SelectItem>
-                                    <SelectItem value="Supplies">Supplies</SelectItem>
-                                    <SelectItem value="Utilities">Utilities</SelectItem>
-                                    <SelectItem value="Repairs & Maintenance">Repairs & Maintenance</SelectItem>
-                                    <SelectItem value="Administrative">Administrative</SelectItem>
-                                    <SelectItem value="Marketing">Marketing</SelectItem>
-                                    <SelectItem value="Other">Other</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                {batchErrors[index]?.category && (
-                                  <p className="text-red-500 text-xs mt-1">{batchErrors[index].category}</p>
-                                )}
-                              </td>
-                              <td className="px-4 py-2">
-                                <Input
-                                  type="date"
-                                  value={expense.expense_date}
-                                  onChange={(e) => updateBatchExpense(index, 'expense_date', e.target.value)}
-                                />
-                              </td>
-                              <td className="px-4 py-2">
-                                <Input
-                                  value={expense.reference_number}
-                                  onChange={(e) => updateBatchExpense(index, 'reference_number', e.target.value)}
-                                  placeholder="Ref #"
-                                />
-                              </td>
-                              <td className="px-4 py-2">
-                                <Select
-                                  value={expense.status}
-                                  onValueChange={(value) => {
-                                    updateBatchExpense(index, 'status', value);
-                                    // If status changes to 'paid', move the expense to payments
-                                    if (value === 'paid') {
-                                      // In a real implementation, we would create a payment record here
-                                    }
-                                  }}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="pending">Pending</SelectItem>
-                                    <SelectItem value="approved">Approved</SelectItem>
-                                    <SelectItem value="paid">Paid</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </td>
-                              <td className="px-4 py-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => removeBatchExpense(index)}
-                                  disabled={batchExpenses.length <= 1}
-                                >
-                                  Remove
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {batchSubmitError && (
-                    <div className="bg-red-50 border border-red-200 rounded-md p-4">
-                      <div className="flex">
-                        <div className="flex-shrink-0">
-                          <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                          </svg>
+                      <div>
+                        <div className="flex justify-between items-center mb-4">
+                          <h3 className="text-lg font-medium">Expense Entries ({batchExpenses.length})</h3>
+                          <Button onClick={addBatchExpenseLine} size="sm">Add Expense Line</Button>
                         </div>
-                        <div className="ml-3">
-                          <h3 className="text-sm font-medium text-red-800">Some expenses failed validation:</h3>
-                          <div className="mt-2 text-sm text-red-700">
-                            <ul className="list-disc pl-5 space-y-1">
-                              {batchSubmitError.split('\n').map((error, idx) => (
-                                <li key={idx}>{error}</li>
+
+                        <div className="border rounded-lg overflow-hidden">
+                          <table className="w-full">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Description *</th>
+                                <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Qty</th>
+                                <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Unit Cost *</th>
+                                <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Department *</th>
+                                <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Category *</th>
+                                <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Date</th>
+                                <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Ref #</th>
+                                <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Status</th>
+                                <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {batchExpenses.map((expense, index) => (
+                                <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                  <td className="px-4 py-2">
+                                    <Input
+                                      value={expense.description}
+                                      onChange={(e) => updateBatchExpense(index, 'description', e.target.value)}
+                                      placeholder="Description"
+                                      className={batchErrors[index]?.description ? 'border-red-500' : ''}
+                                    />
+                                    {batchErrors[index]?.description && (
+                                      <p className="text-red-500 text-xs mt-1">{batchErrors[index].description}</p>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <Input
+                                      type="number"
+                                      min="1"
+                                      value={expense.quantity}
+                                      onChange={(e) => updateBatchExpense(index, 'quantity', parseInt(e.target.value) || 1)}
+                                      className="w-24"
+                                    />
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      value={expense.unit_cost}
+                                      onChange={(e) => updateBatchExpense(index, 'unit_cost', parseFloat(e.target.value) || 0)}
+                                      className={`w-32 ${batchErrors[index]?.unit_cost ? 'border-red-500' : ''}`}
+                                    />
+                                    {batchErrors[index]?.unit_cost && (
+                                      <p className="text-red-500 text-xs mt-1">{batchErrors[index].unit_cost}</p>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <Select
+                                      value={expense.department}
+                                      onValueChange={(value) => updateBatchExpense(index, 'department', value)}
+                                    >
+                                      <SelectTrigger className={batchErrors[index]?.department ? 'border-red-500' : ''}>
+                                        <SelectValue placeholder="Select dept" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {ALL_DEPARTMENTS.map(d => (
+                                          <SelectItem key={d} value={d}>{d}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    {batchErrors[index]?.department && (
+                                      <p className="text-red-500 text-xs mt-1">{batchErrors[index].department}</p>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <Select
+                                      value={expense.category}
+                                      onValueChange={(value) => updateBatchExpense(index, 'category', value)}
+                                    >
+                                      <SelectTrigger className={batchErrors[index]?.category ? 'border-red-500' : ''}>
+                                        <SelectValue placeholder="Select category" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="Cost of Goods Sold">Cost of Goods Sold</SelectItem>
+                                        <SelectItem value="Payroll">Payroll</SelectItem>
+                                        <SelectItem value="Supplies">Supplies</SelectItem>
+                                        <SelectItem value="Utilities">Utilities</SelectItem>
+                                        <SelectItem value="Repairs & Maintenance">Repairs & Maintenance</SelectItem>
+                                        <SelectItem value="Administrative">Administrative</SelectItem>
+                                        <SelectItem value="Marketing">Marketing</SelectItem>
+                                        <SelectItem value="Other">Other</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                    {batchErrors[index]?.category && (
+                                      <p className="text-red-500 text-xs mt-1">{batchErrors[index].category}</p>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <Input
+                                      type="date"
+                                      value={expense.expense_date}
+                                      onChange={(e) => updateBatchExpense(index, 'expense_date', e.target.value)}
+                                    />
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <Input
+                                      value={expense.reference_number}
+                                      onChange={(e) => updateBatchExpense(index, 'reference_number', e.target.value)}
+                                      placeholder="Ref #"
+                                    />
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <Select
+                                      value={expense.status}
+                                      onValueChange={(value) => {
+                                        updateBatchExpense(index, 'status', value);
+                                        // If status changes to 'paid', move the expense to payments
+                                        if (value === 'paid') {
+                                          // In a real implementation, we would create a payment record here
+                                        }
+                                      }}
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="pending">Pending</SelectItem>
+                                        <SelectItem value="approved">Approved</SelectItem>
+                                        <SelectItem value="paid">Paid</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => removeBatchExpense(index)}
+                                      disabled={batchExpenses.length <= 1}
+                                    >
+                                      Remove
+                                    </Button>
+                                  </td>
+                                </tr>
                               ))}
-                            </ul>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {batchSubmitError && (
+                        <div className="bg-red-50 border border-red-200 rounded-md p-4">
+                          <div className="flex">
+                            <div className="flex-shrink-0">
+                              <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                              </svg>
+                            </div>
+                            <div className="ml-3">
+                              <h3 className="text-sm font-medium text-red-800">Some expenses failed validation:</h3>
+                              <div className="mt-2 text-sm text-red-700">
+                                <ul className="list-disc pl-5 space-y-1">
+                                  {batchSubmitError.split('\n').map((error, idx) => (
+                                    <li key={idx}>{error}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex justify-between items-center pt-4 border-t">
+                        <div className="text-sm text-gray-500">
+                          Total Expenses: {batchExpenses.length} |
+                          Estimated Total: ${batchExpenses.reduce((sum, exp) => sum + (exp.quantity * exp.unit_cost), 0).toFixed(2)}
+                        </div>
+                        <div className="flex space-x-2">
+                          <Button variant="outline" onClick={() => setShowBatchExpenseModal(false)}>Cancel</Button>
+                          <Button onClick={handleBatchExpenseSubmit} disabled={!batchVendorId || batchExpenses.length === 0}>
+                            Add {batchExpenses.length} Expense{batchExpenses.length !== 1 ? 's' : ''}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+                <Dialog open={showAddExpenseModal} onOpenChange={setShowAddExpenseModal}>
+                  <DialogTrigger asChild>
+                    <Button>Add Expense</Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>Add New Expense</DialogTitle>
+                    </DialogHeader>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="md:col-span-2">
+                        <Label htmlFor="vendor_id">Vendor *</Label>
+                        <Select
+                          value={expenseForm.vendor_id}
+                          onValueChange={(value) => setExpenseForm({ ...expenseForm, vendor_id: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a vendor" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {vendors.map((vendor: Vendor) => (
+                              <SelectItem key={vendor.id} value={vendor.id}>{vendor.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="md:col-span-2">
+                        <Label htmlFor="description">Description *</Label>
+                        <Input
+                          id="description"
+                          value={expenseForm.description}
+                          onChange={(e) => setExpenseForm({ ...expenseForm, description: e.target.value })}
+                          placeholder="Expense description"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="quantity">Quantity</Label>
+                        <Input
+                          id="quantity"
+                          type="number"
+                          min="1"
+                          value={expenseForm.quantity}
+                          onChange={(e) => setExpenseForm({ ...expenseForm, quantity: parseInt(e.target.value) || 1 })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="unit_cost">Unit Cost *</Label>
+                        <Input
+                          id="unit_cost"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={expenseForm.unit_cost}
+                          onChange={(e) => setExpenseForm({ ...expenseForm, unit_cost: parseFloat(e.target.value) || 0 })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="expense_date">Expense Date</Label>
+                        <Input
+                          id="expense_date"
+                          type="date"
+                          value={expenseForm.expense_date}
+                          onChange={(e) => setExpenseForm({ ...expenseForm, expense_date: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="category">Category</Label>
+                        <Input
+                          id="category"
+                          value={expenseForm.category}
+                          onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value })}
+                          placeholder="Expense category"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="tax_rate">Tax Rate (%)</Label>
+                        <Input
+                          id="tax_rate"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="100"
+                          value={expenseForm.tax_rate}
+                          onChange={(e) => setExpenseForm({ ...expenseForm, tax_rate: parseFloat(e.target.value) || 0 })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="tax_inclusive">Tax Type</Label>
+                        <Select
+                          value={expenseForm.tax_inclusive ? 'inclusive' : 'exclusive'}
+                          onValueChange={(value) => setExpenseForm({ ...expenseForm, tax_inclusive: value === 'inclusive' })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="exclusive">Exclusive (Added)</SelectItem>
+                            <SelectItem value="inclusive">Inclusive (Included)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="department">Department *</Label>
+                        <Select
+                          value={expenseForm.department}
+                          onValueChange={(value) => setExpenseForm({ ...expenseForm, department: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select department" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ALL_DEPARTMENTS.map(d => (
+                              <SelectItem key={d} value={d}>{d}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="category">Expense Category *</Label>
+                        <Select
+                          value={expenseForm.category}
+                          onValueChange={(value) => setExpenseForm({ ...expenseForm, category: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select category" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Cost of Goods Sold">Cost of Goods Sold</SelectItem>
+                            <SelectItem value="Payroll">Payroll</SelectItem>
+                            <SelectItem value="Supplies">Supplies</SelectItem>
+                            <SelectItem value="Utilities">Utilities</SelectItem>
+                            <SelectItem value="Repairs & Maintenance">Repairs & Maintenance</SelectItem>
+                            <SelectItem value="Administrative">Administrative</SelectItem>
+                            <SelectItem value="Marketing">Marketing</SelectItem>
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="reference_number">Reference #</Label>
+                        <Input
+                          id="reference_number"
+                          value={expenseForm.reference_number}
+                          onChange={(e) => setExpenseForm({ ...expenseForm, reference_number: e.target.value })}
+                          placeholder="Reference number"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="status">Status</Label>
+                        <Select
+                          value={expenseForm.status}
+                          onValueChange={(value) => setExpenseForm({ ...expenseForm, status: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="pending">Pending</SelectItem>
+                            <SelectItem value="approved">Approved</SelectItem>
+                            <SelectItem value="paid">Paid</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="flex justify-end space-x-2 pt-4">
+                      <Button variant="outline" onClick={() => setShowAddExpenseModal(false)}>Cancel</Button>
+                      <Button onClick={handleAddExpense}>Add Expense</Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
+
+              {expenseViewMode === 'invoice' && (
+                <ExpenseInvoiceView
+                  expenses={filteredExpenses}
+                  onDeleteExpense={async (id) => {
+                    await deleteVendorExpense(id);
+                  }}
+                  onAddCreditNote={async (expense, creditData) => {
+                    await addVendorExpense({
+                      vendor_id: expense.vendor_id,
+                      description: creditData.description || `Credit note for ${expense.reference_number}`,
+                      quantity: 1,
+                      unit_cost: Math.abs(creditData.total_cost || 0),
+                      tax_amount: 0,
+                      tax_rate: 0,
+                      tax_inclusive: false,
+                      expense_date: new Date().toISOString().split('T')[0],
+                      reference_number: expense.reference_number,
+                      category: expense.category,
+                      department: expense.department,
+                      status: 'approved',
+                    });
+                  }}
+                />
+              )}
+
+              {expenseViewMode === 'flat' && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Expense List</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>ID</TableHead>
+                          <TableHead>Vendor</TableHead>
+                          <TableHead>Description</TableHead>
+                          <TableHead>Department</TableHead>
+                          <TableHead>Category</TableHead>
+                          <TableHead>Qty</TableHead>
+                          <TableHead>Unit Cost</TableHead>
+                          <TableHead>Total Cost</TableHead>
+                          <TableHead>Tax Amount</TableHead>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredExpenses.map((expense: VendorExpense) => {
+                          // Check if this is a batch parent expense
+                          const isBatchParent = expense.is_batch_parent;
+                          const batchDetails = expense.batch_details ? JSON.parse(expense.batch_details) : null;
+
+                          return (
+                            <React.Fragment key={expense.id}>
+                              <TableRow>
+                                <TableCell>{expense.id}</TableCell>
+                                <TableCell>{expense.vendor_name}</TableCell>
+                                <TableCell>
+                                  {isBatchParent ? (
+                                    <div>
+                                      <div className="font-medium">{expense.description}</div>
+                                      <button
+                                        className="text-blue-600 hover:text-blue-800 text-sm underline"
+                                        onClick={() => {
+                                          const expanded = [...expandedBatchRows];
+                                          const index = expanded.indexOf(expense.id);
+                                          if (index > -1) {
+                                            expanded.splice(index, 1);
+                                          } else {
+                                            expanded.push(expense.id);
+                                          }
+                                          setExpandedBatchRows(expanded);
+                                        }}
+                                      >
+                                        {expandedBatchRows.includes(expense.id) ? 'Hide Items' : `View ${batchDetails?.length || 0} Items`}
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    expense.description
+                                  )}
+                                </TableCell>
+                                <TableCell>{expense.department}</TableCell>
+                                <TableCell>{expense.category}</TableCell>
+                                <TableCell>{expense.quantity}</TableCell>
+                                <TableCell>${expense.unit_cost.toFixed(2)}</TableCell>
+                                <TableCell>${expense.total_cost.toFixed(2)}</TableCell>
+                                <TableCell>${expense.tax_amount.toFixed(2)}</TableCell>
+                                <TableCell>{typeof expense.expense_date === 'string' ? expense.expense_date : new Date(expense.expense_date).toISOString().split('T')[0]}</TableCell>
+                                <TableCell>
+                                  <Select
+                                    value={expense.status}
+                                    onValueChange={(value) => updateExpenseStatus(expense.id, value)}
+                                  >
+                                    <SelectTrigger className="w-32">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="pending">Pending</SelectItem>
+                                      <SelectItem value="approved">Approved</SelectItem>
+                                      <SelectItem value="paid">Paid</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleEditExpense(expense)}
+                                    disabled={expense.status === 'paid' || expense.status === 'cleared'}
+                                  >
+                                    {expense.status === 'paid' || expense.status === 'cleared' ? 'Locked' : 'Edit'}
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+
+                              {/* Expanded batch details */}
+                              {isBatchParent && expandedBatchRows.includes(expense.id) && batchDetails && (
+                                <TableRow>
+                                  <TableCell colSpan={12} className="bg-gray-50 p-0">
+                                    <div className="p-4 border-l-4 border-blue-500 ml-4">
+                                      <h4 className="font-medium mb-2">Individual Line Items:</h4>
+                                      <table className="w-full">
+                                        <thead>
+                                          <tr className="bg-gray-100">
+                                            <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Description</th>
+                                            <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Qty</th>
+                                            <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Unit Cost</th>
+                                            <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Total</th>
+                                            <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Department</th>
+                                            <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Category</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {batchDetails.map((item: any, index: number) => (
+                                            <tr key={index} className="border-b">
+                                              <td className="px-2 py-1 text-sm">{item.description}</td>
+                                              <td className="px-2 py-1 text-sm">{item.quantity}</td>
+                                              <td className="px-2 py-1 text-sm">${item.unit_cost.toFixed(2)}</td>
+                                              <td className="px-2 py-1 text-sm">${(item.quantity * item.unit_cost).toFixed(2)}</td>
+                                              <td className="px-2 py-1 text-sm">{item.department}</td>
+                                              <td className="px-2 py-1 text-sm">{item.category}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                        {filteredExpenses.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={12} className="text-center text-gray-500 py-8">
+                              No expenses found. {searchTerm ? 'Try a different search term.' : 'Add an expense to get started.'}
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+
+                    {vendorExpenses.length > 0 && (
+                      <div className="mt-4 border-t pt-4">
+                        <div className="flex justify-end space-x-8">
+                          <div>
+                            <p className="text-lg font-semibold">Subtotal: ${calculateSubtotal(filteredExpenses).toFixed(2)}</p>
+                            <p className="text-lg font-semibold">Tax Total: ${calculateTaxTotal(filteredExpenses).toFixed(2)}</p>
+                            <p className="text-xl font-bold">Grand Total: ${calculateGrandTotal(filteredExpenses).toFixed(2)}</p>
+                          </div>
+                        </div>
+
+                        {/* P&L Reporting Section - USALI Standard */}
+                        <div className="mt-8 border-t pt-4">
+                          <h3 className="text-lg font-semibold mb-4">P&L Report by Department and Category (USALI Standard)</h3>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Department</th>
+                                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                                </tr>
+                              </thead>
+                              <tbody className="bg-white divide-y divide-gray-200">
+                                {Object.entries(groupExpensesByDepartmentAndCategory(filteredExpenses)).map(([dept, categories]) =>
+                                  Object.entries(categories).map(([cat, amount], idx) => (
+                                    <tr key={`${dept}-${cat}`} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{dept}</td>
+                                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{cat}</td>
+                                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">${amount.toFixed(2)}</td>
+                                    </tr>
+                                  ))
+                                )}
+                              </tbody>
+                            </table>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  )}
-
-                  <div className="flex justify-between items-center pt-4 border-t">
-                    <div className="text-sm text-gray-500">
-                      Total Expenses: {batchExpenses.length} |
-                      Estimated Total: ${batchExpenses.reduce((sum, exp) => sum + (exp.quantity * exp.unit_cost), 0).toFixed(2)}
-                    </div>
-                    <div className="flex space-x-2">
-                      <Button variant="outline" onClick={() => setShowBatchExpenseModal(false)}>Cancel</Button>
-                      <Button onClick={handleBatchExpenseSubmit} disabled={!batchVendorId || batchExpenses.length === 0}>
-                        Add {batchExpenses.length} Expense{batchExpenses.length !== 1 ? 's' : ''}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </DialogContent>
-            </Dialog>
-            <Dialog open={showAddExpenseModal} onOpenChange={setShowAddExpenseModal}>
-              <DialogTrigger asChild>
-                <Button>Add Expense</Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>Add New Expense</DialogTitle>
-                </DialogHeader>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="md:col-span-2">
-                    <Label htmlFor="vendor_id">Vendor *</Label>
-                    <Select
-                      value={expenseForm.vendor_id}
-                      onValueChange={(value) => setExpenseForm({ ...expenseForm, vendor_id: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a vendor" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {vendors.map((vendor: Vendor) => (
-                          <SelectItem key={vendor.id} value={vendor.id}>{vendor.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="md:col-span-2">
-                    <Label htmlFor="description">Description *</Label>
-                    <Input
-                      id="description"
-                      value={expenseForm.description}
-                      onChange={(e) => setExpenseForm({ ...expenseForm, description: e.target.value })}
-                      placeholder="Expense description"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="quantity">Quantity</Label>
-                    <Input
-                      id="quantity"
-                      type="number"
-                      min="1"
-                      value={expenseForm.quantity}
-                      onChange={(e) => setExpenseForm({ ...expenseForm, quantity: parseInt(e.target.value) || 1 })}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="unit_cost">Unit Cost *</Label>
-                    <Input
-                      id="unit_cost"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={expenseForm.unit_cost}
-                      onChange={(e) => setExpenseForm({ ...expenseForm, unit_cost: parseFloat(e.target.value) || 0 })}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="expense_date">Expense Date</Label>
-                    <Input
-                      id="expense_date"
-                      type="date"
-                      value={expenseForm.expense_date}
-                      onChange={(e) => setExpenseForm({ ...expenseForm, expense_date: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="category">Category</Label>
-                    <Input
-                      id="category"
-                      value={expenseForm.category}
-                      onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value })}
-                      placeholder="Expense category"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="tax_rate">Tax Rate (%)</Label>
-                    <Input
-                      id="tax_rate"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="100"
-                      value={expenseForm.tax_rate}
-                      onChange={(e) => setExpenseForm({ ...expenseForm, tax_rate: parseFloat(e.target.value) || 0 })}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="tax_inclusive">Tax Type</Label>
-                    <Select
-                      value={expenseForm.tax_inclusive ? 'inclusive' : 'exclusive'}
-                      onValueChange={(value) => setExpenseForm({ ...expenseForm, tax_inclusive: value === 'inclusive' })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="exclusive">Exclusive (Added)</SelectItem>
-                        <SelectItem value="inclusive">Inclusive (Included)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="department">Department *</Label>
-                    <Select
-                      value={expenseForm.department}
-                      onValueChange={(value) => setExpenseForm({ ...expenseForm, department: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select department" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ALL_DEPARTMENTS.map(d => (
-                          <SelectItem key={d} value={d}>{d}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="category">Expense Category *</Label>
-                    <Select
-                      value={expenseForm.category}
-                      onValueChange={(value) => setExpenseForm({ ...expenseForm, category: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Cost of Goods Sold">Cost of Goods Sold</SelectItem>
-                        <SelectItem value="Payroll">Payroll</SelectItem>
-                        <SelectItem value="Supplies">Supplies</SelectItem>
-                        <SelectItem value="Utilities">Utilities</SelectItem>
-                        <SelectItem value="Repairs & Maintenance">Repairs & Maintenance</SelectItem>
-                        <SelectItem value="Administrative">Administrative</SelectItem>
-                        <SelectItem value="Marketing">Marketing</SelectItem>
-                        <SelectItem value="Other">Other</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="reference_number">Reference #</Label>
-                    <Input
-                      id="reference_number"
-                      value={expenseForm.reference_number}
-                      onChange={(e) => setExpenseForm({ ...expenseForm, reference_number: e.target.value })}
-                      placeholder="Reference number"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="status">Status</Label>
-                    <Select
-                      value={expenseForm.status}
-                      onValueChange={(value) => setExpenseForm({ ...expenseForm, status: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pending">Pending</SelectItem>
-                        <SelectItem value="approved">Approved</SelectItem>
-                        <SelectItem value="paid">Paid</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="flex justify-end space-x-2 pt-4">
-                  <Button variant="outline" onClick={() => setShowAddExpenseModal(false)}>Cancel</Button>
-                  <Button onClick={handleAddExpense}>Add Expense</Button>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
-
-          {expenseViewMode === 'invoice' && (
-            <ExpenseInvoiceView
-              expenses={filteredExpenses}
-              onDeleteExpense={async (id) => {
-                await deleteVendorExpense(id);
-              }}
-              onAddCreditNote={async (expense, creditData) => {
-                await addVendorExpense({
-                  vendor_id: expense.vendor_id,
-                  description: creditData.description || `Credit note for ${expense.reference_number}`,
-                  quantity: 1,
-                  unit_cost: Math.abs(creditData.total_cost || 0),
-                  tax_amount: 0,
-                  tax_rate: 0,
-                  tax_inclusive: false,
-                  expense_date: new Date().toISOString().split('T')[0],
-                  reference_number: expense.reference_number,
-                  category: expense.category,
-                  department: expense.department,
-                  status: 'approved',
-                });
-              }}
-            />
-          )}
-
-          {expenseViewMode === 'flat' && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Expense List</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>ID</TableHead>
-                      <TableHead>Vendor</TableHead>
-                      <TableHead>Description</TableHead>
-                      <TableHead>Department</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Qty</TableHead>
-                      <TableHead>Unit Cost</TableHead>
-                      <TableHead>Total Cost</TableHead>
-                      <TableHead>Tax Amount</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredExpenses.map((expense: VendorExpense) => {
-                      // Check if this is a batch parent expense
-                      const isBatchParent = expense.is_batch_parent;
-                      const batchDetails = expense.batch_details ? JSON.parse(expense.batch_details) : null;
-
-                      return (
-                        <React.Fragment key={expense.id}>
-                          <TableRow>
-                            <TableCell>{expense.id}</TableCell>
-                            <TableCell>{expense.vendor_name}</TableCell>
-                            <TableCell>
-                              {isBatchParent ? (
-                                <div>
-                                  <div className="font-medium">{expense.description}</div>
-                                  <button
-                                    className="text-blue-600 hover:text-blue-800 text-sm underline"
-                                    onClick={() => {
-                                      const expanded = [...expandedBatchRows];
-                                      const index = expanded.indexOf(expense.id);
-                                      if (index > -1) {
-                                        expanded.splice(index, 1);
-                                      } else {
-                                        expanded.push(expense.id);
-                                      }
-                                      setExpandedBatchRows(expanded);
-                                    }}
-                                  >
-                                    {expandedBatchRows.includes(expense.id) ? 'Hide Items' : `View ${batchDetails?.length || 0} Items`}
-                                  </button>
-                                </div>
-                              ) : (
-                                expense.description
-                              )}
-                            </TableCell>
-                            <TableCell>{expense.department}</TableCell>
-                            <TableCell>{expense.category}</TableCell>
-                            <TableCell>{expense.quantity}</TableCell>
-                            <TableCell>${expense.unit_cost.toFixed(2)}</TableCell>
-                            <TableCell>${expense.total_cost.toFixed(2)}</TableCell>
-                            <TableCell>${expense.tax_amount.toFixed(2)}</TableCell>
-                            <TableCell>{typeof expense.expense_date === 'string' ? expense.expense_date : new Date(expense.expense_date).toISOString().split('T')[0]}</TableCell>
-                            <TableCell>
-                              <Select
-                                value={expense.status}
-                                onValueChange={(value) => updateExpenseStatus(expense.id, value)}
-                              >
-                                <SelectTrigger className="w-32">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="pending">Pending</SelectItem>
-                                  <SelectItem value="approved">Approved</SelectItem>
-                                  <SelectItem value="paid">Paid</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleEditExpense(expense)}
-                                disabled={expense.status === 'paid' || expense.status === 'cleared'}
-                              >
-                                {expense.status === 'paid' || expense.status === 'cleared' ? 'Locked' : 'Edit'}
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-
-                          {/* Expanded batch details */}
-                          {isBatchParent && expandedBatchRows.includes(expense.id) && batchDetails && (
-                            <TableRow>
-                              <TableCell colSpan={12} className="bg-gray-50 p-0">
-                                <div className="p-4 border-l-4 border-blue-500 ml-4">
-                                  <h4 className="font-medium mb-2">Individual Line Items:</h4>
-                                  <table className="w-full">
-                                    <thead>
-                                      <tr className="bg-gray-100">
-                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Description</th>
-                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Qty</th>
-                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Unit Cost</th>
-                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Total</th>
-                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Department</th>
-                                        <th className="px-2 py-1 text-left text-xs font-medium text-gray-500">Category</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {batchDetails.map((item: any, index: number) => (
-                                        <tr key={index} className="border-b">
-                                          <td className="px-2 py-1 text-sm">{item.description}</td>
-                                          <td className="px-2 py-1 text-sm">{item.quantity}</td>
-                                          <td className="px-2 py-1 text-sm">${item.unit_cost.toFixed(2)}</td>
-                                          <td className="px-2 py-1 text-sm">${(item.quantity * item.unit_cost).toFixed(2)}</td>
-                                          <td className="px-2 py-1 text-sm">{item.department}</td>
-                                          <td className="px-2 py-1 text-sm">{item.category}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-                    {filteredExpenses.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={12} className="text-center text-gray-500 py-8">
-                          No expenses found. {searchTerm ? 'Try a different search term.' : 'Add an expense to get started.'}
-                        </TableCell>
-                      </TableRow>
                     )}
-                  </TableBody>
-                </Table>
-
-                {vendorExpenses.length > 0 && (
-                  <div className="mt-4 border-t pt-4">
-                    <div className="flex justify-end space-x-8">
-                      <div>
-                        <p className="text-lg font-semibold">Subtotal: ${calculateSubtotal(filteredExpenses).toFixed(2)}</p>
-                        <p className="text-lg font-semibold">Tax Total: ${calculateTaxTotal(filteredExpenses).toFixed(2)}</p>
-                        <p className="text-xl font-bold">Grand Total: ${calculateGrandTotal(filteredExpenses).toFixed(2)}</p>
-                      </div>
-                    </div>
-
-                    {/* P&L Reporting Section - USALI Standard */}
-                    <div className="mt-8 border-t pt-4">
-                      <h3 className="text-lg font-semibold mb-4">P&L Report by Department and Category (USALI Standard)</h3>
-                      <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200">
-                          <thead className="bg-gray-50">
-                            <tr>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Department</th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody className="bg-white divide-y divide-gray-200">
-                            {Object.entries(groupExpensesByDepartmentAndCategory(filteredExpenses)).map(([dept, categories]) =>
-                              Object.entries(categories).map(([cat, amount], idx) => (
-                                <tr key={`${dept}-${cat}`} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{dept}</td>
-                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{cat}</td>
-                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">${amount.toFixed(2)}</td>
-                                </tr>
-                              ))
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                  </CardContent>
+                </Card>
+              )}
+            </>
           )}
         </TabsContent>
 
