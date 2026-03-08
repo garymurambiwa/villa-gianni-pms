@@ -1,0 +1,232 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Villa Gianni PMS — Theme Token System
+   All UI colours are driven from these CSS custom properties.
+   The active theme is applied by useSettings by setting data-theme on <html>.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ══ DEFAULT LIGHT ══════════════════════════════════════════════════════════ */
+:root,
+[data-theme="light"] {
+    --hotel-primary: #2563eb;
+    --hotel-primary-dark: #1d4ed8;
+    --hotel-primary-light: #60a5fa;
+    --hotel-accent: #4f46e5;
+    --hotel-gold: #f59e0b;
+
+    --hotel-sidebar-bg: #111827;
+    /* gray-900 */
+    --hotel-sidebar-hover: #1f2937;
+    /* gray-800 */
+    --hotel-sidebar-text: #d1d5db;
+    /* gray-300 */
+    --hotel-sidebar-border: #374151;
+    /* gray-700 */
+
+    --hotel-header-from: #3b0764;
+    --hotel-header-mid: #1e3a8a;
+    --hotel-header-to: #3b0764;
+
+    --hotel-bg: #f3f4f6;
+    /* page background */
+    --hotel-card-bg: #ffffff;
+    --hotel-border: #e5e7eb;
+    --hotel-text: #111827;
+    --hotel-text-muted: #6b7280;
+}
+
+/* ══ DEFAULT DARK ════════════════════════════════════════════════════════════ */
+[data-theme="dark"] {
+    --hotel-primary: #3b82f6;
+    --hotel-primary-dark: #2563eb;
+    --hotel-primary-light: #93c5fd;
+    --hotel-accent: #818cf8;
+    --hotel-gold: #fbbf24;
+
+    --hotel-sidebar-bg: #0a0f1a;
+    --hotel-sidebar-hover: #111827;
+    --hotel-sidebar-text: #9ca3af;
+    --hotel-sidebar-border: #1f2937;
+
+    --hotel-header-from: #0a0f1a;
+    --hotel-header-mid: #1e3a8a;
+    --hotel-header-to: #0a0f1a;
+
+    --hotel-bg: #0f172a;
+    --hotel-card-bg: #1e293b;
+    --hotel-border: #334155;
+    --hotel-text: #f1f5f9;
+    --hotel-text-muted: #94a3b8;
+}
+
+/* ══ OCEAN BLUE ══════════════════════════════════════════════════════════════ */
+[data-theme="ocean"] {
+    --hotel-primary: #0ea5e9;
+    --hotel-primary-dark: #0284c7;
+    --hotel-primary-light: #7dd3fc;
+    --hotel-accent: #06b6d4;
+    --hotel-gold: #f0abfc;
+
+    --hotel-sidebar-bg: #0c1929;
+    --hotel-sidebar-hover: #0f2942;
+    --hotel-sidebar-text: #bae6fd;
+    --hotel-sidebar-border: #1e3a5f;
+
+    --hotel-header-from: #0c1929;
+    --hotel-header-mid: #0369a1;
+    --hotel-header-to: #0ea5e9;
+
+    --hotel-bg: #f0f9ff;
+    --hotel-card-bg: #ffffff;
+    --hotel-border: #bae6fd;
+    --hotel-text: #0c1929;
+    --hotel-text-muted: #0369a1;
+}
+
+/* ══ FOREST GREEN ════════════════════════════════════════════════════════════ */
+[data-theme="forest"] {
+    --hotel-primary: #16a34a;
+    --hotel-primary-dark: #15803d;
+    --hotel-primary-light: #86efac;
+    --hotel-accent: #059669;
+    --hotel-gold: #fde047;
+
+    --hotel-sidebar-bg: #0d1f14;
+    --hotel-sidebar-hover: #14291c;
+    --hotel-sidebar-text: #bbf7d0;
+    --hotel-sidebar-border: #166534;
+
+    --hotel-header-from: #0d1f14;
+    --hotel-header-mid: #166534;
+    --hotel-header-to: #16a34a;
+
+    --hotel-bg: #f0fdf4;
+    --hotel-card-bg: #ffffff;
+    --hotel-border: #bbf7d0;
+    --hotel-text: #0d1f14;
+    --hotel-text-muted: #166534;
+}
+
+/* ══ ROYAL PURPLE ════════════════════════════════════════════════════════════ */
+[data-theme="royal"] {
+    --hotel-primary: #9333ea;
+    --hotel-primary-dark: #7e22ce;
+    --hotel-primary-light: #d8b4fe;
+    --hotel-accent: #a855f7;
+    --hotel-gold: #fbbf24;
+
+    --hotel-sidebar-bg: #130d22;
+    --hotel-sidebar-hover: #1e1236;
+    --hotel-sidebar-text: #e9d5ff;
+    --hotel-sidebar-border: #581c87;
+
+    --hotel-header-from: #130d22;
+    --hotel-header-mid: #581c87;
+    --hotel-header-to: #9333ea;
+
+    --hotel-bg: #faf5ff;
+    --hotel-card-bg: #ffffff;
+    --hotel-border: #e9d5ff;
+    --hotel-text: #130d22;
+    --hotel-text-muted: #6b21a8;
+}
+
+/* ══ WARM SUNSET ═════════════════════════════════════════════════════════════ */
+[data-theme="sunset"] {
+    --hotel-primary: #f97316;
+    --hotel-primary-dark: #ea580c;
+    --hotel-primary-light: #fdba74;
+    --hotel-accent: #f59e0b;
+    --hotel-gold: #fef08a;
+
+    --hotel-sidebar-bg: #1c1208;
+    --hotel-sidebar-hover: #2d1c0c;
+    --hotel-sidebar-text: #fed7aa;
+    --hotel-sidebar-border: #9a3412;
+
+    --hotel-header-from: #1c1208;
+    --hotel-header-mid: #9a3412;
+    --hotel-header-to: #f97316;
+
+    --hotel-bg: #fff7ed;
+    --hotel-card-bg: #ffffff;
+    --hotel-border: #fed7aa;
+    --hotel-text: #1c1208;
+    --hotel-text-muted: #9a3412;
+}
+
+/* ══ EXECUTIVE SLATE ═════════════════════════════════════════════════════════ */
+[data-theme="slate"] {
+    --hotel-primary: #475569;
+    --hotel-primary-dark: #334155;
+    --hotel-primary-light: #94a3b8;
+    --hotel-accent: #64748b;
+    --hotel-gold: #f59e0b;
+
+    --hotel-sidebar-bg: #0f172a;
+    --hotel-sidebar-hover: #1e293b;
+    --hotel-sidebar-text: #cbd5e1;
+    --hotel-sidebar-border: #334155;
+
+    --hotel-header-from: #0f172a;
+    --hotel-header-mid: #334155;
+    --hotel-header-to: #475569;
+
+    --hotel-bg: #f8fafc;
+    --hotel-card-bg: #ffffff;
+    --hotel-border: #e2e8f0;
+    --hotel-text: #0f172a;
+    --hotel-text-muted: #475569;
+}
+
+/* ══ BRONZE WARMTH ═══════════════════════════════════════════════════════════ */
+[data-theme="bronze"] {
+    /* ── Primary palette ── */
+    --hotel-primary: #BB7338;
+    /* warm bronze */
+    --hotel-primary-dark: #8B5224;
+    /* deep bronze */
+    --hotel-primary-light: #D4954F;
+    /* lighter bronze */
+    --hotel-accent: #E8A855;
+    /* soft gold accent */
+    --hotel-gold: #F5C97A;
+    /* highlight gold */
+
+    /* ── Sidebar (espresso) ── */
+    --hotel-sidebar-bg: #1C1410;
+    /* deep espresso */
+    --hotel-sidebar-hover: #2D2018;
+    /* hover row */
+    --hotel-sidebar-text: #E8D5C0;
+    /* warm cream text */
+    --hotel-sidebar-border: #3D2D1E;
+    /* subtle border */
+
+    /* ── Header gradient: espresso → deep brown → bronze ── */
+    --hotel-header-from: #1C1410;
+    --hotel-header-mid: #4A2D14;
+    --hotel-header-to: #BB7338;
+
+    /* ── Page surfaces ── */
+    --hotel-bg: #FDF7F0;
+    /* warm cream background */
+    --hotel-card-bg: #FFFFFF;
+    /* pure white cards */
+    --hotel-border: #E8D5C0;
+    /* warm card border */
+    --hotel-text: #1A1208;
+    /* near-black warm text */
+    --hotel-text-muted: #7A5C44;
+    /* muted warm brown */
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Global theme-aware overrides — applied via CSS variables above.
+   Components that use Tailwind hardcoded classes are handled via inline styles
+   in their JSX (Sidebar.tsx, posimport/Header.tsx).
+   ───────────────────────────────────────────────────────────────────────────── */
+body {
+    background-color: var(--hotel-bg, #f3f4f6);
+    color: var(--hotel-text, #111827);
+    transition: background-color 0.3s ease, color 0.3s ease;
+}

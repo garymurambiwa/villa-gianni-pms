@@ -71,9 +71,10 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
             const allSettings = await pmsAuthDb.getAllAppSettings();
             const newSettings: AppSettings = { ...defaultSettings };
 
-            // Apply all simple string keys
+            // Apply all simple string keys (guard against literally-stored "undefined")
             for (const key of STRING_KEYS) {
-                if (allSettings[key]) (newSettings as any)[key] = allSettings[key];
+                const v = allSettings[key];
+                if (v && v !== 'undefined') (newSettings as any)[key] = v;
             }
 
             // themeColors is JSON
@@ -82,30 +83,37 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
             }
 
             setSettings(newSettings);
-
-            // Inject CSS variables for theme
-            if (newSettings.themeColors?.primary) {
-                document.documentElement.style.setProperty('--primary', newSettings.themeColors.primary);
-            } else {
-                document.documentElement.style.removeProperty('--primary');
-            }
-
-            if (newSettings.backgroundImageUrl) {
-                document.body.style.backgroundImage = `url(${newSettings.backgroundImageUrl})`;
-                document.body.style.backgroundSize = 'cover';
-                document.body.style.backgroundPosition = 'center';
-            } else if (newSettings.themeColors?.background) {
-                document.body.style.backgroundImage = 'none';
-                document.body.style.backgroundColor = newSettings.themeColors.background;
-            } else {
-                document.body.style.backgroundImage = 'none';
-                document.body.style.backgroundColor = '';
-            }
+            applyTheme(newSettings);
 
         } catch (e) {
             console.error('Failed to fetch settings:', e);
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    /** Apply the full theme token set to the DOM */
+    const applyTheme = (s: AppSettings) => {
+        const root = document.documentElement;
+
+        // 1. Set data-theme attribute so themes.css selectors activate
+        root.setAttribute('data-theme', s.themePreset || 'light');
+
+        // 2. Override individual --hotel-* vars if a custom primary is set
+        //    (allows the custom color picker in SystemSettings to override the preset)
+        if (s.themeColors?.primary) {
+            root.style.setProperty('--hotel-primary', s.themeColors.primary);
+        }
+
+        // 3. Apply background image override (from settings page)
+        if (s.backgroundImageUrl) {
+            document.body.style.backgroundImage = `url(${s.backgroundImageUrl})`;
+            document.body.style.backgroundSize = 'cover';
+            document.body.style.backgroundPosition = 'center';
+            document.body.style.backgroundAttachment = 'fixed';
+        } else {
+            document.body.style.backgroundImage = 'none';
+            document.body.style.backgroundAttachment = '';
         }
     };
 

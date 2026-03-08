@@ -152,17 +152,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
 
   return (
-    <div className="w-full md:w-64 bg-gray-900 text-white flex flex-col md:h-screen transition-all duration-300">
+    <div
+      className="w-full md:w-64 flex flex-col md:h-screen transition-all duration-300"
+      style={{ backgroundColor: 'var(--hotel-sidebar-bg, #111827)', color: 'var(--hotel-sidebar-text, #d1d5db)' }}
+    >
       <div className="p-6 border-b border-gray-700 flex justify-between items-center">
         <div>
           <BrandHeader />
-          <p className="text-sm text-gray-400 mt-1">{user?.name}</p>
-          <p className="text-xs text-gray-500">{(user?.role || '').toUpperCase()}</p>
+          <p className="text-sm mt-1" style={{ color: 'var(--hotel-sidebar-text, #9ca3af)', opacity: 0.75 }}>{user?.name}</p>
+          <p className="text-xs" style={{ color: 'var(--hotel-sidebar-text, #9ca3af)', opacity: 0.55 }}>{(user?.role || '').toUpperCase()}</p>
         </div>
         <Button
           variant="ghost"
           size="sm"
-          className="md:hidden text-gray-300 hover:text-white"
+          className="md:hidden hover:bg-white/10"
+          style={{ color: 'var(--hotel-sidebar-text, #d1d5db)' }}
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
         >
           {isMobileMenuOpen ? '✕' : '☰'}
@@ -173,7 +177,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
         <nav className="flex-1 overflow-y-auto min-h-0 py-4 max-h-[50vh] md:max-h-full">
           {sections.map(section => (
             <div key={section} className="mb-3">
-              <div className="px-6 py-2 text-xs uppercase tracking-wide text-gray-400">{section}</div>
+              <div
+                className="px-6 py-2 text-xs uppercase tracking-wide"
+                style={{ color: 'var(--hotel-sidebar-text, #9ca3af)', opacity: 0.6 }}
+              >{section}</div>
               {availableModules
                 .filter(m => m.section === section)
                 .map(module => (
@@ -183,11 +190,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
                       setActiveModule(module.id);
                       setIsMobileMenuOpen(false); // Auto-close on selection
                     }}
-                    className={`w-full px-6 py-3 flex items-center transition-colors ${activeModule === module.id
-                      ? 'text-white'
-                      : 'text-gray-300 hover:bg-gray-800'
-                      }`}
-                    style={activeModule === module.id ? { backgroundColor: 'var(--hotel-primary)' } : {}}
+                    className={`w-full px-6 py-3 flex items-center transition-colors`}
+                    style={
+                      activeModule === module.id
+                        ? { backgroundColor: 'var(--hotel-primary)', color: '#ffffff' }
+                        : { color: 'var(--hotel-sidebar-text, #d1d5db)' }
+                    }
+                    onMouseEnter={e => { if (activeModule !== module.id) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--hotel-sidebar-hover, #1f2937)'; }}
+                    onMouseLeave={e => { if (activeModule !== module.id) (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
                   >
                     <span className="text-xl mr-3">{module.icon}</span>
                     <span className="font-medium flex-1 text-left">{module.name}</span>
@@ -203,7 +213,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
           ))}
         </nav>
 
-        <div className="p-4 border-t border-gray-700">
+        <div
+          className="p-4"
+          style={{ borderTop: '1px solid var(--hotel-sidebar-border, #374151)' }}
+        >
           <div className="flex items-center gap-2">
             <Button
               onClick={logout}

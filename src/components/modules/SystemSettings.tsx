@@ -14,14 +14,16 @@ import { useNavigate } from 'react-router-dom';
 // ─── Options ───────────────────────────────────────────────────────────────
 
 const THEME_PRESETS = [
-    { id: 'light', name: 'Default Light', colors: { primary: '#2563eb', background: '#ffffff' } },
-    { id: 'dark', name: 'Default Dark', colors: { primary: '#3b82f6', background: '#0f172a' } },
-    { id: 'ocean', name: 'Ocean Blue', colors: { primary: '#0ea5e9', background: '#f0f9ff' } },
-    { id: 'forest', name: 'Forest Green', colors: { primary: '#16a34a', background: '#f0fdf4' } },
-    { id: 'royal', name: 'Royal Purple', colors: { primary: '#9333ea', background: '#faf5ff' } },
-    { id: 'sunset', name: 'Warm Sunset', colors: { primary: '#f97316', background: '#fff7ed' } },
-    { id: 'slate', name: 'Executive Slate', colors: { primary: '#475569', background: '#f8fafc' } },
+    { id: 'light', name: 'Default Light', primary: '#2563eb', sidebar: '#111827', bg: '#f3f4f6' },
+    { id: 'dark', name: 'Default Dark', primary: '#3b82f6', sidebar: '#0a0f1a', bg: '#0f172a' },
+    { id: 'ocean', name: 'Ocean Blue', primary: '#0ea5e9', sidebar: '#0c1929', bg: '#f0f9ff' },
+    { id: 'forest', name: 'Forest Green', primary: '#16a34a', sidebar: '#0d1f14', bg: '#f0fdf4' },
+    { id: 'royal', name: 'Royal Purple', primary: '#9333ea', sidebar: '#130d22', bg: '#faf5ff' },
+    { id: 'sunset', name: 'Warm Sunset', primary: '#f97316', sidebar: '#1c1208', bg: '#fff7ed' },
+    { id: 'slate', name: 'Executive Slate', primary: '#475569', sidebar: '#0f172a', bg: '#f8fafc' },
+    { id: 'bronze', name: 'Bronze Warmth 🟤', primary: '#BB7338', sidebar: '#1C1410', bg: '#FDF7F0' },
 ];
+
 
 const CURRENCIES = [
     { code: 'USD', label: 'US Dollar ($)' },
@@ -92,7 +94,7 @@ const SystemSettings = () => {
                 logoUrl: form.logoUrl,
                 backgroundImageUrl: form.backgroundImageUrl,
                 themePreset: form.themePreset,
-                themeColors: preset ? preset.colors : form.themeColors,
+                themeColors: preset ? { primary: preset.primary, background: preset.bg } : form.themeColors,
                 address: form.address,
                 phone: form.phone,
                 email: form.email,
@@ -124,165 +126,184 @@ const SystemSettings = () => {
     }
 
     return (
-        <div className="p-6 max-w-4xl mx-auto space-y-6 pb-20">
-            {/* Header */}
-            <div className="flex items-center gap-3 mb-4">
-                <Button variant="outline" size="icon" onClick={() => navigate(-1)}>
-                    <ArrowLeft className="h-4 w-4" />
-                </Button>
-                <div>
-                    <h2 className="text-2xl font-bold">System Settings</h2>
-                    <p className="text-sm text-gray-500">Configure your property's identity, appearance, and regional preferences.</p>
+        <div className="relative">
+            <div className="p-6 max-w-4xl mx-auto space-y-6 pb-24">
+                {/* Header */}
+                <div className="flex items-center gap-3 mb-4">
+                    <Button variant="outline" size="icon" onClick={() => navigate(-1)}>
+                        <ArrowLeft className="h-4 w-4" />
+                    </Button>
+                    <div>
+                        <h2 className="text-2xl font-bold">System Settings</h2>
+                        <p className="text-sm text-gray-500">Configure your property's identity, appearance, and regional preferences.</p>
+                    </div>
                 </div>
+
+                {/* ── 1. Hotel Identity ── */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2"><Building2 className="w-5 h-5" /> Hotel Identity</CardTitle>
+                        <CardDescription>Basic information shown on the login screen, receipts, and reports.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label htmlFor="hotelName">Hotel / Company Name</Label>
+                            <Input id="hotelName" value={form.hotelName} onChange={e => set('hotelName', e.target.value)} placeholder="e.g. Villa Gianni" />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="hotelTagline">Tagline / Subtitle <span className="text-gray-400 text-xs">(shown under name on login)</span></Label>
+                            <Input id="hotelTagline" value={form.hotelTagline || ''} onChange={e => set('hotelTagline', e.target.value)} placeholder="e.g. Boutique Hotel & Spa" />
+                        </div>
+                        <div className="md:col-span-2 space-y-2">
+                            <Label htmlFor="logoUrl">Logo Image URL</Label>
+                            <Input id="logoUrl" value={form.logoUrl} onChange={e => set('logoUrl', e.target.value)} placeholder="/logo.png or https://…" />
+                            {form.logoUrl && (
+                                <div className="mt-2 p-3 border rounded-md bg-gray-50 inline-block">
+                                    <img src={form.logoUrl} alt="Logo preview" className="max-h-14 object-contain"
+                                        onError={e => (e.currentTarget.style.display = 'none')}
+                                        onLoad={e => (e.currentTarget.style.display = 'block')} />
+                                </div>
+                            )}
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* ── 2. Contact & Location ── */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2"><Globe className="w-5 h-5" /> Contact & Location</CardTitle>
+                        <CardDescription>Appears on receipts, invoices, and email footers.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="md:col-span-2 space-y-2">
+                            <Label htmlFor="address">Physical Address</Label>
+                            <Input id="address" value={form.address || ''} onChange={e => set('address', e.target.value)} placeholder="123 Hotel Street, City, Country" />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="phone">Phone Number</Label>
+                            <Input id="phone" value={form.phone || ''} onChange={e => set('phone', e.target.value)} placeholder="+263 77 123 4567" />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="email">Email Address</Label>
+                            <Input id="email" type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} placeholder="info@myhotel.com" />
+                        </div>
+                        <div className="md:col-span-2 space-y-2">
+                            <Label htmlFor="website">Website URL</Label>
+                            <Input id="website" value={form.website || ''} onChange={e => set('website', e.target.value)} placeholder="https://www.myhotel.com" />
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* ── 3. Regional Settings ── */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">🌍 Regional Settings</CardTitle>
+                        <CardDescription>Currency, timezone, and date display format used throughout the system.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                            <Label>Currency</Label>
+                            <Select value={form.currency || 'USD'} onValueChange={val => set('currency', val)}>
+                                <SelectTrigger id="currency"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    {CURRENCIES.map(c => <SelectItem key={c.code} value={c.code}>{c.label}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Timezone</Label>
+                            <Select value={form.timezone || 'Africa/Harare'} onValueChange={val => set('timezone', val)}>
+                                <SelectTrigger id="timezone"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    {TIMEZONES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Date Format</Label>
+                            <Select value={form.dateFormat || 'DD/MM/YYYY'} onValueChange={val => set('dateFormat', val)}>
+                                <SelectTrigger id="dateFormat"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    {DATE_FORMATS.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* ── 4. Theme & Appearance ── */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2"><Palette className="w-5 h-5" /> Theme & Appearance</CardTitle>
+                        <CardDescription>Color theme and background for the application.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                        <div className="space-y-3">
+                            <Label>Color Preset</Label>
+                            <RadioGroup
+                                value={form.themePreset || 'light'}
+                                onValueChange={val => set('themePreset', val)}
+                                className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3"
+                            >
+                                {THEME_PRESETS.map(preset => (
+                                    <div key={preset.id}
+                                        className={`flex flex-col gap-2 border-2 rounded-xl p-3 cursor-pointer transition-all ${form.themePreset === preset.id ? 'border-blue-500 ring-2 ring-blue-300' : 'border-transparent hover:border-gray-200 hover:shadow'}`}
+                                        style={form.themePreset === preset.id ? { borderColor: preset.primary } : {}}
+                                        onClick={() => set('themePreset', preset.id)}
+                                    >
+                                        {/* Mini theme preview */}
+                                        <div className="w-full h-12 rounded-lg overflow-hidden flex shadow-sm border border-gray-100">
+                                            {/* Sidebar strip */}
+                                            <div className="w-5 h-full flex-shrink-0" style={{ backgroundColor: preset.sidebar }} />
+                                            {/* Main area */}
+                                            <div className="flex-1 flex items-center gap-1 px-2" style={{ backgroundColor: preset.bg }}>
+                                                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: preset.primary }} />
+                                                <div className="h-1.5 rounded-full flex-1" style={{ backgroundColor: preset.primary, opacity: 0.2 }} />
+                                            </div>
+                                        </div>
+                                        {/* Label row */}
+                                        <div className="flex items-center gap-2">
+                                            <RadioGroupItem value={preset.id} id={`preset-${preset.id}`} />
+                                            <Label htmlFor={`preset-${preset.id}`} className="cursor-pointer text-sm font-medium leading-tight">{preset.name}</Label>
+                                        </div>
+                                    </div>
+                                ))}
+                            </RadioGroup>
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="bgUrl">Custom Background Image URL <span className="text-gray-400 text-xs">(overrides preset background)</span></Label>
+                            <Input id="bgUrl" value={form.backgroundImageUrl || ''} onChange={e => set('backgroundImageUrl', e.target.value)}
+                                placeholder="https://example.com/bg.jpg — leave empty for colour background" />
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* ── 5. Receipt / Document Settings ── */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2"><Receipt className="w-5 h-5" /> Receipt & Document Settings</CardTitle>
+                        <CardDescription>Text printed on POS receipts and invoices.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="space-y-2">
+                            <Label htmlFor="receiptFooter">Receipt Footer Message</Label>
+                            <Textarea id="receiptFooter" rows={3} value={form.receiptFooter || ''} onChange={e => set('receiptFooter', e.target.value)}
+                                placeholder="e.g. Thank you for staying with us! We hope to see you again." />
+                            <p className="text-xs text-gray-500">Displayed at the bottom of every POS receipt and folio invoice.</p>
+                        </div>
+                    </CardContent>
+                </Card>
+
             </div>
 
-            {/* ── 1. Hotel Identity ── */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><Building2 className="w-5 h-5" /> Hotel Identity</CardTitle>
-                    <CardDescription>Basic information shown on the login screen, receipts, and reports.</CardDescription>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="hotelName">Hotel / Company Name</Label>
-                        <Input id="hotelName" value={form.hotelName} onChange={e => set('hotelName', e.target.value)} placeholder="e.g. Villa Gianni" />
-                    </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="hotelTagline">Tagline / Subtitle <span className="text-gray-400 text-xs">(shown under name on login)</span></Label>
-                        <Input id="hotelTagline" value={form.hotelTagline || ''} onChange={e => set('hotelTagline', e.target.value)} placeholder="e.g. Boutique Hotel & Spa" />
-                    </div>
-                    <div className="md:col-span-2 space-y-2">
-                        <Label htmlFor="logoUrl">Logo Image URL</Label>
-                        <Input id="logoUrl" value={form.logoUrl} onChange={e => set('logoUrl', e.target.value)} placeholder="/logo.png or https://…" />
-                        {form.logoUrl && (
-                            <div className="mt-2 p-3 border rounded-md bg-gray-50 inline-block">
-                                <img src={form.logoUrl} alt="Logo preview" className="max-h-14 object-contain"
-                                    onError={e => (e.currentTarget.style.display = 'none')}
-                                    onLoad={e => (e.currentTarget.style.display = 'block')} />
-                            </div>
-                        )}
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* ── 2. Contact & Location ── */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><Globe className="w-5 h-5" /> Contact & Location</CardTitle>
-                    <CardDescription>Appears on receipts, invoices, and email footers.</CardDescription>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="md:col-span-2 space-y-2">
-                        <Label htmlFor="address">Physical Address</Label>
-                        <Input id="address" value={form.address || ''} onChange={e => set('address', e.target.value)} placeholder="123 Hotel Street, City, Country" />
-                    </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="phone">Phone Number</Label>
-                        <Input id="phone" value={form.phone || ''} onChange={e => set('phone', e.target.value)} placeholder="+263 77 123 4567" />
-                    </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="email">Email Address</Label>
-                        <Input id="email" type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} placeholder="info@myhotel.com" />
-                    </div>
-                    <div className="md:col-span-2 space-y-2">
-                        <Label htmlFor="website">Website URL</Label>
-                        <Input id="website" value={form.website || ''} onChange={e => set('website', e.target.value)} placeholder="https://www.myhotel.com" />
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* ── 3. Regional Settings ── */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2">🌍 Regional Settings</CardTitle>
-                    <CardDescription>Currency, timezone, and date display format used throughout the system.</CardDescription>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="space-y-2">
-                        <Label>Currency</Label>
-                        <Select value={form.currency || 'USD'} onValueChange={val => set('currency', val)}>
-                            <SelectTrigger id="currency"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                                {CURRENCIES.map(c => <SelectItem key={c.code} value={c.code}>{c.label}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
-                    </div>
-                    <div className="space-y-2">
-                        <Label>Timezone</Label>
-                        <Select value={form.timezone || 'Africa/Harare'} onValueChange={val => set('timezone', val)}>
-                            <SelectTrigger id="timezone"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                                {TIMEZONES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
-                    </div>
-                    <div className="space-y-2">
-                        <Label>Date Format</Label>
-                        <Select value={form.dateFormat || 'DD/MM/YYYY'} onValueChange={val => set('dateFormat', val)}>
-                            <SelectTrigger id="dateFormat"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                                {DATE_FORMATS.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* ── 4. Theme & Appearance ── */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><Palette className="w-5 h-5" /> Theme & Appearance</CardTitle>
-                    <CardDescription>Color theme and background for the application.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                    <div className="space-y-3">
-                        <Label>Color Preset</Label>
-                        <RadioGroup
-                            value={form.themePreset || 'light'}
-                            onValueChange={val => set('themePreset', val)}
-                            className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"
-                        >
-                            {THEME_PRESETS.map(preset => (
-                                <div key={preset.id}
-                                    className={`flex items-center gap-2 border rounded-lg p-3 cursor-pointer transition-all ${form.themePreset === preset.id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-400' : 'hover:bg-gray-50'}`}
-                                    onClick={() => set('themePreset', preset.id)}
-                                >
-                                    <RadioGroupItem value={preset.id} id={`preset-${preset.id}`} />
-                                    <div className="w-4 h-4 rounded-full border shadow-sm flex-shrink-0" style={{ backgroundColor: preset.colors.primary }} />
-                                    <Label htmlFor={`preset-${preset.id}`} className="cursor-pointer text-sm font-medium leading-tight">{preset.name}</Label>
-                                </div>
-                            ))}
-                        </RadioGroup>
-                    </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="bgUrl">Custom Background Image URL <span className="text-gray-400 text-xs">(overrides preset background)</span></Label>
-                        <Input id="bgUrl" value={form.backgroundImageUrl || ''} onChange={e => set('backgroundImageUrl', e.target.value)}
-                            placeholder="https://example.com/bg.jpg — leave empty for colour background" />
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* ── 5. Receipt / Document Settings ── */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><Receipt className="w-5 h-5" /> Receipt & Document Settings</CardTitle>
-                    <CardDescription>Text printed on POS receipts and invoices.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="receiptFooter">Receipt Footer Message</Label>
-                        <Textarea id="receiptFooter" rows={3} value={form.receiptFooter || ''} onChange={e => set('receiptFooter', e.target.value)}
-                            placeholder="e.g. Thank you for staying with us! We hope to see you again." />
-                        <p className="text-xs text-gray-500">Displayed at the bottom of every POS receipt and folio invoice.</p>
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* Save */}
-            <div className="flex justify-end pt-2">
-                <Button onClick={handleSave} disabled={isSaving} size="lg" className="min-w-[180px]">
-                    {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</> : 'Save All Settings'}
-                </Button>
+            {/* ── Sticky Save Bar ── */}
+            <div className="fixed bottom-0 left-0 right-0 z-50 border-t bg-white/95 backdrop-blur-sm shadow-lg">
+                <div className="max-w-4xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
+                    <p className="text-sm text-gray-500">Changes are not saved until you click Save.</p>
+                    <Button onClick={handleSave} disabled={isSaving} size="lg" className="min-w-[180px]">
+                        {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</> : '💾 Save All Settings'}
+                    </Button>
+                </div>
             </div>
         </div>
     );
