@@ -78,25 +78,18 @@ const BrandHeader: React.FC = () => {
 
   const defaultLogo = import.meta.env.VITE_HOTEL_LOGO_URL || `${import.meta.env.BASE_URL || '/'}logo.png`;
   const logoSrc = appSettings.logoUrl || settings.logoDataUrl || defaultLogo;
-  const isSvg = String(logoSrc).startsWith('data:image/svg') || String(logoSrc).endsWith('.svg');
 
   return (
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-3">
         <Link to="/" aria-label="Go to homepage" title="Go to homepage" className="block select-none">
-          <picture>
-            {isSvg && (
-              <source srcSet={logoSrc} type="image/svg+xml" />
-            )}
-            <img
-              src={logoSrc.includes('logo.jpg') ? '/logo.png' : logoSrc} /* Prefer new PNG if default */
-              alt={appSettings.hotelName || settings.name || 'Hotel Logo'}
-              className="w-[120px] sm:w-[150px] md:w-[180px] h-auto object-contain"
-              loading="eager"
-            />
-          </picture>
+          <img
+            src={logoSrc}
+            alt={appSettings.hotelName || settings.name || 'Hotel Logo'}
+            className="w-[120px] sm:w-[150px] md:w-[180px] h-max-[50px] object-contain"
+            loading="eager"
+          />
         </Link>
-        {/* Text removed as per request */}
       </div>
     </div>
   );

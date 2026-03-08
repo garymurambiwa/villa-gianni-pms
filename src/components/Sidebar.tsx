@@ -220,9 +220,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
           <div className="flex items-center gap-2">
             <Button
               onClick={logout}
-              variant="destructive"
               size="sm"
-              className="flex-1"
+              className="flex-1 transition-colors"
+              style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', border: '1px solid rgba(239, 68, 68, 0.3)' }}
+              onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.25)'}
+              onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)'}
               aria-label="Logout"
             >
               Logout
@@ -317,10 +319,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
                     setIsFsTransitioning(false);
                   }, 100);
                 }
+                setIsFsTransitioning(false);
               }}
-              variant={isFullscreen ? 'secondary' : 'default'}
               size="sm"
-              className={`min-w-[4.75rem] ${isFsTransitioning ? 'animate-pulse' : ''}`}
+              className={`min-w-[4.75rem] transition-colors ${isFsTransitioning ? 'animate-pulse' : ''}`}
+              style={isFullscreen
+                ? { backgroundColor: 'var(--hotel-primary)', color: '#ffffff', border: '1px solid var(--hotel-primary)' }
+                : { backgroundColor: 'transparent', color: 'var(--hotel-sidebar-text)', border: '1px solid var(--hotel-sidebar-border)' }
+              }
+              onMouseEnter={e => { if (!isFullscreen) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)' }}
+              onMouseLeave={e => { if (!isFullscreen) e.currentTarget.style.backgroundColor = 'transparent' }}
               title="Toggle Display Mode (F11)"
               aria-label="Toggle Display Mode"
               aria-busy={isFsTransitioning}
@@ -331,22 +339,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
 
             <Button
               onClick={() => setHotkeysOpen(true)}
-              variant="secondary"
               size="sm"
-              className="min-w-[4.75rem]"
+              className="min-w-[4.75rem] transition-colors"
+              style={{ backgroundColor: 'transparent', color: 'var(--hotel-sidebar-text)', border: '1px solid var(--hotel-sidebar-border)' }}
+              onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'}
+              onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
               title="Open Hotkeys"
               aria-label="Open Hotkeys"
             >
               ⚡ Hotkeys
             </Button>
           </div>
-          <div className="mt-3 flex justify-center">
-            <VersionDisplay className="text-gray-600" />
+          <div className="mt-3 flex justify-center text-xs opacity-60 transition-opacity hover:opacity-100" style={{ color: 'var(--hotel-sidebar-text)' }}>
+            <VersionDisplay />
           </div>
         </div>
         <HotkeysSettings open={hotkeysOpen} onOpenChange={setHotkeysOpen} />
         {/* Journal Posting Modal removed; lives in Accounting module */}
       </div>
-    </div>
+    </div >
   );
 };

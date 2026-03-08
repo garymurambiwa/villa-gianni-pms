@@ -3,6 +3,7 @@ import { useData } from '../../context/DataContext';
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { ORIGIN_REGIONS } from '@/data/regions';
+import { Building2, BedDouble, LogIn, LogOut, DollarSign, TrendingUp, AlertCircle, Activity } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const { rooms, reservations, dataError, lastUpdateTs } = useData();
@@ -39,8 +40,8 @@ export const Dashboard: React.FC = () => {
   }).length;
 
   // 1. Occupancy Rate = (Occupied Rooms / Total Available Rooms) * 100
-  const occupancyRate = totalAvailableRooms > 0 
-    ? ((occupiedRooms / totalAvailableRooms) * 100).toFixed(1) 
+  const occupancyRate = totalAvailableRooms > 0
+    ? ((occupiedRooms / totalAvailableRooms) * 100).toFixed(1)
     : '0.0';
 
   // 3. Today's Check-Ins: Number of reservations checking in today
@@ -63,12 +64,12 @@ export const Dashboard: React.FC = () => {
   const avgRoomRate = totalAvailableRooms > 0 ? currentRevenue / totalAvailableRooms : 0;
 
   const stats = [
-    { label: 'Occupancy Rate', value: `${occupancyRate}%`, color: 'bg-blue-500' },
-    { label: 'Occupied Rooms', value: `${occupiedRooms}`, color: 'bg-green-500' },
-    { label: 'Today Check-Ins', value: todayCheckIns, color: 'bg-purple-500' },
-    { label: 'Today Check-Outs', value: todayCheckOuts, color: 'bg-orange-500' },
-    { label: 'ADR', value: `$${avgDailyRate.toFixed(2)}`, color: 'bg-indigo-500' },
-    { label: 'ARR', value: `$${avgRoomRate.toFixed(2)}`, color: 'bg-pink-500' }
+    { label: 'Occupancy Rate', value: `${occupancyRate}%`, color: 'var(--hotel-primary)', icon: <TrendingUp className="w-5 h-5" /> },
+    { label: 'Occupied Rooms', value: `${occupiedRooms}`, color: 'var(--hotel-primary)', icon: <BedDouble className="w-5 h-5" /> },
+    { label: 'Today Check-Ins', value: todayCheckIns, color: 'var(--hotel-accent)', icon: <LogIn className="w-5 h-5" /> },
+    { label: 'Today Check-Outs', value: todayCheckOuts, color: 'var(--hotel-accent)', icon: <LogOut className="w-5 h-5" /> },
+    { label: 'ADR', value: `$${avgDailyRate.toFixed(2)}`, color: 'var(--hotel-gold)', icon: <DollarSign className="w-5 h-5" /> },
+    { label: 'ARR', value: `$${avgRoomRate.toFixed(2)}`, color: 'var(--hotel-gold)', icon: <Building2 className="w-5 h-5" /> }
   ];
 
   // Count room statuses - normalize to standard codes
@@ -205,7 +206,7 @@ export const Dashboard: React.FC = () => {
   // ----- Recent Activity (Dynamic) -----
   const recentActivity = React.useMemo(() => {
     const activity = [];
-    
+
     // Recent Check-Ins (today)
     reservations.filter(r => r.checkIn === todayStr).forEach(r => {
       activity.push({
@@ -231,7 +232,7 @@ export const Dashboard: React.FC = () => {
     // Recent Bookings (confirmed today)
     // We check if confirmedAt starts with todayStr
     reservations.filter(r => r.confirmedAt && r.confirmedAt.startsWith(todayStr)).forEach(r => {
-       activity.push({
+      activity.push({
         type: 'Booking',
         label: 'New Reservation',
         desc: `${r.roomType} - ${r.guestName}`,
@@ -247,141 +248,205 @@ export const Dashboard: React.FC = () => {
   }, [reservations, todayStr]);
 
   return (
-    <div className="p-6">
-      <h2 className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b px-6 -mx-6 text-3xl font-bold text-gray-800 mb-6 py-3">Dashboard Overview</h2>
-      <div className="mb-4 flex items-center justify-between">
-        <div className="text-xs text-gray-500">{lastUpdateTs ? `Updated ${new Date(lastUpdateTs).toLocaleTimeString()}` : 'Waiting for data'}</div>
-        {(dataError || latencyExceeded || validationError) && (
-          <div className={`p-2 rounded border ${dataError ? 'border-red-500 bg-red-50' : latencyExceeded ? 'border-yellow-500 bg-yellow-50' : 'border-orange-500 bg-orange-50'}`}>
-            <span className="text-xs text-gray-800">
-              {dataError ? `Real-time data issue: ${dataError}` : latencyExceeded ? 'Real-time update latency exceeded 2s' : validationError}
-            </span>
+    <div className="p-6 transition-colors duration-300 min-h-screen" style={{ backgroundColor: 'var(--hotel-bg)' }}>
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+        <h2
+          className="text-3xl font-bold transition-colors duration-300"
+          style={{ color: 'var(--hotel-text, #111827)' }}
+        >
+          Overview
+        </h2>
+        <div className="flex items-center gap-4">
+          <div className="text-xs transition-colors" style={{ color: 'var(--hotel-text-muted, #6b7280)' }}>
+            {lastUpdateTs ? `Data synced at ${new Date(lastUpdateTs).toLocaleTimeString()}` : 'Waiting for data'}
           </div>
-        )}
+          <div className="flex shrink-0">
+            {/* Profile icon placeholder mimicking reference image */}
+            <div className="w-10 h-10 rounded-full bg-gray-200 overflow-hidden border-2 border-white shadow-sm flex items-center justify-center text-gray-500">
+              <span className="font-semibold text-sm">AD</span>
+            </div>
+          </div>
+        </div>
       </div>
-      
+      {(dataError || latencyExceeded || validationError) && (
+        <div className={`mb-6 p-4 rounded-xl border flex items-center gap-3 ${dataError ? 'border-red-500 bg-red-50 text-red-700' : 'border-orange-500 bg-orange-50 text-orange-700'}`}>
+          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          <span className="text-sm font-medium">
+            {dataError ? `Real-time synchronization error: ${dataError}` : latencyExceeded ? 'Real-time update latency is unusually high (> 2s)' : validationError}
+          </span>
+        </div>
+      )}
+
+      {/* Top Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
         {stats.map((stat, idx) => (
-          <div key={idx} className="bg-white rounded-xl shadow-lg p-6 border-l-4" style={{ borderColor: stat.color.replace('bg-', '') }}>
-            <p className="text-gray-600 text-sm font-medium mb-2">{stat.label}</p>
-            <p className={`text-3xl font-bold text-gray-800 ${stat.label === 'Occupancy Rate' && pulse ? 'animate-pulse' : ''}`}>{stat.value}</p>
+          <div
+            key={idx}
+            className="rounded-xl shadow-sm p-6 border transition-colors duration-300 relative overflow-hidden"
+            style={{
+              backgroundColor: 'var(--hotel-card-bg, #ffffff)',
+              borderColor: 'var(--hotel-border, #e5e7eb)'
+            }}
+          >
+            <div className="flex justify-between items-start mb-4">
+              <p className="text-sm font-semibold transition-colors uppercase tracking-wider" style={{ color: 'var(--hotel-text-muted, #6b7280)' }}>{stat.label}</p>
+              <div className="p-2.5 rounded-full" style={{ backgroundColor: `color-mix(in srgb, ${stat.color} 15%, transparent)`, color: stat.color }}>
+                {stat.icon}
+              </div>
+            </div>
+            <div>
+              <p
+                className={`text-4xl font-extrabold transition-colors ${stat.label === 'Occupancy Rate' && pulse ? 'animate-pulse' : ''}`}
+                style={{ color: 'var(--hotel-text, #111827)' }}
+              >
+                {stat.value}
+              </p>
+            </div>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl shadow-lg p-6">
-          <h3 className="text-xl font-bold text-gray-800 mb-4">Room Status Summary</h3>
-          <div className="space-y-3">
-            {Object.entries(roomStatusCounts).map(([status, count]) => (
-              <div key={status} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                <span className="font-medium text-gray-700">{status}</span>
-                <span className="text-2xl font-bold text-blue-600">{count}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-8">
+        {/* Left Main Content */}
+        <div className="xl:col-span-2 space-y-6">
 
-        <div className="bg-white rounded-xl shadow-lg p-6">
-          <h3 className="text-xl font-bold text-gray-800 mb-4">Today's Activity</h3>
-          <div className="space-y-3">
-            {recentActivity.length > 0 ? (
-              recentActivity.map((item, idx) => (
-                <div key={idx} className={`p-3 border-l-4 rounded ${item.color}`}>
-                  <p className="text-sm font-medium text-gray-700">{item.label}</p>
-                  <p className="text-xs text-gray-500">{item.desc}</p>
-                </div>
-              ))
-            ) : (
-              <p className="text-gray-500 italic">No activity recorded for today.</p>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Region Filters */}
-      <div className="bg-white rounded-xl shadow-lg p-6 mb-8">
-        <h3 className="text-xl font-bold text-gray-800 mb-4">Analytics Filters</h3>
-        <div className="flex flex-wrap items-center gap-4">
-          <label className="text-sm text-gray-700">
-            Start Date
-            <input
-              type="date"
-              className="ml-2 border rounded px-2 py-1"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
-          </label>
-          <label className="text-sm text-gray-700">
-            End Date
-            <input
-              type="date"
-              className="ml-2 border rounded px-2 py-1"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
-          </label>
-          <label className="text-sm text-gray-700">
-            Metric
-            <select
-              className="ml-2 border rounded px-2 py-1"
-              value={metric}
-              onChange={(e) => setMetric(e.target.value as 'Revenue' | 'RevPAR')}
-            >
-              <option value="Revenue">Revenue</option>
-              <option value="RevPAR">RevPAR</option>
-            </select>
-          </label>
-        </div>
-      </div>
-
-      {/* Revenue Share by Region */}
-      <div className="grid grid-cols-1 gap-6 mb-8">
-        <div className="bg-white rounded-xl shadow-lg p-6">
-          <h3 className="text-xl font-bold text-gray-800 mb-4">Revenue Share by Region</h3>
-          <ChartContainer config={chartConfig} className="w-full h-80">
-            <ResponsiveContainer>
-              <PieChart>
-                <ChartTooltip content={<ChartTooltipContent nameKey="name" labelKey="name" />} />
-                <Pie
-                  data={pieData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={120}
-                  labelLine={false}
-                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={pieColors[entry.name] || '#94a3b8'} />
+          <div className="rounded-xl shadow-sm p-6 border transition-colors duration-300" style={{ backgroundColor: 'var(--hotel-card-bg, #ffffff)', borderColor: 'var(--hotel-border, #e5e7eb)' }}>
+            <h3 className="text-lg font-bold mb-4 transition-colors uppercase tracking-wide" style={{ color: 'var(--hotel-text-muted, #6b7280)' }}>Room Status Overview</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <tbody>
+                  {Object.entries(roomStatusCounts).map(([status, count], idx) => (
+                    <tr key={status} className="border-b transition-colors last:border-0" style={{ borderBottomColor: 'var(--hotel-border, #e5e7eb)' }}>
+                      <td className="py-3 font-semibold transition-colors w-1/3" style={{ color: 'var(--hotel-text, #111827)' }}>{status}</td>
+                      <td className="py-3 font-bold text-right transition-colors pr-2" style={{ color: 'var(--hotel-primary)' }}>{count}</td>
+                      <td className="py-3 w-1/2">
+                        <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--hotel-border)' }}>
+                          <div className="h-full rounded-full" style={{ width: `${totalAvailableRooms > 0 ? (count / totalAvailableRooms) * 100 : 0}%`, backgroundColor: 'var(--hotel-primary)' }}></div>
+                        </div>
+                      </td>
+                    </tr>
                   ))}
-                </Pie>
-                <ChartLegend content={<ChartLegendContent nameKey="name" />} />
-              </PieChart>
-            </ResponsiveContainer>
-          </ChartContainer>
-        </div>
-      </div>
+                </tbody>
+              </table>
+            </div>
+          </div>
 
-      {/* Revenue/RevPAR Trend by Region */}
-      <div className="grid grid-cols-1 gap-6 mb-8">
-        <div className="bg-white rounded-xl shadow-lg p-6">
-          <h3 className="text-xl font-bold text-gray-800 mb-4">{metric} Trend by Region</h3>
-          <ChartContainer config={chartConfig} className="w-full h-96">
-            <ResponsiveContainer>
-              <LineChart data={trendData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                {ORIGIN_REGIONS.map(region => (
-                  <Line key={region} type="monotone" dataKey={region} stroke={pieColors[region] || '#94a3b8'} dot={false} strokeWidth={2} />
-                ))}
-                <ChartLegend content={<ChartLegendContent />} />
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartContainer>
+          <div className="rounded-xl shadow-sm p-6 border transition-colors duration-300" style={{ backgroundColor: 'var(--hotel-card-bg, #ffffff)', borderColor: 'var(--hotel-border, #e5e7eb)' }}>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-bold transition-colors uppercase tracking-wide" style={{ color: 'var(--hotel-text-muted, #6b7280)' }}>{metric} Trend Over Time</h3>
+              <select
+                className="text-sm border rounded px-3 py-1.5 transition-colors outline-none font-medium"
+                style={{ backgroundColor: 'var(--hotel-bg)', borderColor: 'var(--hotel-border)', color: 'var(--hotel-text)' }}
+                value={metric}
+                onChange={(e) => setMetric(e.target.value as 'Revenue' | 'RevPAR')}
+              >
+                <option value="Revenue">Revenue</option>
+                <option value="RevPAR">RevPAR</option>
+              </select>
+            </div>
+            <ChartContainer config={chartConfig} className="w-full h-80">
+              <ResponsiveContainer>
+                <LineChart data={trendData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--hotel-border)" />
+                  <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: 'var(--hotel-text-muted)' }} dy={10} />
+                  <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: 'var(--hotel-text-muted)' }} dx={-10} />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  {ORIGIN_REGIONS.map(region => (
+                    <Line key={region} type="monotone" dataKey={region} stroke={pieColors[region] || '#94a3b8'} dot={{ r: 3, strokeWidth: 2 }} activeDot={{ r: 6 }} strokeWidth={2.5} />
+                  ))}
+                  <ChartLegend content={<ChartLegendContent />} />
+                </LineChart>
+              </ResponsiveContainer>
+            </ChartContainer>
+          </div>
+        </div>
+
+        {/* Right Sidebar Content */}
+        <div className="xl:col-span-1 space-y-6">
+          <div
+            className="rounded-xl shadow-sm p-6 border transition-colors duration-300"
+            style={{
+              backgroundColor: 'var(--hotel-primary)',
+              borderColor: 'var(--hotel-primary)',
+              color: '#ffffff'
+            }}
+          >
+            <div className="flex items-center gap-2 mb-6">
+              <Activity className="w-5 h-5 text-white/80" />
+              <h3 className="text-lg font-bold uppercase tracking-wide text-white/90">Today's Activity</h3>
+            </div>
+            <div className="space-y-4">
+              {recentActivity.length > 0 ? (
+                recentActivity.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="border-b border-white/20 pb-4 last:border-0 last:pb-0"
+                  >
+                    <p className="text-sm font-bold text-white mb-1">{item.label}</p>
+                    <p className="text-xs text-white/80">{item.desc}</p>
+                  </div>
+                ))
+              ) : (
+                <p className="italic text-white/70">No activity recorded for today.</p>
+              )}
+            </div>
+          </div>
+
+          <div
+            className="rounded-xl shadow-sm p-6 border transition-colors duration-300"
+            style={{
+              backgroundColor: 'var(--hotel-accent)',
+              borderColor: 'var(--hotel-accent)',
+              color: '#ffffff'
+            }}
+          >
+            <h3 className="text-lg font-bold uppercase tracking-wide text-white/90 mb-4">Analytics Controls</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-white/80 block mb-1">Start Date</label>
+                <input
+                  type="date"
+                  className="w-full border-0 rounded px-3 py-2 text-sm text-gray-900 shadow-inner"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-white/80 block mb-1">End Date</label>
+                <input
+                  type="date"
+                  className="w-full border-0 rounded px-3 py-2 text-sm text-gray-900 shadow-inner"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl shadow-sm p-6 border transition-colors duration-300" style={{ backgroundColor: 'var(--hotel-card-bg, #ffffff)', borderColor: 'var(--hotel-border, #e5e7eb)' }}>
+            <h3 className="text-sm font-bold mb-4 transition-colors uppercase tracking-wide text-center" style={{ color: 'var(--hotel-text-muted, #6b7280)' }}>Revenue Share</h3>
+            <ChartContainer config={chartConfig} className="w-full h-48">
+              <ResponsiveContainer>
+                <PieChart>
+                  <ChartTooltip content={<ChartTooltipContent nameKey="name" labelKey="name" />} />
+                  <Pie
+                    data={pieData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={70}
+                    innerRadius={45}
+                    paddingAngle={2}
+                  >
+                    {pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={pieColors[entry.name] || '#94a3b8'} stroke="none" />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+            </ChartContainer>
+          </div>
         </div>
       </div>
     </div>
