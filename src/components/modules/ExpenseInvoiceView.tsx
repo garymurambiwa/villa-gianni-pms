@@ -72,9 +72,10 @@ interface Props {
     expenses: VendorExpense[];
     onDeleteExpense?: (id: string) => Promise<void>;
     onAddCreditNote?: (expense: VendorExpense, creditData: Partial<VendorExpense>) => Promise<void>;
+    onRecordBill?: () => void;
 }
 
-export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense, onAddCreditNote }) => {
+export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense, onAddCreditNote, onRecordBill }) => {
     const { toast } = useToast();
 
     // UI state
@@ -262,55 +263,64 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
     return (
         <div className="space-y-4">
             {/* Filters row */}
-            <div className="flex flex-wrap items-end gap-3">
-                <div className="flex-1 min-w-[200px]">
-                    <Label className="text-xs text-gray-500 mb-1 block">Search</Label>
-                    <div className="relative">
-                        <Input
-                            placeholder="Search vendor, invoice, description…"
-                            value={searchQuery}
-                            onChange={e => setSearchQuery(e.target.value)}
-                            className="pl-9"
-                        />
-                        <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
+            <div className="flex flex-wrap items-end gap-3 justify-between">
+                <div className="flex flex-wrap items-end gap-3 flex-1">
+                    <div className="flex-1 min-w-[200px]">
+                        <Label className="text-xs text-gray-500 mb-1 block">Search</Label>
+                        <div className="relative">
+                            <Input
+                                placeholder="Search vendor, invoice, description…"
+                                value={searchQuery}
+                                onChange={e => setSearchQuery(e.target.value)}
+                                className="pl-9"
+                            />
+                            <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                        </div>
+                    </div>
+                    <div>
+                        <Label className="text-xs text-gray-500 mb-1 block">Status</Label>
+                        <Select value={statusFilter} onValueChange={setStatusFilter}>
+                            <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All</SelectItem>
+                                <SelectItem value="pending">Pending</SelectItem>
+                                <SelectItem value="approved">Approved</SelectItem>
+                                <SelectItem value="paid">Paid</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div>
+                        <Label className="text-xs text-gray-500 mb-1 block">Department</Label>
+                        <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+                            <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All Departments</SelectItem>
+                                {ALL_DEPARTMENTS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div>
+                        <Label className="text-xs text-gray-500 mb-1 block">From</Label>
+                        <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-[150px]" />
+                    </div>
+                    <div>
+                        <Label className="text-xs text-gray-500 mb-1 block">To</Label>
+                        <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-[150px]" />
                     </div>
                 </div>
-                <div>
-                    <Label className="text-xs text-gray-500 mb-1 block">Status</Label>
-                    <Select value={statusFilter} onValueChange={setStatusFilter}>
-                        <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="all">All</SelectItem>
-                            <SelectItem value="pending">Pending</SelectItem>
-                            <SelectItem value="approved">Approved</SelectItem>
-                            <SelectItem value="paid">Paid</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </div>
-                <div>
-                    <Label className="text-xs text-gray-500 mb-1 block">Department</Label>
-                    <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
-                        <SelectTrigger className="w-[200px]"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="all">All Departments</SelectItem>
-                            {ALL_DEPARTMENTS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-                        </SelectContent>
-                    </Select>
-                </div>
-                <div>
-                    <Label className="text-xs text-gray-500 mb-1 block">From</Label>
-                    <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-[150px]" />
-                </div>
-                <div>
-                    <Label className="text-xs text-gray-500 mb-1 block">To</Label>
-                    <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-[150px]" />
-                </div>
+                {onRecordBill && (
+                    <div className="flex items-end pb-1">
+                        <Button onClick={onRecordBill} className="bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-sm">
+                            + Record Vendor Bill
+                        </Button>
+                    </div>
+                )}
             </div>
 
-            {/* Summary */}
-            <div className="flex items-center justify-between text-sm text-gray-600">
+            {/* List Header */}
+            <div className="flex justify-between items-center text-sm text-gray-500 bg-gray-50 p-2 rounded-md">
                 <span>{filteredGroups.length} invoice{filteredGroups.length !== 1 ? 's' : ''} shown</span>
                 <span className="font-semibold">Net Total: {formatCurrency(totalFiltered)}</span>
             </div>

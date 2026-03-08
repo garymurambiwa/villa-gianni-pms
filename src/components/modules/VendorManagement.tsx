@@ -1206,6 +1206,7 @@ const VendorManagement: React.FC = () => {
                       status: 'approved',
                     });
                   }}
+                  onRecordBill={() => setIsRecordingBill(true)}
                 />
               )}
 
