@@ -49,7 +49,10 @@ export const Header: React.FC = () => {
 
   return (
     <>
-      <header className="bg-gradient-to-r from-purple-900 via-blue-900 to-purple-900 text-white shadow-2xl sticky top-0 z-40">
+      <header
+        className="text-white shadow-2xl sticky top-0 z-40"
+        style={{ background: 'linear-gradient(to right, var(--hotel-header-from), var(--hotel-header-mid), var(--hotel-header-to))' }}
+      >
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">

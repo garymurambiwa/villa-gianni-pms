@@ -183,9 +183,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
                       setIsMobileMenuOpen(false); // Auto-close on selection
                     }}
                     className={`w-full px-6 py-3 flex items-center transition-colors ${activeModule === module.id
-                      ? 'bg-blue-600 text-white'
+                      ? 'text-white'
                       : 'text-gray-300 hover:bg-gray-800'
                       }`}
+                    style={activeModule === module.id ? { backgroundColor: 'var(--hotel-primary)' } : {}}
                   >
                     <span className="text-xl mr-3">{module.icon}</span>
                     <span className="font-medium flex-1 text-left">{module.name}</span>
