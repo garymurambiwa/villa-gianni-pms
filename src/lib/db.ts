@@ -2,7 +2,8 @@
 import { Pool, neonConfig } from '@neondatabase/serverless';
 
 // Default connection for browser users (Neon with WebSocket support)
-const BROWSER_DSN = 'postgresql://neondb_owner:npg_r1fvxIDGLNA8@ep-empty-smoke-ahhjh27q-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require';
+// Fall back to original database if environment variable is not defined
+const BROWSER_DSN = import.meta.env.VITE_DATABASE_URL || 'postgresql://neondb_owner:npg_gS19rJszxTVk@ep-aged-poetry-a2nngq39-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require';
 
 type QueryResult<Row = any> = { rows: Row[]; rowCount: number } | { error: string }
 type ExecResult = { ok: true } | { ok: false; error: string }
