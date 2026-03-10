@@ -1242,7 +1242,7 @@ const VendorManagement: React.FC = () => {
                           return (
                             <React.Fragment key={expense.id}>
                               <TableRow>
-                                <TableCell>{expense.id}</TableCell>
+                                <TableCell title={expense.id}>{expense.id.slice(0, 8)}...</TableCell>
                                 <TableCell>{expense.vendor_name}</TableCell>
                                 <TableCell>
                                   {isBatchParent ? (
@@ -1274,7 +1274,22 @@ const VendorManagement: React.FC = () => {
                                 <TableCell>${expense.unit_cost.toFixed(2)}</TableCell>
                                 <TableCell>${expense.total_cost.toFixed(2)}</TableCell>
                                 <TableCell>${expense.tax_amount.toFixed(2)}</TableCell>
-                                <TableCell>{typeof expense.expense_date === 'string' ? expense.expense_date : new Date(expense.expense_date).toISOString().split('T')[0]}</TableCell>
+                                <TableCell>
+                                  {(() => {
+                                    try {
+                                      const d = new Date(expense.expense_date);
+                                      if (isNaN(d.getTime())) return String(expense.expense_date);
+                                      const yy = String(d.getFullYear()).slice(-2);
+                                      const mm = String(d.getMonth() + 1).padStart(2, '0');
+                                      const dd = String(d.getDate()).padStart(2, '0');
+                                      const hh = String(d.getHours()).padStart(2, '0');
+                                      const min = String(d.getMinutes()).padStart(2, '0');
+                                      return `${yy}.${mm}.${dd}:${hh}.${min}`;
+                                    } catch {
+                                      return String(expense.expense_date);
+                                    }
+                                  })()}
+                                </TableCell>
                                 <TableCell>
                                   <Select
                                     value={expense.status}
