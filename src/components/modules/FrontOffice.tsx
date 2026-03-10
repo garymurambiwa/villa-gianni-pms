@@ -20,7 +20,7 @@ import FOPrintCustomization from '@/components/modules/FOPrintCustomization';
 import FolioManagement from './folio/FolioManagement';
 import { TransferRoomModal } from './folio/TransferRoomModal';
 import { ReportLayout, ReportTable } from '../ui/ReportLayout';
-
+import { QuickCheckInModal } from './QuickCheckInModal';
 const packageOptions = [
   { code: 'RO', label: 'Room Only', surcharge: 0 },
   { code: 'BB', label: 'Bed & Breakfast', surcharge: 15 },
@@ -54,6 +54,7 @@ export const FrontOffice: React.FC = () => {
   const [selectedResId, setSelectedResId] = useState<string | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
   const [checkInDialogOpen, setCheckInDialogOpen] = useState(false);
+  const [quickCheckInOpen, setQuickCheckInOpen] = useState(false);
   const [showPrintSettings, setShowPrintSettings] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
@@ -1000,6 +1001,10 @@ export const FrontOffice: React.FC = () => {
           <p className="text-muted-foreground">Manage arrivals, departures, and in-house guests</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setQuickCheckInOpen(true)}>
+            <UserCheck className="mr-2 h-4 w-4" />
+            Quick Check-In
+          </Button>
           <Button variant="outline" onClick={openGuestLookup}>
             <FileSearch className="mr-2 h-4 w-4" />
             Guest Lookup
@@ -1958,6 +1963,10 @@ export const FrontOffice: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <QuickCheckInModal
+        isOpen={quickCheckInOpen}
+        onClose={() => setQuickCheckInOpen(false)}
+      />
     </div >
   );
 };
