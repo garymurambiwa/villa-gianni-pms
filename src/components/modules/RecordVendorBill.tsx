@@ -85,8 +85,7 @@ export const RecordVendorBill: React.FC<{ onCancel: () => void; onSuccess?: () =
 
   const handleDeptSelect = (id: string, value: string) => {
     // When department changes, clear category selection
-    handleChangeLine(id, 'department', value);
-    handleChangeLine(id, 'category', '');
+    setLines(prev => prev.map(l => l.id === id ? { ...l, department: value, category: '' } : l));
   };
 
   // Get departments (merge static USALI with dynamic from GL)

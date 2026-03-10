@@ -252,7 +252,23 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
         setCreditForm({ description: '', amount: 0 });
     };
 
-    const formatCurrency = (val: number) => `R${Math.abs(val).toFixed(2)}`;
+    const formatCurrency = (val: number) => `$${Math.abs(val).toFixed(2)}`;
+
+    const formatDateShort = (dateStr: string) => {
+        try {
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return dateStr;
+            const yy = String(d.getFullYear()).slice(-2);
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            const hh = String(d.getHours()).padStart(2, '0');
+            const min = String(d.getMinutes()).padStart(2, '0');
+            return `${yy}.${mm}.${dd}:${hh}.${min}`;
+        } catch {
+            return dateStr;
+        }
+    };
+
     const sortIndicator = (field: SortField) => sortField === field ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
 
     const totalFiltered = filteredGroups.reduce((s, g) => s + g.netAmount, 0);
@@ -367,7 +383,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                                         <TableCell className="font-mono text-sm">{toDisplayId(idx + 1, 'INV')}</TableCell>
                                         <TableCell className="font-medium">{group.vendorName}</TableCell>
                                         <TableCell className="text-sm text-gray-600">{group.department}</TableCell>
-                                        <TableCell className="text-sm">{group.date}</TableCell>
+                                        <TableCell className="text-sm">{formatDateShort(group.date)}</TableCell>
                                         <TableCell className="text-right font-semibold">
                                             {formatCurrency(group.netAmount)}
                                             {group.creditNotes.length > 0 && (
