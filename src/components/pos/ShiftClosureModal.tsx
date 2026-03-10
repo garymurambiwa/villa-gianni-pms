@@ -31,7 +31,7 @@ export const ShiftClosureModal: React.FC<ShiftClosureModalProps> = ({
   const openingCashNum = Number(activeShift ? activeShift.openingCash : 0);
   const totalsCashNum = Number(totals?.cash ?? 0);
   const expectedCash = openingCashNum + totalsCashNum;
-  const cashDifference = closingCash ? Number(closingCash) - expectedCash : 0;
+  const cashDifference = (closingCash !== '') ? (Number(closingCash) - expectedCash) : 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +42,11 @@ export const ShiftClosureModal: React.FC<ShiftClosureModalProps> = ({
     setSuccess('');
 
     try {
-      const result = await endShift(parseFloat(closingCash) || expectedCash);
+      // Prevent parsing errors by strictly checking the input string
+      const parsedCash = parseFloat(closingCash);
+      const finalClosingCash = isNaN(parsedCash) ? expectedCash : parsedCash;
+
+      const result = await endShift(finalClosingCash);
       
       if (result.success) {
         if (result.error) {
