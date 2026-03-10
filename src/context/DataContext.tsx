@@ -253,7 +253,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           let derivedCategoryId = p.category_id; // Use existing if present
           if (!derivedCategoryId) {
             if (isBar) {
-              if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice')) {
+              if (rawCat.includes('beer') || rawCat.includes('wine') || rawCat.includes('liquor') || rawCat.includes('spirit') || rawCat.includes('cider') || rawCat.includes('alcohol') || rawCat.includes('cocktail')) {
+                derivedCategoryId = 'CAT_BAR_ALC';
+              } else if (rawCat.includes('beverage') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice') || rawCat.includes('soft drink')) {
                 derivedCategoryId = 'CAT_BAR_BEV';
               } else {
                 derivedCategoryId = 'CAT_BAR_GEN';

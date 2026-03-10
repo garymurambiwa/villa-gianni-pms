@@ -256,7 +256,9 @@ export const getMenuItems = async (): Promise<Array<{ id: string; name: string; 
             let category_id = r.category_id || undefined;
             if (!category_id) {
               if (category === 'bar') {
-                if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice')) {
+                if (rawCat.includes('beer') || rawCat.includes('wine') || rawCat.includes('liquor') || rawCat.includes('spirit') || rawCat.includes('cider') || rawCat.includes('alcohol') || rawCat.includes('cocktail')) {
+                  category_id = 'CAT_BAR_ALC';
+                } else if (rawCat.includes('beverage') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice') || rawCat.includes('soft drink')) {
                   category_id = 'CAT_BAR_BEV';
                 } else {
                   category_id = 'CAT_BAR_GEN';

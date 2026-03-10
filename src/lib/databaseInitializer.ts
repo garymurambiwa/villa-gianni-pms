@@ -108,7 +108,29 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
       console.log('Table creation note:', e)
     }
     
-    // Create indexes
+    // Create indexes and triggers
+    try {
+      await db.exec(`
+        CREATE OR REPLACE FUNCTION update_updated_at_column()
+        RETURNS TRIGGER AS $$
+        BEGIN
+          NEW.updated_at = NOW();
+          RETURN NEW;
+        END;
+        $$ language 'plpgsql';
+      `)
+      await db.exec(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_products_updated_at') THEN
+            CREATE TRIGGER update_products_updated_at
+            BEFORE UPDATE ON products
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+          END IF;
+        END $$;
+      `)
+    } catch (e) { /* ignore if exists or unsupported */ }
+
     try {
       await db.exec(`CREATE INDEX IF NOT EXISTS idx_reservations_guest ON reservations(guest_id)`)
       await db.exec(`CREATE INDEX IF NOT EXISTS idx_reservations_room ON reservations(room_id)`)

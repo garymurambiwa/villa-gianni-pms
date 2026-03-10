@@ -30,7 +30,8 @@ export const listCategories = (department?: 'Bar' | 'Restaurant'): MenuCategory[
   const DEFAULTS: MenuCategory[] = [
     { category_id: 'CAT_BAR_GEN', category_name: 'General', department: 'Bar', sort_order: 0, buttonColor: '#4f46e5', textColor: '#ffffff' },
     { category_id: 'CAT_REST_GEN', category_name: 'General', department: 'Restaurant', sort_order: 0, buttonColor: '#10b981', textColor: '#ffffff' },
-    { category_id: 'CAT_BAR_BEV', category_name: 'Beverages', department: 'Bar', sort_order: 1, buttonColor: '#3b82f6', textColor: '#ffffff' },
+    { category_id: 'CAT_BAR_BEV', category_name: 'Soft Drinks', department: 'Bar', sort_order: 1, buttonColor: '#3b82f6', textColor: '#ffffff' },
+    { category_id: 'CAT_BAR_ALC', category_name: 'Beer & Alcohol', department: 'Bar', sort_order: 2, buttonColor: '#ef4444', textColor: '#ffffff' },
     { category_id: 'CAT_REST_MAIN', category_name: 'Mains', department: 'Restaurant', sort_order: 1, buttonColor: '#f59e0b', textColor: '#ffffff' }
   ];
   const rows = readJSON<MenuCategory[]>(K_CATEGORIES, DEFAULTS);
