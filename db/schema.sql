@@ -100,6 +100,33 @@ CREATE TABLE IF NOT EXISTS public.menu_items (
   inserted_at timestamptz NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS public.products (
+  id VARCHAR(255) PRIMARY KEY,
+  name text NOT NULL,
+  category text,
+  department text DEFAULT 'Restaurant',
+  price numeric(12,2) DEFAULT 0,
+  cost_price numeric(12,2) DEFAULT 0,
+  stock_level numeric DEFAULT 0,
+  unit text DEFAULT 'units',
+  active boolean DEFAULT true,
+  visibility text,
+  is_stock_item boolean DEFAULT true,
+  category_id text,
+  sub_id text,
+  parent_sub_id text,
+  notes text,
+  barcodes text,
+  cos_percent numeric(5,2),
+  gp_percent numeric(5,2),
+  gp_amount numeric(12,2),
+  qty_received numeric DEFAULT 0,
+  image_bg_color text,
+  picture_data text,
+  inserted_at timestamptz NOT NULL DEFAULT NOW(),
+  updated_at timestamptz DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS public.orders (
   id VARCHAR(255) PRIMARY KEY,
   user_id VARCHAR(255),
@@ -1188,6 +1215,11 @@ CREATE TRIGGER update_expenses_updated_at
 DROP TRIGGER IF EXISTS update_inventory_items_updated_at ON public.inventory_items;
 CREATE TRIGGER update_inventory_items_updated_at 
   BEFORE UPDATE ON public.inventory_items 
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_products_updated_at ON public.products;
+CREATE TRIGGER update_products_updated_at
+  BEFORE UPDATE ON public.products
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 

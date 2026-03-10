@@ -76,6 +76,33 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
           active BOOLEAN NOT NULL DEFAULT true,
           inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
         );
+
+        CREATE TABLE IF NOT EXISTS products (
+          id VARCHAR(255) PRIMARY KEY,
+          name TEXT NOT NULL,
+          category TEXT,
+          department TEXT DEFAULT 'Restaurant',
+          price NUMERIC(12,2) DEFAULT 0,
+          cost_price NUMERIC(12,2) DEFAULT 0,
+          stock_level NUMERIC DEFAULT 0,
+          unit TEXT DEFAULT 'units',
+          active BOOLEAN DEFAULT true,
+          visibility TEXT,
+          is_stock_item BOOLEAN DEFAULT true,
+          category_id TEXT,
+          sub_id TEXT,
+          parent_sub_id TEXT,
+          notes TEXT,
+          barcodes TEXT,
+          cos_percent NUMERIC(5,2),
+          gp_percent NUMERIC(5,2),
+          gp_amount NUMERIC(12,2),
+          qty_received NUMERIC DEFAULT 0,
+          image_bg_color TEXT,
+          picture_data TEXT,
+          inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
       `)
     } catch (e) { 
       console.log('Table creation note:', e)
