@@ -637,7 +637,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: errorMsg };
       }
       await loadAllData();
-      return { success: true };
+      return { success: true, reservationId };
     } catch (e: any) {
       const errorMsg = e?.message || String(e) || 'Unknown error occurred';
       console.error('Create reservation error:', errorMsg);
