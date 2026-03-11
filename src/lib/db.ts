@@ -60,7 +60,7 @@ export const db = {
   },
 
   async isConfigured(): Promise<boolean> {
-    return true;
+    return !!BROWSER_DSN;
   },
 
   async setConnectionString(conn: string): Promise<ExecResult> {
@@ -83,7 +83,10 @@ export const db = {
     const pgSql = convertPlaceholders(sql);
     try {
       const pool = await getBrowserPool();
-      const res = await pool.query(pgSql, params);
+      const res = await Promise.race([
+        pool.query(pgSql, params),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('DB connection timeout. Please check your network or VITE_DATABASE_URL.')), 15000))
+      ]) as any;
       return { rows: res.rows, rowCount: res.rowCount || 0 };
     } catch (e: any) {
       console.error(`[DB-Web-Error] ${e.message}`, sql);
@@ -94,7 +97,10 @@ export const db = {
   async exec(sql: string, actorUserId?: string): Promise<ExecResult> {
     try {
       const pool = await getBrowserPool();
-      await pool.query(convertPlaceholders(sql));
+      await Promise.race([
+        pool.query(convertPlaceholders(sql)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('DB connection timeout')), 15000))
+      ]);
       return { ok: true };
     } catch (e: any) { return { ok: false, error: e.message } }
   },

@@ -455,9 +455,12 @@ export const pmsAuthDb = {
 
   async verifyLogin(username: string, password: string): Promise<{ ok: boolean; user?: DbUser; mustChange?: boolean; error?: string }> {
     const res = await db.query<DbUser & { password_hash: string; failed_attempts: number; lockout_until: string | null; password_changed_at: string | null }>(`SELECT id, username, name, role, active, password_change_required, created_at, password_hash, failed_attempts, lockout_until, password_changed_at FROM app_users WHERE username = ?`, [username]);
-    if ('error' in res || !res.rows || res.rows.length === 0) {
+    if ('error' in res) {
+      return { ok: false, error: res.error as string };
+    }
+    if (!res.rows || res.rows.length === 0) {
       await this.recordAccessAttempt(username, 'login_attempt', { ok: false, reason: 'user_not_found' });
-      return { ok: false };
+      return { ok: false, error: 'user_not_found' };
     }
     const row = res.rows[0] as any;
     // Rate limiting: count last 15 minutes attempts (PostgreSQL interval syntax)
@@ -465,12 +468,12 @@ export const pmsAuthDb = {
     const recentAttempts = ('error' in rate) ? 0 : (rate.rows?.[0]?.c ?? 0);
     if (recentAttempts >= 5) {
       await this.recordAccessAttempt(username, 'login_attempt', { ok: false, reason: 'rate_limited' });
-      return { ok: false };
+      return { ok: false, error: 'rate limit exceeded' };
     }
     // Lockout check
     if (row.lockout_until && new Date(row.lockout_until).getTime() > Date.now()) {
       await this.recordAccessAttempt(username, 'login_attempt', { ok: false, reason: 'locked_out_until', until: row.lockout_until });
-      return { ok: false };
+      return { ok: false, error: 'account locked' };
     }
     const ok = await bcrypt.compare(password, row.password_hash);
     await db.query(`INSERT INTO login_attempts (user_username, ip, user_agent, ok) VALUES (?, ?, ?, ?)`, [username, 'electron', navigator.userAgent || 'electron', ok]);
@@ -482,7 +485,7 @@ export const pmsAuthDb = {
         lockUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // ISO string is fine for MySQL DATETIME usually, or use JS Date
       }
       await db.query(`UPDATE app_users SET failed_attempts = ?, lockout_until = ?, updated_at = NOW() WHERE username = ?`, [nextFailed, lockUntil ? new Date(lockUntil) : null, username]);
-      return { ok: false };
+      return { ok: false, error: 'Invalid username or password' };
     }
     // Success: reset counters
     await db.query(`UPDATE app_users SET failed_attempts = 0, lockout_until = NULL, last_login = NOW(), updated_at = NOW() WHERE username = ?`, [username]);

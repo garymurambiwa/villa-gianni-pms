@@ -198,6 +198,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           auth.createSession({
             id: resDb.user.id,
             username: resDb.user.username,
+            name: resDb.user.name,
             email: '',
             role: resDb.user.role as any,
             profile: { name: resDb.user.name },
@@ -240,14 +241,25 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           logger.logAuth('login_success', { username, userId: resDb.user.id, timestamp: new Date().toISOString() });
           return { success: true };
         }
-        if (resDb.error) {
-          let errorCode: AuthError['code'] = 'INVALID_CREDENTIALS';
-          if (resDb.error.includes('locked')) errorCode = 'USER_LOCKED';
-          else if (resDb.error.includes('rate limit')) errorCode = 'RATE_LIMITED';
-          else if (resDb.error.includes('inactive')) errorCode = 'USER_INACTIVE';
-          const authError = createAuthError(errorCode, resDb.error, username);
-          logger.logAuth('login_failure', { username, errorCode: authError.code, error: resDb.error, timestamp: new Date().toISOString() });
-          return { success: false, error: authError };
+        
+        // If they exist in DB but failed to login, stop them. If DB throws, also stop them to be safe.
+        // Wait, what if they only exist in local auth fallback?
+        // Fallback is only intended when db is not configured. If configured, fail.
+        if (!resDb.ok) {
+           let errorCode: AuthError['code'] = 'INVALID_CREDENTIALS';
+           const errReason = resDb.error || 'Invalid username or password';
+           if (errReason.includes('locked')) errorCode = 'USER_LOCKED';
+           else if (errReason.includes('rate limit')) errorCode = 'RATE_LIMITED';
+           else if (errReason.includes('inactive')) errorCode = 'USER_INACTIVE';
+           
+           // If the reason is 'user_not_found', we can let it fall through to local fallback.
+           if (errReason.includes('user_not_found') || errReason.includes('not found')) {
+               // Fall through
+           } else {
+               const authError = createAuthError(errorCode, errReason, username);
+               logger.logAuth('login_failure', { username, errorCode: authError.code, error: errReason, timestamp: new Date().toISOString() });
+               return { success: false, error: authError };
+           }
         }
       }
     } catch { }

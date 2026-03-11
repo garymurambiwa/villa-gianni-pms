@@ -533,7 +533,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const createReservation = async (resData: any): Promise<{ success: boolean; error?: string }> => {
+  const createReservation = async (resData: any): Promise<{ success: boolean; error?: string; reservationId?: string }> => {
     try {
       // Step 1: Create or find guest first
       let guestId = resData.guestId;
