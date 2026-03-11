@@ -76,7 +76,7 @@ interface Props {
     onMarkPaid?: (referenceNumber: string) => Promise<void>;
 }
 
-export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense, onAddCreditNote, onRecordBill }) => {
+export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense, onAddCreditNote, onRecordBill, onMarkPaid }) => {
     const { toast } = useToast();
 
     // UI state
