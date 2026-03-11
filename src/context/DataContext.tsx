@@ -27,6 +27,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [realTimeSyncService, setRealTimeSyncService] = useState<RealTimeSyncService | null>(null);
   const [isRealTimeSyncActive, setIsRealTimeSyncActive] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [lastUpdateTs, setLastUpdateTs] = useState<number | null>(null);
 
   const loadAllData = async () => {
     setLoading(true);
@@ -316,8 +318,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-    } catch (error) {
+      setLastUpdateTs(Date.now());
+      setDataError(null);
+
+    } catch (error: any) {
       console.error("Failed to load data from MySQL:", error);
+      setDataError(error.message || "Failed to load database content");
     } finally {
       setLoading(false);
     }
@@ -2518,7 +2524,9 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       triggerManualSync,
       getSyncStats,
       isRealTimeSyncActive,
-      realTimeSyncService
+      realTimeSyncService,
+      dataError,
+      lastUpdateTs
     }}>
       {children}
     </DataContext.Provider>

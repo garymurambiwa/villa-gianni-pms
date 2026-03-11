@@ -73,6 +73,7 @@ interface Props {
     onDeleteExpense?: (id: string) => Promise<void>;
     onAddCreditNote?: (expense: VendorExpense, creditData: Partial<VendorExpense>) => Promise<void>;
     onRecordBill?: () => void;
+    onMarkPaid?: (referenceNumber: string) => Promise<void>;
 }
 
 export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense, onAddCreditNote, onRecordBill }) => {
@@ -244,7 +245,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                 is_credit_note: true,
                 parent_expense_id: creditTarget.id,
             });
-            toast({ title: 'Credit Note Created', description: `R${creditForm.amount.toFixed(2)} credited against ${creditTarget.reference_number}` });
+            toast({ title: 'Credit Note Created', description: `$${creditForm.amount.toFixed(2)} credited against ${creditTarget.reference_number}` });
         } catch (err: any) {
             toast({ title: 'Error', description: err.message || 'Failed to create credit note', variant: 'destructive' });
         }
@@ -258,12 +259,12 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
         try {
             const d = new Date(dateStr);
             if (isNaN(d.getTime())) return dateStr;
-            const yy = String(d.getFullYear()).slice(-2);
+            const yy = d.getFullYear();
             const mm = String(d.getMonth() + 1).padStart(2, '0');
             const dd = String(d.getDate()).padStart(2, '0');
             const hh = String(d.getHours()).padStart(2, '0');
             const min = String(d.getMinutes()).padStart(2, '0');
-            return `${yy}.${mm}.${dd}:${hh}.${min}`;
+            return `${dd}/${mm}/${yy} ${hh}:${min}`;
         } catch {
             return dateStr;
         }
@@ -402,6 +403,16 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                                         </TableCell>
                                         <TableCell onClick={e => e.stopPropagation()}>
                                             <div className="flex gap-1">
+                                                {group.status !== 'paid' && onMarkPaid && (
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        className="text-xs bg-green-50 text-green-600 border-green-200 hover:bg-green-100 font-medium"
+                                                        onClick={() => onMarkPaid(group.referenceNumber)}
+                                                    >
+                                                        Mark Paid
+                                                    </Button>
+                                                )}
                                                 <Button
                                                     size="sm"
                                                     variant="outline"
@@ -435,7 +446,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                                             <TableCell className="text-xs text-gray-400 pl-6">└ {line.id.slice(0, 8)}</TableCell>
                                             <TableCell colSpan={2} className="text-sm">{line.description}</TableCell>
                                             <TableCell className="text-sm text-gray-600">
-                                                {line.quantity} × R{line.unit_cost.toFixed(2)}
+                                                {line.quantity} × ${line.unit_cost.toFixed(2)}
                                             </TableCell>
                                             <TableCell className="text-right text-sm">{formatCurrency(line.total_cost)}</TableCell>
                                             <TableCell className="text-xs text-gray-500">{line.category}</TableCell>
@@ -530,7 +541,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                             />
                         </div>
                         <div>
-                            <Label>Credit Amount (R)</Label>
+                            <Label>Credit Amount ($)</Label>
                             <Input
                                 type="number"
                                 min={0}

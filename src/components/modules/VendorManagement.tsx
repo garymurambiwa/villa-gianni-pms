@@ -1207,6 +1207,37 @@ const VendorManagement: React.FC = () => {
                     });
                   }}
                   onRecordBill={() => setIsRecordingBill(true)}
+                  onMarkPaid={async (referenceNumber) => {
+                    const expensesToUpdate = filteredExpenses.filter(e => e.reference_number === referenceNumber && e.status !== 'paid');
+                    if (expensesToUpdate.length === 0) return;
+                    
+                    let totalCost = 0;
+                    const expenseIds: string[] = [];
+                    
+                    for (const exp of expensesToUpdate) {
+                      await updateVendorExpense(exp.id, { ...exp, status: 'paid' });
+                      totalCost += exp.total_cost;
+                      expenseIds.push(exp.id);
+                    }
+                    
+                    const paymentData = {
+                      vendor_id: expensesToUpdate[0].vendor_id,
+                      expense_ids: expenseIds.join(','),
+                      amount_paid: totalCost,
+                      payment_date: new Date().toISOString().split('T')[0],
+                      payment_method: 'Bank',
+                      reference_number: `PAY-${Date.now()}`,
+                      notes: `Payment for invoice ${referenceNumber}`
+                    };
+                    
+                    const paymentSuccess = await payVendor(paymentData);
+                    if (paymentSuccess) {
+                      toast({ title: 'Payment Processed', description: `Invoice ${referenceNumber} marked as paid` });
+                      loadVendorPayments();
+                    } else {
+                      toast({ title: 'Payment Error', description: 'Could not create payment record', variant: 'destructive' });
+                    }
+                  }}
                 />
               )}
 
@@ -1279,12 +1310,12 @@ const VendorManagement: React.FC = () => {
                                     try {
                                       const d = new Date(expense.expense_date);
                                       if (isNaN(d.getTime())) return String(expense.expense_date);
-                                      const yy = String(d.getFullYear()).slice(-2);
+                                      const yy = d.getFullYear();
                                       const mm = String(d.getMonth() + 1).padStart(2, '0');
                                       const dd = String(d.getDate()).padStart(2, '0');
                                       const hh = String(d.getHours()).padStart(2, '0');
                                       const min = String(d.getMinutes()).padStart(2, '0');
-                                      return `${yy}.${mm}.${dd}:${hh}.${min}`;
+                                      return `${dd}/${mm}/${yy} ${hh}:${min}`;
                                     } catch {
                                       return String(expense.expense_date);
                                     }

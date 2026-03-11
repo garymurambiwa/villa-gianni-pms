@@ -73,14 +73,14 @@ export const Dashboard: React.FC = () => {
   ];
 
   // Count room statuses - normalize to standard codes
-  const roomStatusCounts = {
+  const roomStatusCounts = React.useMemo(() => ({
     VC: rooms.filter(r => getStatusCategory(r.status) === 'VC').length,
     VD: rooms.filter(r => getStatusCategory(r.status) === 'VD').length,
     OCC: rooms.filter(r => getStatusCategory(r.status) === 'OCC').length,
     OD: rooms.filter(r => getStatusCategory(r.status) === 'OD').length,
     OOO: rooms.filter(r => getStatusCategory(r.status) === 'OOO').length,
     OOS: rooms.filter(r => getStatusCategory(r.status) === 'OOS').length
-  };
+  }), [rooms]);
   React.useEffect(() => {
     updateStartRef.current = performance.now();
   }, [rooms, reservations]);
