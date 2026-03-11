@@ -376,7 +376,9 @@ export const pmsAuthDb = {
     const row = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username) = lower('admin')`);
     if (!('error' in row) && row.rows && row.rows.length > 0) {
       const id = row.rows[0].id;
-      await db.query(`UPDATE app_users SET role = 'admin', active = true, updated_at = NOW() WHERE id = ?`, [id]);
+      const hash = await bcrypt.hash('admin123', 12);
+      await db.query(`UPDATE app_users SET role = 'admin', active = true, updated_at = NOW(), failed_attempts = 0, lockout_until = NULL, password_hash = ?, password_change_required = false WHERE id = ?`, [hash, id]);
+      await db.query(`DELETE FROM login_attempts WHERE user_username = 'admin'`);
       await db.query(`UPDATE app_users SET two_factor_enabled = true WHERE id = ?`, [id]);
       await this.recordAccessAttempt('admin', 'permissions_granted', {
         privileges: [
