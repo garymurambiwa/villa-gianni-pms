@@ -451,7 +451,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addRoom = async (roomData: any): Promise<boolean> => {
     try {
       // Generate unique ID for the room
-      const roomId = `R${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
+      const roomId = `R${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       const sql = "INSERT INTO rooms (id, number, type, floor, rate, status) VALUES (?, ?, ?, ?, ?, ?)";
       const params = [roomId, String(roomData.number || ''), String(roomData.type || ''), Number(roomData.floor || 1), Number(roomData.rate || 0), 'VC'];
       const result = await db.query(sql, params);
@@ -560,7 +560,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // If no existing guest found, create a new one
         if (!guestId) {
-          const newGuestId = `G${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
+          const newGuestId = `G${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
           const guestSql = "INSERT INTO guests (id, full_name, email, phone) VALUES (?, ?, ?, ?)";
           const guestParams = [newGuestId, guestName, guestEmail, guestPhone];
           const guestResult = await db.query(guestSql, guestParams);
@@ -575,7 +575,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Step 2: Create the reservation with the guest_id
-      const reservationId = `RES${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
+      const reservationId = `RES${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
       // Prepare id_document_enc (required field) - encrypt if provided, use placeholder if not
       const idDocumentEnc = resData.idDocumentNumber
@@ -753,7 +753,7 @@ check_in_date = ?, check_out_date = ?, status = ?,
       });
 
       // Generate unique ID for the POS order
-      const orderId = `POS${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
+      const orderId = `POS${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       // PostgreSQL uses ON CONFLICT instead of ON DUPLICATE KEY UPDATE
       // First try to update existing order, if not found, insert new one
       const updateSql = "UPDATE pos_orders SET items = ?::jsonb, total_amount = ?, status = ? WHERE table_number = ? AND status = 'open' RETURNING id";
