@@ -2377,11 +2377,11 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
   // VENDORS - Process a vendor payment
   const payVendor = async (paymentData: any): Promise<boolean> => {
     try {
-      const paymentId = \`VPAY\${Date.now()}_\${Math.random().toString(36).substring(2, 9)} \`;
+      const paymentId = `VPAY${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
-      const sql = \`INSERT INTO vendor_payments(
+      const sql = `INSERT INTO vendor_payments(
         id, vendor_id, expense_ids, amount_paid, payment_date, payment_method, reference_number, notes, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())\`;
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
 
       const params = [
         paymentId,
@@ -2405,7 +2405,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       if (paymentData.expense_ids) {
         const expenseIds = paymentData.expense_ids.split(',').map((id: string) => id.trim());
         const placeholders = expenseIds.map(() => '?').join(',');
-        await db.query(\`UPDATE vendor_expenses SET status = 'paid' WHERE id IN (\${placeholders})\`, expenseIds);
+        await db.query(`UPDATE vendor_expenses SET status = 'paid' WHERE id IN (${placeholders})`, expenseIds);
       }
 
       // Reload vendor payments and expenses
