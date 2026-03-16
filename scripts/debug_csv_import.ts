@@ -16,8 +16,9 @@ const sheet = workbook.Sheets[sheetName];
 const data = XLSX.utils.sheet_to_json(sheet);
 
 if (data.length > 0) {
-    console.log('First Row Keys:', Object.keys(data[0]));
-    console.log('First Row Data:', data[0]);
+    const firstRow = data[0] as Record<string, unknown>;
+    console.log('First Row Keys:', Object.keys(firstRow));
+    console.log('First Row Data:', firstRow);
 } else {
     console.log('No data found');
 }

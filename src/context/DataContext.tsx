@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { db } from '../lib/db';
 import { v4 as uuidv4 } from 'uuid';
 import { toast } from '@/hooks/use-toast';
-import dbSync, { performFullSync, ensureTablesExist, loadCategoriesFromDb } from '@/lib/dbSync';
+import { performFullSync, ensureTablesExist, loadCategoriesFromDb } from '@/lib/dbSync';
 import menuCats from '@/lib/menuCategories';
 import { RealTimeSyncService } from '@/lib/realTimeSyncService';
 import { refreshRooms } from '@/lib/roomService';
@@ -20,17 +20,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [posOrders, setPosOrders] = useState([]);
   const [inventory, setInventory] = useState([]);
   const [folioCharges, setFolioCharges] = useState([]);
-  const [cityLedger, setCityLedger] = useState<any[]>([]);
-  const [vendors, setVendors] = useState<any[]>([]);
-  const [vendorExpenses, setVendorExpenses] = useState<any[]>([]);
-  const [vendorPayments, setVendorPayments] = useState<any[]>([]);
+  const [cityLedger, setCityLedger] = useState<Record<string, unknown>[]>([]);
+  const [vendors, setVendors] = useState<Record<string, unknown>[]>([]);
+  const [vendorExpenses, setVendorExpenses] = useState<Record<string, unknown>[]>([]);
+  const [vendorPayments, setVendorPayments] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [realTimeSyncService, setRealTimeSyncService] = useState<RealTimeSyncService | null>(null);
   const [isRealTimeSyncActive, setIsRealTimeSyncActive] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const [lastUpdateTs, setLastUpdateTs] = useState<number | null>(null);
 
-  const loadAllData = async () => {
+  const loadAllData = React.useCallback(async () => {
     setLoading(true);
     try {
       // Load PMS Data
@@ -327,10 +327,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   // Initialize real-time sync service
-  const initializeRealTimeSync = () => {
+  const initializeRealTimeSync = React.useCallback(() => {
     try {
       const syncService = RealTimeSyncService.getInstance({
         interval: 8000, // 8 seconds to meet 5-10 second requirement
@@ -358,7 +358,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('[DataContext] Failed to initialize real-time sync service:', error);
       return null;
     }
-  };
+  }, []);
 
   // Start real-time synchronization
   const startRealTimeSync = () => {
@@ -394,36 +394,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return new Map();
   };
 
-  useEffect(() => {
-    if (!user) return; // Don't load data if not logged in
 
-    loadAllData();
-    loadCityLedger();
-    loadVendors();
-    loadVendorExpenses();
-    loadVendorPayments();
-
-    // Perform initial sync of localStorage data to database
-    // This ensures any items created while offline are synced
-    (async () => {
-      try {
-        await ensureTablesExist();
-        const result = await performFullSync();
-        if (result.synced && result.synced > 0) {
-          console.log(`[DataContext] Initial sync completed: ${result.synced} items synced to database`);
-        }
-      } catch (err) {
-        console.warn('[DataContext] Initial sync failed:', err);
-      }
-    })();
-
-    // Initialize and start real-time sync service
-    const syncService = initializeRealTimeSync();
-    if (syncService) {
-      syncService.start();
-      setIsRealTimeSyncActive(true);
-    }
-  }, [user]);
 
   // Cleanup real-time sync service and other resources on unmount
   useEffect(() => {
@@ -943,12 +914,12 @@ status = 'checked-in',
       };
 
       // Update state
-      setFolioCharges((prev: any[]) => {
+      setFolioCharges((prev: Record<string, unknown>[]) => {
         const next = [...prev, newCharge];
         // Also persist to localStorage
         try {
           localStorage.setItem('corepms_folioCharges', JSON.stringify(next));
-        } catch { }
+        } catch { /* noop — localStorage is best-effort */ }
         return next;
       });
 
@@ -995,12 +966,12 @@ status = 'checked-in',
         source: 'pos'
       };
 
-      setFolioCharges((prev: any[]) => {
+      setFolioCharges((prev: Record<string, unknown>[]) => {
         const next = [...prev, newCharge];
         // Also persist to localStorage
         try {
           localStorage.setItem('corepms_folioCharges', JSON.stringify(next));
-        } catch { }
+        } catch { /* noop — localStorage is best-effort */ }
         return next;
       });
 
@@ -1047,12 +1018,12 @@ status = 'checked-in',
         source: 'front_office'
       };
 
-      setFolioCharges((prev: any[]) => {
+      setFolioCharges((prev: Record<string, unknown>[]) => {
         const next = [...prev, newPayment];
         // Also persist to localStorage
         try {
           localStorage.setItem('corepms_folioCharges', JSON.stringify(next));
-        } catch { }
+        } catch { /* noop — localStorage is best-effort */ }
         return next;
       });
 
@@ -1091,7 +1062,7 @@ status = 'checked-in',
         // Also persist to localStorage
         try {
           localStorage.setItem('corepms_folioCharges', JSON.stringify(next));
-        } catch { }
+        } catch { /* noop — localStorage is best-effort */ }
         return next;
       });
 
@@ -1218,7 +1189,7 @@ status = 'checked-in',
   };
 
   // CITY LEDGER - Load city ledger data
-  const loadCityLedger = async () => {
+  const loadCityLedger = React.useCallback(async () => {
     try {
       // Create or ensure city_ledger table structure
       try {
@@ -1512,7 +1483,7 @@ status = 'checked-in',
     } catch (error) {
       console.error('Failed to load city ledger data:', error);
     }
-  };
+  }, []);
 
   // CITY LEDGER - Add a new city ledger account
   const addCityLedgerAccount = async (accountData: any): Promise<boolean> => {
@@ -2002,7 +1973,7 @@ END;
   };
 
   // VENDORS - Load all vendors
-  const loadVendors = async () => {
+  const loadVendors = React.useCallback(async () => {
     try {
       const result = await db.query(
         `SELECT id, name, contact_person, phone, email, address, tax_id, payment_terms, credit_limit, current_balance, status, created_at, updated_at 
@@ -2037,10 +2008,10 @@ END;
       console.error('Load vendors error:', e?.message || e);
       toast({ title: 'Database Read Failed', description: `Could not load vendors: ${e?.message || e} `, variant: 'destructive' });
     }
-  };
+  }, []);
 
   // VENDORS - Load all vendor expenses
-  const loadVendorExpenses = async () => {
+  const loadVendorExpenses = React.useCallback(async () => {
     try {
       // First get all vendor expenses
       const expensesResult = await db.query(
@@ -2083,10 +2054,10 @@ END;
       console.error('Load vendor expenses error:', e?.message || e);
       toast({ title: 'Database Read Failed', description: 'Could not load vendor expenses', variant: 'destructive' });
     }
-  };
+  }, []);
 
   // VENDORS - Load all vendor payments
-  const loadVendorPayments = async () => {
+  const loadVendorPayments = React.useCallback(async () => {
     try {
       // First get all vendor payments
       const paymentsResult = await db.query(
@@ -2129,7 +2100,7 @@ END;
       console.error('Load vendor payments error:', e?.message || e);
       toast({ title: 'Database Read Failed', description: 'Could not load vendor payments', variant: 'destructive' });
     }
-  };
+  }, []);
 
   // VENDORS - Add a new vendor
   const addVendor = async (vendorData: any): Promise<boolean> => {
@@ -2272,11 +2243,11 @@ name = ?, contact_person = ?, phone = ?, email = ?, address = ?, tax_id = ?,
         const accs = gl.getAccounts();
         // Find an expense account (USALI: departmental expense or fallback 5000-series)
         const dept = String(expenseData.department || '').toLowerCase();
-        let expAccId = accs.find(a => a.category === 'Expense' && a.name.toLowerCase().includes(dept))?.id
+        const expAccId = accs.find(a => a.category === 'Expense' && a.name.toLowerCase().includes(dept))?.id
           || accs.find(a => a.category === 'Expense')?.id
           || '5000';
         // AP (Accounts Payable) as credit side — liability
-        let apAccId = accs.find(a => a.category === 'Liability' && a.name.toLowerCase().includes('payable'))?.id
+        const apAccId = accs.find(a => a.category === 'Liability' && a.name.toLowerCase().includes('payable'))?.id
           || accs.find(a => a.category === 'Liability')?.id
           || '2000';
 
@@ -2294,7 +2265,7 @@ name = ?, contact_person = ?, phone = ?, email = ?, address = ?, tax_id = ?,
       }
 
       // Notify report views to refresh
-      try { window.dispatchEvent(new CustomEvent('vendor:data:updated')); } catch { }
+      try { window.dispatchEvent(new CustomEvent('vendor:data:updated')); } catch { /* noop */ }
 
       // Reload vendor expenses
       await loadVendorExpenses();
@@ -2338,7 +2309,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       }
 
       // Notify report views to refresh
-      try { window.dispatchEvent(new CustomEvent('vendor:data:updated')); } catch { }
+      try { window.dispatchEvent(new CustomEvent('vendor:data:updated')); } catch { /* noop */ }
 
       // Reload vendor expenses
       await loadVendorExpenses();
@@ -2362,7 +2333,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       }
 
       // Notify report views to refresh
-      try { window.dispatchEvent(new CustomEvent('vendor:data:updated')); } catch { }
+      try { window.dispatchEvent(new CustomEvent('vendor:data:updated')); } catch { /* noop */ }
 
       // Reload vendor expenses
       await loadVendorExpenses();
@@ -2504,7 +2475,38 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
     };
 
     initializeData();
-  }, []);
+  }, [loadAllData]);
+
+  useEffect(() => {
+    if (!user) return; // Don't load data if not logged in
+
+    loadAllData();
+    loadCityLedger();
+    loadVendors();
+    loadVendorExpenses();
+    loadVendorPayments();
+
+    // Perform initial sync of localStorage data to database
+    // This ensures any items created while offline are synced
+    (async () => {
+      try {
+        await ensureTablesExist();
+        const result = await performFullSync();
+        if (result.synced && result.synced > 0) {
+          console.log(`[DataContext] Initial sync completed: ${result.synced} items synced to database`);
+        }
+      } catch (err) {
+        console.warn('[DataContext] Initial sync failed:', err);
+      }
+    })();
+
+    // Initialize and start real-time sync service
+    const syncService = initializeRealTimeSync();
+    if (syncService) {
+      syncService.start();
+      setIsRealTimeSyncActive(true);
+    }
+  }, [user, loadAllData, loadCityLedger, loadVendors, loadVendorExpenses, loadVendorPayments, initializeRealTimeSync]);
 
   return (
     <DataContext.Provider value={{

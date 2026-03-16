@@ -13,10 +13,10 @@ export const refreshRooms = async (): Promise<Room[]> => {
     // Check if query succeeded (res has "rows")
     if ('rows' in res && Array.isArray(res.rows)) {
       // Map DB rows to Room objects
-      roomsCache = res.rows.map((r: any) => ({
-        id: r.id,
-        number: r.number,
-        type: r.type,
+      roomsCache = res.rows.map((r: Record<string, unknown>) => ({
+        id: r.id as string,
+        number: r.number as string,
+        type: r.type as string,
         floor: Number(r.floor || 1),
         rate: Number(r.rate || 0),
         status: r.status as RoomStatus
@@ -150,19 +150,19 @@ export interface RoomAudit {
 }
 
 export const getAudit = async (): Promise<RoomAudit[]> => {
-  const res = await db.query<any>('SELECT * FROM room_audits ORDER BY timestamp DESC LIMIT 100');
+  const res = await db.query<Record<string, unknown>>('SELECT * FROM room_audits ORDER BY timestamp DESC LIMIT 100');
   if ('rows' in res && Array.isArray(res.rows)) {
-    return res.rows.map((row: any) => ({
-      id: row.id,
-      timestamp: row.timestamp,
-      userId: row.user_id,
-      user: row.user_username,
-      role: row.user_role,
-      action: row.action,
-      roomId: row.room_id,
+    return res.rows.map((row: Record<string, unknown>) => ({
+      id: String(row.id),
+      timestamp: String(row.timestamp),
+      userId: row.user_id ? String(row.user_id) : undefined,
+      user: row.user_username ? String(row.user_username) : undefined,
+      role: row.user_role ? String(row.user_role) : undefined,
+      action: String(row.action) as RoomAudit['action'],
+      roomId: row.room_id ? String(row.room_id) : undefined,
       before: typeof row.before_state === 'string' ? JSON.parse(row.before_state) : row.before_state,
       after: typeof row.after_state === 'string' ? JSON.parse(row.after_state) : row.after_state,
-      message: row.message
+      message: row.message ? String(row.message) : undefined
     }));
   }
   return [];
@@ -192,7 +192,7 @@ export const pushAudit = async (entry: Omit<RoomAudit, 'id' | 'timestamp'>): Pro
 };
 
 export const revertAudit = async (auditId: string): Promise<boolean> => {
-  const res = await db.query<any>('SELECT * FROM room_audits WHERE id = ?', [auditId]);
+  const res = await db.query<Record<string, unknown>>('SELECT * FROM room_audits WHERE id = ?', [auditId]);
   if (!('rows' in res) || !res.rows.length) return false;
 
   const audit = res.rows[0];
@@ -224,7 +224,7 @@ export const revertAudit = async (auditId: string): Promise<boolean> => {
       await refreshRooms();
       await pushAudit({
         action: 'update',
-        roomId: audit.room_id,
+        roomId: audit.room_id ? String(audit.room_id) : undefined,
         user: 'System',
         message: `Reverted action ${audit.action} from audit ${auditId}`
       });

@@ -16,7 +16,7 @@ async function main() {
             `);
             console.log("Inserted 'Simple Test Item'");
         } catch (e) {
-            console.log("Insert failed (might exist):", e.message);
+            console.log("Insert failed (might exist):", (e as Error).message);
         }
 
         client.release();

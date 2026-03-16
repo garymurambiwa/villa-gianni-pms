@@ -27,5 +27,13 @@ export default tseslint.config(
       ],
       "@typescript-eslint/no-unused-vars": "off",
     },
+  },
+  // DataContext.tsx legitimately uses `any` for dynamic DB row shapes throughout
+  // its 2500+ line data loading layer — suppress per-file to avoid mass TS churn
+  {
+    files: ["src/context/DataContext.tsx"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+    },
   }
 );

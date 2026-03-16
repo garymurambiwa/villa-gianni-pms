@@ -44,11 +44,18 @@ async function withRetry(fn, retries = 3, delay = 1000) {
     }
 }
 
+// Convert MySQL-style ? placeholders to PostgreSQL $1, $2, etc.
+function convertPlaceholders(sql) {
+    let idx = 0;
+    return sql.replace(/\?/g, () => `$${++idx}`);
+}
+
 module.exports = {
     async query(sql, params) {
         try {
             const pool = await getPgPool();
-            const res = await withRetry(() => pool.query(sql, params));
+            const pgSql = convertPlaceholders(sql);
+            const res = await withRetry(() => pool.query(pgSql, params));
             return { ok: true, rows: res.rows || [], rowCount: res.rowCount || 0 };
         } catch (e) {
             console.error('DB Query Error:', e.message);
@@ -60,7 +67,8 @@ module.exports = {
     async exec(sql) {
         try {
             const pool = await getPgPool();
-            await withRetry(() => pool.query(sql));
+            const pgSql = convertPlaceholders(sql);
+            await withRetry(() => pool.query(pgSql));
             return { ok: true };
         } catch (e) {
             console.error('DB Exec Error:', e.message);
@@ -81,7 +89,8 @@ module.exports = {
                 const results = [];
                 for (const op of operations) {
                     // op is { sql: string, params?: any[] }
-                    const res = await client.query(op.sql, op.params || []);
+                    const pgSql = convertPlaceholders(op.sql);
+                    const res = await client.query(pgSql, op.params || []);
                     results.push({ rows: res.rows, rowCount: res.rowCount });
                 }
 

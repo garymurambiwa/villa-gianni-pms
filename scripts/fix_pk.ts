@@ -16,12 +16,13 @@ async function main() {
             await client.query('ALTER TABLE inventory_items ADD PRIMARY KEY (id);');
             console.log("Added PRIMARY KEY (id)");
         } catch (e) {
-            console.log("PK add failed (might exist or dups):", e.message);
+            const err = e as Error;
+            console.log("PK add failed (might exist or dups):", err.message);
             // If dups, we might need to truncate?
             // User has NO items in POS, so truncating is probably safe/desired to fix this mess.
-            if (e.message.includes('multiple primary keys') || e.message.includes('already exists')) {
+            if (err.message.includes('multiple primary keys') || err.message.includes('already exists')) {
                 // Ignore
-            } else if (e.message.includes('could not create unique index')) {
+            } else if (err.message.includes('could not create unique index')) {
                 console.log("Duplicates found. Truncating table to fix structure...");
                 await client.query('TRUNCATE TABLE inventory_items');
                 await client.query('ALTER TABLE inventory_items ADD PRIMARY KEY (id);');

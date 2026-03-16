@@ -135,7 +135,7 @@ export const decrementInventory = (soldItems: Array<{ name: string; quantity: nu
     const list = raw ? JSON.parse(raw) : [];
     const nameMap = new Map<string, number>();
     soldItems.forEach(si => nameMap.set(String(si.name).toLowerCase(), Number(si.quantity || 0)));
-    const next = list.map((it: any) => {
+    const next = list.map((it: Record<string, unknown>) => {
       const q = nameMap.get(String(it.name || '').toLowerCase());
       if (!q) return it;
       const current = Number(it.qtyInStock || 0);
@@ -169,7 +169,7 @@ export const decrementInventory = (soldItems: Array<{ name: string; quantity: nu
           [qty, name]
         );
       }
-    } catch { }
+    } catch { /* noop — DB decrement is best-effort */ }
   })();
 };
 
@@ -182,7 +182,7 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
     const raw = localStorage.getItem('corepms_pos_items');
     const list = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(list)) return [];
-    return list.map((it: any) => {
+    return list.map((it: Record<string, unknown>) => {
       const costCenter = String(it.costCenter || it.type || '').toLowerCase();
       const rawCat = String(it.department || it.category || '').toLowerCase();
       const isBar = costCenter.includes('bar') ||
@@ -199,7 +199,8 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
 
       const category: 'food' | 'bar' = isBar ? 'bar' : 'food';
       const price = Number(it.sellingPrice ?? it.price ?? 0);
-      const available = category === 'bar' ? !!it.visibility?.bar : !!it.visibility?.restaurant;
+      const visibility = it.visibility as { bar?: boolean; restaurant?: boolean } | null | undefined;
+      const available = category === 'bar' ? !!visibility?.bar : !!visibility?.restaurant;
       return {
         id: String(it.id ?? it.name ?? `item_${Math.random().toString(36).slice(2)}`),
         name: String(it.name ?? 'Item'),
@@ -212,7 +213,7 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
         subCategory: it.subCategory ? String(it.subCategory) : (it.category ? String(it.category) : undefined),
         sub_id: it.sub_id ? String(it.sub_id) : undefined,
         imageBgColor: it.imageBgColor ? String(it.imageBgColor) : undefined,
-        image: it.pictureData || undefined,
+        image: it.pictureData ? String(it.pictureData) : undefined,
       };
     }).filter(m => m.available);
   } catch (err) {
@@ -231,7 +232,7 @@ export const getMenuItems = async (): Promise<Array<{ id: string; name: string; 
       );
       if ('rows' in res && Array.isArray(res.rows)) {
         return res.rows
-          .map((r: any) => {
+          .map((r: Record<string, unknown>) => {
             const rawCat = String(r.department || r.category || '').toLowerCase();
             // Simple heuristic for Bar vs Food, defaulting to Food
             const isBar = rawCat.includes('bar') ||
@@ -253,7 +254,7 @@ export const getMenuItems = async (): Promise<Array<{ id: string; name: string; 
 
             // Map imported products to default Categories to ensure they appear in POS tabs
             // Otherwise, OrderModal filters them out if they don't match active category ID.
-            let category_id = r.category_id || undefined;
+            let category_id = r.category_id ? String(r.category_id) : undefined;
             if (!category_id) {
               if (category === 'bar') {
                 if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice')) {
@@ -276,7 +277,7 @@ export const getMenuItems = async (): Promise<Array<{ id: string; name: string; 
               price,
               category,
               description: '',
-              subCategory: r.category || r.department || '',
+              subCategory: String(r.category || r.department || ''),
               category_id
             };
           })
@@ -316,9 +317,9 @@ export const generateReceiptHTML = (
     totalOverride?: number;
   } = {}
 ): string => {
-  let subtotal = Number(options.subtotalOverride ?? (Array.isArray(data.items) ? data.items.reduce((s, it) => s + Number(it.subtotal || 0), 0) : 0))
+  const subtotal = Number(options.subtotalOverride ?? (Array.isArray(data.items) ? data.items.reduce((s, it) => s + Number(it.subtotal || 0), 0) : 0))
   let tax = 0
-  let total = Number(((options.totalOverride ?? data.total) ?? 0))
+  const total = Number(options.totalOverride ?? data.total ?? 0)
   const taxLines = Array.isArray(options.taxLines) ? options.taxLines : [{ name: `Tax`, amount: Number(((total - subtotal) || 0).toFixed(2)) }]
   tax = taxLines.reduce((s, t) => s + Number(t.amount || 0), 0)
   const timestamp = new Date().toLocaleString();
@@ -326,7 +327,7 @@ export const generateReceiptHTML = (
   const rowsHTML = safeItems.map(item => {
     const qty = Number(item.quantity ?? 0);
     const price = Number(item.price ?? 0);
-    const sub = Number(item.subtotal ?? (qty * price) ?? 0);
+    const sub = Number(item.subtotal ?? (qty * price));
     const name = String(item.name ?? 'Item');
     return `
           <tr>
@@ -453,7 +454,7 @@ export const printDocument = (
     printWindow.document.open();
     printWindow.document.write(wrapped);
     printWindow.document.close();
-  } catch { }
+  } catch { /* noop — document.write may fail cross-origin */ }
   printWindow.focus();
 
   const trigger = () => {
@@ -461,7 +462,7 @@ export const printDocument = (
       printWindow.print();
       if (autoClose) printWindow.close();
     } catch {
-      setTimeout(() => { try { printWindow.print(); if (autoClose) printWindow.close(); } catch { } }, 250);
+      setTimeout(() => { try { printWindow.print(); if (autoClose) printWindow.close(); } catch { /* noop */ } }, 250);
     }
   };
   try { printWindow.addEventListener('load', trigger); } catch { setTimeout(trigger, 300); }
@@ -644,7 +645,7 @@ export const createAuditEntry = (
   entityType: string,
   entityId: string,
   userId: string,
-  details?: any
+  details?: Record<string, unknown> | unknown
 ) => {
   return {
     id: generateTransactionId('AUDIT'),
@@ -860,16 +861,16 @@ export const generateCityLedgerReceiptHTML = (
 
 export type GatewayResult = { status: 'approved' | 'declined' | 'timeout'; authCode?: string; reference?: string; reason?: string };
 
-export const logPaymentEvent = (event: { type: string; data?: any }) => {
+export const logPaymentEvent = (event: { type: string; data?: Record<string, unknown> }) => {
   try {
     const raw = localStorage.getItem('corepms_payment_logs');
     const list = raw ? JSON.parse(raw) : [];
     const entry = { ts: new Date().toISOString(), ...event };
     localStorage.setItem('corepms_payment_logs', JSON.stringify([entry, ...list].slice(0, 1000)));
-  } catch { }
+  } catch { /* noop — log is best-effort */ }
 };
 
-export const processCardPayment = async (req: { amount: number; currency?: string; token?: string; meta?: any }): Promise<GatewayResult> => {
+export const processCardPayment = async (req: { amount: number; currency?: string; token?: string; meta?: Record<string, unknown> }): Promise<GatewayResult> => {
   const m = req.meta || {};
   if (m.forceDecline) return Promise.resolve({ status: 'declined' as const, reason: 'forced' });
   if (m.forceTimeout) return new Promise((resolve) => setTimeout(() => resolve({ status: 'timeout' as const }), 1500));

@@ -51,7 +51,7 @@ const loadInventoryFromPOS = async (): Promise<{ items: InventoryItem[]; source:
       );
       if ('rows' in res && Array.isArray(res.rows) && res.rows.length > 0) {
         return {
-          items: res.rows.map((r: any) => ({
+          items: res.rows.map((r: Record<string, unknown>) => ({
             id: String(r.id),
             name: String(r.name),
             category: String(r.category || ''),
@@ -156,10 +156,10 @@ export const Inventory: React.FC = () => {
   const lastScrollTimeRef = useRef<number>(0);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const getXLSX = useCallback(async (): Promise<any | null> => {
+  const getXLSX = useCallback(async (): Promise<Record<string, unknown> | null> => {
     try {
-      const w = window as any;
-      if (w.XLSX) return w.XLSX;
+      const w = window as unknown as Record<string, any>;
+      if (w.XLSX) return w.XLSX as Record<string, unknown>;
       await new Promise<void>((resolve, reject) => {
         const s = document.createElement('script');
         s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
@@ -223,9 +223,9 @@ export const Inventory: React.FC = () => {
           const vr = localStorage.getItem('corepms_goods_received');
           const vs = vr ? JSON.parse(vr) : [];
           const ids = new Set<string>();
-          (Array.isArray(vs) ? vs : []).forEach((v: any) => { if (String(v.supplier || '') === supplierFilter) { (v.items || []).forEach((it: any) => ids.add(String(it.itemId))) } });
+          (Array.isArray(vs) ? vs : []).forEach((v: Record<string, unknown>) => { if (String(v.supplier || '') === supplierFilter) { (v.items as Record<string, unknown>[] || []).forEach((it: Record<string, unknown>) => ids.add(String(it.itemId))) } });
           base = base.filter(i => ids.has(String(i.id)));
-        } catch { }
+        } catch { /* noop */ }
       }
       return base.length;
     };
@@ -311,11 +311,11 @@ export const Inventory: React.FC = () => {
 
   // Print current filtered list by category
   const handlePrintByCategory = () => {
-    const rows = filteredItems.map(i => `<tr><td>${i.name}</td><td class=\"right\">${i.quantity}</td><td>${i.unit}</td><td class=\"right\">${Number(i.cost).toFixed(2)}</td><td class=\"right\">${(i.quantity * Number(i.cost)).toFixed(2)}</td></tr>`).join('');
+    const rows = filteredItems.map(i => `<tr><td>${i.name}</td><td class="right">${i.quantity}</td><td>${i.unit}</td><td class="right">${Number(i.cost).toFixed(2)}</td><td class="right">${(i.quantity * Number(i.cost)).toFixed(2)}</td></tr>`).join('');
     const brand = readReceiptBranding();
     const header = `
-      ${brand.show_logo && brand.logo_url ? `<div style=\"text-align:center\"><img src=\"${brand.logo_url}\" alt=\"Logo\" style=\"max-width:120px\"/></div>` : ''}
-      <div style=\"text-align:center;font-weight:bold\">${brand.restaurant_name}</div>
+      ${brand.show_logo && brand.logo_url ? `<div style="text-align:center"><img src="${brand.logo_url}" alt="Logo" style="max-width:120px"/></div>` : ''}
+      <div style="text-align:center;font-weight:bold">${brand.restaurant_name}</div>
     `;
     const html = `
       <html><head><title>Inventory — ${filter}</title>
@@ -329,34 +329,34 @@ export const Inventory: React.FC = () => {
       </head>
       <body>
         ${header}
-        <h2 style=\"text-align:center\">Inventory (${filter})</h2>
+        <h2 style="text-align:center">Inventory (${filter})</h2>
         <table>
-          <thead><tr><th>Item</th><th class=\"right\">Qty</th><th>Unit</th><th class=\"right\">Unit Cost</th><th class=\"right\">Total Value</th></tr></thead>
+          <thead><tr><th>Item</th><th class="right">Qty</th><th>Unit</th><th class="right">Unit Cost</th><th class="right">Total Value</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
-        <div style=\"text-align:center;margin-top:12px;font-size:11px;color:#555\">Powered By Coredigita</div>
+        <div style="text-align:center;margin-top:12px;font-size:11px;color:#555">Powered By Coredigita</div>
       </body></html>`;
     const w = window.open('', '_blank');
     if (!w) { toast({ title: 'Popup blocked', description: 'Allow popups to print.', variant: 'destructive' }); return; }
     w.document.write(html);
     w.document.close();
-    try { w.focus(); w.print(); } catch { }
+    try { w.focus(); w.print(); } catch { /* noop */ }
   };
 
   // Export current filtered list by category (CSV)
   const handleExportByCategory = () => {
     const headers = ['Item', 'Qty', 'Unit', 'UnitCost', 'TotalValue'];
     const rows = filteredItems.map(i => [i.name, String(i.quantity), i.unit, Number(i.cost).toFixed(2), (i.quantity * Number(i.cost)).toFixed(2)]);
-    const csv = [headers.join(','), ...rows.map(r => r.map(v => `\"${String(v).replace(/\"/g, '\"\"')}\"`).join(','))].join('\n');
+    const csv = [headers.join(','), ...rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = `inventory_${filter}.csv`; a.click(); URL.revokeObjectURL(url);
   };
 
   // Supplier list for filter dropdown
-  const suppliersFromStore: string[] = (() => { try { const raw = localStorage.getItem('corepms_suppliers'); const list = raw ? JSON.parse(raw) : []; return Array.isArray(list) && list.length ? list.map((s: any) => String(s.name || s)) : ['Default Supplier']; } catch { return ['Default Supplier']; } })();
+  const suppliersFromStore: string[] = (() => { try { const raw = localStorage.getItem('corepms_suppliers'); const list = raw ? JSON.parse(raw) : []; return Array.isArray(list) && list.length ? list.map((s: Record<string, unknown>) => String(s.name || s)) : ['Default Supplier']; } catch { return ['Default Supplier']; } })();
   // Map supplier -> set of itemIds from GRV vouchers
-  const itemsBySupplier = (() => { try { const vr = localStorage.getItem('corepms_goods_received'); const vs = vr ? JSON.parse(vr) : []; const map = new Map<string, Set<string>>(); (Array.isArray(vs) ? vs : []).forEach((v: any) => { const s = String(v.supplier || ''); if (!map.has(s)) map.set(s, new Set<string>()); (v.items || []).forEach((it: any) => map.get(s)!.add(String(it.itemId))); }); return map; } catch { return new Map<string, Set<string>>(); } })();
+  const itemsBySupplier = (() => { try { const vr = localStorage.getItem('corepms_goods_received'); const vs = vr ? JSON.parse(vr) : []; const map = new Map<string, Set<string>>(); (Array.isArray(vs) ? vs : []).forEach((v: Record<string, unknown>) => { const s = String(v.supplier || ''); if (!map.has(s)) map.set(s, new Set<string>()); (v.items as Record<string, unknown>[] || []).forEach((it: Record<string, unknown>) => map.get(s)!.add(String(it.itemId))); }); return map; } catch { return new Map<string, Set<string>>(); } })();
 
   const filteredItems = (() => {
     let base = filter === 'all' ? inventory : filter === 'low' ? inventory.filter(i => i.quantity <= i.reorderLevel) : inventory.filter(i => i.category === filter);
@@ -459,11 +459,11 @@ export const Inventory: React.FC = () => {
           >
             Kitchen
           </button>
-          <select className="px-4 py-2 rounded-lg border" value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}>
+          <select aria-label="Filter by Supplier" className="px-4 py-2 rounded-lg border" value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)}>
             <option value="all">All Suppliers</option>
             {suppliersFromStore.map((s, idx) => (<option key={idx} value={s}>{s}</option>))}
           </select>
-          <select className="px-4 py-2 rounded-lg border" value={locationFilter} onChange={(e) => setLocationFilter(e.target.value as any)}>
+          <select aria-label="Filter by Location" className="px-4 py-2 rounded-lg border" value={locationFilter} onChange={(e) => setLocationFilter(e.target.value as 'all' | 'Kitchen' | 'Cellar')}>
             <option value="all">All Locations</option>
             <option value="Kitchen">Kitchen</option>
             <option value="Cellar">Cellar</option>
@@ -477,8 +477,8 @@ export const Inventory: React.FC = () => {
             <h3 className="text-lg font-semibold mb-3">Adjust Stock</h3>
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-medium">Item</label>
-                <select className="w-full border rounded p-2" value={adjustItemId} onChange={(e) => setAdjustItemId(e.target.value)}>
+                <label htmlFor="adjust-item-select" className="text-xs font-medium">Item</label>
+                <select id="adjust-item-select" className="w-full border rounded p-2" value={adjustItemId} onChange={(e) => setAdjustItemId(e.target.value)}>
                   <option value="">Select item</option>
                   {inventory.map((it) => (
                     <option key={it.id} value={it.id}>{it.name}</option>
@@ -487,16 +487,16 @@ export const Inventory: React.FC = () => {
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs font-medium">Current</label>
-                  <input className="w-full border rounded p-2" readOnly value={String(inventory.find((x) => x.id === adjustItemId)?.quantity ?? 0)} />
+                  <label htmlFor="adjust-current-qty" className="text-xs font-medium">Current</label>
+                  <input id="adjust-current-qty" className="w-full border rounded p-2" readOnly value={String(inventory.find((x) => x.id === adjustItemId)?.quantity ?? 0)} />
                 </div>
                 <div>
-                  <label className="text-xs font-medium">Adjustment (±)</label>
-                  <input type="number" className="w-full border rounded p-2" value={adjustDelta} onChange={(e) => setAdjustDelta(Number(e.target.value || 0))} />
+                  <label htmlFor="adjust-delta-input" className="text-xs font-medium">Adjustment (±)</label>
+                  <input id="adjust-delta-input" type="number" className="w-full border rounded p-2" value={adjustDelta} onChange={(e) => setAdjustDelta(Number(e.target.value || 0))} placeholder="0" />
                 </div>
                 <div>
-                  <label className="text-xs font-medium">New</label>
-                  <input className="w-full border rounded p-2" readOnly value={(() => {
+                  <label htmlFor="adjust-new-qty" className="text-xs font-medium">New</label>
+                  <input id="adjust-new-qty" className="w-full border rounded p-2" readOnly value={(() => {
                     const cur = inventory.find((x) => x.id === adjustItemId);
                     const curQty = Number(cur?.quantity || 0);
                     const nextQty = curQty + Number(adjustDelta || 0);
@@ -659,23 +659,23 @@ const EventBinder: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
       try {
         btn.style.transform = 'scale(1.05)';
         btn.style.filter = 'brightness(0.9)';
-      } catch { }
+      } catch { /* noop */ }
     };
     const leave = () => {
       try {
         btn.style.transform = 'scale(1.0)';
         btn.style.filter = 'none';
-      } catch { }
+      } catch { /* noop */ }
     };
     const down = () => {
       try {
         btn.style.transform = 'scale(0.98)';
-      } catch { }
+      } catch { /* noop */ }
     };
     const up = () => {
       try {
         btn.style.transform = 'scale(1.05)';
-      } catch { }
+      } catch { /* noop */ }
     };
 
     btn.addEventListener('click', click);
@@ -718,7 +718,7 @@ const GRVModal: React.FC<GRVModalProps> = ({ inventory, onClose, onSaved }) => {
   const [rows, setRows] = useState<Array<{ itemId: string; qty: number; totalCost: number }>>([
     { itemId: '', qty: 0, totalCost: 0 }
   ]);
-  const suppliers: string[] = (() => { try { const raw = localStorage.getItem('corepms_suppliers'); const list = raw ? JSON.parse(raw) : []; return Array.isArray(list) && list.length ? list.map((s: any) => String(s.name || s)) : ['Default Supplier']; } catch { return ['Default Supplier']; } })();
+  const suppliers: string[] = (() => { try { const raw = localStorage.getItem('corepms_suppliers'); const list = raw ? JSON.parse(raw) : []; return Array.isArray(list) && list.length ? list.map((s: Record<string, unknown>) => String(s.name || s)) : ['Default Supplier']; } catch { return ['Default Supplier']; } })();
 
   const addRow = () => setRows(prev => [...prev, { itemId: '', qty: 0, totalCost: 0 }]);
   const removeRow = (idx: number) => setRows(prev => prev.filter((_, i) => i !== idx));
@@ -758,12 +758,12 @@ const GRVModal: React.FC<GRVModalProps> = ({ inventory, onClose, onSaved }) => {
               }
             }
           }
-        } catch { }
+        } catch { /* noop */ }
       })();
       // Load POS items
       const raw = localStorage.getItem('corepms_pos_items');
-      const list: any[] = raw ? JSON.parse(raw) : [];
-      const map = new Map<string, any>(list.map(it => [String(it.id), it]));
+      const list: POSItem[] = raw ? JSON.parse(raw) : [];
+      const map = new Map<string, POSItem>(list.map(it => [String(it.id), it]));
       // Update stock and average cost
       rows.forEach(r => {
         if (!r.itemId || r.qty <= 0 || r.totalCost <= 0) return;
@@ -793,7 +793,7 @@ const GRVModal: React.FC<GRVModalProps> = ({ inventory, onClose, onSaved }) => {
         const vs = vr ? JSON.parse(vr) : [];
         vs.unshift(voucher);
         localStorage.setItem('corepms_goods_received', JSON.stringify(vs.slice(0, 500)));
-      } catch { }
+      } catch { /* noop */ }
       // Audit entries: GRV_CREATE and per-item INVENTORY_RECEIPT
       try {
         const rawAudit = localStorage.getItem('corepms_pos_audit');
@@ -807,7 +807,7 @@ const GRVModal: React.FC<GRVModalProps> = ({ inventory, onClose, onSaved }) => {
         const itemEntries = voucher.items.map((it, idx) => ({ id: `AUD_${Date.now()}_${idx}`, action: 'INVENTORY_RECEIPT', entity: 'STOCK', entityId: it.itemId, timestamp: base.timestamp, details: { qty: it.qty, totalCost: it.totalCost, location } }));
         const nextAudit = [header, ...itemEntries, ...auditList].slice(0, 500);
         localStorage.setItem('corepms_pos_audit', JSON.stringify(nextAudit));
-      } catch { }
+      } catch { /* noop */ }
       onSaved();
       toast({ title: 'Goods received', description: 'Voucher saved and stock updated.' });
     } catch (err) {
@@ -822,25 +822,25 @@ const GRVModal: React.FC<GRVModalProps> = ({ inventory, onClose, onSaved }) => {
         <h3 className="text-lg font-semibold mb-3">Goods Received Voucher (GRV)</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <div>
-            <label className="text-xs font-medium">Date Received *</label>
-            <input type="date" className="w-full border rounded p-2" value={dateReceived} onChange={(e) => setDateReceived(e.target.value)} />
+            <label htmlFor="grv-date" className="text-xs font-medium">Date Received *</label>
+            <input id="grv-date" type="date" className="w-full border rounded p-2" value={dateReceived} onChange={(e) => setDateReceived(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs font-medium">Supplier/Vendor *</label>
-            <select className="w-full border rounded p-2" value={supplier} onChange={(e) => setSupplier(e.target.value)}>
+            <label htmlFor="grv-supplier" className="text-xs font-medium">Supplier/Vendor *</label>
+            <select id="grv-supplier" className="w-full border rounded p-2" value={supplier} onChange={(e) => setSupplier(e.target.value)}>
               <option value="">Select supplier</option>
               {suppliers.map((s, idx) => (<option key={idx} value={s}>{s}</option>))}
             </select>
           </div>
           <div>
-            <label className="text-xs font-medium">Invoice / Reference No.</label>
-            <input className="w-full border rounded p-2" value={reference} onChange={(e) => setReference(e.target.value)} />
+            <label htmlFor="grv-reference" className="text-xs font-medium">Invoice / Reference No.</label>
+            <input id="grv-reference" className="w-full border rounded p-2" value={reference} onChange={(e) => setReference(e.target.value)} title="Invoice / Reference Number" placeholder="e.g. INV-123" />
           </div>
           <div>
             <label className="text-xs font-medium">Stock Location *</label>
             <div className="flex items-center gap-4 p-2">
-              <label className="flex items-center gap-2"><input type="radio" name="grv-location" checked={location === 'Kitchen'} onChange={() => setLocation('Kitchen')} /> Kitchen</label>
-              <label className="flex items-center gap-2"><input type="radio" name="grv-location" checked={location === 'Cellar'} onChange={() => setLocation('Cellar')} /> Cellar</label>
+              <label htmlFor="loc-kitchen" className="flex items-center gap-2"><input id="loc-kitchen" type="radio" name="grv-location" checked={location === 'Kitchen'} onChange={() => setLocation('Kitchen')} /> Kitchen</label>
+              <label htmlFor="loc-cellar" className="flex items-center gap-2"><input id="loc-cellar" type="radio" name="grv-location" checked={location === 'Cellar'} onChange={() => setLocation('Cellar')} /> Cellar</label>
             </div>
           </div>
         </div>
@@ -856,16 +856,16 @@ const GRVModal: React.FC<GRVModalProps> = ({ inventory, onClose, onSaved }) => {
                 {rows.map((r, idx) => (
                   <tr key={idx} className="border-t">
                     <td className="p-2">
-                      <select className="w-full border rounded p-2" value={r.itemId} onChange={(e) => updateRow(idx, { itemId: e.target.value })}>
+                      <select aria-label="Select inventory item" title="Item" className="w-full border rounded p-2" value={r.itemId} onChange={(e) => updateRow(idx, { itemId: e.target.value })}>
                         <option value="">Select item</option>
                         {inventory.map(it => (<option key={it.id} value={it.id}>{it.name}</option>))}
                       </select>
                     </td>
                     <td className="p-2 text-right">
-                      <input type="number" className="w-full border rounded p-2" value={r.qty} onChange={(e) => updateRow(idx, { qty: Number(e.target.value || 0) })} />
+                      <input type="number" aria-label="Quantity received" title="Quantity" className="w-full border rounded p-2" value={r.qty} onChange={(e) => updateRow(idx, { qty: Number(e.target.value || 0) })} placeholder="0" />
                     </td>
                     <td className="p-2 text-right">
-                      <input type="number" step="0.01" className="w-full border rounded p-2" value={r.totalCost} onChange={(e) => updateRow(idx, { totalCost: Number(e.target.value || 0) })} />
+                      <input type="number" step="0.01" aria-label="Total cost of items" title="Total Cost" className="w-full border rounded p-2" value={r.totalCost} onChange={(e) => updateRow(idx, { totalCost: Number(e.target.value || 0) })} placeholder="0.00" />
                     </td>
                     <td className="p-2 text-center">
                       <button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => removeRow(idx)}>Remove</button>
@@ -895,7 +895,7 @@ const SuppliersModal: React.FC<SuppliersModalProps> = ({ onClose, onSaved }) => 
     try {
       const raw = localStorage.getItem('corepms_suppliers');
       const list = raw ? JSON.parse(raw) : [];
-      return (Array.isArray(list) ? list : []).map((s: any) => ({ id: s.id || `SUP_${Math.random().toString(36).slice(2)}`, name: String(s.name || s), contact: String(s.contact || ''), phone: String(s.phone || ''), address: String(s.address || '') }));
+      return (Array.isArray(list) ? list : []).map((s: Record<string, unknown>) => ({ id: String(s.id || `SUP_${Math.random().toString(36).slice(2)}`), name: String(s.name || s), contact: String(s.contact || ''), phone: String(s.phone || ''), address: String(s.address || '') }));
     } catch { return []; }
   };
   const [suppliers, setSuppliers] = useState<Array<{ id: string; name: string; contact?: string; phone?: string; address?: string }>>(readSuppliers());
@@ -905,7 +905,7 @@ const SuppliersModal: React.FC<SuppliersModalProps> = ({ onClose, onSaved }) => 
   const [newAddress, setNewAddress] = useState('');
 
   const saveAll = () => {
-    try { localStorage.setItem('corepms_suppliers', JSON.stringify(suppliers)); } catch { }
+    try { localStorage.setItem('corepms_suppliers', JSON.stringify(suppliers)); } catch { /* noop */ }
   };
   const addSupplier = () => {
     const name = newName.trim(); if (!name) return;
@@ -938,10 +938,10 @@ const SuppliersModal: React.FC<SuppliersModalProps> = ({ onClose, onSaved }) => 
             <tbody>
               {suppliers.map(s => (
                 <tr key={s.id} className="border-t">
-                  <td className="p-2"><input className="w-full border rounded p-2" value={s.name} onChange={(e) => patchSupplier(s.id, { name: e.target.value })} /></td>
-                  <td className="p-2"><input className="w-full border rounded p-2" value={s.contact || ''} onChange={(e) => patchSupplier(s.id, { contact: e.target.value })} /></td>
-                  <td className="p-2"><input className="w-full border rounded p-2" value={s.phone || ''} onChange={(e) => patchSupplier(s.id, { phone: e.target.value })} /></td>
-                  <td className="p-2"><input className="w-full border rounded p-2" value={s.address || ''} onChange={(e) => patchSupplier(s.id, { address: e.target.value })} /></td>
+                  <td className="p-2"><input aria-label="Supplier Name" title="Name" className="w-full border rounded p-2" value={s.name} onChange={(e) => patchSupplier(s.id, { name: e.target.value })} placeholder="Name" /></td>
+                  <td className="p-2"><input aria-label="Contact Person" title="Contact Person" className="w-full border rounded p-2" value={s.contact || ''} onChange={(e) => patchSupplier(s.id, { contact: e.target.value })} placeholder="Contact" /></td>
+                  <td className="p-2"><input aria-label="Phone Number" title="Phone" className="w-full border rounded p-2" value={s.phone || ''} onChange={(e) => patchSupplier(s.id, { phone: e.target.value })} placeholder="Phone" /></td>
+                  <td className="p-2"><input aria-label="Address" title="Address" className="w-full border rounded p-2" value={s.address || ''} onChange={(e) => patchSupplier(s.id, { address: e.target.value })} placeholder="Address" /></td>
                   <td className="p-2 text-center"><button className="px-2 py-1 rounded bg-red-100 text-red-700" onClick={() => delSupplier(s.id)}>Delete</button></td>
                 </tr>
               ))}

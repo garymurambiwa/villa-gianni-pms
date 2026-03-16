@@ -83,7 +83,7 @@ export const generateZReading = (data: ZReadingData): ShiftReading => {
 export const generateZReadingHTML = (
   zReading: ShiftReading,
   shift: Shift,
-  receiptSettings?: any
+  receiptSettings?: Record<string, unknown>
 ): string => {
   const timestamp = new Date().toLocaleString();
   const shiftDuration = calculateShiftDuration(shift.startedAt, shift.endedAt);
@@ -245,7 +245,7 @@ export const generateZReadingHTML = (
 export const printZReading = async (
   zReading: ShiftReading,
   shift: Shift,
-  receiptSettings?: any
+  receiptSettings?: Record<string, unknown>
 ): Promise<{ success: boolean; error?: string }> => {
   try {
     const printerStatus = await checkPrinterStatus();
@@ -257,7 +257,7 @@ export const printZReading = async (
     if (!settings && zReading.outlet) {
       try {
         settings = getOutletReceiptSettings(zReading.outlet);
-      } catch { }
+      } catch { /* noop — use fallback settings */ }
     }
 
     const html = generateZReadingHTML(zReading, shift, settings);

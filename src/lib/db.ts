@@ -80,6 +80,22 @@ export const db = {
   },
 
   async query<Row = any>(sql: string, params: any[] = []): Promise<QueryResult<Row>> {
+    const isLocal = BROWSER_DSN?.includes('localhost');
+    if (isLocal) {
+      try {
+        const res = await fetch('/api/db/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sql, params })
+        });
+        const data = await res.json();
+        return data as QueryResult<Row>;
+      } catch (e: any) {
+        console.error(`[DB-Bridge-Error] ${e.message}`, sql);
+        return { error: e.message };
+      }
+    }
+
     const pgSql = convertPlaceholders(sql);
     try {
       const pool = await getBrowserPool();
@@ -95,6 +111,18 @@ export const db = {
   },
 
   async exec(sql: string, actorUserId?: string): Promise<ExecResult> {
+    const isLocal = BROWSER_DSN?.includes('localhost');
+    if (isLocal) {
+      try {
+        const res = await fetch('/api/db/exec', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sql })
+        });
+        return await res.json() as ExecResult;
+      } catch (e: any) { return { ok: false, error: e.message } }
+    }
+
     try {
       const pool = await getBrowserPool();
       await Promise.race([
@@ -106,6 +134,18 @@ export const db = {
   },
 
   async transaction(operations: (string | { sql: string; params?: any[] })[], actorUserId?: string): Promise<ExecResult> {
+    const isLocal = BROWSER_DSN?.includes('localhost');
+    if (isLocal) {
+      try {
+        const res = await fetch('/api/db/transaction', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ operations })
+        });
+        return await res.json() as ExecResult;
+      } catch (e: any) { return { ok: false, error: e.message } }
+    }
+
     const normalizedOps = operations.map(op => {
       if (typeof op === 'string') return { sql: op, params: [] };
       return { sql: op.sql, params: op.params || [] };
