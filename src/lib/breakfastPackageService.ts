@@ -36,7 +36,7 @@ async function ensureBreakfastTablesExist(): Promise<void> {
     }
 
     // Wait for database to be ready before creating tables
-    const isReady = await db.waitForReady(10, 500);
+    const isReady = await db.waitForReady();
     if (!isReady) {
       console.warn('[BreakfastService] Database not ready, will retry later');
       return;

@@ -16,7 +16,7 @@ interface User {
 }
 
 const UserManagement: React.FC = () => {
-  const { addUser } = useData();
+  const { addUser, users, loading } = useData();
   const { toast } = useToast();
   
   const [showAddUserModal, setShowAddUserModal] = useState(false);
@@ -26,8 +26,6 @@ const UserManagement: React.FC = () => {
     email: '',
     role: 'user'
   });
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(false);
 
   const handleAddUser = async () => {
     if (!userForm.username.trim() || !userForm.password.trim() || !userForm.email.trim()) {
@@ -63,8 +61,6 @@ const UserManagement: React.FC = () => {
         role: 'user'
       });
       setShowAddUserModal(false);
-      // Refresh user list
-      // In a real implementation, we would load users from the database
     } else {
       toast({
         title: 'Error',
@@ -174,26 +170,33 @@ const UserManagement: React.FC = () => {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {users.length > 0 ? (
-              users.map((user) => (
+            {users && users.length > 0 ? (
+              users.map((user: any) => (
                 <tr key={user.id}>
-                  <td className="px-6 py-4 whitespace-nowrap">{user.username}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">{user.email}</td>
+                  <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{user.username || user.name}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-gray-500">{user.email || 'No email'}</td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                      user.role === 'admin' ? 'bg-purple-100 text-purple-800' : 
+                      user.role === 'manager' ? 'bg-blue-100 text-blue-800' : 
+                      'bg-green-100 text-green-800'
+                    }`}>
                       {user.role}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">{new Date(user.created_at).toLocaleDateString()}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-gray-500 text-sm">
+                    {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <Button variant="outline" size="sm">Edit</Button>
+                    <Button variant="outline" size="sm" className="mr-2">Edit</Button>
+                    <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-900 hover:bg-red-50">Delete</Button>
                   </td>
                 </tr>
               ))
             ) : (
               <tr>
                 <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
-                  {loading ? 'Loading users...' : 'No users found. Add a user to get started.'}
+                  {loading ? 'Loading users...' : 'No users found.'}
                 </td>
               </tr>
             )}

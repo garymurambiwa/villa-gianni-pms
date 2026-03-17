@@ -24,6 +24,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [vendors, setVendors] = useState<Record<string, unknown>[]>([]);
   const [vendorExpenses, setVendorExpenses] = useState<Record<string, unknown>[]>([]);
   const [vendorPayments, setVendorPayments] = useState<Record<string, unknown>[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [realTimeSyncService, setRealTimeSyncService] = useState<RealTimeSyncService | null>(null);
   const [isRealTimeSyncActive, setIsRealTimeSyncActive] = useState(false);
@@ -326,6 +327,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setDataError(error.message || "Failed to load database content");
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadUsers = React.useCallback(async () => {
+    try {
+      console.log('[DataContext] loadUsers starting...');
+      const pmsAuthDb = (await import('@/lib/pmsAuthDb')).default;
+      const allUsers = await pmsAuthDb.listUsers();
+      console.log('[DataContext] Total users fetched:', allUsers.length);
+      setUsers(allUsers);
+    } catch (error) {
+      console.error('[DataContext] Failed to load users:', error);
     }
   }, []);
 
@@ -2429,35 +2442,26 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
   // USER MANAGEMENT - Add a new user
   const addUser = async (userData: any): Promise<boolean> => {
     try {
-      const userId = `USR${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
-
-      // Hash the password (in a real app, use bcrypt or similar)
-      // For now, we'll store the password as-is for simplicity
-      const hashedPassword = userData.password; // In real app, hash this
-
-      const sql = `INSERT INTO users(
-    id, username, password_hash, email, role, created_at, updated_at
-  ) VALUES(?, ?, ?, ?, ?, NOW(), NOW())`;
-
-      const params = [
-        userId,
-        userData.username,
-        hashedPassword,
-        userData.email,
-        userData.role
-      ];
-
-      const result = await db.query(sql, params);
-      if ('error' in result) {
-        console.error('User insert failed:', result.error);
-        toast({ title: 'Database Write Failed', description: 'User could not be saved', variant: 'destructive' });
+      const pmsAuthDb = (await import('@/lib/pmsAuthDb')).default;
+      const res = await pmsAuthDb.registerUser({
+        username: userData.username,
+        email: userData.email,
+        password: userData.password,
+        name: userData.username, // Using username as name if not provided
+        role: userData.role || 'user'
+      });
+      
+      if (!res.ok) {
+        console.error('User registration failed:', res.error);
+        toast({ title: 'Registration Failed', description: res.error || 'User could not be created', variant: 'destructive' });
         return false;
       }
 
+      await loadUsers();
       return true;
     } catch (e: any) {
       console.error('Add user error:', e?.message || e);
-      toast({ title: 'Database Write Failed', description: 'User could not be saved', variant: 'destructive' });
+      toast({ title: 'Database Error', description: 'User could not be saved', variant: 'destructive' });
       return false;
     }
   };
@@ -2472,10 +2476,11 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       // CRITICAL: Load all data from database and sync to localStorage
       // This includes products with category_id mapping for POS visibility
       await loadAllData();
+      await loadUsers();
     };
 
     initializeData();
-  }, [loadAllData]);
+  }, [loadAllData, loadUsers]);
 
   useEffect(() => {
     if (!user) return; // Don't load data if not logged in
@@ -2519,6 +2524,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       addCityLedgerAccount, updateCityLedgerAccount, addCityLedgerTransaction, addCityLedgerNote,
       addVendor, updateVendor, deleteVendor, addVendorExpense, updateVendorExpense, deleteVendorExpense, payVendor, loadVendorPayments,
       addUser, // Add user management function
+      users, loadUsers,
       cityLedger, loading, refreshData: loadAllData,
       // Real-time sync methods
       startRealTimeSync,

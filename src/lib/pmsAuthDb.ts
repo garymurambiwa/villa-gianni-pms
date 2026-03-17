@@ -574,6 +574,48 @@ export const pmsAuthDb = {
     await db.query(`UPDATE app_users SET is_verified = true, updated_at = NOW() WHERE id = ?`, [rec.user_id]);
     await db.query(`UPDATE email_verifications SET used_at = NOW() WHERE token = ?`, [token]);
     return { ok: true };
+  },
+
+  async listUsers(): Promise<DbUser[]> {
+    console.log('[pmsAuthDb] listUsers called');
+    const res = await db.query<DbUser>(`SELECT id, username, name, email, role, active, created_at, last_login, last_activity FROM app_users ORDER BY username ASC`);
+    console.log('[pmsAuthDb] listUsers result:', res);
+    if ('error' in res) {
+      console.error('[pmsAuthDb] listUsers error:', res.error);
+      return [];
+    }
+    return res.rows || [];
+  },
+
+  async deleteUser(id: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await db.query(`DELETE FROM app_users WHERE id = ?`, [id]);
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to delete user' };
+    }
+  },
+
+  async updateUser(id: string, patch: Partial<DbUser>): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const sets: string[] = [];
+      const params: any[] = [];
+      if (patch.name !== undefined) { sets.push(`name = ?`); params.push(patch.name); }
+      if (patch.role !== undefined) { sets.push(`role = ?`); params.push(patch.role); }
+      if (patch.active !== undefined) { sets.push(`active = ?`); params.push(patch.active); }
+      if (patch.username !== undefined) { sets.push(`username = ?`); params.push(patch.username); }
+      
+      if (sets.length === 0) return { ok: true };
+      
+      params.push(id);
+      const sql = `UPDATE app_users SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`;
+      const res = await db.query(sql, params);
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to update user' };
+    }
   }
 }
 

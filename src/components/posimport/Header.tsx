@@ -156,7 +156,7 @@ export const Header: React.FC = () => {
               )}
 
               <div className="border-l border-purple-400 pl-4">
-                <div className="text-sm font-semibold">{user?.fullName}</div>
+                <div className="text-sm font-semibold">{user?.name}</div>
                 <div className="text-xs text-purple-200">{user?.role || 'Staff'}</div>
               </div>
 

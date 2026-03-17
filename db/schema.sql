@@ -169,6 +169,8 @@ CREATE TABLE IF NOT EXISTS public.app_users (
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
   last_login TIMESTAMP,
+  last_activity TIMESTAMP,
+  permissions TEXT[],
   two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
   two_factor_secret TEXT
 );

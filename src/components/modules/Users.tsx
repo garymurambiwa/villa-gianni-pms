@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { listUsers as authListUsers, register as authRegister, updateUser as authUpdateUser, deleteUser as authDeleteUser, mapStandardRoleToInternal, mapInternalRoleToStandard, validatePasswordStrength } from '@/lib/authService';
+import React, { useState, useEffect, useMemo } from 'react';
+import { register as authRegister, updateUser as authUpdateUser, deleteUser as authDeleteUser, mapStandardRoleToInternal, mapInternalRoleToStandard, validatePasswordStrength } from '@/lib/authService';
+import { useData } from '@/context/DataContext';
 
 // Standardized roles and granular rights model
 const ROLE_LIST = [
@@ -120,50 +121,32 @@ const mockUsers: SystemUser[] = [
 ];
 
 export const Users: React.FC = () => {
-  const [users, setUsers] = useState<SystemUser[]>([]);
-  const [loadingUsers, setLoadingUsers] = useState(true);
+  const { users: globalUsers, loadUsers, loading: loadingData } = useData();
+  const [justUpdatedId, setJustUpdatedId] = useState<string | null>(null);
+
+  const users = useMemo(() => {
+    console.log('[Users] Mapping globalUsers:', globalUsers);
+    return globalUsers.map(u => ({
+      id: u.id,
+      username: u.username,
+      name: u.name || u.username,
+      role: mapInternalRoleToStandard(u.role as any),
+      active: u.active,
+      lastLogin: u.last_login || '—',
+      lastActivity: u.last_activity,
+      permissions: (u.permissions || []) as any,
+    }));
+  }, [globalUsers]);
+
+  const loadingUsers = loadingData;
 
   useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const rows = await authListUsers();
-        // Check if rows is actually an array (handle unexpected API responses)
-        if (!Array.isArray(rows)) {
-          console.error("authListUsers returned non-array:", rows);
-          throw new Error("Invalid response from server");
-        }
-
-        setUsers(rows.map(u => ({
-          id: u.id,
-          username: u.username,
-          name: u.profile?.name || u.name || u.username,
-          role: mapInternalRoleToStandard(u.role as any),
-          active: u.active,
-          lastLogin: u.lastLogin || '—',
-          lastActivity: u.lastActivity,
-          permissions: (u.permissions || []) as any,
-        })));
-      } catch (err) {
-        console.error("Failed to load users:", err);
-        // Fallback to mock users if DB fails/offline, but log it
-        setUsers(mockUsers);
-      } finally {
-        setLoadingUsers(false);
-      }
-    };
-
-    // Initial fetch
-    fetchUsers();
-
-    // Poll for status updates every 30s
-    const interval = setInterval(fetchUsers, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    loadUsers();
+  }, [loadUsers]);
 
   const [showNewForm, setShowNewForm] = useState(false);
   const [editingUser, setEditingUser] = useState<SystemUser | null>(null);
   const [saving, setSaving] = useState(false);
-  const [justUpdatedId, setJustUpdatedId] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState<SystemUser | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -183,24 +166,8 @@ export const Users: React.FC = () => {
         <NewUserForm
           users={users}
           onCreate={(u) => {
-            // Optimistic update
-            setUsers(prev => [{ ...u }, ...prev]);
             setShowNewForm(false);
-            // Trigger actual refresh to ensure DB consistency
-            authListUsers().then(rows => {
-              if (Array.isArray(rows)) {
-                setUsers(rows.map(usr => ({
-                  id: usr.id,
-                  username: usr.username,
-                  name: usr.profile?.name || usr.name || usr.username,
-                  role: mapInternalRoleToStandard(usr.role as any),
-                  active: usr.active,
-                  lastLogin: usr.lastLogin || '—',
-                  lastActivity: usr.lastActivity,
-                  permissions: (usr.permissions || []) as any,
-                })));
-              }
-            }).catch(console.error);
+            loadUsers();
           }}
           onCancel={() => setShowNewForm(false)}
         />
@@ -309,11 +276,11 @@ export const Users: React.FC = () => {
                 // Fallback to local update on error, but notify
                 console.warn('Failed to persist edit:', res.error);
               }
-              setUsers(prev => prev.map(u => (u.id === updated.id ? { ...updated } : u)));
+              setJustUpdatedId(updated.id);
+              loadUsers();
             } finally {
               setSaving(false);
               setEditingUser(null);
-              setJustUpdatedId(updated.id);
               setTimeout(() => setJustUpdatedId(null), 1500);
             }
           }}
@@ -332,7 +299,7 @@ export const Users: React.FC = () => {
               const id = deletingUser?.id || '';
               const res = await authDeleteUser(id);
               if (!res.ok) console.warn('Delete failed:', res.error);
-              setUsers(prev => prev.filter(u => u.id !== id));
+              loadUsers();
             } finally {
               setDeleting(false);
               setDeletingUser(null);
