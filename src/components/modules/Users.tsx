@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { register as authRegister, updateUser as authUpdateUser, deleteUser as authDeleteUser, mapStandardRoleToInternal, mapInternalRoleToStandard, validatePasswordStrength } from '@/lib/authService';
 import { useData } from '@/context/DataContext';
+import pmsAuthDb from '@/lib/pmsAuthDb';
 
 // Standardized roles and granular rights model
 const ROLE_LIST = [
@@ -489,6 +490,32 @@ const EditUserDialog: React.FC<{ user: SystemUser; onClose: () => void; onSave: 
     return m;
   });
   const toggleRight = (key: RightsKey) => setPerm(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Password reset state
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const handlePasswordReset = async () => {
+    if (!newPassword.trim()) { setPwMsg({ ok: false, text: 'Enter a new password' }); return; }
+    if (newPassword !== confirmPassword) { setPwMsg({ ok: false, text: 'Passwords do not match' }); return; }
+    setPwSaving(true);
+    setPwMsg(null);
+    try {
+      const res = await pmsAuthDb.updatePasswordForUserUnsafe(user.username, newPassword);
+      if (res.ok) {
+        setPwMsg({ ok: true, text: 'Password updated successfully' });
+        setNewPassword('');
+        setConfirmPassword('');
+      } else {
+        setPwMsg({ ok: false, text: res.error || 'Failed to update password' });
+      }
+    } finally {
+      setPwSaving(false);
+    }
+  };
+
   const handleScroll = React.useCallback((e: React.UIEvent<HTMLElement>) => {
     try { if ((import.meta as any).env?.DEV) console.log('[ScrollDiag] dialog-scrollTop', (e.target as HTMLElement).scrollTop); } catch { }
   }, []);
@@ -518,6 +545,40 @@ const EditUserDialog: React.FC<{ user: SystemUser; onClose: () => void; onSave: 
             <input id="active" type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} className="h-4 w-4" />
             <label htmlFor="active" className="text-sm">Active</label>
           </div>
+
+          {/* Password Reset Section */}
+          <div className="mt-2 border rounded-md p-3 bg-gray-50">
+            <p className="text-sm font-semibold text-gray-700 mb-2">Reset Password</p>
+            <div className="grid gap-2">
+              <Input
+                type="password"
+                placeholder="New password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+              <Input
+                type="password"
+                placeholder="Confirm new password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+              {newPassword && confirmPassword && newPassword !== confirmPassword && (
+                <p className="text-xs text-red-600">Passwords do not match</p>
+              )}
+              {pwMsg && (
+                <p className={`text-xs font-medium ${pwMsg.ok ? 'text-green-600' : 'text-red-600'}`}>{pwMsg.text}</p>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handlePasswordReset}
+                disabled={pwSaving || !newPassword || !confirmPassword}
+              >
+                {pwSaving ? 'Saving…' : 'Set New Password'}
+              </Button>
+            </div>
+          </div>
+
           <div className="mt-2">
             {RIGHTS_CATEGORIES.map(cat => (
               <div key={cat.title} className="mb-2 border rounded-md">

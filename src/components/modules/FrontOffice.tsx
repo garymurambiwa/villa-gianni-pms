@@ -72,6 +72,11 @@ export const FrontOffice: React.FC = () => {
   const [transferResId, setTransferResId] = useState<string | null>(null);
   const [transferRoomId, setTransferRoomId] = useState<string | null>(null);
 
+  // Assign Room State (for in-house guests with no room)
+  const [assignRoomDialogOpen, setAssignRoomDialogOpen] = useState(false);
+  const [assignRoomResId, setAssignRoomResId] = useState<string | null>(null);
+  const [assignRoomSelected, setAssignRoomSelected] = useState<string | null>(null);
+
   // Check-in state
   const [rateOverride, setRateOverride] = useState<string>('');
   const [selectedPackage, setSelectedPackage] = useState<string>('RO');
@@ -1153,6 +1158,21 @@ export const FrontOffice: React.FC = () => {
                           <TableCell><Badge variant="secondary">{getResPackage(res)}</Badge></TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
+                              {!res.room_id && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-blue-600 border-blue-300 hover:bg-blue-50"
+                                  title="Assign a room to this guest"
+                                  onClick={() => {
+                                    setAssignRoomResId(res.id);
+                                    setAssignRoomSelected(availableRooms.length > 0 ? availableRooms[0].id : null);
+                                    setAssignRoomDialogOpen(true);
+                                  }}
+                                >
+                                  Assign Room
+                                </Button>
+                              )}
                               <Button variant="outline" size="sm" aria-label="View Folio" onClick={() => handleManualChargeClick(res.guest_id || res.id)}>
                                 <FileText className="h-4 w-4" />
                               </Button>
@@ -1556,6 +1576,59 @@ export const FrontOffice: React.FC = () => {
           if (typeof window !== 'undefined') window.location.reload();
         }}
       />
+
+      {/* Assign Room Dialog — for in-house guests with no room assigned */}
+      <Dialog open={assignRoomDialogOpen} onOpenChange={setAssignRoomDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Assign Room</DialogTitle>
+            <DialogDescription>Select a room to assign to this in-house guest.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {availableRooms.length === 0 ? (
+              <p className="text-sm text-orange-600 font-medium">No available rooms at the moment. Mark a room as vacant first.</p>
+            ) : (
+              <div className="grid gap-2">
+                <Label htmlFor="assign-room-select">Room</Label>
+                <Select value={assignRoomSelected || ''} onValueChange={setAssignRoomSelected}>
+                  <SelectTrigger id="assign-room-select">
+                    <SelectValue placeholder="Select a room" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableRooms.map(r => (
+                      <SelectItem key={r.id} value={r.id}>
+                        Room {r.number} — {r.type} (${r.rate}/night)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignRoomDialogOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!assignRoomSelected || availableRooms.length === 0}
+              onClick={() => {
+                if (assignRoomResId && assignRoomSelected) {
+                  const res = reservations.find(r => r.id === assignRoomResId);
+                  const roomObj = availableRooms.find(r => r.id === assignRoomSelected);
+                  const baseRate = roomObj?.rate || res?.rate || 0;
+                  const pkgCode = sanitizePackageCode(res?.packageCode || res?.package_code || 'RO', 'RO');
+                  const totalRate = computeTotalRate(baseRate, pkgCode, packageOptions, 'RO');
+                  checkInGuest(assignRoomResId, assignRoomSelected, { rateOverride: totalRate, packageCode: pkgCode, taxInclusive: false });
+                  toast.success('Room assigned successfully');
+                  setAssignRoomDialogOpen(false);
+                  setAssignRoomResId(null);
+                  setAssignRoomSelected(null);
+                }
+              }}
+            >
+              Assign Room
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={guestLookupOpen} onOpenChange={setGuestLookupOpen}>
         <DialogContent className="sm:max-w-[700px]">
