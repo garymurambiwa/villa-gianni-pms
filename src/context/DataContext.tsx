@@ -263,9 +263,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 derivedCategoryId = 'CAT_BAR_GEN';
               }
             } else {
-              if (rawCat.includes('main') || rawCat.includes('entree')) {
+              if (rawCat.includes('main') || rawCat.includes('entree') || rawCat.includes('mains')) {
                 derivedCategoryId = 'CAT_REST_MAIN';
+              } else if (rawCat.includes('dessert') || rawCat.includes('sweet') || rawCat.includes('pudding')) {
+                derivedCategoryId = 'CAT_REST_DESSERT';
               } else {
+                // Default to General, not Mains — items without a category
+                // should not be assumed to be main courses
                 derivedCategoryId = 'CAT_REST_GEN';
               }
             }

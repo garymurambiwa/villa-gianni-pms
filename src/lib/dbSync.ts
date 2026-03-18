@@ -160,7 +160,8 @@ export async function syncProductToDb(item: ProductRecord): Promise<SyncResult> 
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW(), NOW())
       ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
-        /* Do NOT update department or category on conflict - set by import scripts only */
+        department = EXCLUDED.department,
+        category = EXCLUDED.category,
         price = EXCLUDED.price,
         cost_price = EXCLUDED.cost_price,
         stock_level = EXCLUDED.stock_level,
@@ -168,9 +169,9 @@ export async function syncProductToDb(item: ProductRecord): Promise<SyncResult> 
         active = EXCLUDED.active,
         visibility = EXCLUDED.visibility,
         is_stock_item = EXCLUDED.is_stock_item,
-        category_id = EXCLUDED.category_id,
-        sub_id = EXCLUDED.sub_id,
-        parent_sub_id = EXCLUDED.parent_sub_id,
+        category_id = COALESCE(EXCLUDED.category_id, products.category_id),
+        sub_id = COALESCE(EXCLUDED.sub_id, products.sub_id),
+        parent_sub_id = COALESCE(EXCLUDED.parent_sub_id, products.parent_sub_id),
         notes = EXCLUDED.notes,
         barcodes = EXCLUDED.barcodes,
         cos_percent = EXCLUDED.cos_percent,
