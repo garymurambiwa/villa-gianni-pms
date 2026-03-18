@@ -1654,6 +1654,8 @@ export const FrontOffice: React.FC = () => {
                       checked={printMode === 'restaurant'}
                       onChange={(e) => setPrintMode(e.target.value as 'restaurant' | 'arrivals' | 'both')}
                       className="h-4 w-4 text-primary focus:ring-primary"
+                      title="Restaurant Guest List"
+                      aria-label="Restaurant Guest List"
                     />
                     <Label htmlFor="print-restaurant" className="flex items-center gap-2">
                       <Utensils className="h-4 w-4" />
@@ -1673,6 +1675,8 @@ export const FrontOffice: React.FC = () => {
                       checked={printMode === 'arrivals'}
                       onChange={(e) => setPrintMode(e.target.value as 'restaurant' | 'arrivals' | 'both')}
                       className="h-4 w-4 text-primary focus:ring-primary"
+                      title="Today's Arrivals"
+                      aria-label="Today's Arrivals"
                     />
                     <Label htmlFor="print-arrivals" className="flex items-center gap-2">
                       <UserCheck className="h-4 w-4" />
@@ -1692,6 +1696,8 @@ export const FrontOffice: React.FC = () => {
                       checked={printMode === 'both'}
                       onChange={(e) => setPrintMode(e.target.value as 'restaurant' | 'arrivals' | 'both')}
                       className="h-4 w-4 text-primary focus:ring-primary"
+                      title="Combined Report"
+                      aria-label="Combined Report"
                     />
                     <Label htmlFor="print-both" className="flex items-center gap-2">
                       <FileText className="h-4 w-4" />

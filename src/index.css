@@ -2,6 +2,7 @@
 
 /* Shared design system */
 @import './styles/design-system.css';
+@import './styles/theme-utilities.css';
 
 /* Print styles for reports and documents */
 @import './styles/print.css';

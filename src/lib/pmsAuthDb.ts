@@ -49,6 +49,7 @@ export const pmsAuthDb = {
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
         last_login TIMESTAMP,
+        permissions TEXT[],
         two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
         two_factor_secret TEXT
       );
@@ -97,6 +98,7 @@ export const pmsAuthDb = {
     await db.exec(createUsers);
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT false`); } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT`); } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS permissions TEXT[]`); } catch { }
     await db.exec(createLogs);
     await db.exec(createVerifications);
     await db.exec(createLoginAttempts);
@@ -536,8 +538,8 @@ export const pmsAuthDb = {
     }
   },
 
-  async registerUser(payload: { username: string; email: string; password: string; name: string; role: string }): Promise<{ ok: boolean; error?: string; verifyToken?: string }> {
-    const { username, email, password, name, role } = payload || ({} as any);
+  async registerUser(payload: { username: string; email: string; password: string; name: string; role: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; verifyToken?: string }> {
+    const { username, email, password, name, role, permissions } = payload || ({} as any);
     if (!username || !email || !password || !name) return { ok: false, error: 'Missing fields' };
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
     if (!this.validateStrongPassword(password)) return { ok: false, error: 'Weak password' };
@@ -545,12 +547,12 @@ export const pmsAuthDb = {
     if (!('error' in exists) && exists.rows && exists.rows.length > 0) return { ok: false, error: 'User exists' };
     const id = `usr_${makeUuid()}`;
     const hash = await bcrypt.hash(password, 12);
-    const ins = await db.query(`INSERT INTO app_users (id, username, email, name, role, password_hash, active, password_change_required, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, true, true, false, NOW(), NOW())`, [id, username, email, name, role, hash]);
+    const ins = await db.query(`INSERT INTO app_users (id, username, email, name, role, password_hash, active, password_change_required, is_verified, created_at, updated_at, permissions) VALUES (?, ?, ?, ?, ?, ?, true, true, false, NOW(), NOW(), ?)`, [id, username, email, name, role, hash, permissions || []]);
     if ('error' in ins) return { ok: false, error: ins.error };
+    
     const token = makeUuid();
     const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     await db.query(`INSERT INTO email_verifications (token, user_id, expires_at) VALUES (?, ?, ?)`, [token, id, expires]);
-    await this.recordAccessAttempt(username, 'user_registered', { email });
     return { ok: true, verifyToken: token };
   },
 
@@ -591,6 +593,7 @@ export const pmsAuthDb = {
     try {
       const res = await db.query(`DELETE FROM app_users WHERE id = ?`, [id]);
       if ('error' in res) return { ok: false, error: res.error };
+      await this.recordAccessAttempt(id, 'user_deleted', { id });
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: e?.message || 'Failed to delete user' };
@@ -605,6 +608,7 @@ export const pmsAuthDb = {
       if (patch.role !== undefined) { sets.push(`role = ?`); params.push(patch.role); }
       if (patch.active !== undefined) { sets.push(`active = ?`); params.push(patch.active); }
       if (patch.username !== undefined) { sets.push(`username = ?`); params.push(patch.username); }
+      if ((patch as any).permissions !== undefined) { sets.push(`permissions = ?`); params.push((patch as any).permissions); }
       
       if (sets.length === 0) return { ok: true };
       
@@ -612,6 +616,7 @@ export const pmsAuthDb = {
       const sql = `UPDATE app_users SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`;
       const res = await db.query(sql, params);
       if ('error' in res) return { ok: false, error: res.error };
+      await this.recordAccessAttempt(id, 'user_updated', { fields: sets.map(s => s.split(' ')[0]) });
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: e?.message || 'Failed to update user' };

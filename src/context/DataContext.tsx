@@ -25,6 +25,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [vendorExpenses, setVendorExpenses] = useState<Record<string, unknown>[]>([]);
   const [vendorPayments, setVendorPayments] = useState<Record<string, unknown>[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [realTimeSyncService, setRealTimeSyncService] = useState<RealTimeSyncService | null>(null);
   const [isRealTimeSyncActive, setIsRealTimeSyncActive] = useState(false);
@@ -339,6 +340,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUsers(allUsers);
     } catch (error) {
       console.error('[DataContext] Failed to load users:', error);
+    }
+  }, []);
+
+  const loadLogs = React.useCallback(async (filters?: any) => {
+    try {
+      const pmsAuthDb = (await import('@/lib/pmsAuthDb')).default;
+      const allLogs = await pmsAuthDb.listAccessLogs(filters);
+      setLogs(allLogs);
+    } catch (error) {
+      console.error('[DataContext] Failed to load logs:', error);
     }
   }, []);
 
@@ -2477,10 +2488,11 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       // This includes products with category_id mapping for POS visibility
       await loadAllData();
       await loadUsers();
+      await loadLogs();
     };
 
     initializeData();
-  }, [loadAllData, loadUsers]);
+  }, [loadAllData, loadUsers, loadLogs]);
 
   useEffect(() => {
     if (!user) return; // Don't load data if not logged in
@@ -2490,6 +2502,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
     loadVendors();
     loadVendorExpenses();
     loadVendorPayments();
+    loadLogs();
 
     // Perform initial sync of localStorage data to database
     // This ensures any items created while offline are synced
@@ -2511,7 +2524,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       syncService.start();
       setIsRealTimeSyncActive(true);
     }
-  }, [user, loadAllData, loadCityLedger, loadVendors, loadVendorExpenses, loadVendorPayments, initializeRealTimeSync]);
+  }, [user, loadAllData, loadCityLedger, loadVendors, loadVendorExpenses, loadVendorPayments, loadLogs, initializeRealTimeSync]);
 
   return (
     <DataContext.Provider value={{
@@ -2525,6 +2538,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       addVendor, updateVendor, deleteVendor, addVendorExpense, updateVendorExpense, deleteVendorExpense, payVendor, loadVendorPayments,
       addUser, // Add user management function
       users, loadUsers,
+      logs, loadLogs,
       cityLedger, loading, refreshData: loadAllData,
       // Real-time sync methods
       startRealTimeSync,

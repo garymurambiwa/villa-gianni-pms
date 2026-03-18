@@ -138,8 +138,8 @@ export const Rooms: React.FC = () => {
       <div className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b px-6 -mx-6 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
         <h2 className="text-3xl font-bold text-gray-800">Rooms Management</h2>
         <div className="flex flex-wrap items-center gap-2">
-          <Input placeholder="Search rooms..." value={query} onChange={(e) => setQuery(e.target.value)} className="w-48" />
-          <select className="border rounded px-2 py-2" value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}>
+          <Input id="room-search" aria-label="Search rooms" placeholder="Search rooms..." value={query} onChange={(e) => setQuery(e.target.value)} className="w-48" />
+          <select id="room-sort" aria-label="Sort rooms" className="border rounded px-2 py-2" value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}>
             <option value="number">Sort by Number</option>
             <option value="type">Sort by Name</option>
           </select>
@@ -221,7 +221,9 @@ export const Rooms: React.FC = () => {
                   <div className={`${statusColors[room.status]} text-white ${view === 'sm' ? 'px-2 py-1' : 'px-3 py-2'} rounded-lg text-center font-semibold mb-4`}>
                     {statusLabels[room.status]}
                   </div>
+                  <label htmlFor={`status-${room.id}`} className="sr-only">Room Status</label>
                   <select
+                    id={`status-${room.id}`}
                     value={room.status}
                     onChange={(e) => handleStatusChange(room.id, e.target.value as Room['status'])}
                     className={view === 'sm' ? 'w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500' : 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500'}
@@ -275,7 +277,8 @@ export const Rooms: React.FC = () => {
                   <td className="p-2">{room.number}</td>
                   <td className="p-2">{room.type}</td>
                   <td className="p-2">
-                    <select value={room.status} onChange={(e) => handleStatusChange(room.id, e.target.value as Room['status'])} className="border rounded px-2 py-1">
+                    <label htmlFor={`list-status-${room.id}`} className="sr-only">Room Status</label>
+                    <select id={`list-status-${room.id}`} value={room.status} onChange={(e) => handleStatusChange(room.id, e.target.value as Room['status'])} className="border rounded px-2 py-1">
                       {Object.entries(statusLabels).map(([status, label]) => <option key={status} value={status}>{label}</option>)}
                     </select>
                   </td>
@@ -307,8 +310,8 @@ export const Rooms: React.FC = () => {
             </DialogHeader>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs">Room Number</label>
-                <Input value={addForm.number} onChange={(e) => setAddForm(f => ({ ...f, number: e.target.value }))} placeholder="e.g. 305" />
+                <label htmlFor="new-room-number" className="text-xs">Room Number</label>
+                <Input id="new-room-number" value={addForm.number} onChange={(e) => setAddForm(f => ({ ...f, number: e.target.value }))} placeholder="e.g. 305" />
                 {(() => {
                   const dup = rooms.some(r => r.number.trim().toLowerCase() === addForm.number.trim().toLowerCase());
                   const invalidNum = addForm.number.trim().length < 3 || !/^[a-zA-Z0-9-]+$/.test(addForm.number);
@@ -316,20 +319,20 @@ export const Rooms: React.FC = () => {
                 })()}
               </div>
               <div>
-                <label className="text-xs">Room Name (display)</label>
-                <Input value={addForm.type} onChange={(e) => setAddForm(f => ({ ...f, type: e.target.value.slice(0, 50) }))} placeholder="e.g. Deluxe Queen" />
+                <label htmlFor="new-room-name" className="text-xs">Room Name (display)</label>
+                <Input id="new-room-name" value={addForm.type} onChange={(e) => setAddForm(f => ({ ...f, type: e.target.value.slice(0, 50) }))} placeholder="e.g. Deluxe Queen" />
                 {(() => {
                   const invalidType = addForm.type.trim().length === 0 || addForm.type.length > 50;
                   return <div className="text-xs mt-1">{invalidType ? <span className="text-red-600">Name required (≤50 chars)</span> : <span className="text-green-700">OK</span>}</div>;
                 })()}
               </div>
               <div>
-                <label className="text-xs">Floor</label>
-                <Input type="number" value={addForm.floor} onChange={(e) => setAddForm(f => ({ ...f, floor: Number(e.target.value || 1) }))} />
+                <label htmlFor="new-room-floor" className="text-xs">Floor</label>
+                <Input id="new-room-floor" type="number" value={addForm.floor} onChange={(e) => setAddForm(f => ({ ...f, floor: Number(e.target.value || 1) }))} />
               </div>
               <div>
-                <label className="text-xs">Rate</label>
-                <Input type="number" value={addForm.rate} onChange={(e) => setAddForm(f => ({ ...f, rate: Number(e.target.value || 0) }))} />
+                <label htmlFor="new-room-rate" className="text-xs">Rate</label>
+                <Input id="new-room-rate" type="number" value={addForm.rate} onChange={(e) => setAddForm(f => ({ ...f, rate: Number(e.target.value || 0) }))} />
               </div>
             </div>
             <div className="mt-3 flex items-center gap-2">
@@ -390,8 +393,8 @@ export const Rooms: React.FC = () => {
             </DialogHeader>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs">Room Number</label>
-                <Input value={editing.number} onChange={(e) => setEditing(r => r ? { ...r, number: e.target.value } : r)} />
+                <label htmlFor="edit-room-number" className="text-xs">Room Number</label>
+                <Input id="edit-room-number" value={editing.number} onChange={(e) => setEditing(r => r ? { ...r, number: e.target.value } : r)} />
                 {(() => {
                   const dup = rooms.some(r => r.number.trim().toLowerCase() === String(editing?.number || '').trim().toLowerCase() && r.id !== editing?.id);
                   const invalidNum = String(editing?.number || '').trim().length < 3 || !/^[a-zA-Z0-9-]+$/.test(String(editing?.number || ''));
@@ -399,16 +402,17 @@ export const Rooms: React.FC = () => {
                 })()}
               </div>
               <div>
-                <label className="text-xs">Room Name (display)</label>
-                <Input value={editing.type} onChange={(e) => setEditing(r => r ? { ...r, type: e.target.value.slice(0, 50) } : r)} />
+                <label htmlFor="edit-room-name" className="text-xs">Room Name (display)</label>
+                <Input id="edit-room-name" value={editing.type} onChange={(e) => setEditing(r => r ? { ...r, type: e.target.value.slice(0, 50) } : r)} />
                 {(() => {
                   const invalidType = String(editing?.type || '').trim().length === 0 || String(editing?.type || '').length > 50;
                   return <div className="text-xs mt-1">{invalidType ? <span className="text-red-600">Name required (≤50 chars)</span> : <span className="text-green-700">OK</span>}</div>;
                 })()}
               </div>
               <div>
-                <label className="text-xs">Room Rate</label>
+                <label htmlFor="edit-room-rate" className="text-xs">Room Rate</label>
                 <Input
+                  id="edit-room-rate"
                   type="number"
                   step="0.01"
                   value={Number(editing.rate || 0)}

@@ -9,7 +9,7 @@ export const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const { login } = useAuth();
-  const { settings: appSettings } = useSettings();
+  const { settings: appSettings, isLoading } = useSettings();
   const [loading, setLoading] = useState(false);
   const [dbModalOpen, setDbModalOpen] = useState(false);
   const [dbHost, setDbHost] = useState('192.168.100.18');
@@ -83,6 +83,17 @@ export const Login: React.FC = () => {
     }
   };
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-gray-300 border-t-gray-600 rounded-full animate-spin"></div>
+          <p className="text-gray-400 text-sm font-medium">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       {appSettings.themePreset === 'bronze' ? (
@@ -91,11 +102,11 @@ export const Login: React.FC = () => {
           <div className="w-full md:w-1/2 xl:w-[45%] flex flex-col justify-center px-8 sm:px-16 lg:px-24 py-12 min-h-screen relative z-10">
             <div className="w-full max-w-md mx-auto">
               <div className="mb-10">
-                <img src={appSettings.logoUrl || import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png'} alt="Logo" className="h-10 object-contain" />
+                <img src={appSettings.logoUrl || '/logo.png'} alt="Logo" className="h-10 object-contain" />
               </div>
 
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Login</h1>
-              <p className="text-gray-500 font-medium mb-8 text-sm">{appSettings.hotelTagline || 'See your growth and get consulting support!'}</p>
+              <p className="text-gray-500 font-medium mb-8 text-sm">{appSettings.hotelTagline || 'Welcome back!'}</p>
 
               <form onSubmit={handleSubmit} className="space-y-5">
                 <div>
@@ -150,7 +161,7 @@ export const Login: React.FC = () => {
               </div>
 
               <div className="mt-12 text-xs font-semibold text-gray-400">
-                ©{new Date().getFullYear()} {appSettings.hotelName || 'Felix'} All rights reserved.
+                ©{new Date().getFullYear()} {appSettings.hotelName} All rights reserved.
               </div>
 
               {/* Additional DB config hidden mostly, standard link */}
@@ -170,7 +181,7 @@ export const Login: React.FC = () => {
           <div
             className="hidden md:flex flex-1 relative overflow-hidden items-center justify-center p-12"
             style={{
-              backgroundImage: `url(${appSettings.backgroundImageUrl || import.meta.env.VITE_HOTEL_LOGIN_BG_URL || 'https://d64gsuwffb70l.cloudfront.net/6902597c3f1b2e5af1fa50b6_1761984216938_8ca99844.webp'})`,
+              backgroundImage: `url(${appSettings.backgroundImageUrl || 'https://d64gsuwffb70l.cloudfront.net/6902597c3f1b2e5af1fa50b6_1761984216938_8ca99844.webp'})`,
               backgroundSize: 'cover',
               backgroundPosition: 'center',
             }}
@@ -280,8 +291,8 @@ export const Login: React.FC = () => {
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
           <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-8 w-full max-w-md border border-gray-200 relative z-10">
             <div className="text-center mb-8">
-              <img src={appSettings.logoUrl || import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png'} alt={appSettings.hotelName || import.meta.env.VITE_HOTEL_NAME || 'Hotel Logo'} className="h-32 mx-auto mb-6 object-contain" />
-              <h1 className="text-2xl font-bold text-gray-900 mb-2">{appSettings.hotelName || import.meta.env.VITE_HOTEL_NAME || 'Hotel Name'}</h1>
+              <img src={appSettings.logoUrl || '/logo.png'} alt={appSettings.hotelName} className="h-32 mx-auto mb-6 object-contain" />
+              <h1 className="text-2xl font-bold text-gray-900 mb-2">{appSettings.hotelName}</h1>
               {appSettings.hotelTagline && <p className="text-gray-600 mb-2">{appSettings.hotelTagline}</p>}
             </div>
 
@@ -347,24 +358,24 @@ export const Login: React.FC = () => {
             {dbStatus && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">{dbStatus}</div>}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Host</label>
-                <input className="w-full px-3 py-2 border rounded" value={dbHost} onChange={(e) => setDbHost(e.target.value)} />
+                <label htmlFor="dbHost" className="block text-sm font-medium text-gray-700 mb-1">Host</label>
+                <input id="dbHost" className="w-full px-3 py-2 border rounded" value={dbHost} onChange={(e) => setDbHost(e.target.value)} placeholder="e.g. localhost" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
-                <input className="w-full px-3 py-2 border rounded" value={dbPort} onChange={(e) => setDbPort(e.target.value)} />
+                <label htmlFor="dbPort" className="block text-sm font-medium text-gray-700 mb-1">Port</label>
+                <input id="dbPort" className="w-full px-3 py-2 border rounded" value={dbPort} onChange={(e) => setDbPort(e.target.value)} placeholder="5432" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">User</label>
-                <input className="w-full px-3 py-2 border rounded" value={dbUser} onChange={(e) => setDbUser(e.target.value)} />
+                <label htmlFor="dbUser" className="block text-sm font-medium text-gray-700 mb-1">User</label>
+                <input id="dbUser" className="w-full px-3 py-2 border rounded" value={dbUser} onChange={(e) => setDbUser(e.target.value)} placeholder="Database user" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                <input type="password" className="w-full px-3 py-2 border rounded" value={dbPassword} onChange={(e) => setDbPassword(e.target.value)} />
+                <label htmlFor="dbPassword" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                <input id="dbPassword" type="password" className="w-full px-3 py-2 border rounded" value={dbPassword} onChange={(e) => setDbPassword(e.target.value)} placeholder="Database password" />
               </div>
               <div className="col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Database</label>
-                <input className="w-full px-3 py-2 border rounded" value={dbName} onChange={(e) => setDbName(e.target.value)} />
+                <label htmlFor="dbName" className="block text-sm font-medium text-gray-700 mb-1">Database</label>
+                <input id="dbName" className="w-full px-3 py-2 border rounded" value={dbName} onChange={(e) => setDbName(e.target.value)} placeholder="Database name" />
               </div>
             </div>
             <div className="mt-4 flex items-center gap-2">

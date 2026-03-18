@@ -1,0 +1,50 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Villa Gianni PMS — Theme Utility Classes
+   Maps --hotel-* CSS variables to helper classes to avoid inline styles.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.hotel-bg {
+    background-color: var(--hotel-bg) !important;
+}
+
+.hotel-text {
+    color: var(--hotel-text, #111827) !important;
+}
+
+.hotel-text-muted {
+    color: var(--hotel-text-muted, #6b7280) !important;
+}
+
+.hotel-card-bg {
+    background-color: var(--hotel-card-bg, #ffffff) !important;
+}
+
+.hotel-border {
+    border-color: var(--hotel-border, #e5e7eb) !important;
+}
+
+.hotel-primary-text {
+    color: var(--hotel-primary) !important;
+}
+
+.hotel-accent-text {
+    color: var(--hotel-accent) !important;
+}
+
+.hotel-gold-text {
+    color: var(--hotel-gold) !important;
+}
+
+.hotel-primary-bg {
+    background-color: var(--hotel-primary) !important;
+}
+
+.hotel-accent-bg {
+    background-color: var(--hotel-accent) !important;
+}
+
+/* POS specific utilities */
+.pos-scroll-touch {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+}

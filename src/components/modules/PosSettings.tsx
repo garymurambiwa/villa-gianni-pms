@@ -158,13 +158,13 @@ const MenuCategoriesPanel: React.FC = () => {
     <div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
         <div>
-          <label className="text-xs">Category name</label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Cocktails" />
+          <label htmlFor="pos-cat-name" className="text-xs">Category name</label>
+          <Input id="pos-cat-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Cocktails" />
         </div>
         <div>
-          <label className="text-xs">Department</label>
+          <label htmlFor="pos-cat-dept" className="text-xs">Department</label>
           <Select value={dept} onValueChange={(v) => setDept(v as any)}>
-            <SelectTrigger>
+            <SelectTrigger id="pos-cat-dept">
               <SelectValue placeholder="Select" />
             </SelectTrigger>
             <SelectContent>
@@ -174,8 +174,8 @@ const MenuCategoriesPanel: React.FC = () => {
           </Select>
         </div>
         <div>
-          <label className="text-xs">Sort order</label>
-          <Input type="number" value={sort} onChange={(e) => setSort(Number(e.target.value) || 0)} />
+          <label htmlFor="pos-cat-sort" className="text-xs">Sort order</label>
+          <Input id="pos-cat-sort" type="number" value={sort} onChange={(e) => setSort(Number(e.target.value) || 0)} />
         </div>
         <div className="flex items-end">
           <Button className="bg-indigo-600 text-white" onClick={add}>Add Category</Button>
@@ -188,17 +188,17 @@ const MenuCategoriesPanel: React.FC = () => {
 
       <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
         <div>
-          <label className="text-xs">Button color</label>
+          <label htmlFor="pos-cat-btn-color" className="text-xs">Button color</label>
           <div className="flex items-center gap-2">
-            <input type="color" value={(parseColor(btnColor)?.hex) || '#4f46e5'} onChange={(e) => setBtnColor(e.target.value)} />
-            <Input placeholder="#4f46e5 or rgb() or hsl()" value={btnColor} onChange={(e) => setBtnColor(e.target.value)} />
+            <input id="pos-cat-btn-color" type="color" value={(parseColor(btnColor)?.hex) || '#4f46e5'} onChange={(e) => setBtnColor(e.target.value)} />
+            <Input aria-label="Button color hex" placeholder="#4f46e5 or rgb() or hsl()" value={btnColor} onChange={(e) => setBtnColor(e.target.value)} />
           </div>
         </div>
         <div>
-          <label className="text-xs">Text color</label>
+          <label htmlFor="pos-cat-txt-color" className="text-xs">Text color</label>
           <div className="flex items-center gap-2">
-            <input type="color" value={(parseColor(txtColor)?.hex) || '#ffffff'} onChange={(e) => setTxtColor(e.target.value)} />
-            <Input placeholder="#ffffff or rgb() or hsl()" value={txtColor} onChange={(e) => setTxtColor(e.target.value)} />
+            <input id="pos-cat-txt-color" type="color" value={(parseColor(txtColor)?.hex) || '#ffffff'} onChange={(e) => setTxtColor(e.target.value)} />
+            <Input aria-label="Text color hex" placeholder="#ffffff or rgb() or hsl()" value={txtColor} onChange={(e) => setTxtColor(e.target.value)} />
           </div>
         </div>
         <div>
@@ -216,9 +216,9 @@ const MenuCategoriesPanel: React.FC = () => {
       </div>
 
       <div className="mt-3 flex items-center gap-2">
-        <label className="text-xs">Filter</label>
+        <label htmlFor="pos-cat-filter" className="text-xs">Filter</label>
         <Select value={filterDept} onValueChange={(v) => setFilterDept(v as any)}>
-          <SelectTrigger className="w-40">
+          <SelectTrigger id="pos-cat-filter" className="w-40">
             <SelectValue placeholder="Department" />
           </SelectTrigger>
           <SelectContent>
@@ -376,13 +376,13 @@ const SubCategoriesPanel: React.FC = () => {
     <div>
       <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
         <div>
-          <label className="text-xs font-medium">Name</label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Classic Cocktails" />
+          <label htmlFor="sub-cat-name" className="text-xs font-medium">Name</label>
+          <Input id="sub-cat-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Classic Cocktails" />
         </div>
         <div>
-          <label className="text-xs font-medium">Category</label>
+          <label htmlFor="sub-cat-parent-cat" className="text-xs font-medium">Category</label>
           <Select value={categoryId || undefined} onValueChange={(v) => setCategoryId(v)}>
-            <SelectTrigger>
+            <SelectTrigger id="sub-cat-parent-cat">
               <SelectValue placeholder="Select category" />
             </SelectTrigger>
             <SelectContent>
@@ -391,9 +391,9 @@ const SubCategoriesPanel: React.FC = () => {
           </Select>
         </div>
         <div>
-          <label className="text-xs font-medium">Parent sub-category</label>
+          <label htmlFor="sub-cat-parent-sub" className="text-xs font-medium">Parent sub-category</label>
           <Select value={parentSubId} onValueChange={(v) => setParentSubId(v)} disabled={!categoryId}>
-            <SelectTrigger>
+            <SelectTrigger id="sub-cat-parent-sub">
               <SelectValue placeholder={categoryId ? 'Optional' : 'Select category first'} />
             </SelectTrigger>
             <SelectContent>
@@ -403,22 +403,22 @@ const SubCategoriesPanel: React.FC = () => {
           </Select>
         </div>
         <div>
-          <label className="text-xs font-medium">Sort</label>
-          <Input type="number" value={sort} onChange={(e) => setSort(Number(e.target.value) || 0)} />
+          <label htmlFor="sub-cat-sort" className="text-xs font-medium">Sort</label>
+          <Input id="sub-cat-sort" type="number" value={sort} onChange={(e) => setSort(Number(e.target.value) || 0)} />
         </div>
         <div className="flex items-end">
           <Button className="bg-indigo-600 text-white" onClick={add}>Add Sub-category</Button>
         </div>
         <div className="md:col-span-5">
-          <label className="text-xs font-medium">Description</label>
-          <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" />
+          <label htmlFor="sub-cat-desc" className="text-xs font-medium">Description</label>
+          <Textarea id="sub-cat-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" />
         </div>
       </div>
 
       <div className="mt-3 flex items-center gap-2">
-        <label className="text-xs">Filter</label>
+        <label htmlFor="sub-cat-filter" className="text-xs">Filter</label>
         <Select value={deptFilter} onValueChange={(v) => setDeptFilter(v as any)}>
-          <SelectTrigger className="w-40">
+          <SelectTrigger id="sub-cat-filter" className="w-40">
             <SelectValue placeholder="Department" />
           </SelectTrigger>
           <SelectContent>

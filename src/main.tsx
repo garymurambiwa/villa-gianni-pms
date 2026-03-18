@@ -8,11 +8,22 @@ import './index.css'
 // its own brand colors without any code changes.
 {
   const root = document.documentElement;
-  root.style.setProperty('--hotel-primary', import.meta.env.VITE_HOTEL_PRIMARY_COLOR || '#1d4ed8');
-  root.style.setProperty('--hotel-accent', import.meta.env.VITE_HOTEL_ACCENT_COLOR || '#4f46e5');
-  root.style.setProperty('--hotel-header-from', import.meta.env.VITE_HOTEL_HEADER_BG_FROM || '#3b0764');
-  root.style.setProperty('--hotel-header-mid', import.meta.env.VITE_HOTEL_ACCENT_COLOR || '#1e3a8a');
-  root.style.setProperty('--hotel-header-to', import.meta.env.VITE_HOTEL_HEADER_BG_TO || '#3b0764');
+  const host = typeof window !== 'undefined' ? window.location.hostname : '';
+  const isBaradzanwa = host.includes('baradzanwa');
+
+  if (isBaradzanwa) {
+    root.style.setProperty('--hotel-primary', '#BB7338'); // Bronze/Gold for Baradzanwa
+    root.style.setProperty('--hotel-accent', '#8B4513');
+    root.style.setProperty('--hotel-header-from', '#2d1a12');
+    root.style.setProperty('--hotel-header-mid', '#3d261c');
+    root.style.setProperty('--hotel-header-to', '#2d1a12');
+  } else {
+    root.style.setProperty('--hotel-primary', import.meta.env.VITE_HOTEL_PRIMARY_COLOR || '#1d4ed8');
+    root.style.setProperty('--hotel-accent', import.meta.env.VITE_HOTEL_ACCENT_COLOR || '#4f46e5');
+    root.style.setProperty('--hotel-header-from', import.meta.env.VITE_HOTEL_HEADER_BG_FROM || '#3b0764');
+    root.style.setProperty('--hotel-header-mid', import.meta.env.VITE_HOTEL_ACCENT_COLOR || '#1e3a8a');
+    root.style.setProperty('--hotel-header-to', import.meta.env.VITE_HOTEL_HEADER_BG_TO || '#3b0764');
+  }
 }
 
 const el = document.getElementById('root')!

@@ -952,8 +952,9 @@ export const Reservations: React.FC = () => {
                     required
                   />
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">ID Type *</label>
+                    <label htmlFor="idDocumentType" className="block text-sm font-medium text-gray-700 mb-1">ID Type *</label>
                     <select
+                      id="idDocumentType"
                       name="idDocumentType"
                       value={formData.idDocumentType}
                       onChange={handleInputChange}
@@ -993,7 +994,7 @@ export const Reservations: React.FC = () => {
                   placeholder="Enter ID or Passport number"
                   aria-label="ID or Passport Number"
                   aria-required="true"
-                  aria-invalid={!!idDocError}
+                  aria-invalid={idDocError ? "true" : "false"}
                   aria-describedby="idDocHelp idDocError"
                   className={`w-full px-4 py-2 border rounded-lg ${idDocError ? 'border-red-500' : ''}`}
                   required
@@ -1014,9 +1015,11 @@ export const Reservations: React.FC = () => {
                 {fieldErrors.originRegion && <p className="text-xs text-red-600 mb-2">{fieldErrors.originRegion}</p>}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Booking Source</label>
+                    <label htmlFor="bookingSource" className="block text-sm font-medium text-gray-700 mb-1">Booking Source</label>
                     <select
+                      id="bookingSource"
                       name="bookingSource"
+                      title="Booking Source"
                       value={formData.bookingSource}
                       onChange={(e) => {
                         const val = e.target.value;
@@ -1082,9 +1085,10 @@ export const Reservations: React.FC = () => {
                 <h4 className="font-semibold text-gray-700 mb-2">Room Selection</h4>
 
                 <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Assigned Room <span className="text-red-600">*</span></label>
+                  <label htmlFor="assignedRoom" className="block text-sm font-medium text-gray-700 mb-1">Assigned Room <span className="text-red-600">*</span></label>
                   <div className="flex gap-2">
                     <Input
+                      id="assignedRoom"
                       value={formData.roomId ? (rooms.find((r: any) => r.id === formData.roomId)?.number || 'Unknown') : 'No Room Selected'}
                       readOnly
                       className={`bg-gray-50 ${!formData.roomId ? 'border-red-500' : ''}`}
@@ -1112,9 +1116,11 @@ export const Reservations: React.FC = () => {
                   </button>
                   {outOfSyncRoomType && <span className="text-xs text-red-600">Selected room type is not in Rate Management</span>}
                 </div>
-                <select
-                  name="roomType"
-                  value={formData.roomType}
+                  <label htmlFor="roomType" className="sr-only">Room Type</label>
+                  <select
+                    id="roomType"
+                    name="roomType"
+                    title="Room Type"
                   onChange={handleInputChange}
                   className={`w-full px-4 py-2 border rounded-lg mb-2 ${fieldErrors.roomType ? 'border-red-500' : ''} ${outOfSyncRoomType ? 'border-red-500' : ''}`}
                   ref={roomTypeRef}
@@ -1224,9 +1230,11 @@ export const Reservations: React.FC = () => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2 mb-2">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Meal Plan</label>
+                    <label htmlFor="packageCode" className="block text-sm font-medium text-gray-700 mb-1">Meal Plan</label>
                     <select
+                      id="packageCode"
                       name="packageCode"
+                      title="Meal Plan"
                       value={formData.packageCode}
                       onChange={handleInputChange}
                       className="w-full px-4 py-2 border rounded-lg"

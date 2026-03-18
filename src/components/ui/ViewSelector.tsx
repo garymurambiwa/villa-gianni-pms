@@ -30,8 +30,8 @@ export const ViewSelector: React.FC<ViewSelectorProps> = ({ value, onChange, sto
           type="button"
           variant={value === opt ? 'default' : 'outline'}
           className={value === opt ? 'bg-blue-600 text-white' : ''}
-          aria-pressed={value === opt}
-          aria-checked={value === opt}
+          aria-pressed={value === opt ? "true" : "false"}
+          aria-checked={value === opt ? "true" : "false"}
           role="radio"
           onClick={() => setValue(opt)}
         >

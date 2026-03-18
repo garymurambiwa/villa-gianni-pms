@@ -298,6 +298,7 @@ const RateManagement: React.FC = () => {
                   <TableCell className="font-medium">{roomType}</TableCell>
                   <TableCell className="text-right">
                     <Input
+                      title={`Nightly Rate for ${roomType}`}
                       type="number"
                       value={rate}
                       onChange={(e) => updateBaseRate(roomType, e.target.value)}
@@ -314,10 +315,10 @@ const RateManagement: React.FC = () => {
               ))}
               <TableRow>
                 <TableCell>
-                  <Input placeholder="New room type" value={newRoomType} onChange={(e) => setNewRoomType(e.target.value)} />
+                  <Input id="new-room-type" title="New Room Type" placeholder="New room type" value={newRoomType} onChange={(e) => setNewRoomType(e.target.value)} />
                 </TableCell>
                 <TableCell className="text-right">
-                  <Input type="number" placeholder="Rate" value={newRoomRate} onChange={(e) => setNewRoomRate(e.target.value)} className="w-32 ml-auto" />
+                  <Input id="new-room-rate" title="New Room Rate" type="number" placeholder="Rate" value={newRoomRate} onChange={(e) => setNewRoomRate(e.target.value)} className="w-32 ml-auto" />
                 </TableCell>
                 <TableCell className="text-right">
                   <Button size="sm" onClick={addBaseRate}>Add</Button>
@@ -338,8 +339,9 @@ const RateManagement: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {ORIGIN_REGIONS.map(region => (
               <div key={region} className="p-3 border rounded">
-                <Label className="text-xs">{region}</Label>
+                <Label htmlFor={`adj-${region}`} className="text-xs">{region}</Label>
                 <Input
+                  id={`adj-${region}`}
                   type="number"
                   value={Math.round((config.regionAdjustments[region] || 0) * 100)}
                   onChange={(e) => updateRegionAdj(region, e.target.value)}
@@ -455,24 +457,27 @@ const RateManagement: React.FC = () => {
                 <h3 className="text-lg font-medium mb-3">Add New Breakfast Package</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
-                    <Label>Code *</Label>
+                    <Label htmlFor="bb-code">Code *</Label>
                     <Input
+                      id="bb-code"
                       value={newBreakfastPackage.code}
                       onChange={(e) => setNewBreakfastPackage(prev => ({ ...prev, code: e.target.value.toUpperCase() }))}
                       placeholder="e.g., BB"
                     />
                   </div>
                   <div>
-                    <Label>Name *</Label>
+                    <Label htmlFor="bb-name">Name *</Label>
                     <Input
+                      id="bb-name"
                       value={newBreakfastPackage.name}
                       onChange={(e) => setNewBreakfastPackage(prev => ({ ...prev, name: e.target.value }))}
                       placeholder="e.g., Bed & Breakfast"
                     />
                   </div>
                   <div>
-                    <Label>Base Price per Person ($)</Label>
+                    <Label htmlFor="bb-price">Base Price per Person ($)</Label>
                     <Input
+                      id="bb-price"
                       type="number"
                       min="0"
                       step="0.01"
@@ -492,7 +497,7 @@ const RateManagement: React.FC = () => {
                         checked={newBreakfastPackage.isActive}
                         onCheckedChange={(checked) => setNewBreakfastPackage(prev => ({ ...prev, isActive: checked }))}
                       />
-                      <Label>Active</Label>
+                      <Label htmlFor="bb-active">Active</Label>
                     </div>
                   </div>
                 </div>
@@ -614,7 +619,7 @@ const RateManagement: React.FC = () => {
           <div className="flex gap-2">
             <Button variant="outline" onClick={exportConfig}>Export JSON</Button>
             <Button variant="outline" onClick={triggerImport}>Import JSON</Button>
-            <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={handleImportFile} />
+            <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={handleImportFile} title="Import JSON File" />
           </div>
           <div className="flex items-center gap-3">
             {validation.hasErrors && (

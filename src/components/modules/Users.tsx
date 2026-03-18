@@ -121,7 +121,8 @@ const mockUsers: SystemUser[] = [
 ];
 
 export const Users: React.FC = () => {
-  const { users: globalUsers, loadUsers, loading: loadingData } = useData();
+  const { users: globalUsers, loadUsers, logs, loadLogs, loading: loadingData } = useData();
+  const [activeTab, setActiveTab] = useState<'users' | 'logs'>('users');
   const [justUpdatedId, setJustUpdatedId] = useState<string | null>(null);
 
   const users = useMemo(() => {
@@ -153,14 +154,35 @@ export const Users: React.FC = () => {
   return (
     <div className="p-6">
       <div className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b px-6 -mx-6 flex justify-between items-center mb-6 py-3">
-        <h2 className="text-3xl font-bold text-gray-800">User Management</h2>
-        <button
-          onClick={() => setShowNewForm(!showNewForm)}
-          className="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700"
-        >
-          + New User
-        </button>
+        <div className="flex flex-col">
+          <h2 className="text-3xl font-bold text-gray-800">User Management</h2>
+          <div className="flex gap-4 mt-2">
+            <button
+              onClick={() => setActiveTab('users')}
+              className={`pb-2 px-1 text-sm font-medium transition-colors border-b-2 ${activeTab === 'users' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            >
+              User List
+            </button>
+            <button
+              onClick={() => setActiveTab('logs')}
+              className={`pb-2 px-1 text-sm font-medium transition-colors border-b-2 ${activeTab === 'logs' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            >
+              Activity Logs
+            </button>
+          </div>
+        </div>
+        {activeTab === 'users' && (
+          <button
+            onClick={() => setShowNewForm(!showNewForm)}
+            className="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700"
+          >
+            + New User
+          </button>
+        )}
       </div>
+
+      {activeTab === 'users' ? (
+        <>
 
       {showNewForm && (
         <NewUserForm
@@ -256,7 +278,10 @@ export const Users: React.FC = () => {
           <p className="text-3xl font-bold text-gray-800">6</p>
         </div>
       </div>
-      {/* Edit Dialog */}
+        </>
+      ) : (
+        <UserLogsTable logs={logs} onRefresh={loadLogs} />
+      )}
       {editingUser && (
         <EditUserDialog
           user={editingUser}
@@ -383,25 +408,25 @@ const NewUserForm: React.FC<{ users: SystemUser[]; onCreate: (u: SystemUser) => 
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-          <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g., Vhukile Matenda" className="w-full px-4 py-2 border rounded-lg" />
+          <label htmlFor="newUserFullName" className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+          <input id="newUserFullName" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g., Vhukile Matenda" className="w-full px-4 py-2 border rounded-lg" />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Username (Email or System ID)</label>
-          <input type="text" value={usernameOrId} onChange={(e) => setUsernameOrId(e.target.value)} placeholder="e.g., user@example.com or SYS001" className="w-full px-4 py-2 border rounded-lg" />
+          <label htmlFor="newUserUsername" className="block text-sm font-medium text-gray-700 mb-1">Username (Email or System ID)</label>
+          <input id="newUserUsername" type="text" value={usernameOrId} onChange={(e) => setUsernameOrId(e.target.value)} placeholder="e.g., user@example.com or SYS001" className="w-full px-4 py-2 border rounded-lg" />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-2 border rounded-lg" />
+          <label htmlFor="newUserPassword" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+          <input id="newUserPassword" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-2 border rounded-lg" />
           <p className="text-xs text-gray-500 mt-1">Min 8 chars, include upper, lower, number, and symbol.</p>
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
-          <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full px-4 py-2 border rounded-lg" />
+          <label htmlFor="newUserConfirmPassword" className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+          <input id="newUserConfirmPassword" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full px-4 py-2 border rounded-lg" />
         </div>
         <div className="md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-          <select value={role} onChange={(e) => applyRoleDefaults(e.target.value as RoleName)} className="w-full px-4 py-2 border rounded-lg">
+          <label htmlFor="newUserRole" className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+          <select id="newUserRole" value={role} onChange={(e) => applyRoleDefaults(e.target.value as RoleName)} className="w-full px-4 py-2 border rounded-lg">
             {ROLE_LIST.map(r => (
               <option key={r} value={r}>{r}</option>
             ))}
@@ -466,16 +491,16 @@ const EditUserDialog: React.FC<{ user: SystemUser; onClose: () => void; onSave: 
         </DialogHeader>
         <div className="grid grid-cols-1 gap-3">
           <div>
-            <label className="text-xs">Username</label>
-            <Input value={form.username} disabled className="mt-1" />
+            <label htmlFor="editUsername" className="text-xs">Username</label>
+            <Input id="editUsername" value={form.username} disabled className="mt-1" />
           </div>
           <div>
-            <label className="text-xs">Full Name</label>
-            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="mt-1" />
+            <label htmlFor="editFullName" className="text-xs">Full Name</label>
+            <Input id="editFullName" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="mt-1" />
           </div>
           <div>
-            <label className="text-xs">Role</label>
-            <select className="border rounded-md px-3 py-2 mt-1" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+            <label htmlFor="editRole" className="text-xs">Role</label>
+            <select id="editRole" className="border rounded-md px-3 py-2 mt-1" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
               {roles.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
@@ -534,3 +559,65 @@ const DeleteConfirmDialog: React.FC<{ user: SystemUser; onCancel: () => void; on
     </AlertDialog>
   );
 }
+// Activity Logs Table Component
+const UserLogsTable: React.FC<{ logs: any[]; onRefresh: () => void }> = ({ logs, onRefresh }) => {
+  useEffect(() => {
+    onRefresh();
+  }, [onRefresh]);
+
+  return (
+    <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+      <div className="p-4 border-b flex justify-between items-center bg-gray-50">
+        <h3 className="font-bold text-gray-700">System Access & Audit Logs</h3>
+        <button 
+          onClick={onRefresh}
+          className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+        >
+          Refresh Logs
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Timestamp</th>
+              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">User</th>
+              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Event</th>
+              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Details</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            {logs.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-6 py-10 text-center text-gray-500 italic">No activity logs found.</td>
+              </tr>
+            ) : (
+              logs.map((log) => (
+                <tr key={log.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+                    {new Date(log.ts).toLocaleString()}
+                  </td>
+                  <td className="px-6 py-4 text-sm font-medium text-gray-800">
+                    {log.user_username || 'System'}
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                      log.event.includes('fail') ? 'bg-red-100 text-red-700' : 
+                      log.event.includes('success') || log.event.includes('login') ? 'bg-green-100 text-green-700' : 
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {log.event.replace(/_/g, ' ')}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate" title={JSON.stringify(log.detail)}>
+                    {log.detail ? JSON.stringify(log.detail) : '—'}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};

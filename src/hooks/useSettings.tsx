@@ -32,21 +32,29 @@ interface SettingsContextType {
     isLoading: boolean;
 }
 
-const defaultSettings: AppSettings = {
-    hotelName: import.meta.env.VITE_HOTEL_NAME || 'Hotel Name',
-    hotelTagline: import.meta.env.VITE_HOTEL_TAGLINE || 'Boutique Hotel',
-    logoUrl: import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png',
-    themePreset: 'light',
-    themeColors: {},
-    address: import.meta.env.VITE_HOTEL_ADDRESS || '',
-    phone: import.meta.env.VITE_HOTEL_PHONE || '',
-    email: import.meta.env.VITE_HOTEL_EMAIL || '',
-    website: '',
-    currency: 'USD',
-    timezone: 'Africa/Harare',
-    dateFormat: 'DD/MM/YYYY',
-    receiptFooter: import.meta.env.VITE_HOTEL_RECEIPT_FOOTER || 'Thank you for staying with us!',
+const getInitialDefaults = (): AppSettings => {
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    const isBaradzanwa = host.includes('baradzanwa');
+    
+    return {
+        hotelName: isBaradzanwa ? 'Baradzanwa' : (import.meta.env.VITE_HOTEL_NAME || 'Hotel Name'),
+        hotelTagline: isBaradzanwa ? 'Welcome to Baradzanwa' : (import.meta.env.VITE_HOTEL_TAGLINE || 'Boutique Hotel'),
+        logoUrl: isBaradzanwa ? '/logob.png' : (import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png'),
+        themePreset: isBaradzanwa ? 'bronze' : 'light',
+        themeColors: {},
+        address: isBaradzanwa ? '' : (import.meta.env.VITE_HOTEL_ADDRESS || ''),
+        phone: isBaradzanwa ? '' : (import.meta.env.VITE_HOTEL_PHONE || ''),
+        email: isBaradzanwa ? '' : (import.meta.env.VITE_HOTEL_EMAIL || ''),
+        website: '',
+        currency: 'USD',
+        timezone: 'Africa/Harare',
+        dateFormat: 'DD/MM/YYYY',
+        receiptFooter: isBaradzanwa ? 'Thank you!' : (import.meta.env.VITE_HOTEL_RECEIPT_FOOTER || 'Thank you for staying with us!'),
+        backgroundImageUrl: isBaradzanwa ? '/baradzanwabg.jpeg' : '',
+    };
 };
+
+const defaultSettings = getInitialDefaults();
 
 const STRING_KEYS: Array<keyof AppSettings> = [
     'hotelName', 'hotelTagline', 'logoUrl', 'themePreset', 'backgroundImageUrl',
@@ -66,10 +74,11 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
     const [isLoading, setIsLoading] = useState(true);
 
     const fetchSettings = async () => {
+        // Set loading to true initially
         setIsLoading(true);
         try {
             const allSettings = await pmsAuthDb.getAllAppSettings();
-            const newSettings: AppSettings = { ...defaultSettings };
+            const newSettings: AppSettings = { ...getInitialDefaults() };
 
             // Apply all simple string keys (guard against literally-stored "undefined")
             for (const key of STRING_KEYS) {
@@ -95,6 +104,11 @@ export const SettingsProvider = ({ children }: { children: ReactNode }) => {
     /** Apply the full theme token set to the DOM */
     const applyTheme = (s: AppSettings) => {
         const root = document.documentElement;
+
+        // 0. Update document title
+        if (s.hotelName) {
+            document.title = `${s.hotelName} Management Suite`;
+        }
 
         // 1. Set data-theme attribute so themes.css selectors activate
         root.setAttribute('data-theme', s.themePreset || 'light');

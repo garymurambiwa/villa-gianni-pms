@@ -89,6 +89,7 @@ const saveMockUsers = (users: UserRecord[]) => {
 
 // IPC Wrappers - NOW ASYNC with Browser DB Fallback
 import { db } from './db';
+import pmsAuthDb from './pmsAuthDb';
 
 const isBrowser = typeof window === 'undefined' || !window.native?.auth;
 
@@ -101,16 +102,10 @@ export const listUsers = async (): Promise<UserRecord[]> => {
       }
     } catch (e) { console.error('listUsers failed', e); }
   } else {
-    // Browser DB mode
+    // Browser DB mode via pmsAuthDb
     try {
-      const res = await db.query(`
-        SELECT id, username, email, name, role, active, permissions, last_login, last_activity, created_at, updated_at
-        FROM public.app_users 
-        ORDER BY username ASC
-      `);
-      if (res && 'rows' in res) {
-        return res.rows.map(mapDbUser);
-      }
+      const users = await pmsAuthDb.listUsers();
+      return users.map(mapDbUser);
     } catch (e) { console.error('Browser listUsers failed', e); }
   }
   return [];
@@ -128,72 +123,24 @@ export const register = async (payload: { username: string; email?: string; pass
       return { ok: false, error: res.error || 'Registration failed' };
     } catch (e: any) { return { ok: false, error: e.message || String(e) }; }
   } else {
-    // Browser DB mode
+    // Browser DB mode via pmsAuthDb
     try {
-      // Ensure pgcrypto exists
-      await db.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+      const res = await pmsAuthDb.registerUser({
+        username: payload.username,
+        email: payload.email || '',
+        password: payload.password,
+        name: payload.name || payload.username,
+        role: payload.role || 'staff',
+        permissions: payload.permissions
+      });
 
-      // Ensure app_users table exists
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS public.app_users (
-          id VARCHAR(50) PRIMARY KEY,
-          username VARCHAR(50) UNIQUE NOT NULL,
-          email VARCHAR(255),
-          password_hash VARCHAR(255),
-          name VARCHAR(100),
-          role VARCHAR(20) DEFAULT 'staff',
-          active BOOLEAN DEFAULT true,
-          permissions TEXT[],
-          last_login TIMESTAMP,
-          last_activity TIMESTAMP,
-          is_verified BOOLEAN DEFAULT false,
-          created_at TIMESTAMP DEFAULT NOW(),
-          updated_at TIMESTAMP DEFAULT NOW()
-        )
-      `);
-
-      // Ensure profiles table exists
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS public.profiles (
-          id VARCHAR(50) PRIMARY KEY REFERENCES public.app_users(id) ON DELETE CASCADE,
-          email VARCHAR(255),
-          full_name VARCHAR(100),
-          role VARCHAR(20),
-          is_active BOOLEAN,
-          updated_at TIMESTAMP DEFAULT NOW()
-        )
-      `);
-
-      const res = await db.query(
-        `INSERT INTO public.app_users (
-           id, username, email, name, role, password_hash, created_at, updated_at, is_verified
-         ) VALUES (
-           gen_random_uuid()::varchar, $1, $2, $3, $4, crypt($5, gen_salt('bf')), NOW(), NOW(), true
-         ) RETURNING id, username, email, name, role`,
-        [payload.username, payload.email || null, payload.name || payload.username, payload.role || 'staff', payload.password]
-      );
-
-      if ('error' in res) {
-        return { ok: false, error: res.error as string };
+      if (res.ok) {
+        // Fetch the user to return it (pmsAuthDb.registerUser only returns verifyToken)
+        const allUsers = await pmsAuthDb.listUsers();
+        const newUser = allUsers.find(u => u.username === payload.username);
+        return { ok: true, user: newUser ? mapDbUser(newUser) : undefined };
       }
-
-      if ('rows' in res && res.rows.length > 0) {
-        const newUser = res.rows[0];
-        // Create profile
-        const profileRes = await db.query(
-          `INSERT INTO public.profiles (id, email, full_name, role, is_active)
-           VALUES ($1, $2, $3, $4, true)
-           ON CONFLICT (id) DO NOTHING`,
-          [newUser.id, newUser.email, newUser.name, newUser.role]
-        );
-
-        if ('error' in profileRes) {
-          console.warn('Profile creation warning:', profileRes.error);
-        }
-
-        return { ok: true, user: mapDbUser(newUser) };
-      }
-      return { ok: false, error: 'Registration failed - no user returned' };
+      return { ok: false, error: res.error || 'Registration failed' };
     } catch (e: any) {
       return { ok: false, error: e.message || String(e) };
     }
@@ -229,29 +176,15 @@ export const login = async (usernameOrEmail: string, password: string): Promise<
       return { ok: false, error: res.error || 'Login failed' };
     } catch (e: any) { return { ok: false, error: e.message || String(e) }; }
   } else {
-    // Browser DB mode
+    // Browser DB mode via pmsAuthDb
     try {
-      // Ensure pgcrypto exists
-      await db.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
-
-      const res = await db.query(
-        `SELECT id, username, email, name, role, active, permissions, created_at
-         FROM public.app_users 
-         WHERE (username = $1 OR email = $1) 
-         AND password_hash = crypt($2, password_hash)
-         AND active = true`,
-        [usernameOrEmail, password]
-      );
-
-      if ('rows' in res && res.rows.length > 0) {
-        const u = mapDbUser(res.rows[0]);
-        // Update last login
-        await db.query('UPDATE public.app_users SET last_login = NOW() WHERE id = $1', [u.id]);
-
+      const res = await pmsAuthDb.login(usernameOrEmail, password);
+      if (res.ok && res.user) {
+        const u = mapDbUser(res.user);
         const session = createSession(u);
         return { ok: true, session, user: u };
       }
-      return { ok: false, error: 'Invalid username or password' };
+      return { ok: false, error: res.error || 'Invalid username or password' };
     } catch (e: any) { return { ok: false, error: e.message || String(e) }; }
   }
 };
@@ -262,20 +195,10 @@ export const updateUser = async (userId: string, patch: any): Promise<{ ok: bool
     if (res.ok) return { ok: true };
     return res;
   } else {
-    // Browser DB mode
+    // Browser DB mode via pmsAuthDb
     try {
-      if (patch.role || patch.active !== undefined || patch.password) {
-        let q = 'UPDATE public.app_users SET updated_at = NOW()';
-        const args = [userId];
-        let idx = 2;
-        if (patch.role) { q += `, role = $${idx++}`; args.push(patch.role); }
-        if (patch.active !== undefined) { q += `, active = $${idx++}`; args.push(patch.active); }
-        if (patch.password) { q += `, password_hash = crypt($${idx++}, gen_salt('bf'))`; args.push(patch.password); }
-        q += ' WHERE id = $1';
-        await db.query(q, args);
-      }
-
-      return { ok: true };
+      const res = await pmsAuthDb.updateUser(userId, patch);
+      return { ok: res.ok, error: res.error };
     } catch (e: any) { return { ok: false, error: e.message }; }
   }
 };
@@ -284,12 +207,8 @@ export const deleteUser = async (userId: string): Promise<{ ok: boolean; error?:
   if (!isBrowser && window.native?.auth?.deleteUser) {
     return window.native.auth.deleteUser(userId);
   } else {
-    // Browser DB mode
-    try {
-      await db.query('DELETE FROM public.app_users WHERE id = $1', [userId]);
-      await db.query('DELETE FROM public.profiles WHERE id = $1', [userId]);
-      return { ok: true };
-    } catch (e: any) { return { ok: false, error: e.message }; }
+    // Browser DB mode via pmsAuthDb
+    return pmsAuthDb.deleteUser(userId);
   }
 };
 
@@ -297,7 +216,7 @@ export const sendHeartbeat = async (userId: string): Promise<void> => {
   if (!isBrowser && window.native?.auth?.heartbeat && userId) {
     await window.native.auth.heartbeat(userId).catch(() => { });
   } else if (userId) {
-    db.query('UPDATE public.app_users SET last_activity = NOW() WHERE id = $1', [userId]).catch(() => { });
+    db.query('UPDATE app_users SET last_activity = NOW() WHERE id = $1', [userId]).catch(() => { });
   }
 };
 

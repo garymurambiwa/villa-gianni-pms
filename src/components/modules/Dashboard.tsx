@@ -248,16 +248,15 @@ export const Dashboard: React.FC = () => {
   }, [reservations, todayStr]);
 
   return (
-    <div className="p-6 transition-colors duration-300 min-h-screen" style={{ backgroundColor: 'var(--hotel-bg)' }}>
+    <div className="p-6 transition-colors duration-300 min-h-screen hotel-bg">
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
         <h2
-          className="text-3xl font-bold transition-colors duration-300"
-          style={{ color: 'var(--hotel-text, #111827)' }}
+          className="text-3xl font-bold transition-colors duration-300 hotel-text"
         >
           Overview
         </h2>
         <div className="flex items-center gap-4">
-          <div className="text-xs transition-colors" style={{ color: 'var(--hotel-text-muted, #6b7280)' }}>
+          <div className="text-xs transition-colors hotel-text-muted">
             {lastUpdateTs ? `Data synced at ${new Date(lastUpdateTs).toLocaleTimeString()}` : 'Waiting for data'}
           </div>
           <div className="flex shrink-0">
@@ -282,22 +281,17 @@ export const Dashboard: React.FC = () => {
         {stats.map((stat, idx) => (
           <div
             key={idx}
-            className="rounded-xl shadow-sm p-6 border transition-colors duration-300 relative overflow-hidden"
-            style={{
-              backgroundColor: 'var(--hotel-card-bg, #ffffff)',
-              borderColor: 'var(--hotel-border, #e5e7eb)'
-            }}
+            className="rounded-xl shadow-sm p-6 border transition-colors duration-300 relative overflow-hidden hotel-card-bg hotel-border"
           >
             <div className="flex justify-between items-start mb-4">
-              <p className="text-sm font-semibold transition-colors uppercase tracking-wider" style={{ color: 'var(--hotel-text-muted, #6b7280)' }}>{stat.label}</p>
+              <p className="text-sm font-semibold transition-colors uppercase tracking-wider hotel-text-muted">{stat.label}</p>
               <div className="p-2.5 rounded-full" style={{ backgroundColor: `color-mix(in srgb, ${stat.color} 15%, transparent)`, color: stat.color }}>
                 {stat.icon}
               </div>
             </div>
             <div>
               <p
-                className={`text-4xl font-extrabold transition-colors ${stat.label === 'Occupancy Rate' && pulse ? 'animate-pulse' : ''}`}
-                style={{ color: 'var(--hotel-text, #111827)' }}
+                className={`text-4xl font-extrabold transition-colors hotel-text ${stat.label === 'Occupancy Rate' && pulse ? 'animate-pulse' : ''}`}
               >
                 {stat.value}
               </p>
@@ -310,18 +304,18 @@ export const Dashboard: React.FC = () => {
         {/* Left Main Content */}
         <div className="xl:col-span-2 space-y-6">
 
-          <div className="rounded-xl shadow-sm p-6 border transition-colors duration-300" style={{ backgroundColor: 'var(--hotel-card-bg, #ffffff)', borderColor: 'var(--hotel-border, #e5e7eb)' }}>
-            <h3 className="text-lg font-bold mb-4 transition-colors uppercase tracking-wide" style={{ color: 'var(--hotel-text-muted, #6b7280)' }}>Room Status Overview</h3>
+          <div className="rounded-xl shadow-sm p-6 border transition-colors duration-300 hotel-card-bg hotel-border">
+            <h3 className="text-lg font-bold mb-4 transition-colors uppercase tracking-wide hotel-text-muted">Room Status Overview</h3>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <tbody>
                   {Object.entries(roomStatusCounts).map(([status, count], idx) => (
-                    <tr key={status} className="border-b transition-colors last:border-0" style={{ borderBottomColor: 'var(--hotel-border, #e5e7eb)' }}>
-                      <td className="py-3 font-semibold transition-colors w-1/3" style={{ color: 'var(--hotel-text, #111827)' }}>{status}</td>
-                      <td className="py-3 font-bold text-right transition-colors pr-2" style={{ color: 'var(--hotel-primary)' }}>{count}</td>
+                    <tr key={status} className="border-b transition-colors last:border-0 hotel-border">
+                      <td className="py-3 font-semibold transition-colors w-1/3 hotel-text">{status}</td>
+                      <td className="py-3 font-bold text-right transition-colors pr-2 hotel-primary-text">{count}</td>
                       <td className="py-3 w-1/2">
-                        <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--hotel-border)' }}>
-                          <div className="h-full rounded-full" style={{ width: `${totalAvailableRooms > 0 ? (count / totalAvailableRooms) * 100 : 0}%`, backgroundColor: 'var(--hotel-primary)' }}></div>
+                        <div className="h-1.5 w-full rounded-full overflow-hidden hotel-border bg-gray-100">
+                          <div className="h-full rounded-full hotel-primary-bg" style={{ width: `${totalAvailableRooms > 0 ? (count / totalAvailableRooms) * 100 : 0}%` }}></div>
                         </div>
                       </td>
                     </tr>
@@ -331,12 +325,13 @@ export const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="rounded-xl shadow-sm p-6 border transition-colors duration-300" style={{ backgroundColor: 'var(--hotel-card-bg, #ffffff)', borderColor: 'var(--hotel-border, #e5e7eb)' }}>
+          <div className="rounded-xl shadow-sm p-6 border transition-colors duration-300 hotel-card-bg hotel-border">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-bold transition-colors uppercase tracking-wide" style={{ color: 'var(--hotel-text-muted, #6b7280)' }}>{metric} Trend Over Time</h3>
+              <h3 className="text-lg font-bold transition-colors uppercase tracking-wide hotel-text-muted">{metric} Trend Over Time</h3>
               <select
-                className="text-sm border rounded px-3 py-1.5 transition-colors outline-none font-medium"
-                style={{ backgroundColor: 'var(--hotel-bg)', borderColor: 'var(--hotel-border)', color: 'var(--hotel-text)' }}
+                id="metric-trend-select"
+                title="Select metric for trend chart"
+                className="text-sm border rounded px-3 py-1.5 transition-colors outline-none font-medium hotel-bg hotel-border hotel-text"
                 value={metric}
                 onChange={(e) => setMetric(e.target.value as 'Revenue' | 'RevPAR')}
               >
@@ -364,12 +359,7 @@ export const Dashboard: React.FC = () => {
         {/* Right Sidebar Content */}
         <div className="xl:col-span-1 space-y-6">
           <div
-            className="rounded-xl shadow-sm p-6 border transition-colors duration-300"
-            style={{
-              backgroundColor: 'var(--hotel-primary)',
-              borderColor: 'var(--hotel-primary)',
-              color: '#ffffff'
-            }}
+            className="rounded-xl shadow-sm p-6 border transition-colors duration-300 hotel-primary-bg"
           >
             <div className="flex items-center gap-2 mb-6">
               <Activity className="w-5 h-5 text-white/80" />
@@ -393,18 +383,14 @@ export const Dashboard: React.FC = () => {
           </div>
 
           <div
-            className="rounded-xl shadow-sm p-6 border transition-colors duration-300"
-            style={{
-              backgroundColor: 'var(--hotel-accent)',
-              borderColor: 'var(--hotel-accent)',
-              color: '#ffffff'
-            }}
+            className="rounded-xl shadow-sm p-6 border transition-colors duration-300 hotel-accent-bg"
           >
             <h3 className="text-lg font-bold uppercase tracking-wide text-white/90 mb-4">Analytics Controls</h3>
             <div className="space-y-4">
               <div>
-                <label className="text-xs font-semibold text-white/80 block mb-1">Start Date</label>
+                <label htmlFor="start-date" className="text-xs font-semibold text-white/80 block mb-1">Start Date</label>
                 <input
+                  id="start-date"
                   type="date"
                   className="w-full border-0 rounded px-3 py-2 text-sm text-gray-900 shadow-inner"
                   value={startDate}
@@ -412,8 +398,9 @@ export const Dashboard: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="text-xs font-semibold text-white/80 block mb-1">End Date</label>
+                <label htmlFor="end-date" className="text-xs font-semibold text-white/80 block mb-1">End Date</label>
                 <input
+                  id="end-date"
                   type="date"
                   className="w-full border-0 rounded px-3 py-2 text-sm text-gray-900 shadow-inner"
                   value={endDate}
@@ -423,8 +410,8 @@ export const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="rounded-xl shadow-sm p-6 border transition-colors duration-300" style={{ backgroundColor: 'var(--hotel-card-bg, #ffffff)', borderColor: 'var(--hotel-border, #e5e7eb)' }}>
-            <h3 className="text-sm font-bold mb-4 transition-colors uppercase tracking-wide text-center" style={{ color: 'var(--hotel-text-muted, #6b7280)' }}>Revenue Share</h3>
+          <div className="rounded-xl shadow-sm p-6 border transition-colors duration-300 hotel-card-bg hotel-border">
+            <h3 className="text-sm font-bold mb-4 transition-colors uppercase tracking-wide text-center hotel-text-muted">Revenue Share</h3>
             <ChartContainer config={chartConfig} className="w-full h-48">
               <ResponsiveContainer>
                 <PieChart>
