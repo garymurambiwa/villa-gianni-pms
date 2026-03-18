@@ -26,6 +26,8 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
           type VARCHAR(50) NOT NULL,
           rate NUMERIC(12,2) NOT NULL DEFAULT 0,
           status VARCHAR(50) NOT NULL DEFAULT 'vacant',
+          floor INTEGER NOT NULL DEFAULT 1,
+          is_active BOOLEAN NOT NULL DEFAULT true,
           tax_applicable BOOLEAN DEFAULT true,
           inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
         );
@@ -107,6 +109,10 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
     } catch (e) { 
       console.log('Table creation note:', e)
     }
+
+    // Patch existing rooms table to add missing columns (safe for existing deployments)
+    try { await db.exec(`ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true`); } catch (e) { console.log('rooms.is_active column note:', e); }
+    try { await db.exec(`ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1`); } catch (e) { console.log('rooms.floor column note:', e); }
     
     // Create indexes
     try {

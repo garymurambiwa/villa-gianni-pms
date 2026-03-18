@@ -36,7 +36,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     try {
       // Load PMS Data
-      const roomRes = await db.query('SELECT * FROM rooms WHERE is_active IS DISTINCT FROM false ORDER BY number');
+      // Load rooms, filtering out soft-deleted ones.
+      // Fallback to unfiltered query if is_active column doesn't exist yet on older DBs.
+      let roomRes: any;
+      try {
+        roomRes = await db.query('SELECT * FROM rooms WHERE is_active IS DISTINCT FROM false ORDER BY number');
+        // Also ensure the column exists for future queries (safe ALTER IF NOT EXISTS)
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => {});
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => {});
+      } catch (_colErr) {
+        // Column doesn't exist yet — fall back to all rooms and add the column
+        roomRes = await db.query('SELECT * FROM rooms ORDER BY number');
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => {});
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => {});
+      }
       if ('rows' in roomRes) {
         const normalized = (roomRes.rows || []).map((r: any) => {
           const s = String(r.status || '').toLowerCase();
@@ -56,6 +69,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await refreshRooms();
         await refreshRateConfig();
       }
+
 
       // Load reservations with guest info and room info joined
       const resRes = await db.query(`

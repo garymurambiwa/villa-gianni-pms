@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS public.rooms (
   type text NOT NULL,
   status text NOT NULL DEFAULT 'vacant',
   rate numeric(12,2) NOT NULL DEFAULT 0,
+  floor integer NOT NULL DEFAULT 1,
+  is_active boolean NOT NULL DEFAULT true,
   inserted_at timestamptz NOT NULL DEFAULT NOW()
 );
 
