@@ -14,6 +14,16 @@ interface MenuItem {
   category: 'bar' | 'restaurant';
 }
 
+interface InventoryItem {
+  id: string;
+  name: string;
+  selling_price: number | string;
+  type?: string;
+  category?: string;
+  department?: string;
+  costCenter?: string;
+}
+
 // Hardcoded items removed. Using inventory from DataContext.
 // const menuItems: MenuItem[] = [...];
 
@@ -26,22 +36,35 @@ export const POS: React.FC = () => {
   const menuItems: MenuItem[] = useMemo(() => {
     console.log('[POS] Inventory raw:', inventory?.length, inventory?.[0]);
     const items = (inventory || [])
-      .filter((i: any) => i.selling_price && Number(i.selling_price) > 0)
-      .map((i: any) => {
-        const rawCat = String(i.type || i.category || i.department || '').toLowerCase();
+      .filter((i: InventoryItem) => i.selling_price && Number(i.selling_price) > 0)
+      .map((i: InventoryItem) => {
+        // Priority: costCenter is the most reliable field (explicitly set by user)
         const costCenter = String(i.costCenter || '').toLowerCase();
-        // Relaxed category logic: rely on mapped costCenter or check broad bar terms
-        const isBar = costCenter === 'bar' || rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink');
-        const category = isBar ? 'bar' : 'restaurant';
+        // Fallback: check category/department/type fields for bar-related keywords
+        const rawCat = String(i.category || i.department || i.type || '').toLowerCase();
+        const isBar =
+          costCenter === 'bar' ||
+          costCenter.includes('bar') ||
+          rawCat === 'bar' ||
+          rawCat.includes('bar') ||
+          rawCat.includes('beverage') ||
+          rawCat.includes('cocktail') ||
+          rawCat.includes('beer') ||
+          rawCat.includes('wine') ||
+          rawCat.includes('cider') ||
+          rawCat.includes('liquor') ||
+          rawCat.includes('spirit') ||
+          rawCat.includes('drink') ||
+          rawCat.includes('alcohol');
+        const category: 'bar' | 'restaurant' = isBar ? 'bar' : 'restaurant';
         return {
           id: i.id,
           name: i.name,
           price: Number(i.selling_price),
           category,
-          visibility: { bar: true, restaurant: true } // Force visibility to TRUE for debugging
         };
       });
-    console.log('[POS] MenuItems processed:', items.length, items[0]);
+    console.log('[POS] MenuItems processed:', items.length, 'bar:', items.filter(m => m.category === 'bar').length, 'restaurant:', items.filter(m => m.category === 'restaurant').length);
     return items;
   }, [inventory]);
 
@@ -59,7 +82,9 @@ export const POS: React.FC = () => {
       if (savedCart) {
         setCart(JSON.parse(savedCart));
       }
-    } catch { }
+    } catch (e) {
+      console.warn('[POS] Failed to load cart from localStorage', e);
+    }
   }, []);
 
   React.useEffect(() => {
@@ -108,7 +133,9 @@ export const POS: React.FC = () => {
   };
 
   const subtotal = useMemo(() => cart.reduce((sum, c) => sum + (c.item.price * c.qty), 0), [cart]);
-  const taxRate = 0.10;
+  // Tax is 0 by default — selling prices are already final (tax-inclusive).
+  // If tax is required, configure it via Receipt Settings per outlet.
+  const taxRate = 0;
   const tax = useMemo(() => subtotal * taxRate, [subtotal]);
   const total = useMemo(() => subtotal + tax, [subtotal, tax]);
 
@@ -324,8 +351,8 @@ export const POS: React.FC = () => {
               <div className="font-semibold text-sm mb-2">Item Options: {cart[editIdx].item.name}</div>
               <div className="grid grid-cols-2 gap-2 mb-2">
                 <div>
-                  <label className="block text-xs text-gray-700 mb-1">Preparation Level</label>
-                  <select className="w-full px-2 py-1 border rounded" value={prepLevel} onChange={(e) => setPrepLevel(e.target.value)}>
+                  <label htmlFor="prep-level" className="block text-xs text-gray-700 mb-1">Preparation Level</label>
+                  <select id="prep-level" title="Preparation Level" className="w-full px-2 py-1 border rounded" value={prepLevel} onChange={(e) => setPrepLevel(e.target.value)}>
                     <option value="">Select…</option>
                     <option value="Rare">Rare</option>
                     <option value="Medium">Medium</option>
@@ -334,16 +361,16 @@ export const POS: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-700 mb-1">Quantity</label>
-                  <input type="number" min={1} className="w-full px-2 py-1 border rounded" value={cart[editIdx].qty} onChange={(e) => {
+                  <label htmlFor="item-qty" className="block text-xs text-gray-700 mb-1">Quantity</label>
+                  <input id="item-qty" type="number" min={1} title="Quantity" className="w-full px-2 py-1 border rounded" value={cart[editIdx].qty} onChange={(e) => {
                     const q = Math.max(1, Number(e.target.value || 1));
                     const copy = [...cart]; copy[editIdx] = { ...copy[editIdx], qty: q }; setCart(copy);
                   }} />
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-700 mb-1">Special Instructions</label>
-                <textarea className="w-full px-2 py-1 border rounded" rows={3} value={specialNotes} onChange={(e) => setSpecialNotes(e.target.value)} placeholder="e.g., No salt, extra sauce, allergy notes…" />
+                <label htmlFor="special-instr" className="block text-xs text-gray-700 mb-1">Special Instructions</label>
+                <textarea id="special-instr" className="w-full px-2 py-1 border rounded" rows={3} value={specialNotes} onChange={(e) => setSpecialNotes(e.target.value)} placeholder="e.g., No salt, extra sauce, allergy notes…" />
               </div>
               <div className="mt-2 flex gap-2">
                 <button
@@ -387,13 +414,8 @@ export const POS: React.FC = () => {
               <div className="text-xs text-gray-600 mb-2">Recent payments processed during this shift</div>
               <div
                 ref={txContainerRef}
-                className="relative overflow-x-auto overflow-y-auto max-h-64 sm:max-h-80 scroll-smooth"
+                className={`relative overflow-x-auto overflow-y-auto max-h-64 sm:max-h-80 pos-scroll-touch ${isScrolling ? '' : 'scroll-smooth'}`}
                 onScroll={handleTxScroll}
-                style={{
-                  WebkitOverflowScrolling: 'touch',
-                  touchAction: 'pan-y', // Explicitly allow vertical panning
-                  scrollBehavior: isScrolling ? 'auto' : 'smooth' // Use auto during drag, smooth for snap
-                }}
                 tabIndex={0}
                 onKeyDown={(e) => {
                   const el = txContainerRef.current;
@@ -488,5 +510,7 @@ const logPaymentError = (step: string, error: any, ctx?: any) => {
     const raw = localStorage.getItem('corepms_payment_errors');
     const list = raw ? JSON.parse(raw) : [];
     localStorage.setItem('corepms_payment_errors', JSON.stringify([entry, ...list].slice(0, 500)));
-  } catch { }
+  } catch (e) {
+    console.error('[POS] Failed to log payment error', e);
+  }
 };

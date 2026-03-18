@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { formatCurrency, getMenuItemsFromPOSStore } from '@/lib/posIntegration';
-import menuCats from '@/lib/menuCategories';
+import menuCats, { SubTreeNode, SubCategory } from '@/lib/menuCategories';
 import cocktailEng from '@/lib/cocktailEngineering';
 import { useToast } from '@/hooks/use-toast';
 
@@ -29,7 +29,7 @@ export interface Bill {
   tableId: string;
   items: BillItem[];
   status: 'open' | 'suspended' | 'paid';
-  createdAt: Date;
+  createdAt: string;
   total: number;
 }
 
@@ -47,7 +47,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [dynamicMenu, setDynamicMenu] = useState<MenuItem[]>(() => {
     try {
       if (Array.isArray(menuItems) && menuItems.length) return menuItems;
-      const fromStore = getMenuItemsFromPOSStore() as any[];
+      const fromStore = getMenuItemsFromPOSStore() as MenuItem[];
       return Array.isArray(fromStore) ? fromStore : [];
     } catch {
       return [];
@@ -55,7 +55,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   });
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const { toast } = useToast();
-  const [subTree, setSubTree] = useState<any[]>([]);
+  const [subTree, setSubTree] = useState<SubTreeNode[]>([]);
   const [subPath, setSubPath] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -65,7 +65,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
     if (menuItems && menuItems.length > 0) {
       setDynamicMenu(menuItems);
     } else {
-      const fromStore = getMenuItemsFromPOSStore() as any[];
+      const fromStore = getMenuItemsFromPOSStore() as MenuItem[];
       if (Array.isArray(fromStore) && fromStore.length > 0) {
         setDynamicMenu(fromStore);
       }
@@ -111,15 +111,15 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
     }
     return null;
   };
-  const getCurrentLevel = (): any[] => {
+  const getCurrentLevel = (): MenuItem[] => {
     if (!subPath.length) return subTree;
     const cur = findNode(subTree, subPath[subPath.length - 1]);
     return cur?.children || [];
   };
-  const collectDescendantIds = (node: any | null): Set<string> => {
+  const collectDescendantIds = (node: SubTreeNode | null): Set<string> => {
     const ids = new Set<string>();
     if (!node) return ids;
-    const dfs = (n: any) => { ids.add(n.sub_id); (n.children || []).forEach(dfs); };
+    const dfs = (n: SubTreeNode) => { ids.add(n.sub_id); (n.children || []).forEach(dfs); };
     dfs(node);
     return ids;
   };
@@ -138,12 +138,16 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
     try {
       const res = cocktailEng.decrementIngredientsForCocktail(menuItem.id, 1);
       if (res.alerts.length) toast({ title: 'Low stock', description: res.alerts.join(' • ') });
-    } catch { }
+    } catch (e) {
+      console.warn('[OrderModal] Ingredient decrement failed:', e);
+    }
   };
 
   const removeItem = (itemId: string) => {
     setItems(items.filter(i => i.menuItem.id !== itemId));
-    try { cocktailEng.restoreIngredientsForCocktail(itemId, 1); } catch { }
+    try { cocktailEng.restoreIngredientsForCocktail(itemId, 1); } catch (e) {
+      console.warn('[OrderModal] Ingredient restoration failed:', e);
+    }
   };
 
   const total = (Array.isArray(items) ? items : []).reduce((sum, item) => sum + item.subtotal, 0);
@@ -231,7 +235,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                   <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
               </div>
+              <label htmlFor="item-search" className="sr-only">Search items</label>
               <input
+                id="item-search"
                 ref={searchInputRef}
                 type="text"
                 placeholder="Search items..."
@@ -243,6 +249,8 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 <button
                   onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                  title="Clear search"
+                  aria-label="Clear search"
                 >
                   <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -323,7 +331,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 </div>
                 <div className="overflow-x-auto">
                   <div className="flex items-center gap-2">
-                    {getCurrentLevel().length ? getCurrentLevel().map((n: any) => (
+                    {getCurrentLevel().length ? getCurrentLevel().map((n: SubTreeNode) => (
                       <Button key={n.sub_id} variant={subPath[subPath.length - 1] === n.sub_id ? 'default' : 'outline'} onClick={() => setSubPath(prev => [...prev, n.sub_id])}>{n.name}</Button>
                     )) : (
                       <div className="text-xs text-gray-600">No sub-categories</div>
@@ -357,7 +365,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                   {item.image ? (
                     <img src={item.image} alt={item.name} className="w-full h-24 object-cover rounded mb-2" />
                   ) : (
-                    <div className="w-full h-24 rounded mb-2" style={{ backgroundColor: (item as any).imageBgColor || '#ddd' }} />
+                    <div className="w-full h-24 rounded mb-2 bg-gray-200" style={{ backgroundColor: (item as any).imageBgColor || '#ddd' } as React.CSSProperties} />
                   )}
                   <div className="font-semibold text-sm">{item.name}</div>
                   {isSearching && (
@@ -412,7 +420,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                           onClick={() => {
                             setItems(prev => prev.map(i => i.menuItem.id === item.menuItem.id ? { ...i, preparation_level: opt } : i))
                           }}
-                          aria-pressed={item.preparation_level === opt}
+                          aria-pressed={item.preparation_level === opt ? "true" : "false"}
                         >
                           {opt.replace('-', ' ')}
                         </button>
@@ -429,11 +437,12 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                         const next = cur; // toggle visibility handled via local state below
                         setItems(prev => prev.map(i => i.menuItem.id === item.menuItem.id ? { ...i, manual_notes: next } : i))
                         const el = document.getElementById(`notes-${item.menuItem.id}`);
-                        if (el) { try { (el as HTMLTextAreaElement).focus(); } catch { } }
+                        if (el) { try { (el as HTMLTextAreaElement).focus(); } catch (e) { console.error('[OrderModal] Focus error:', e); } }
                       }}
                     >
                       Add Special Instructions / Extras
                     </button>
+                    <label htmlFor={`notes-${item.menuItem.id}`} className="sr-only">Special Instructions</label>
                     <div className="mt-2">
                       <textarea
                         id={`notes-${item.menuItem.id}`}
@@ -466,7 +475,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       tableId: `t${tableNumber}`,
                       items,
                       status: 'open',
-                      createdAt: new Date(),
+                      createdAt: new Date().toISOString(),
                       total
                     });
                     onClose();
