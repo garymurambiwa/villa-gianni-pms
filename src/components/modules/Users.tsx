@@ -127,14 +127,24 @@ export const Users: React.FC = () => {
 
   const users = useMemo(() => {
     console.log('[Users] Mapping globalUsers:', globalUsers);
+    const toStr = (v: any): string => {
+      if (!v) return '—';
+      if (v instanceof Date) return v.toLocaleString();
+      const s = String(v);
+      // If it looks like an ISO date, format it nicely
+      if (s.match(/^\d{4}-\d{2}-\d{2}/)) {
+        try { return new Date(s).toLocaleString(); } catch { return s; }
+      }
+      return s;
+    };
     return globalUsers.map(u => ({
       id: u.id,
       username: u.username,
       name: u.name || u.username,
       role: mapInternalRoleToStandard(u.role as any),
       active: u.active,
-      lastLogin: u.last_login || '—',
-      lastActivity: u.last_activity,
+      lastLogin: toStr(u.last_login),
+      lastActivity: u.last_activity ? toStr(u.last_activity) : undefined,
       permissions: (u.permissions || []) as any,
     }));
   }, [globalUsers]);

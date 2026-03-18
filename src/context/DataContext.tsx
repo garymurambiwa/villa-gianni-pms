@@ -2106,7 +2106,9 @@ END;
       if (payments.length > 0) {
         const vendorIds = [...new Set(payments.map(payment => payment.vendor_id))];
         if (vendorIds.length > 0) {
-          const vendorNamesQuery = `SELECT id, name FROM vendors WHERE id IN(${vendorIds.map(() => '?').join(',')})`;
+          // PostgreSQL uses $1, $2, ... placeholders (not MySQL-style ?)
+          const placeholders = vendorIds.map((_, i) => `$${i + 1}`).join(',');
+          const vendorNamesQuery = `SELECT id, name FROM vendors WHERE id IN(${placeholders})`;
           const vendorsResult = await db.query(vendorNamesQuery, vendorIds);
 
           if (!('error' in vendorsResult)) {
