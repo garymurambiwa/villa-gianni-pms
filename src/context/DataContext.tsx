@@ -36,7 +36,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     try {
       // Load PMS Data
-      const roomRes = await db.query('SELECT * FROM rooms');
+      const roomRes = await db.query('SELECT * FROM rooms WHERE is_active IS DISTINCT FROM false ORDER BY number');
       if ('rows' in roomRes) {
         const normalized = (roomRes.rows || []).map((r: any) => {
           const s = String(r.status || '').toLowerCase();

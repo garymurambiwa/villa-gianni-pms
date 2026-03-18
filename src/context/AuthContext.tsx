@@ -104,9 +104,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch {
           // ignore
         }
-        const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-          const sUser = session?.user || null;
-          if (!sUser) { setUser(null); return; }
+        const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+          // Only clear user on explicit sign-out; ignore null session during token refresh
+          if (!session?.user) {
+            if (event === 'SIGNED_OUT') setUser(null);
+            return;
+          }
+          const sUser = session.user;
           const uname = ((sUser.user_metadata?.username as string) || sUser.email || sUser.id || '').toLowerCase();
           const baseUser = {
             id: sUser.id,

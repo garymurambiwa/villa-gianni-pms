@@ -884,6 +884,7 @@ export const PosSettings: React.FC = () => {
       costPrice: Number(costPrice.toFixed(2)),
       sellingPrice: Number(sellingPrice.toFixed(2)),
       costCenter,
+      inventoryCategory: inventoryCategory || undefined,
       visibility: { bar: barVisible, restaurant: restaurantVisible },
       cosPercent: computedCOS,
       gpAmount,
