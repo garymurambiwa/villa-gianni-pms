@@ -1521,6 +1521,7 @@ export const Reservations: React.FC = () => {
             <thead className="bg-gray-100">
               <tr>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Guest Name</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Room No.</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Room Type</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Check-In</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-gray-700">Check-Out</th>
@@ -1534,6 +1535,11 @@ export const Reservations: React.FC = () => {
               {displayReservations.map(res => (
                 <tr key={res.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 text-sm text-gray-800">{String(res.guestName || '')}</td>
+                  <td className="px-6 py-4 text-sm font-semibold text-gray-800">
+                    {(res as any).room_number || (res as any).roomNumber
+                      ? <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs font-bold">{String((res as any).room_number || (res as any).roomNumber)}</span>
+                      : <span className="text-gray-400 text-xs">—</span>}
+                  </td>
                   <td className="px-6 py-4 text-sm text-gray-600">{String(res.roomType || '')}</td>
                   <td className="px-6 py-4 text-sm text-gray-600">{String(res.checkIn || '')}</td>
                   <td className="px-6 py-4 text-sm text-gray-600">{String(res.checkOut || '')}</td>

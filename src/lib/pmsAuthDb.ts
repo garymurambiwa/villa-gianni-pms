@@ -99,6 +99,8 @@ export const pmsAuthDb = {
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT false`); } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT`); } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS permissions TEXT[]`); } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_activity TIMESTAMP`); } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP`); } catch { }
     await db.exec(createLogs);
     await db.exec(createVerifications);
     await db.exec(createLoginAttempts);

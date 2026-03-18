@@ -164,7 +164,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           }
           if (!userFound) auth.logout();
         }
-        onActivity = () => auth.touchSession();
+        // Throttle DB last_activity updates to once per minute to avoid excessive writes
+        let lastActivityUpdate = 0;
+        onActivity = () => {
+          auth.touchSession();
+          const now = Date.now();
+          if (now - lastActivityUpdate > 60_000) {
+            lastActivityUpdate = now;
+            db.isConfigured().then(configured => {
+              if (configured) {
+                const sess = auth.getSession();
+                if (sess?.userId) {
+                  db.query('UPDATE app_users SET last_activity = NOW() WHERE id = $1', [sess.userId]).catch(() => {});
+                }
+              }
+            }).catch(() => {});
+          }
+        };
         window.addEventListener('mousemove', onActivity);
         window.addEventListener('keydown', onActivity);
       }
