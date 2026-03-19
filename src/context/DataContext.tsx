@@ -1969,6 +1969,27 @@ END;
         // Column may already exist, which is fine
       }
 
+      // Add void_status column to vendor_expenses (ACTIVE/VOIDED) — data-safe, defaults all existing rows to ACTIVE
+      try {
+        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS void_status TEXT DEFAULT 'ACTIVE'; `);
+      } catch (e) {
+        // Column may already exist, which is fine
+      }
+
+      // Add voided_at column to vendor_expenses (timestamp when voided)
+      try {
+        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS voided_at TIMESTAMP DEFAULT NULL; `);
+      } catch (e) {
+        // Column may already exist, which is fine
+      }
+
+      // Add voided_reason column to vendor_expenses (reason text for audit trail)
+      try {
+        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS voided_reason TEXT DEFAULT NULL; `);
+      } catch (e) {
+        // Column may already exist, which is fine
+      }
+
       // Add created_at column to vendor_payments if it doesn't exist
       try {
         await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
@@ -2389,6 +2410,50 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
     }
   };
 
+  // VENDORS - Void an expense (soft-void: keeps record for audit trail)
+  const voidVendorExpense = async (expenseId: string, reason: string): Promise<boolean> => {
+    try {
+      // Safety check: fetch current status before voiding
+      const checkRes = await db.query(
+        `SELECT status, void_status FROM vendor_expenses WHERE id = ?`,
+        [expenseId]
+      );
+      const row = ('rows' in checkRes && checkRes.rows?.length > 0) ? checkRes.rows[0] : null;
+      if (!row) {
+        toast({ title: 'Not Found', description: 'Expense record not found', variant: 'destructive' });
+        return false;
+      }
+      if (row.void_status === 'VOIDED') {
+        toast({ title: 'Already Voided', description: 'This expense has already been voided', variant: 'destructive' });
+        return false;
+      }
+      if (!['pending', 'approved'].includes(row.status)) {
+        toast({ title: 'Cannot Void', description: 'Only pending or approved expenses can be voided', variant: 'destructive' });
+        return false;
+      }
+
+      const sql = `UPDATE vendor_expenses
+        SET void_status = 'VOIDED', voided_at = NOW(), voided_reason = ?, status = 'voided', updated_at = NOW()
+        WHERE id = ?`;
+      const result = await db.query(sql, [reason || 'No reason provided', expenseId]);
+      if ('error' in result) {
+        console.error('Vendor expense void failed:', result.error);
+        toast({ title: 'Database Write Failed', description: 'Vendor expense could not be voided', variant: 'destructive' });
+        return false;
+      }
+
+      // Notify report views to refresh
+      try { window.dispatchEvent(new CustomEvent('vendor:data:updated')); } catch { }
+
+      await loadVendorExpenses();
+      return true;
+    } catch (e: any) {
+      console.error('Void vendor expense error:', e?.message || e);
+      toast({ title: 'Database Write Failed', description: 'Vendor expense could not be voided', variant: 'destructive' });
+      return false;
+    }
+  };
+
   // VENDORS - Process a vendor payment
   const payVendor = async (paymentData: any): Promise<boolean> => {
     try {
@@ -2555,7 +2620,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       recordFolioCharge, recordFolioPayment, removeFolioCharge,
       bulkUpdateRoomStatus, bulkDeleteRooms, getRoomAudit, revertRoomChange,
       addCityLedgerAccount, updateCityLedgerAccount, addCityLedgerTransaction, addCityLedgerNote,
-      addVendor, updateVendor, deleteVendor, addVendorExpense, updateVendorExpense, deleteVendorExpense, payVendor, loadVendorPayments,
+      addVendor, updateVendor, deleteVendor, addVendorExpense, updateVendorExpense, deleteVendorExpense, voidVendorExpense, payVendor, loadVendorPayments,
       addUser, // Add user management function
       users, loadUsers,
       logs, loadLogs,

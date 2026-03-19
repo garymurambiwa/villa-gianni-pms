@@ -74,13 +74,13 @@ interface Props {
     onAddCreditNote?: (expense: VendorExpense, creditData: Partial<VendorExpense>) => Promise<void>;
     onRecordBill?: () => void;
     onMarkPaid?: (referenceNumber: string) => Promise<void>;
+    onViewDetails?: (group: InvoiceGroup) => void;
 }
 
-export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense, onAddCreditNote, onRecordBill, onMarkPaid }) => {
+export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense, onAddCreditNote, onRecordBill, onMarkPaid, onViewDetails }) => {
     const { toast } = useToast();
 
     // UI state
-    const [expandedInvoices, setExpandedInvoices] = useState<Set<string>>(new Set());
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<string>('all');
     const [departmentFilter, setDepartmentFilter] = useState<string>('all');
@@ -207,13 +207,9 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
     /* ---------------------------------------------------------------------- */
     /*  Handlers                                                               */
     /* ---------------------------------------------------------------------- */
-    const toggleExpand = useCallback((ref: string) => {
-        setExpandedInvoices(prev => {
-            const next = new Set(prev);
-            if (next.has(ref)) next.delete(ref); else next.add(ref);
-            return next;
-        });
-    }, []);
+    const handleViewDetails = useCallback((group: InvoiceGroup) => {
+        onViewDetails?.(group);
+    }, [onViewDetails]);
 
     const handleSort = useCallback((field: SortField) => {
         if (sortField === field) {
@@ -366,21 +362,18 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                             </TableRow>
                         )}
                         {filteredGroups.map((group, idx) => {
-                            const isExpanded = expandedInvoices.has(group.referenceNumber);
-                            const hasChildren = group.lines.length > 1 || group.creditNotes.length > 0;
+                            const statusColors: Record<string, string> = {
+                                paid: 'bg-green-100 text-green-700',
+                                approved: 'bg-blue-100 text-blue-700',
+                                voided: 'bg-red-100 text-red-600',
+                                pending: 'bg-yellow-100 text-yellow-700',
+                            };
+                            const badgeClass = statusColors[group.status] ?? 'bg-gray-100 text-gray-600';
 
                             return (
                                 <React.Fragment key={group.referenceNumber}>
-                                    {/* Parent invoice row */}
-                                    <TableRow
-                                        className={`cursor-pointer hover:bg-gray-50 ${isExpanded ? 'bg-blue-50/50' : ''}`}
-                                        onClick={() => hasChildren && toggleExpand(group.referenceNumber)}
-                                    >
-                                        <TableCell className="text-center">
-                                            {hasChildren && (
-                                                <span className="text-gray-400 text-sm">{isExpanded ? '▼' : '▶'}</span>
-                                            )}
-                                        </TableCell>
+                                    <TableRow className="hover:bg-gray-50">
+                                        <TableCell className="text-center text-gray-300 select-none">·</TableCell>
                                         <TableCell className="font-mono text-sm">{toDisplayId(idx + 1, 'INV')}</TableCell>
                                         <TableCell className="font-medium">{group.vendorName}</TableCell>
                                         <TableCell className="text-sm text-gray-600">{group.department}</TableCell>
@@ -394,14 +387,11 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                                             )}
                                         </TableCell>
                                         <TableCell>
-                                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${group.status === 'paid' ? 'bg-green-100 text-green-700' :
-                                                group.status === 'approved' ? 'bg-blue-100 text-blue-700' :
-                                                    'bg-yellow-100 text-yellow-700'
-                                                }`}>
+                                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${badgeClass}`}>
                                                 {String(group.status || '').charAt(0).toUpperCase() + String(group.status || '').slice(1)}
                                             </span>
                                         </TableCell>
-                                        <TableCell onClick={e => e.stopPropagation()}>
+                                        <TableCell>
                                             <div className="flex gap-1">
                                                 {group.status !== 'paid' && onMarkPaid && (
                                                     <Button
@@ -413,6 +403,14 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                                                         Mark Paid
                                                     </Button>
                                                 )}
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="text-xs text-blue-600 border-blue-200 hover:bg-blue-50"
+                                                    onClick={() => handleViewDetails(group)}
+                                                >
+                                                    View Details
+                                                </Button>
                                                 <Button
                                                     size="sm"
                                                     variant="outline"
@@ -438,45 +436,6 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                                             </div>
                                         </TableCell>
                                     </TableRow>
-
-                                    {/* Expanded child rows */}
-                                    {isExpanded && group.lines.map(line => (
-                                        <TableRow key={line.id} className="bg-gray-50/50">
-                                            <TableCell></TableCell>
-                                            <TableCell className="text-xs text-gray-400 pl-6">└ {line.id.slice(0, 8)}</TableCell>
-                                            <TableCell colSpan={2} className="text-sm">{line.description}</TableCell>
-                                            <TableCell className="text-sm text-gray-600">
-                                                {line.quantity} × ${line.unit_cost.toFixed(2)}
-                                            </TableCell>
-                                            <TableCell className="text-right text-sm">{formatCurrency(line.total_cost)}</TableCell>
-                                            <TableCell className="text-xs text-gray-500">{line.category}</TableCell>
-                                            <TableCell></TableCell>
-                                        </TableRow>
-                                    ))}
-
-                                    {/* Credit notes */}
-                                    {isExpanded && group.creditNotes.map(cn => (
-                                        <TableRow key={cn.id} className="bg-red-50/30">
-                                            <TableCell></TableCell>
-                                            <TableCell className="text-xs text-red-400 pl-6">└ Credit</TableCell>
-                                            <TableCell colSpan={2} className="text-sm text-red-600">{cn.description}</TableCell>
-                                            <TableCell></TableCell>
-                                            <TableCell className="text-right text-sm text-red-600 font-medium">
-                                                -{formatCurrency(Math.abs(cn.total_cost))}
-                                            </TableCell>
-                                            <TableCell></TableCell>
-                                            <TableCell>
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    className="text-xs text-red-500"
-                                                    onClick={() => { setDeleteTarget(cn); setDeleteConfirmText(''); }}
-                                                >
-                                                    Remove
-                                                </Button>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
                                 </React.Fragment>
                             );
                         })}

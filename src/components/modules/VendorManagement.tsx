@@ -13,6 +13,7 @@ import { formatDateForCSV, toDisplayId, escapeCSV } from '@/lib/csvUtils';
 import { ALL_DEPARTMENTS } from '@/lib/usaliCategories';
 import { ExpenseInvoiceView } from '@/components/modules/ExpenseInvoiceView';
 import { RecordVendorBill } from '@/components/modules/RecordVendorBill';
+import { BillDetailModal } from '@/components/modules/BillDetailModal';
 
 interface Vendor {
   id: string;
@@ -67,7 +68,7 @@ interface VendorPayment {
 }
 
 const VendorManagement: React.FC = () => {
-  const { vendors, vendorExpenses, vendorPayments, addVendor, updateVendor, deleteVendor, addVendorExpense, updateVendorExpense, deleteVendorExpense, payVendor, loadVendorPayments } = useData();
+  const { vendors, vendorExpenses, vendorPayments, addVendor, updateVendor, deleteVendor, addVendorExpense, updateVendorExpense, deleteVendorExpense, voidVendorExpense, payVendor, loadVendorPayments } = useData();
   const { toast } = useToast();
 
   const [activeTab, setActiveTab] = useState('vendors');
@@ -92,6 +93,8 @@ const VendorManagement: React.FC = () => {
   const [expandedBatchRows, setExpandedBatchRows] = useState<string[]>([]);
   const [expenseViewMode, setExpenseViewMode] = useState<'flat' | 'invoice'>('invoice');
   const [isRecordingBill, setIsRecordingBill] = useState(false);
+  const [selectedInvoiceGroup, setSelectedInvoiceGroup] = useState<any | null>(null);
+  const [showBillDetailModal, setShowBillDetailModal] = useState(false);
 
   // Vendor form state
   const [vendorForm, setVendorForm] = useState({
@@ -1207,6 +1210,7 @@ const VendorManagement: React.FC = () => {
                     });
                   }}
                   onRecordBill={() => setIsRecordingBill(true)}
+<<<<<<< HEAD
                   onMarkPaid={async (referenceNumber) => {
                     const expensesToUpdate = filteredExpenses.filter(e => e.reference_number === referenceNumber && e.status !== 'paid');
                     if (expensesToUpdate.length === 0) return;
@@ -1237,6 +1241,11 @@ const VendorManagement: React.FC = () => {
                     } else {
                       toast({ title: 'Payment Error', description: 'Could not create payment record', variant: 'destructive' });
                     }
+=======
+                  onViewDetails={(group) => {
+                    setSelectedInvoiceGroup(group);
+                    setShowBillDetailModal(true);
+>>>>>>> b927e1d ([DATA_SAFE] [ISOLATED] v0.3.1 - Vendor Bill Module: accordion -> BillDetailModal, void/delete logic, audit columns)
                   }}
                 />
               )}
@@ -1483,6 +1492,15 @@ const VendorManagement: React.FC = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* BillDetailModal — renders outside tab content to avoid nesting issues */}
+      <BillDetailModal
+        group={selectedInvoiceGroup}
+        open={showBillDetailModal}
+        onClose={() => { setShowBillDetailModal(false); setSelectedInvoiceGroup(null); }}
+        onVoidExpense={voidVendorExpense}
+        onDeleteExpense={async (id) => { await deleteVendorExpense(id); }}
+      />
     </div >
   );
 };
