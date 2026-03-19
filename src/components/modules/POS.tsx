@@ -6,12 +6,16 @@ import { deductInventoryStock } from '@/lib/dbSync';
 import { useShift } from '@/contexts/ShiftContext';
 import { getOutletReceiptSettings } from '@/components/modules/ReceiptSettingsModal';
 import { useAuth } from '@/context/AuthContext';
+import menuCats from '@/lib/menuCategories';
 
 interface MenuItem {
   id: string;
   name: string;
   price: number;
   category: 'bar' | 'restaurant';
+  category_id?: string | null;
+  sub_id?: string | null;
+  qtyInStock?: number;
 }
 
 interface InventoryItem {
@@ -22,6 +26,10 @@ interface InventoryItem {
   category?: string;
   department?: string;
   costCenter?: string;
+  category_id?: string | null;
+  sub_id?: string | null;
+  stock_level?: number;
+  qtyInStock?: number;
 }
 
 // Hardcoded items removed. Using inventory from DataContext.
@@ -62,6 +70,9 @@ export const POS: React.FC = () => {
           name: i.name,
           price: Number(i.selling_price),
           category,
+          category_id: i.category_id,
+          sub_id: i.sub_id,
+          qtyInStock: i.qtyInStock ?? i.stock_level ?? 0,
         };
       });
     console.log('[POS] MenuItems processed:', items.length, 'bar:', items.filter(m => m.category === 'bar').length, 'restaurant:', items.filter(m => m.category === 'restaurant').length);
@@ -69,6 +80,7 @@ export const POS: React.FC = () => {
   }, [inventory]);
 
   const [activeCategory, setActiveCategory] = useState<'bar' | 'restaurant'>('restaurant');
+  const [activeSubCategoryId, setActiveSubCategoryId] = useState<string>('all');
   const [cart, setCart] = useState<{ item: MenuItem; qty: number; preparation_level?: string; manual_notes?: string }[]>([]);
   const [roomNumber, setRoomNumber] = useState('');
   const [customerName, setCustomerName] = useState('');
@@ -86,6 +98,10 @@ export const POS: React.FC = () => {
       console.warn('[POS] Failed to load cart from localStorage', e);
     }
   }, []);
+
+  React.useEffect(() => {
+    setActiveSubCategoryId('all');
+  }, [activeCategory]);
 
   React.useEffect(() => {
     localStorage.setItem('corepms_pos_cart', JSON.stringify(cart));
@@ -283,17 +299,51 @@ export const POS: React.FC = () => {
             </button>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {menuItems.filter(m => m.category === activeCategory).map(item => (
+          {/* Sub-category Tabs */}
+          <div className="flex gap-2 mb-6 overflow-x-auto pb-2 no-scrollbar">
+            <button
+              onClick={() => setActiveSubCategoryId('all')}
+              className={`px-4 py-2 rounded-full whitespace-nowrap text-sm font-medium transition-colors ${activeSubCategoryId === 'all' ? 'bg-blue-100 text-blue-700 border-2 border-blue-500' : 'bg-gray-100 text-gray-600 border-2 border-transparent'}`}
+            >
+              All Items
+            </button>
+            {menuCats.listCategories(activeCategory === 'bar' ? 'Bar' : 'Restaurant').map(cat => (
               <button
-                key={item.id}
-                onClick={() => addToCart(item)}
-                className="bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 p-6 rounded-xl border-2 border-blue-200 transition-all"
+                key={cat.category_id}
+                onClick={() => setActiveSubCategoryId(cat.category_id)}
+                className={`px-4 py-2 rounded-full whitespace-nowrap text-sm font-medium transition-colors ${activeSubCategoryId === cat.category_id ? 'bg-blue-100 text-blue-700 border-2 border-blue-500' : 'bg-gray-100 text-gray-600 border-2 border-transparent'}`}
               >
-                <p className="font-bold text-gray-800 mb-2">{item.name}</p>
-                <p className="text-2xl font-bold text-blue-600">{formatCurrency(item.price)}</p>
+                {cat.category_name}
               </button>
             ))}
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {menuItems
+              .filter(m => m.category === activeCategory)
+              .filter(m => activeSubCategoryId === 'all' || m.category_id === activeSubCategoryId || m.sub_id === activeSubCategoryId)
+              .map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => addToCart(item)}
+                  className="bg-white hover:bg-blue-50 p-4 rounded-xl border-2 border-gray-100 hover:border-blue-200 transition-all shadow-sm flex flex-col items-start text-left relative overflow-hidden group"
+                >
+                  <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="bg-blue-600 text-white p-1 rounded-full">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    </div>
+                  </div>
+                  <p className="font-bold text-gray-800 mb-1 line-clamp-2 leading-tight h-10">{item.name}</p>
+                  <div className="flex justify-between items-end w-full mt-auto">
+                    <p className="text-lg font-bold text-blue-600">{formatCurrency(item.price)}</p>
+                    {item.qtyInStock !== undefined && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${item.qtyInStock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                        Qty: {item.qtyInStock}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              ))}
           </div>
         </div>
 

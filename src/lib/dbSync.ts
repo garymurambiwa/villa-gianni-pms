@@ -2455,7 +2455,7 @@ export async function deductInventoryStock(items: { id: string; qty: number }[])
     }
 
     const operations = Array.from(updates.entries()).map(([id, qty]) => ({
-      sql: `UPDATE inventory_items SET stock_level = GREATEST(0, stock_level - $1), updated_at = NOW() WHERE id = $2`,
+      sql: `UPDATE products SET stock_level = GREATEST(0, stock_level - $1), updated_at = NOW() WHERE id = $2`,
       params: [qty, id]
     }));
 
