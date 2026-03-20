@@ -1,0 +1,24 @@
+COREPMS PRODUCTION DEPLOYMENT SYSTEM
+====================================
+
+START HERE:
+1. README.md - Complete usage guide
+
+CORE FILES:
+2. antigravity_prompt.md - Full architectural guide for AntiGravity
+3. DEPLOYMENT_CHECKLIST.md - Step-by-step deployment process
+4. QUICK_REFERENCE.md - Emergency quick reference
+
+SCRIPTS:
+5. scripts/backup-full-system.sh - Create full backup
+6. scripts/rollback.sh - Emergency rollback
+7. scripts/verify-data-integrity.sh - Check data integrity
+8. scripts/bump-version.sh - Version management
+
+USAGE:
+- Start with README.md to understand the system
+- Use DEPLOYMENT_CHECKLIST.md for actual deployments
+- Keep QUICK_REFERENCE.md handy during deployments
+- Give antigravity_prompt.md to your AI assistant
+
+All scripts are ready to use (executable permissions set).
