@@ -42,13 +42,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         roomRes = await db.query('SELECT * FROM rooms WHERE is_active IS DISTINCT FROM false ORDER BY number');
         // Also ensure the column exists for future queries (safe ALTER IF NOT EXISTS)
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => {});
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => {});
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => { });
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => { });
       } catch (_colErr) {
         // Column doesn't exist yet — fall back to all rooms and add the column
         roomRes = await db.query('SELECT * FROM rooms ORDER BY number');
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => {});
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => {});
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => { });
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => { });
       }
       if ('rows' in roomRes) {
         const normalized = (roomRes.rows || []).map((r: any) => {
@@ -268,8 +268,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             rawCat.includes('drink') ||
             rawCat.includes('alcohol');
 
-          let derivedCategoryId = p.category_id; // Use existing if present
-          if (!derivedCategoryId) {
+          // CRITICAL: Preserve explicitly assigned category_id from database
+          // Only derive default category if category_id is null/undefined/empty
+          let derivedCategoryId = p.category_id;
+
+          // Only derive category if none explicitly set - preserve user assignments
+          if (!derivedCategoryId || derivedCategoryId === '' || derivedCategoryId === null) {
             if (isBar) {
               if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice')) {
                 derivedCategoryId = 'CAT_BAR_BEV';
@@ -2546,7 +2550,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
         name: userData.username, // Using username as name if not provided
         role: userData.role || 'user'
       });
-      
+
       if (!res.ok) {
         console.error('User registration failed:', res.error);
         toast({ title: 'Registration Failed', description: res.error || 'User could not be created', variant: 'destructive' });

@@ -25,7 +25,9 @@ import {
   syncPosItemToDb,
   deletePosItemFromDb,
   performFullSync,
-  ensureTablesExist
+  ensureTablesExist,
+  fixItemVisibility,
+  fixAllItemsVisibility
 } from '@/lib/dbSync';
 import vendors from '@/lib/vendors';
 
@@ -876,6 +878,12 @@ export const PosSettings: React.FC = () => {
 
   const saveStockItem = () => {
     if (!validate()) return;
+
+    // FIX: Auto-assign Bar visibility when costCenter is 'bar'
+    // This ensures items assigned to Bar menu automatically show as Bar:Yes
+    const effectiveBarVisible = costCenter === 'bar' ? true : barVisible;
+    const effectiveRestaurantVisible = costCenter === 'restaurant' ? true : restaurantVisible;
+
     const base = {
       name: itemName.trim(),
       qtyReceived,
@@ -884,8 +892,11 @@ export const PosSettings: React.FC = () => {
       costPrice: Number(costPrice.toFixed(2)),
       sellingPrice: Number(sellingPrice.toFixed(2)),
       costCenter,
+      // FIX: Include type field for proper department handling in sync
+      type: costCenter === 'bar' ? 'Bar' : (costCenter === 'restaurant' ? 'Restaurant' : ''),
       inventoryCategory: inventoryCategory || undefined,
-      visibility: { bar: barVisible, restaurant: restaurantVisible },
+      // FIX: Use effective visibility with auto-assignment
+      visibility: { bar: effectiveBarVisible, restaurant: effectiveRestaurantVisible },
       cosPercent: computedCOS,
       gpAmount,
       gpPercent,
@@ -1099,8 +1110,18 @@ export const PosSettings: React.FC = () => {
     }
   };
 
-  const [importSummary, setImportSummary] = React.useState<{ imported: number; created: number; updated: number; errors: string[]; total: number } | null>(null);
-  const [lastImportSummary, setLastImportSummary] = React.useState<{ imported: number; created: number; updated: number; errors: string[]; total: number } | null>(null);
+  const [importSummary, setImportSummary] = React.useState<{ imported: number; created: number; updated: number; errors: string[]; total: number; pendingCategoryReview?: number } | null>(null);
+  const [lastImportSummary, setLastImportSummary] = React.useState<{ imported: number; created: number; updated: number; errors: string[]; total: number; pendingCategoryReview?: number } | null>(null);
+  const [pendingCategoryQueue, setPendingCategoryQueue] = React.useState<any[]>([]);
+  const [showPendingQueue, setShowPendingQueue] = React.useState(false);
+
+  // Load pending category queue on mount
+  React.useEffect(() => {
+    try {
+      const queue = JSON.parse(localStorage.getItem('corepms_pending_category_queue') || '[]');
+      setPendingCategoryQueue(queue);
+    } catch { }
+  }, []);
 
   React.useEffect(() => {
     if (!isManager && !isAdminRole) return;
@@ -1169,16 +1190,73 @@ export const PosSettings: React.FC = () => {
           const gpPercent = cols[gpPctIdx] ? Number(cols[gpPctIdx]) : (sellingPrice ? (gpAmount / sellingPrice) * 100 : 0);
           const notes = cols[notesIdx] || '';
           const id = cols[idIdx] || `ITEM_${Date.now()}_${i}`;
-          // Resolve category
+          // Resolve category with intelligent mapping and pending queue support
           let category_id: string | null = null;
+          let pendingCategoryReview = false;
           const catIdVal = catIdIdx >= 0 ? (cols[catIdIdx] || '').trim() : '';
           const catNameVal = catNameIdx >= 0 ? (cols[catNameIdx] || '').trim() : '';
+
+          // Default category IDs for fallback
+          const defaultBarCategory = 'CAT_BAR_GEN';
+          const defaultRestCategory = 'CAT_REST_GEN';
+
           if (catIdVal) {
-            category_id = catIdVal;
+            // Validate that the category_id exists
+            const dept = costCenter === 'bar' ? 'Bar' : 'Restaurant';
+            const existingCat = menuCats.listCategories(dept as any).find(c => c.category_id === catIdVal);
+            if (existingCat) {
+              category_id = catIdVal;
+            } else {
+              // Category ID doesn't exist - mark for pending review
+              category_id = costCenter === 'bar' ? defaultBarCategory : defaultRestCategory;
+              pendingCategoryReview = true;
+              // Store pending category mapping for later review
+              const pendingQueue = JSON.parse(localStorage.getItem('corepms_pending_category_queue') || '[]');
+              pendingQueue.push({
+                itemId: id,
+                itemName: name,
+                requestedCategoryId: catIdVal,
+                assignedCategoryId: category_id,
+                department: costCenter,
+                timestamp: new Date().toISOString()
+              });
+              localStorage.setItem('corepms_pending_category_queue', JSON.stringify(pendingQueue.slice(-100)));
+            }
           } else if (catNameVal) {
+            // Try to match by category name
             const dept = costCenter === 'bar' ? 'Bar' : 'Restaurant';
             const found = menuCats.listCategories(dept as any).find(c => c.category_name.toLowerCase() === catNameVal.toLowerCase());
-            if (found) category_id = found.category_id; else errors.push(`Row ${i + 1}: unknown CategoryName '${catNameVal}' for department '${dept}'`);
+            if (found) {
+              category_id = found.category_id;
+            } else {
+              // Category name doesn't exist - try fuzzy matching
+              const allCats = menuCats.listCategories(dept as any);
+              const fuzzyMatch = allCats.find(c =>
+                c.category_name.toLowerCase().includes(catNameVal.toLowerCase()) ||
+                catNameVal.toLowerCase().includes(c.category_name.toLowerCase())
+              );
+              if (fuzzyMatch) {
+                category_id = fuzzyMatch.category_id;
+              } else {
+                // Assign to default category and mark for review
+                category_id = costCenter === 'bar' ? defaultBarCategory : defaultRestCategory;
+                pendingCategoryReview = true;
+                // Store pending category mapping for later review
+                const pendingQueue = JSON.parse(localStorage.getItem('corepms_pending_category_queue') || '[]');
+                pendingQueue.push({
+                  itemId: id,
+                  itemName: name,
+                  requestedCategoryName: catNameVal,
+                  assignedCategoryId: category_id,
+                  department: costCenter,
+                  timestamp: new Date().toISOString()
+                });
+                localStorage.setItem('corepms_pending_category_queue', JSON.stringify(pendingQueue.slice(-100)));
+              }
+            }
+          } else {
+            // No category specified - assign default based on cost center
+            category_id = costCenter === 'bar' ? defaultBarCategory : defaultRestCategory;
           }
           // InventoryCategory parsing
           let inventoryCategory: 'kitchen' | 'cellar' | undefined = undefined;
@@ -1237,7 +1315,11 @@ export const PosSettings: React.FC = () => {
           toast({ title: 'Cloud Sync Failed', description: 'Could not connect to database.', variant: 'destructive' });
         }
 
-        const summary = { imported: parsed.length, created, updated, errors, total: next.length };
+        // Get updated pending queue count
+        const currentPendingQueue = JSON.parse(localStorage.getItem('corepms_pending_category_queue') || '[]');
+        const pendingCategoryReview = currentPendingQueue.length;
+
+        const summary = { imported: parsed.length, created, updated, errors, total: next.length, pendingCategoryReview };
         setImportSummary(summary);
         setLastImportSummary(summary);
         try { localStorage.setItem('corepms_pos_last_import_summary', JSON.stringify(summary)); } catch { }
@@ -1284,9 +1366,11 @@ export const PosSettings: React.FC = () => {
         const invCat = it.inventoryCategory === 'kitchen' || it.inventoryCategory === 'cellar'
           ? it.inventoryCategory
           : (isBar ? 'cellar' : center === 'restaurant' ? 'kitchen' : it.inventoryCategory);
+        // FIX: Don't overwrite explicit visibility settings - only set defaults if undefined
+        // This preserves user-assigned visibility values
         const vis = {
-          bar: isBar ? true : !!it.visibility?.bar,
-          restaurant: center === 'restaurant' ? true : !!it.visibility?.restaurant,
+          bar: it.visibility?.bar !== undefined ? !!it.visibility?.bar : (isBar ? true : !!it.visibility?.bar),
+          restaurant: it.visibility?.restaurant !== undefined ? !!it.visibility?.restaurant : (center === 'restaurant' ? true : !!it.visibility?.restaurant),
         };
         const merged = { ...it, category_id: newCatId, inventoryCategory: invCat, visibility: vis };
         if (
@@ -1304,6 +1388,42 @@ export const PosSettings: React.FC = () => {
     } catch (e) {
       logSettingsError('migrate_categories', e);
       toast({ title: 'Migration failed', description: 'Could not migrate categories', variant: 'destructive' });
+    }
+  };
+
+  // FIX: Function to fix visibility in database - corrects items with incorrect visibility settings
+  const fixVisibilityInDatabase = async () => {
+    toast({ title: 'Fixing visibility...', description: 'This may take a moment', duration: 2000 });
+    try {
+      const result = await fixAllItemsVisibility();
+      if (result.success) {
+        toast({ title: 'Visibility fixed', description: `Fixed ${result.synced} items in database`, duration: 3000 });
+        // Reload data from database
+        refreshData?.();
+      } else {
+        toast({ title: 'Fix failed', description: result.error || 'Unknown error', variant: 'destructive' });
+      }
+    } catch (err) {
+      console.error('[PosSettings] Fix visibility error:', err);
+      toast({ title: 'Fix error', description: String(err), variant: 'destructive' });
+    }
+  };
+
+  // FIX: Function to fix a specific item (e.g., ABSOLUTE VODKA)
+  const fixSpecificItem = async (itemId: string, itemName: string, targetCostCenter: string, targetVisibility: { bar: boolean; restaurant: boolean }) => {
+    toast({ title: 'Fixing item...', description: `Updating ${itemName}`, duration: 2000 });
+    try {
+      const result = await fixItemVisibility(itemId, targetCostCenter, targetVisibility);
+      if (result.success) {
+        toast({ title: 'Item fixed', description: `${itemName} updated successfully`, duration: 3000 });
+        // Reload data from database
+        refreshData?.();
+      } else {
+        toast({ title: 'Fix failed', description: result.error || 'Unknown error', variant: 'destructive' });
+      }
+    } catch (err) {
+      console.error('[PosSettings] Fix item error:', err);
+      toast({ title: 'Fix error', description: String(err), variant: 'destructive' });
     }
   };
 
@@ -1438,11 +1558,18 @@ export const PosSettings: React.FC = () => {
                     <SelectValue placeholder="Select unit" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="piece">piece</SelectItem>
                     <SelectItem value="each">each</SelectItem>
                     <SelectItem value="kg">kg</SelectItem>
+                    <SelectItem value="g">g</SelectItem>
+                    <SelectItem value="gram">gram</SelectItem>
                     <SelectItem value="lb">lb</SelectItem>
+                    <SelectItem value="oz">oz</SelectItem>
                     <SelectItem value="ml">ml</SelectItem>
+                    <SelectItem value="milliliter">milliliter</SelectItem>
                     <SelectItem value="L">L</SelectItem>
+                    <SelectItem value="liter">liter</SelectItem>
+                    <SelectItem value="tot">tot (tray)</SelectItem>
                   </SelectContent>
                 </Select>
                 {errors.unitOfMeasure && <div className="text-xs text-red-600 mt-1">{errors.unitOfMeasure}</div>}
@@ -1664,6 +1791,16 @@ export const PosSettings: React.FC = () => {
                 <div>Created: <span className="font-semibold text-green-700">{importSummary.created}</span></div>
                 <div>Updated: <span className="font-semibold text-blue-700">{importSummary.updated}</span></div>
                 <div>Total Items: <span className="font-semibold">{importSummary.total}</span></div>
+                {(importSummary.pendingCategoryReview ?? 0) > 0 && (
+                  <div className="col-span-2 mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                    <div className="font-semibold text-yellow-800">
+                      Pending Category Review: {importSummary.pendingCategoryReview} items
+                    </div>
+                    <div className="text-xs text-yellow-700 mt-1">
+                      These items were assigned to default categories because their requested categories don't exist. Review and assign proper categories.
+                    </div>
+                  </div>
+                )}
               </div>
               <div>
                 <div className="font-semibold mb-1">Errors ({importSummary.errors.length})</div>

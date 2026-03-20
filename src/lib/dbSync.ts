@@ -493,6 +493,102 @@ export async function syncAllInventoryItemsToDb(): Promise<SyncResult> {
  * Sync a POS item to the unified products table
  * This is the main function to call when saving items in PosSettings
  */
+/**
+ * Fix visibility for items that have incorrect visibility settings
+ * This ensures bar items have bar: true visibility and restaurant items have restaurant: true
+ */
+export async function fixItemVisibility(itemId: string, costCenter: string, targetVisibility: { bar: boolean; restaurant: boolean }): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) {
+      return { success: true, synced: 0 };
+    }
+
+    const visibilityJson = JSON.stringify(targetVisibility);
+    const department = costCenter === 'bar' ? 'Bar' : 'Restaurant';
+    const category = costCenter || 'restaurant';
+
+    const sql = `
+      UPDATE products SET
+        visibility = $1,
+        department = $2,
+        category = $3,
+        updated_at = NOW()
+      WHERE id = $4
+    `;
+
+    const result = await db.query(sql, [visibilityJson, department, category, itemId]);
+
+    if ('error' in result) {
+      console.error('[dbSync] Fix visibility failed:', (result as any).error);
+      return { success: false, error: (result as any).error };
+    }
+
+    console.log('[dbSync] Fixed visibility for item:', itemId, targetVisibility);
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    console.error('[dbSync] Fix visibility CRITICAL FAILURE:', msg);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Fix all items with incorrect visibility settings
+ * This is a bulk fix that corrects items where visibility doesn't match their costCenter
+ */
+export async function fixAllItemsVisibility(): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) {
+      return { success: true, synced: 0 };
+    }
+
+    // Get all products
+    const result = await db.query('SELECT id, name, category, department, visibility FROM products WHERE is_stock_item = true');
+
+    if ('error' in result) {
+      return { success: false, error: (result as any).error };
+    }
+
+    const rows = result.rows || [];
+    let fixed = 0;
+
+    for (const row of rows) {
+      const category = String(row.category || '').toLowerCase();
+      const dept = String(row.department || '').toLowerCase();
+      const isBar = category.includes('bar') || dept.includes('bar');
+
+      // Parse existing visibility
+      let vis = row.visibility;
+      if (typeof vis === 'string') {
+        try { vis = JSON.parse(vis); } catch { vis = {}; }
+      }
+      vis = vis || {};
+
+      // Determine correct visibility based on category
+      const correctVis = isBar
+        ? { bar: true, restaurant: vis.restaurant === true }  // Bar items should have bar: true
+        : { bar: vis.bar === true, restaurant: true };  // Restaurant items should have restaurant: true
+
+      // Only fix if visibility is incorrect
+      const needsFix = (isBar && !correctVis.bar) || (!isBar && !correctVis.restaurant);
+
+      if (needsFix) {
+        const fixResult = await fixItemVisibility(row.id, isBar ? 'bar' : 'restaurant', correctVis);
+        if (fixResult.success) fixed++;
+      }
+    }
+
+    console.log('[dbSync] Fixed visibility for items:', fixed);
+    return { success: true, synced: fixed };
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    console.error('[dbSync] Fix all items visibility CRITICAL FAILURE:', msg);
+    return { success: false, error: msg };
+  }
+}
+
 export async function syncPosItemToDb(item: any): Promise<SyncResult> {
   try {
     const isConfigured = await db.isConfigured();

@@ -1210,7 +1210,6 @@ const VendorManagement: React.FC = () => {
                     });
                   }}
                   onRecordBill={() => setIsRecordingBill(true)}
-<<<<<<< HEAD
                   onMarkPaid={async (referenceNumber) => {
                     const expensesToUpdate = filteredExpenses.filter(e => e.reference_number === referenceNumber && e.status !== 'paid');
                     if (expensesToUpdate.length === 0) return;
@@ -1241,11 +1240,10 @@ const VendorManagement: React.FC = () => {
                     } else {
                       toast({ title: 'Payment Error', description: 'Could not create payment record', variant: 'destructive' });
                     }
-=======
+                  }}
                   onViewDetails={(group) => {
                     setSelectedInvoiceGroup(group);
                     setShowBillDetailModal(true);
->>>>>>> b927e1d ([DATA_SAFE] [ISOLATED] v0.3.1 - Vendor Bill Module: accordion -> BillDetailModal, void/delete logic, audit columns)
                   }}
                 />
               )}

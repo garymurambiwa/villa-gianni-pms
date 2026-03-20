@@ -4,6 +4,10 @@ import { formatCurrency, getMenuItemsFromPOSStore } from '@/lib/posIntegration';
 import menuCats, { SubTreeNode, SubCategory } from '@/lib/menuCategories';
 import cocktailEng from '@/lib/cocktailEngineering';
 import { useToast } from '@/hooks/use-toast';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 
 export interface MenuItem {
   id: string;
@@ -59,6 +63,131 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [subPath, setSubPath] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Close context menu when clicking elsewhere
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, []);
+
+  // Handle context menu (right-click) on menu items
+  const handleContextMenu = (e: React.MouseEvent, item: MenuItem) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, item });
+  };
+
+  // Handle long-press on touch devices
+  const handleLongPress = (e: React.TouchEvent, item: MenuItem) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      setContextMenu({ x: touch.clientX, y: touch.clientY, item });
+    }
+  };
+
+  // Open item edit modal from context menu
+  const openItemEdit = (item: MenuItem) => {
+    setEditingItem(item);
+    setEditItemPrice(String(item.price));
+    setEditItemCategory(item.category_id || '');
+    setEditItemCost('');
+    setEditItemUnit('');
+    setShowItemEdit(true);
+    setContextMenu(null);
+  };
+
+  // Save edited item to database and update local state
+  const saveItemEdit = async () => {
+    if (!editingItem) return;
+    try {
+      // Update in localStorage
+      const raw = localStorage.getItem('corepms_pos_items');
+      const list = raw ? JSON.parse(raw) : [];
+      const updatedList = list.map((it: any) =>
+        it.id === editingItem.id
+          ? { ...it, price: Number(editItemPrice), category_id: editItemCategory || it.category_id }
+          : it
+      );
+      localStorage.setItem('corepms_pos_items', JSON.stringify(updatedList));
+
+      // Update local state
+      setDynamicMenu(prev => prev.map(it =>
+        it.id === editingItem.id
+          ? { ...it, price: Number(editItemPrice), category_id: editItemCategory || it.category_id }
+          : it
+      ));
+
+      // Sync to database
+      const { db } = await import('@/lib/db');
+      await db.query(
+        `UPDATE products SET price = ?, category_id = ?, updated_at = NOW() WHERE id = ?`,
+        [Number(editItemPrice), editItemCategory || null, editingItem.id]
+      );
+
+      toast({ title: 'Item Updated', description: `${editingItem.name} has been updated.` });
+      setShowItemEdit(false);
+      setEditingItem(null);
+    } catch (err) {
+      console.error('Failed to update item:', err);
+      toast({ title: 'Update Failed', description: 'Could not update item in database.', variant: 'destructive' });
+    }
+  };
+
+  // Quick Add handler
+  const handleQuickAdd = async () => {
+    if (!quickAddName.trim() || !quickAddPrice) return;
+    try {
+      const newItem = {
+        id: `ITEM_${Date.now()}`,
+        name: quickAddName.trim(),
+        price: Number(quickAddPrice),
+        category: activeCategory as 'food' | 'bar',
+        category_id: quickAddCategory || (activeCategory === 'bar' ? 'CAT_BAR_GEN' : 'CAT_REST_GEN'),
+        image: '',
+        description: ''
+      };
+
+      // Save to localStorage
+      const raw = localStorage.getItem('corepms_pos_items');
+      const list = raw ? JSON.parse(raw) : [];
+      const updatedList = [newItem, ...list];
+      localStorage.setItem('corepms_pos_items', JSON.stringify(updatedList.slice(0, 500)));
+
+      // Update local state
+      setDynamicMenu(prev => [newItem, ...prev]);
+
+      // Save to database
+      const { db } = await import('@/lib/db');
+      await db.query(
+        `INSERT INTO products (id, name, price, department, category, category_id, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, true, NOW(), NOW())`,
+        [newItem.id, newItem.name, newItem.price, activeCategory === 'bar' ? 'Bar' : 'Restaurant', newItem.category, newItem.category_id]
+      );
+
+      toast({ title: 'Item Added', description: `${newItem.name} has been added to the menu.` });
+      setShowQuickAdd(false);
+      setQuickAddName('');
+      setQuickAddPrice('');
+      setQuickAddCategory('');
+    } catch (err) {
+      console.error('Failed to add item:', err);
+      toast({ title: 'Add Failed', description: 'Could not add item to database.', variant: 'destructive' });
+    }
+  };
+
+  // Quick Add Item state
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [quickAddName, setQuickAddName] = useState('');
+  const [quickAddPrice, setQuickAddPrice] = useState('');
+  const [quickAddCategory, setQuickAddCategory] = useState<string>('');
+
+  // Context Menu state for item editing
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: MenuItem } | null>(null);
+  const [showItemEdit, setShowItemEdit] = useState(false);
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [editItemPrice, setEditItemPrice] = useState('');
+  const [editItemCategory, setEditItemCategory] = useState<string>('');
+  const [editItemCost, setEditItemCost] = useState('');
+  const [editItemUnit, setEditItemUnit] = useState<string>('');
 
   // Sync dynamicMenu with menuItems prop when it changes (asynchronously via FrontOffice API)
   useEffect(() => {
@@ -259,6 +388,18 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
               )}
             </div>
 
+            {/* Quick Add Item Button */}
+            <Button
+              variant="outline"
+              className="ml-2 text-purple-600 border-purple-200 hover:bg-purple-50"
+              onClick={() => {
+                setQuickAddCategory(activeCategory === 'bar' ? 'CAT_BAR_GEN' : 'CAT_REST_GEN');
+                setShowQuickAdd(true);
+              }}
+            >
+              + Quick Add
+            </Button>
+
             {/* Search results indicator */}
             {isSearching && (
               <div className="mb-3 text-sm text-gray-500 flex items-center gap-2">
@@ -360,6 +501,20 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 <div
                   key={item.id}
                   onClick={() => { addItem(item); if (isSearching) setSearchQuery(''); }}
+                  onContextMenu={(e) => handleContextMenu(e, item)}
+                  onTouchEnd={(e) => {
+                    // Simple long-press detection
+                    const touch = e.touches[0];
+                    const element = e.currentTarget;
+                    let pressTimer: NodeJS.Timeout;
+                    const startPress = () => {
+                      pressTimer = setTimeout(() => handleContextMenu({ clientX: touch.clientX, clientY: touch.clientY } as any, item), 500);
+                    };
+                    const cancelPress = () => clearTimeout(pressTimer);
+                    element.addEventListener('touchstart', startPress);
+                    element.addEventListener('touchend', cancelPress);
+                    element.addEventListener('touchmove', cancelPress);
+                  }}
                   className="cursor-pointer bg-white rounded-lg shadow hover:shadow-lg transition-all p-3 border-2 border-transparent hover:border-purple-500"
                 >
                   {item.image ? (
@@ -489,6 +644,126 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
           </div>
         </div>
       </div>
+
+      {/* Context Menu Popup */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[160px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+            onClick={() => {
+              addItem(contextMenu.item);
+              setContextMenu(null);
+            }}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add to Order
+          </button>
+          <button
+            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+            onClick={() => openItemEdit(contextMenu.item)}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            Edit Item
+          </button>
+        </div>
+      )}
+
+      {/* Quick Add Item Dialog */}
+      <Dialog open={showQuickAdd} onOpenChange={setShowQuickAdd}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Quick Add Menu Item</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Item Name</Label>
+              <Input
+                value={quickAddName}
+                onChange={(e) => setQuickAddName(e.target.value)}
+                placeholder="e.g., Grilled Chicken"
+              />
+            </div>
+            <div>
+              <Label>Price</Label>
+              <Input
+                type="number"
+                value={quickAddPrice}
+                onChange={(e) => setQuickAddPrice(e.target.value)}
+                placeholder="0.00"
+                step="0.01"
+              />
+            </div>
+            <div>
+              <Label>Category</Label>
+              <Select value={quickAddCategory} onValueChange={setQuickAddCategory}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {menuCats.listCategories(activeCategory === 'bar' ? 'Bar' : 'Restaurant').map((cat: any) => (
+                    <SelectItem key={cat.category_id} value={cat.category_id}>{cat.category_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowQuickAdd(false)}>Cancel</Button>
+            <Button onClick={handleQuickAdd} disabled={!quickAddName.trim() || !quickAddPrice}>Add Item</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Item Dialog */}
+      <Dialog open={showItemEdit} onOpenChange={setShowItemEdit}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Menu Item</DialogTitle>
+          </DialogHeader>
+          {editingItem && (
+            <div className="space-y-4">
+              <div>
+                <Label>Item Name</Label>
+                <Input value={editingItem.name} disabled />
+              </div>
+              <div>
+                <Label>Price</Label>
+                <Input
+                  type="number"
+                  value={editItemPrice}
+                  onChange={(e) => setEditItemPrice(e.target.value)}
+                  step="0.01"
+                />
+              </div>
+              <div>
+                <Label>Category</Label>
+                <Select value={editItemCategory} onValueChange={setEditItemCategory}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {menuCats.listCategories(editingItem.category === 'bar' ? 'Bar' : 'Restaurant').map((cat: any) => (
+                      <SelectItem key={cat.category_id} value={cat.category_id}>{cat.category_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowItemEdit(false)}>Cancel</Button>
+            <Button onClick={saveItemEdit}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

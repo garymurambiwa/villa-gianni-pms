@@ -222,13 +222,13 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
   }
 };
 
-export const getMenuItems = async (): Promise<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; description?: string; category_id?: string; subCategory?: string; }>> => {
+export const getMenuItems = async (): Promise<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; description?: string; category_id?: string; subCategory?: string; unitOfMeasure?: string; costPrice?: number; }>> => {
   try {
     const isConfigured = await db.isConfigured();
     if (isConfigured) {
-      // Use products table as source of truth
+      // Use products table as source of truth - include category_id and unit fields
       const res = await db.query(
-        `SELECT id, name, price, department, category, active FROM products WHERE active = true`
+        `SELECT id, name, price, department, category, active, category_id, sub_id, unit, cost_price FROM products WHERE active = true`
       );
       if ('rows' in res && Array.isArray(res.rows)) {
         return res.rows
@@ -252,10 +252,12 @@ export const getMenuItems = async (): Promise<Array<{ id: string; name: string; 
             // Filter out items with no price to prevent $0.00 items cluttering POS
             if (price <= 0) return null;
 
-            // Map imported products to default Categories to ensure they appear in POS tabs
-            // Otherwise, OrderModal filters them out if they don't match active category ID.
+            // CRITICAL: Use the explicitly assigned category_id if present in database
+            // Only derive default category if category_id is not set
             let category_id = r.category_id ? String(r.category_id) : undefined;
-            if (!category_id) {
+
+            // Only derive category if none explicitly set - preserve user assignments
+            if (!category_id || category_id === '') {
               if (category === 'bar') {
                 if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice')) {
                   category_id = 'CAT_BAR_BEV';
@@ -278,7 +280,9 @@ export const getMenuItems = async (): Promise<Array<{ id: string; name: string; 
               category,
               description: '',
               subCategory: String(r.category || r.department || ''),
-              category_id
+              category_id,
+              unitOfMeasure: r.unit ? String(r.unit) : undefined,
+              costPrice: r.cost_price ? Number(r.cost_price) : undefined
             };
           })
           .filter((item): item is NonNullable<typeof item> => item !== null);

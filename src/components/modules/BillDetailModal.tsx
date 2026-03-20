@@ -93,7 +93,7 @@ export const BillDetailModal: React.FC<Props> = ({ group, open, onClose, onVoidE
     group.status === 'pending' &&
     voidStatus !== 'VOIDED';
 
-  const formatCurrency = (val: number) => `R${Math.abs(val).toFixed(2)}`;
+  const formatCurrency = (val: number) => `$${Math.abs(val).toFixed(2)}`;
   const formatDate = (d: string) => d ? new Date(d).toLocaleDateString('en-ZA') : '—';
 
   /* ---- Status badge ---- */
@@ -150,7 +150,115 @@ export const BillDetailModal: React.FC<Props> = ({ group, open, onClose, onVoidE
     setIsDeleting(false);
   };
 
-  const handlePrint = () => window.print();
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank', 'width=800,height=600,scrollbars=yes');
+    if (!printWindow) return;
+
+    const taxTotal = group.lines.reduce((s, l) => s + (l.tax_amount || 0), 0);
+    const creditTotal = group.creditNotes.reduce((s, c) => s + c.total_cost, 0);
+    const statusLabel = (group.status || '').charAt(0).toUpperCase() + (group.status || '').slice(1);
+    const fmtDate = (d: string) => d ? new Date(d).toLocaleDateString('en-US') : '—';
+    const fmtAmt = (v: number) => `$${Math.abs(v).toFixed(2)}`;
+
+    const lineRows = group.lines.map(l => `
+      <tr>
+        <td>${l.description}</td>
+        <td>${l.category}</td>
+        <td class="center">${l.quantity}</td>
+        <td class="right">${fmtAmt(l.unit_cost)}</td>
+        <td class="right">${fmtAmt(l.total_cost)}</td>
+      </tr>`).join('');
+
+    const creditRows = group.creditNotes.length > 0 ? `
+      <h3 style="color:#b91c1c;margin-top:20px">Credit Notes</h3>
+      <table>
+        <tbody>
+          ${group.creditNotes.map(cn => `<tr><td>${cn.description}</td><td class="right" style="color:#b91c1c">-${fmtAmt(Math.abs(cn.total_cost))}</td></tr>`).join('')}
+        </tbody>
+      </table>` : '';
+
+    const voidBanner = (primaryExpense?.void_status === 'VOIDED' && primaryExpense?.voided_reason)
+      ? `<div style="background:#fef2f2;border:1px solid #fca5a5;padding:8px 12px;border-radius:4px;margin-bottom:12px;color:#b91c1c;font-size:11pt">
+           <strong>VOIDED:</strong> ${primaryExpense.voided_reason}
+         </div>` : '';
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Invoice ${group.referenceNumber}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 11pt; color: #111; background: white; padding: 20mm; }
+    h1 { font-size: 18pt; color: #1e3a5f; margin-bottom: 4px; }
+    h2 { font-size: 11pt; font-weight: 600; color: #374151; margin: 16px 0 8px; }
+    h3 { font-size: 10pt; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 9pt; font-weight: 600; background: #fef3c7; color: #92400e; margin-left: 10px; }
+    .divider { border: none; border-top: 3px solid #0073e6; margin: 12px 0 18px; }
+    .meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; background: #f8fafc; border-radius: 6px; padding: 12px; margin-bottom: 16px; }
+    .meta-label { font-size: 8pt; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; }
+    .meta-value { font-size: 11pt; font-weight: 600; margin-top: 2px; }
+    table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+    thead th { background: #0073e6; color: white; padding: 8px 10px; text-align: left; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.03em; }
+    thead th.right { text-align: right; }
+    thead th.center { text-align: center; }
+    tbody td { padding: 7px 10px; border-bottom: 1px solid #e5e7eb; }
+    tbody tr:nth-child(even) { background: #f9fafb; }
+    .right { text-align: right; }
+    .center { text-align: center; }
+    .totals { float: right; width: 260px; margin-top: 16px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px; }
+    .totals-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 10pt; color: #4b5563; }
+    .totals-row.net { font-weight: 700; font-size: 12pt; color: #111; border-top: 1px solid #d1d5db; padding-top: 8px; margin-top: 6px; }
+    .footer { clear: both; margin-top: 30px; text-align: center; font-size: 8pt; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 10px; }
+    @media print { body { padding: 10mm; } }
+  </style>
+</head>
+<body>
+  <h1>Invoice <span style="color:#2563eb;font-family:monospace">${group.referenceNumber}</span>
+    <span class="badge">${statusLabel}</span>
+  </h1>
+  <hr class="divider" />
+  ${voidBanner}
+  <div class="meta">
+    <div><div class="meta-label">Vendor</div><div class="meta-value">${group.vendorName}</div></div>
+    <div><div class="meta-label">Department</div><div class="meta-value">${group.department || '—'}</div></div>
+    <div><div class="meta-label">Date</div><div class="meta-value">${fmtDate(group.date)}</div></div>
+    <div><div class="meta-label">Invoice Ref</div><div class="meta-value" style="font-family:monospace">${group.referenceNumber}</div></div>
+  </div>
+
+  <h2>Line Items</h2>
+  <table>
+    <thead><tr>
+      <th>Description</th><th>Category</th>
+      <th class="center">Qty</th>
+      <th class="right">Unit Cost</th>
+      <th class="right">Total</th>
+    </tr></thead>
+    <tbody>${lineRows}</tbody>
+  </table>
+
+  ${creditRows}
+
+  <div class="totals">
+    <div class="totals-row"><span>Subtotal</span><span>${fmtAmt(group.totalAmount)}</span></div>
+    ${taxTotal > 0 ? `<div class="totals-row"><span>VAT (${group.lines[0]?.tax_rate?.toFixed(1)}%)</span><span>${fmtAmt(taxTotal)}</span></div>` : ''}
+    ${group.creditNotes.length > 0 ? `<div class="totals-row" style="color:#b91c1c"><span>Credits</span><span>-${fmtAmt(Math.abs(creditTotal))}</span></div>` : ''}
+    <div class="totals-row net"><span>Net Total</span><span>${fmtAmt(group.netAmount)}</span></div>
+  </div>
+
+  <div class="footer">Printed ${new Date().toLocaleString('en-US')} &nbsp;|&nbsp; Villa Gianni PMS</div>
+</body>
+</html>`;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
+    // Allow browser to render before triggering print dialog
+    setTimeout(() => {
+      printWindow.focus();
+      printWindow.print();
+      printWindow.close();
+    }, 350);
+  };
 
   /* ---- Tax summary ---- */
   const taxTotal = group.lines.reduce((s, l) => s + (l.tax_amount || 0), 0);

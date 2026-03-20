@@ -17,6 +17,8 @@ export type DbUser = {
   active: boolean;
   password_change_required: boolean;
   created_at: string;
+  email?: string;
+  permissions?: string[];
 }
 
 export type AccessLog = {
@@ -460,7 +462,7 @@ export const pmsAuthDb = {
   },
 
   async verifyLogin(username: string, password: string): Promise<{ ok: boolean; user?: DbUser; mustChange?: boolean; error?: string }> {
-    const res = await db.query<DbUser & { password_hash: string; failed_attempts: number; lockout_until: string | null; password_changed_at: string | null }>(`SELECT id, username, name, role, active, password_change_required, created_at, password_hash, failed_attempts, lockout_until, password_changed_at FROM app_users WHERE username = ?`, [username]);
+    const res = await db.query<DbUser & { password_hash: string; failed_attempts: number; lockout_until: string | null; password_changed_at: string | null }>(`SELECT id, username, name, role, active, password_change_required, created_at, password_hash, failed_attempts, lockout_until, password_changed_at, permissions FROM app_users WHERE username = ?`, [username]);
     if ('error' in res) {
       return { ok: false, error: res.error as string };
     }
@@ -505,6 +507,7 @@ export const pmsAuthDb = {
       active: !!row.active,
       password_change_required: !!row.password_change_required,
       created_at: row.created_at,
+      permissions: row.permissions || [],
     };
     await db.query(`UPDATE app_users SET password_change_required = false WHERE username = ?`, [username]);
     return { ok: true, user, mustChange };
@@ -542,8 +545,8 @@ export const pmsAuthDb = {
 
   async registerUser(payload: { username: string; email: string; password: string; name: string; role: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; verifyToken?: string }> {
     const { username, email, password, name, role, permissions } = payload || ({} as any);
-    if (!username || !email || !password || !name) return { ok: false, error: 'Missing fields' };
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
+    if (!username || !password || !name) return { ok: false, error: 'Missing fields' };
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
     if (!this.validateStrongPassword(password)) return { ok: false, error: 'Weak password' };
     const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE username = ? OR email = ?`, [username, email]);
     if (!('error' in exists) && exists.rows && exists.rows.length > 0) return { ok: false, error: 'User exists' };
@@ -582,7 +585,7 @@ export const pmsAuthDb = {
 
   async listUsers(): Promise<DbUser[]> {
     console.log('[pmsAuthDb] listUsers called');
-    const res = await db.query<DbUser>(`SELECT id, username, name, email, role, active, created_at, last_login, last_activity FROM app_users ORDER BY username ASC`);
+    const res = await db.query<DbUser>(`SELECT id, username, name, email, role, active, created_at, last_login, last_activity, permissions FROM app_users ORDER BY username ASC`);
     console.log('[pmsAuthDb] listUsers result:', res);
     if ('error' in res) {
       console.error('[pmsAuthDb] listUsers error:', res.error);
