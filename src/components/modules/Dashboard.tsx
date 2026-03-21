@@ -120,25 +120,44 @@ export const Dashboard: React.FC = () => {
   const parsedEnd = new Date(endDate);
 
   const clampDate = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const inRange = (checkInISO: string) => {
+
+  // Check if reservation overlaps with date range
+  const isReservationInRange = (checkInISO: string, checkOutISO: string) => {
     const ci = clampDate(new Date(checkInISO));
-    return ci >= clampDate(parsedStart) && ci <= clampDate(parsedEnd);
+    const co = clampDate(new Date(checkOutISO));
+    const rangeStart = clampDate(parsedStart);
+    const rangeEnd = clampDate(parsedEnd);
+    // Check if reservation overlaps with range (reservation starts before range ends AND ends after range starts)
+    return ci <= rangeEnd && co >= rangeStart;
   };
 
-  const daysBetween = (aISO: string, bISO: string) => {
-    const a = clampDate(new Date(aISO));
-    const b = clampDate(new Date(bISO));
-    const diff = (b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24);
-    return Math.max(0, Math.floor(diff));
+  // Calculate the number of nights within the date range for a reservation
+  const getNightsInRange = (checkInISO: string, checkOutISO: string) => {
+    const ci = clampDate(new Date(checkInISO));
+    const co = clampDate(new Date(checkOutISO));
+    const rangeStart = clampDate(parsedStart);
+    const rangeEnd = clampDate(parsedEnd);
+
+    // Calculate overlap start and end
+    const overlapStart = ci > rangeStart ? ci : rangeStart;
+    const overlapEnd = co < rangeEnd ? co : rangeEnd;
+
+    const nights = (overlapEnd.getTime() - overlapStart.getTime()) / (1000 * 60 * 60 * 24);
+    return Math.max(0, Math.floor(nights));
   };
 
   const regionRevenueMap = React.useMemo(() => {
     const map = new Map<string, number>();
     reservations.forEach(r => {
       if (!r.originRegion) return;
-      if (!inRange(r.checkIn)) return;
-      const nights = daysBetween(r.checkIn, r.checkOut);
-      const revenue = (nights || 1) * (r.rate || 0);
+      if (!r.checkIn || !r.checkOut) return;
+      if (!isReservationInRange(r.checkIn, r.checkOut)) return;
+
+      // Calculate only the nights within the selected date range
+      const nightsInRange = getNightsInRange(r.checkIn, r.checkOut);
+      if (nightsInRange <= 0) return;
+
+      const revenue = nightsInRange * (r.rate || 0);
       map.set(r.originRegion, (map.get(r.originRegion) || 0) + revenue);
     });
     return map;

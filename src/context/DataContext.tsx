@@ -138,6 +138,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             nationalityCode: r.nationality_code || '',
             nationalityName: r.nationality_name || '',
             bookingSource: r.booking_source || '',
+            // Map source to originRegion for Dashboard revenue reporting
+            originRegion: r.source || r.booking_source || '',
             partnerCode: r.partner_code || '',
             utmSource: r.utm_source || '',
             utmMedium: r.utm_medium || '',

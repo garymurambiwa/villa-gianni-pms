@@ -2088,6 +2088,8 @@ export const FrontOffice: React.FC = () => {
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-blue-200 border border-blue-400"></span>Booked</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-amber-200 border border-amber-400"></span>Occupied</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-gray-200 border border-gray-400"></span>Checked Out</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-yellow-200 border border-yellow-400"></span>Dirty</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-red-200 border border-red-400"></span>OOO</span>
             </div>
           </div>
 
@@ -2114,17 +2116,37 @@ export const FrontOffice: React.FC = () => {
 
             const getCellInfo = (room: any, date: Date): { bg: string; label: string; title: string } => {
               const dateStr = format(date, 'yyyy-MM-dd');
+              const isToday = dateStr === today;
+
               const slots = roomResMap.get(String(room.id)) || [];
               for (const slot of slots) {
                 if (!slot.checkIn || !slot.checkOut) continue;
-                // Date is in range [checkIn, checkOut)
                 if (dateStr >= slot.checkIn && dateStr < slot.checkOut) {
-                  if (slot.status === 'checked-in') return { bg: 'bg-amber-100 border-amber-300', label: '', title: `Occupied — ${slot.guestName}` };
-                  if (slot.status === 'checked-out') return { bg: 'bg-gray-100 border-gray-300', label: '', title: `Checked Out — ${slot.guestName}` };
-                  if (slot.status === 'confirmed' || slot.status === 'pending') return { bg: 'bg-blue-100 border-blue-300', label: '', title: `Booked — ${slot.guestName}` };
+                  const displayName = slot.guestName ? (slot.guestName.split(' ')[0] || slot.guestName) : '';
+                  if (slot.status === 'checked-in') {
+                    return { bg: 'bg-amber-200 border-amber-400 text-amber-950', label: displayName, title: `Occupied — ${slot.guestName}` };
+                  }
+                  if (slot.status === 'checked-out') {
+                    return { bg: 'bg-gray-200 border-gray-400 text-gray-700', label: displayName, title: `Checked Out — ${slot.guestName}` };
+                  }
+                  if (slot.status === 'confirmed' || slot.status === 'pending') {
+                    return { bg: 'bg-blue-200 border-blue-400 text-blue-950', label: displayName, title: `Booked — ${slot.guestName}` };
+                  }
                 }
               }
-              return { bg: 'bg-green-50 border-green-200', label: '', title: 'Vacant' };
+
+              // Today's Room Status Overlay (if no reservation)
+              if (isToday) {
+                const s = String(room.status || '').toUpperCase();
+                if (s === 'OOO' || s === 'OUT OF ORDER') {
+                  return { bg: 'bg-red-200 border-red-400 text-red-900', label: 'OOO', title: 'Out of Order' };
+                }
+                if (s === 'VD' || s === 'VACANT DIRTY' || s === 'OD' || s === 'OCCUPIED DIRTY') {
+                  return { bg: 'bg-yellow-200 border-yellow-400 text-yellow-900', label: 'Dirty', title: `Dirty (${s})` };
+                }
+              }
+
+              return { bg: 'bg-green-100 border-green-300 text-green-900', label: '', title: 'Vacant' };
             };
 
             return (
@@ -2139,9 +2161,8 @@ export const FrontOffice: React.FC = () => {
                         return (
                           <th
                             key={ds}
-                            className={`border border-gray-200 px-1 py-2 text-center font-medium min-w-[68px] w-[68px] ${
-                              isToday ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-600'
-                            }`}
+                            className={`border border-gray-200 px-1 py-2 text-center font-medium min-w-[68px] w-[68px] ${isToday ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-600'
+                              }`}
                           >
                             <div className="text-sm font-bold">{format(date, 'd')}</div>
                             <div className={`text-[10px] font-normal ${isToday ? 'text-blue-100' : 'text-gray-400'}`}>{format(date, 'EEE')}</div>
@@ -2158,17 +2179,37 @@ export const FrontOffice: React.FC = () => {
                           <div className="text-[10px] text-gray-400 truncate">{room.type}</div>
                         </td>
                         {dateColumns.map(date => {
-                          const { bg, title } = getCellInfo(room, date);
+                          const { bg, title, label } = getCellInfo(room, date);
                           const ds = format(date, 'yyyy-MM-dd');
                           const isToday = ds === today;
+                          const isVacant = title === 'Vacant';
                           return (
                             <td
                               key={ds}
                               title={title}
-                              className={`border ${
-                                isToday ? 'border-blue-400' : 'border-gray-200'
-                              } ${bg} h-10 min-w-[68px] w-[68px] text-center cursor-default transition-opacity hover:opacity-75`}
-                            />
+                              onClick={() => {
+                                if (isVacant) {
+                                  // Find the room and pre-select it in QuickCheckInModal
+                                  const room = rooms.find((r: any) => r.id === room.id);
+                                  if (room) {
+                                    // Set the selected room in the QuickCheckInModal
+                                    (window as any).__quickCheckInRoomId = room.id;
+                                    (window as any).__quickCheckInRoomNumber = room.number;
+                                  }
+                                  setQuickCheckInOpen(true);
+                                }
+                              }}
+                              className={`border ${isToday ? 'border-blue-400' : 'border-gray-200'
+                                } ${bg} h-10 min-w-[68px] w-[68px] text-center ${isVacant ? 'cursor-pointer hover:opacity-50' : 'cursor-default'} transition-opacity hover:opacity-75 relative`}
+                            >
+                              {label && (
+                                <div className="flex items-center justify-center h-full w-full">
+                                  <span className="truncate max-w-full px-1 text-[10px] font-medium leading-tight">
+                                    {label}
+                                  </span>
+                                </div>
+                              )}
+                            </td>
                           );
                         })}
                       </tr>
