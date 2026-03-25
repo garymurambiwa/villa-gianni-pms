@@ -129,7 +129,7 @@ export const processPayment = (
 /**
  * Decrement inventory quantities based on sold items
  */
-export const decrementInventory = (soldItems: Array<{ name: string; quantity: number }>) => {
+export const decrementInventory = (soldItems: Array<{ name: string; quantity: number }>, costCenter?: string, shiftId?: string) => {
   try {
     const raw = localStorage.getItem('corepms_pos_items');
     const list = raw ? JSON.parse(raw) : [];
@@ -148,11 +148,13 @@ export const decrementInventory = (soldItems: Array<{ name: string; quantity: nu
       action: 'INVENTORY_DEPLETION',
       entity: 'STOCK',
       timestamp: new Date().toISOString(),
-      details: soldItems
+      details: soldItems,
+      cost_center: costCenter,
+      shift_id: shiftId
     };
     const ar = localStorage.getItem('corepms_pos_audit');
     const al = ar ? JSON.parse(ar) : [];
-    localStorage.setItem('corepms_pos_audit', JSON.stringify([audit, ...al].slice(0, 200)));
+    localStorage.setItem('corepms_pos_audit', JSON.stringify([audit, ...al].slice(0, 1000)));
   } catch (err) {
     console.error('Failed to decrement inventory', err);
   }
@@ -222,55 +224,38 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
   }
 };
 
-export const getMenuItems = async (): Promise<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; description?: string; category_id?: string; subCategory?: string; unitOfMeasure?: string; costPrice?: number; }>> => {
+export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; description?: string; category_id?: string; subCategory?: string; unitOfMeasure?: string; costPrice?: number; }>> => {
   try {
     const isConfigured = await db.isConfigured();
     if (isConfigured) {
-      // Use products table as source of truth - include category_id and unit fields
+      // Use products table as source of truth
       const res = await db.query(
-        `SELECT id, name, price, department, category, active, category_id, sub_id, unit, cost_price FROM products WHERE active = true`
+        `SELECT id, name, price, department, category, active, category_id, sub_id, unit, cost_price, bar_visibility, restaurant_visibility FROM products WHERE active = true`
       );
       if ('rows' in res && Array.isArray(res.rows)) {
         return res.rows
-          .map((r: Record<string, unknown>) => {
+          .map((r: any) => {
             const rawCat = String(r.department || r.category || '').toLowerCase();
-            // Simple heuristic for Bar vs Food, defaulting to Food
-            const isBar = rawCat.includes('bar') ||
-              rawCat.includes('beverage') ||
-              rawCat.includes('cocktail') ||
-              rawCat.includes('beer') ||
-              rawCat.includes('wine') ||
-              rawCat.includes('cider') ||
-              rawCat.includes('liquor') ||
-              rawCat.includes('spirit') ||
-              rawCat.includes('drink') ||
-              rawCat.includes('alcohol');
-
-            const category: 'food' | 'bar' = isBar ? 'bar' : 'food';
+            const isBarItem = rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('drink') || !!r.bar_visibility;
+            
+            const category: 'food' | 'bar' = isBarItem ? 'bar' : 'food';
             const price = Number(r.price || 0);
 
-            // Filter out items with no price to prevent $0.00 items cluttering POS
             if (price <= 0) return null;
 
-            // CRITICAL: Use the explicitly assigned category_id if present in database
-            // Only derive default category if category_id is not set
-            let category_id = r.category_id ? String(r.category_id) : undefined;
+            // Filter by cost centre if specified
+            if (costCentre) {
+              const ccLower = costCentre.toLowerCase();
+              const isBarStation = ccLower.includes('bar');
+              const isRestaurantStation = ccLower.includes('restaurant') || ccLower.includes('room service');
+              
+              if (isBarStation && !r.bar_visibility) return null;
+              if (isRestaurantStation && !r.restaurant_visibility) return null;
+            }
 
-            // Only derive category if none explicitly set - preserve user assignments
+            let category_id = r.category_id ? String(r.category_id) : undefined;
             if (!category_id || category_id === '') {
-              if (category === 'bar') {
-                if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice')) {
-                  category_id = 'CAT_BAR_BEV';
-                } else {
-                  category_id = 'CAT_BAR_GEN';
-                }
-              } else {
-                if (rawCat.includes('main') || rawCat.includes('entree')) {
-                  category_id = 'CAT_REST_MAIN';
-                } else {
-                  category_id = 'CAT_REST_GEN';
-                }
-              }
+              category_id = isBarItem ? 'CAT_BAR_GEN' : 'CAT_REST_GEN';
             }
 
             return {

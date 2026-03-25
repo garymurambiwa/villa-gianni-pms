@@ -21,7 +21,7 @@ import { db } from '@/lib/db';
 export const POSFrontOffice: React.FC = () => {
   const { guests, recordFolioCharge, removeFolioCharge, loading, posOrders, savePosOrder, closePosOrder } = useData();
   const { activeShift, startShift, endShift, getTotals, addTransaction } = useShift();
-  const { user } = useAuth();
+  const { user, costCentre, shiftId } = useAuth();
 
   const [mountLoading, setMountLoading] = useState<boolean>(false);
   const [tables, setTables] = useState<Array<{ id: string; number: number; status: 'available' | 'occupied' | 'suspended'; currentBill?: any }>>(
@@ -62,7 +62,7 @@ export const POSFrontOffice: React.FC = () => {
   useEffect(() => {
     const refresh = async () => {
       try {
-        const list = await getMenuItems();
+        const list = await getMenuItems(costCentre || undefined);
         // Add empty image property to ensure type compatibility
         const safeList = Array.isArray(list) ? list : [];
         console.log("[POS Items Debug - Retrieved]", safeList.length, "items");
@@ -201,7 +201,7 @@ export const POSFrontOffice: React.FC = () => {
     const run = async () => {
       setMountLoading(true);
       try {
-        const ready = await db.waitForReady(180, 500);
+        const ready = await db.waitForReady();
         if (!ready) {
           setConnError('Database initialization timed out after 90s');
           setMountLoading(false);
@@ -213,7 +213,7 @@ export const POSFrontOffice: React.FC = () => {
         } else {
           setConnError(null);
         }
-        const res = await db.query(`SELECT table_id, status FROM table_status`);
+        const res = await db.query(`SELECT table_id, status FROM table_status WHERE cost_center = $1`, [costCentre || 'Main Restaurant']);
         if ('rows' in res) {
           const statusMap: Record<string, 'available' | 'occupied' | 'suspended'> = {};
           const safeRows = Array.isArray(res.rows) ? res.rows : [];
@@ -231,10 +231,8 @@ export const POSFrontOffice: React.FC = () => {
           setTables(prev => {
             const safePrev = Array.isArray(prev) ? prev : [];
             return safePrev.map(t => {
-              if (statusMap[t.id]) {
-                return { ...t, status: statusMap[t.id] };
-              }
-              return t;
+              const status = statusMap[t.id] || t.status;
+              return { ...t, status, cost_center: costCentre || 'Main Restaurant' };
             });
           });
         }
@@ -252,11 +250,11 @@ export const POSFrontOffice: React.FC = () => {
     try {
       await db.query(
         `
-          INSERT INTO table_status (table_id, status, last_update)
-          VALUES ($1, $2, NOW())
-          ON CONFLICT (table_id) DO UPDATE SET status = EXCLUDED.status, last_update = NOW()
+          INSERT INTO table_status (table_id, status, cost_center, last_update)
+          VALUES ($1, $2, $3, NOW())
+          ON CONFLICT (table_id, cost_center) DO UPDATE SET status = EXCLUDED.status, last_update = NOW()
         `,
-        [tableId, mapped]
+        [tableId, mapped, costCentre || 'Main Restaurant']
       );
     } catch { }
   }, []);
@@ -288,7 +286,7 @@ export const POSFrontOffice: React.FC = () => {
   }, []);
 
   const clearBill = useCallback(async (tableId: string) => {
-    if (closePosOrder) await closePosOrder(tableId);
+    if (closePosOrder) await closePosOrder(tableId, costCentre || undefined);
     setTables(prev => {
       const safePrev = Array.isArray(prev) ? prev : [];
       return safePrev.map(t => t.id === tableId ? { ...t, currentBill: undefined, status: 'available' } : t);
@@ -472,7 +470,13 @@ export const POSFrontOffice: React.FC = () => {
     debouncedTimerRef.current = setTimeout(async () => {
       const current = pendingBillRef.current;
       const ok = await (typeof savePosOrder === 'function'
-        ? savePosOrder({ table: current.tableId, items: current.items, total: current.total })
+        ? savePosOrder({ 
+            table: current.tableId, 
+            items: current.items, 
+            total: current.total,
+            cost_center: costCentre || 'Main Restaurant',
+            shift_id: shiftId
+          })
         : Promise.resolve(true));
       if (!ok) {
         setTables(prev);
@@ -523,7 +527,7 @@ export const POSFrontOffice: React.FC = () => {
     // Auto-deplete inventory for sold items
     try {
       const soldItems = bill.items.map((i: any) => ({ name: i.menuItem.name, quantity: Number(i.quantity || 0) }));
-      decrementInventory(soldItems);
+      decrementInventory(soldItems, costCentre || 'Main Restaurant', shiftId || 'unknown');
     } catch (err) {
       console.warn('Inventory depletion failed:', err);
       logPaymentError('inventory', err, { billId: bill.id });
@@ -531,7 +535,7 @@ export const POSFrontOffice: React.FC = () => {
 
     // Close POS order in DB to prevent reversion to occupied state
     if (closePosOrder) {
-      await closePosOrder(bill.tableId);
+      await closePosOrder(bill.tableId, costCentre || undefined);
     }
 
     setTables(prev => prev.map(t =>
@@ -634,7 +638,7 @@ export const POSFrontOffice: React.FC = () => {
               {(visibleTables || []).map(table => (
                 <TableCard
                   key={table.id}
-                  table={table as any}
+                  table={{ ...table, cost_center: costCentre || 'Main Restaurant' } as any}
                   onClick={() => handleTableClick(table.id)}
                   onToggleSuspend={() => toggleSuspend(table.id)}
                   onClearBill={() => clearBill(table.id)}

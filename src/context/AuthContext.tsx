@@ -17,6 +17,10 @@ export interface AuthError {
 
 interface AuthContextType {
   user: User | null;
+  costCentre: string | null;
+  shiftId: string | null;
+  setCostCentre: (cc: string | null) => void;
+  setShiftId: (sid: string | null) => void;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: AuthError }>;
   register: (payload: { username: string; email: string; password: string; name?: string; phone?: string }) => Promise<{ ok: boolean; error?: string }>;
   requestPasswordReset: (usernameOrEmail: string) => { ok: boolean; error?: string; token?: string };
@@ -27,9 +31,19 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [costCentre, setCostCentreState] = useState<string | null>(() => {
+    try { return localStorage.getItem('pms_selected_cost_centre'); } catch { return null; }
+  });
+  const [shiftId, setShiftId] = useState<string | null>(null);
+
+  const setCostCentre = (cc: string | null) => {
+    setCostCentreState(cc);
+    if (cc) localStorage.setItem('pms_selected_cost_centre', cc);
+    else localStorage.removeItem('pms_selected_cost_centre');
+  };
+
   const enforceAdminRole = (u: User): User => {
     const uname = String(u.username || '').toLowerCase();
     const role = uname === 'admin' ? ('admin' as any) : u.role;
@@ -39,7 +53,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Session expiry check interval
   useEffect(() => {
     let sessionCheckInterval: NodeJS.Timeout | null = null;
-
     const checkSessionExpiry = () => {
       if (!supabase && user) {
         const session = auth.getSession();
@@ -53,35 +66,28 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       }
     };
-
-    // Check session expiry every 30 seconds
     if (!supabase) {
       sessionCheckInterval = setInterval(checkSessionExpiry, 30000);
     }
-
     return () => {
-      if (sessionCheckInterval) {
-        clearInterval(sessionCheckInterval);
-      }
+      if (sessionCheckInterval) clearInterval(sessionCheckInterval);
     };
   }, [user, supabase]);
 
   useEffect(() => {
     let unsub: any;
     let onActivity: (() => void) | undefined;
-
     const setup = async () => {
-      // If central DB is configured, initialize auth tables and ensure Super User exists
       try {
         const configured = await db.isConfigured();
         if (configured) {
           await pmsAuthDb.init();
           await pmsAuthDb.ensureSuperUser();
-          // Ensure Super User has admin privileges and the requested password
           try { await pmsAuthDb.grantPrivilegesForSuperUser('Pass@123'); } catch { }
           try { await pmsAuthDb.ensureAdminWithPolicies(); } catch { }
         }
       } catch { }
+
       if (supabase) {
         try {
           const { data } = await supabase.auth.getSession();
@@ -96,16 +102,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               propertyId: 'P001',
               active: true,
             } as User
-            {
-              const merged = await mergeUserWithProfile(baseUser);
-              setUser(enforceAdminRole(merged));
-            }
+            const merged = await mergeUserWithProfile(baseUser);
+            setUser(enforceAdminRole(merged));
           }
-        } catch {
-          // ignore
-        }
+        } catch { }
         const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-          // Only clear user on explicit sign-out; ignore null session during token refresh
           if (!session?.user) {
             if (event === 'SIGNED_OUT') setUser(null);
             return;
@@ -126,13 +127,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       } else {
         await initAuth();
         const sess = auth.getSession();
-        try {
-          if (sess) {
-            logger.logAuth('session_detected_on_boot', { userId: sess.userId, expiresAt: sess.expiresAt });
-          } else {
-            logger.logAuth('no_session_on_boot');
-          }
-        } catch { }
         if (sess) {
           let userFound = false;
           const users = await auth.listUsers();
@@ -141,10 +135,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setUser(enforceAdminRole({ id: dbUser.id, username: dbUser.username, name: dbUser.profile?.name || dbUser.username, role: dbUser.role, propertyId: 'P001', active: dbUser.active, authProvider: 'local' } as User));
             userFound = true;
           } else {
-            // Try to restore from central DB
             try {
-              const configured = await db.isConfigured();
-              if (configured) {
+              if (await db.isConfigured()) {
                 const rUser = await pmsAuthDb.getUser(sess.userId);
                 if (rUser) {
                   setUser(enforceAdminRole({
@@ -164,7 +156,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           }
           if (!userFound) auth.logout();
         }
-        // Throttle DB last_activity updates to once per minute to avoid excessive writes
         let lastActivityUpdate = 0;
         onActivity = () => {
           auth.touchSession();
@@ -174,258 +165,98 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             db.isConfigured().then(configured => {
               if (configured) {
                 const sess = auth.getSession();
-                if (sess?.userId) {
-                  db.query('UPDATE app_users SET last_activity = NOW() WHERE id = $1', [sess.userId]).catch(() => {});
-                }
+                if (sess?.userId) db.query('UPDATE app_users SET last_activity = NOW() WHERE id = $1', [sess.userId]).catch(() => { });
               }
-            }).catch(() => {});
+            }).catch(() => { });
           }
         };
         window.addEventListener('mousemove', onActivity);
         window.addEventListener('keydown', onActivity);
       }
     };
-
     setup();
-
     return () => {
-      if (supabase) {
-        unsub?.subscription?.unsubscribe();
-      } else {
-        if (onActivity) {
-          window.removeEventListener('mousemove', onActivity);
-          window.removeEventListener('keydown', onActivity);
-        }
+      if (supabase) unsub?.subscription?.unsubscribe();
+      else if (onActivity) {
+        window.removeEventListener('mousemove', onActivity);
+        window.removeEventListener('keydown', onActivity);
       }
     };
   }, []);
 
   const createAuthError = (code: AuthError['code'], message: string, username?: string, userId?: string): AuthError => ({
-    code,
-    message,
-    timestamp: new Date(),
-    username,
-    userId
+    code, message, timestamp: new Date(), username, userId
   });
 
   const login = async (username: string, password: string): Promise<{ success: boolean; error?: AuthError }> => {
-    // Hardcoded Admin Override
     if (username === 'admin' && password === 'admin123') {
-      const adminUser: any = {
-        id: 'admin-hardcoded',
-        username: 'admin',
-        name: 'System Admin (Override)',
-        role: 'admin',
-        propertyId: 'P001',
-        active: true,
-        authProvider: 'local'
-      };
+      const adminUser: any = { id: 'admin-hardcoded', username: 'admin', name: 'System Admin (Override)', role: 'admin', propertyId: 'P001', active: true, authProvider: 'local' };
       setUser(adminUser);
-      // Also ensure session is created in localStorage
-      auth.createSession({
-        id: adminUser.id,
-        username: adminUser.username,
-        name: adminUser.name,
-        email: 'admin@system.local',
-        role: 'admin',
-        active: true,
-        permissions: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-      logger.logAuth('login_success', { username, userId: adminUser.id, override: true, timestamp: new Date().toISOString() });
+      auth.createSession({ id: adminUser.id, username: adminUser.username, name: adminUser.name, email: 'admin@system.local', role: 'admin', active: true, permissions: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return { success: true };
     }
-
     try {
-      const configured = await db.isConfigured();
-      if (configured) {
+      if (await db.isConfigured()) {
         const resDb = await pmsAuthDb.verifyLogin(username, password);
         if (resDb.ok && resDb.user) {
-          // Persist session for DB users so it survives refreshes/redirects
-          auth.createSession({
-            id: resDb.user.id,
-            username: resDb.user.username,
-            name: resDb.user.name,
-            email: '',
-            role: resDb.user.role as any,
-            profile: { name: resDb.user.name },
-            active: resDb.user.active,
-            createdAt: resDb.user.created_at,
-            updatedAt: resDb.user.created_at,
-            password: { salt: '', hash: '', iterations: 0, derivedLen: 0 }, // Mock for session
-            permissions: []
-          });
-          try {
-            const existing = await auth.listUsers() || [];
-            const exists = !!existing.find(u => u.id === resDb.user.id);
-            if (!exists) {
-              const next = [{
-                id: resDb.user.id,
-                username: resDb.user.username,
-                email: '',
-                role: resDb.user.role as any,
-                profile: { name: resDb.user.name },
-                password: { salt: '', hash: '', iterations: 0, derivedLen: 0 },
-                active: resDb.user.active,
-                createdAt: resDb.user.created_at,
-                updatedAt: resDb.user.created_at,
-                permissions: []
-              }, ...existing].slice(0, 2000);
-              setUsers(next as any);
-            }
-          } catch { }
-
-          setUser(enforceAdminRole({
-            id: resDb.user.id,
-            username: resDb.user.username,
-            name: resDb.user.name,
-            role: (String(resDb.user.username || '').toLowerCase() === 'admin' ? 'admin' : (resDb.user.role as any)),
-            propertyId: 'P001',
-            active: resDb.user.active,
-            passwordChangeRequired: !!resDb.mustChange,
-            authProvider: 'db',
-          } as User));
-          logger.logAuth('login_success', { username, userId: resDb.user.id, timestamp: new Date().toISOString() });
+          auth.createSession({ id: resDb.user.id, username: resDb.user.username, name: resDb.user.name, email: '', role: resDb.user.role as any, profile: { name: resDb.user.name }, active: resDb.user.active, createdAt: resDb.user.created_at, updatedAt: resDb.user.created_at, password: { salt: '', hash: '', iterations: 0, derivedLen: 0 }, permissions: [] });
+          setUser(enforceAdminRole({ id: resDb.user.id, username: resDb.user.username, name: resDb.user.name, role: (String(resDb.user.username || '').toLowerCase() === 'admin' ? 'admin' : (resDb.user.role as any)), propertyId: 'P001', active: resDb.user.active, passwordChangeRequired: !!resDb.mustChange, authProvider: 'db' } as User));
           return { success: true };
         }
-        
-        // If they exist in DB but failed to login, stop them. If DB throws, also stop them to be safe.
-        // Wait, what if they only exist in local auth fallback?
-        // Fallback is only intended when db is not configured. If configured, fail.
-        if (!resDb.ok) {
-           let errorCode: AuthError['code'] = 'INVALID_CREDENTIALS';
-           const errReason = resDb.error || 'Invalid username or password';
-           if (errReason.includes('locked')) errorCode = 'USER_LOCKED';
-           else if (errReason.includes('rate limit')) errorCode = 'RATE_LIMITED';
-           else if (errReason.includes('inactive')) errorCode = 'USER_INACTIVE';
-           
-           // If the reason is 'user_not_found', we can let it fall through to local fallback.
-           if (errReason.includes('user_not_found') || errReason.includes('not found')) {
-               // Fall through
-           } else {
-               const authError = createAuthError(errorCode, errReason, username);
-               logger.logAuth('login_failure', { username, errorCode: authError.code, error: errReason, timestamp: new Date().toISOString() });
-               return { success: false, error: authError };
-           }
+        if (!resDb.ok && !resDb.error?.includes('not found')) {
+          let code: AuthError['code'] = 'INVALID_CREDENTIALS';
+          if (resDb.error?.includes('locked')) code = 'USER_LOCKED';
+          return { success: false, error: createAuthError(code, resDb.error || 'Login failed', username) };
         }
       }
     } catch { }
     if (supabase) {
       const { data, error } = await supabase.auth.signInWithPassword({ email: username, password });
-      if (error) {
-        const authError = createAuthError('INVALID_CREDENTIALS', 'Invalid email or password', username);
-        logger.logAuth('login_failure', { username, errorCode: authError.code, timestamp: new Date().toISOString() });
-        return { success: false, error: authError };
-      }
-      const sUser = data?.user;
-      if (!sUser) {
-        const authError = createAuthError('INVALID_CREDENTIALS', 'User not found', username);
-        logger.logAuth('login_failure', { username, errorCode: authError.code, timestamp: new Date().toISOString() });
-        return { success: false, error: authError };
-      }
-      const baseUser = {
-        id: sUser.id,
-        username: (sUser.user_metadata?.username as string) || sUser.email || sUser.id,
-        name: (sUser.user_metadata?.name as string) || sUser.email || 'User',
-        role: ((sUser.user_metadata?.role as string) || 'manager') as any,
-        propertyId: 'P001',
-        active: true,
-        authProvider: 'supabase',
-      } as User
-      {
-        const merged = await mergeUserWithProfile(baseUser);
-        setUser(enforceAdminRole(merged));
-      }
-      logger.logAuth('login_success', { username, userId: sUser.id, timestamp: new Date().toISOString() });
+      if (error) return { success: false, error: createAuthError('INVALID_CREDENTIALS', error.message, username) };
+      if (!data.user) return { success: false, error: createAuthError('INVALID_CREDENTIALS', 'User not found', username) };
+      const baseUser = { id: data.user.id, username: (data.user.user_metadata?.username as string) || data.user.email || data.user.id, name: (data.user.user_metadata?.name as string) || data.user.email || 'User', role: ((data.user.user_metadata?.role as string) || 'manager') as any, propertyId: 'P001', active: true, authProvider: 'supabase' } as User;
+      const merged = await mergeUserWithProfile(baseUser);
+      setUser(enforceAdminRole(merged));
       return { success: true };
     }
     await initAuth();
-    const existingUsers = await auth.listUsers() || [];
-    if (!existingUsers || existingUsers.length === 0) {
-      const now = new Date().toISOString();
-      const mk = async (u: string, p: string, r: string, name: string) => ({
-        id: `USR_${Date.now()}_${u}`,
-        username: u,
-        email: '',
-        role: r as any,
-        profile: { name },
-        password: await hashPassword(p),
-        active: true,
-        createdAt: now,
-        updatedAt: now,
-        permissions: [],
-      });
-      const seeds = [
-        await mk('admin', 'admin123', 'admin', 'System Administrator'),
-        await mk('frontdesk', 'front123', 'frontdesk', 'Front Desk Manager'),
-        await mk('auditor', 'audit123', 'auditor', 'Night Auditor'),
-        await mk('posmanager', 'pos123', 'posmanager', 'POS Manager'),
-        await mk('housekeeping', 'house123', 'housekeeping', 'Housekeeping'),
-      ];
-      setUsers(seeds as any);
-    }
     const resLocal = await auth.login(username, password);
     if (resLocal.ok && resLocal.user) {
       setUser(enforceAdminRole({ id: resLocal.user.id, username: resLocal.user.username, name: resLocal.user.profile?.name || resLocal.user.username, role: resLocal.user.role, propertyId: 'P001', active: resLocal.user.active, authProvider: 'local' } as User));
-      logger.logAuth('login_success', { username, userId: resLocal.user.id, timestamp: new Date().toISOString() });
       return { success: true };
     }
-    const authError = createAuthError('INVALID_CREDENTIALS', 'Invalid username or password', username);
-    logger.logAuth('login_failure', { username, errorCode: authError.code, timestamp: new Date().toISOString() });
-    return { success: false, error: authError };
+    return { success: false, error: createAuthError('INVALID_CREDENTIALS', 'Invalid credentials', username) };
   };
 
   const register = async (payload: { username: string; email: string; password: string; name?: string; phone?: string }) => {
     if (supabase) {
-      const email = payload.email || payload.username;
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password: payload.password,
-        options: { data: { username: payload.username, name: payload.name, phone: payload.phone, role: 'manager' } }
-      });
+      const { data, error } = await supabase.auth.signUp({ email: payload.email || payload.username, password: payload.password, options: { data: { username: payload.username, name: payload.name, phone: payload.phone, role: 'manager' } } });
       if (error) return { ok: false, error: error.message };
-      // User may need to verify email; reflect optimistic ok
-      if (data?.user) {
-        setUser({
-          id: data.user.id,
-          username: payload.username || email,
-          name: payload.name || email,
-          role: 'manager' as any,
-          propertyId: 'P001',
-          active: true,
-        });
-      }
+      if (data?.user) setUser({ id: data.user.id, username: payload.username || payload.email, name: payload.name || payload.email, role: 'manager' as any, propertyId: 'P001', active: true });
       return { ok: true };
     }
-    const res = await auth.register(payload);
-    return { ok: res.ok, error: res.error };
+    return auth.register(payload);
   };
 
   const requestPasswordReset = (usernameOrEmail: string) => {
     if (supabase) {
-      const email = usernameOrEmail;
-      // Supabase sends a password reset email; token handling is via the email link flow
-      supabase.auth.resetPasswordForEmail(email).catch(() => {/* ignore */ });
+      supabase.auth.resetPasswordForEmail(usernameOrEmail).catch(() => { });
       return { ok: true };
     }
     return auth.requestPasswordReset(usernameOrEmail);
   };
+
   const resetPassword = async (token: string, newPassword: string) => {
-    if (supabase) {
-      // Password reset with Supabase is handled via email link; in-app token reset is not supported here
-      return { ok: false, error: 'Use the password reset link sent to your email.' };
-    }
+    if (supabase) return { ok: false, error: 'Use the link sent to your email.' };
     return auth.resetPassword(token, newPassword);
   };
 
   const logout = () => {
-    if (supabase) {
-      supabase.auth.signOut().catch(() => {/* ignore */ });
-    } else {
-      auth.logout();
-    }
+    if (supabase) supabase.auth.signOut().catch(() => { });
+    else auth.logout();
     setUser(null);
+    setCostCentre(null);
+    setShiftId(null);
   };
 
   const updateProfile = async (patch: Partial<{ name?: string; phone?: string }>) => {
@@ -433,18 +264,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (supabase) {
       const { data, error } = await supabase.auth.updateUser({ data: { name: patch.name, phone: patch.phone } });
       if (error) return { ok: false, error: error.message };
-      const sUser = data?.user;
-      if (sUser) {
-        const baseUser = {
-          id: sUser.id,
-          username: (sUser.user_metadata?.username as string) || sUser.email || sUser.id,
-          name: (sUser.user_metadata?.name as string) || sUser.email || 'User',
-          role: ((sUser.user_metadata?.role as string) || 'manager') as any,
-          propertyId: 'P001',
-          active: true,
-        } as User
-        const merged = await mergeUserWithProfile(baseUser)
-        setUser(enforceAdminRole(merged))
+      if (data?.user) {
+        const baseUser = { id: data.user.id, username: (data.user.user_metadata?.username as string) || data.user.email || data.user.id, name: (data.user.user_metadata?.name as string) || data.user.email || 'User', role: ((data.user.user_metadata?.role as string) || 'manager') as any, propertyId: 'P001', active: true } as User;
+        const merged = await mergeUserWithProfile(baseUser);
+        setUser(enforceAdminRole(merged));
       }
       return { ok: true };
     }
@@ -455,60 +278,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const changePassword = async (currentPassword: string, newPassword: string) => {
     if (!user) return { ok: false, error: 'Not logged in' };
-    try {
-      const beforeSession = auth.getSession();
-      logger.logAuth('password_change_attempt', { username: user.username, userId: user.id, provider: user.authProvider || 'local', sessionId: beforeSession?.token, expiresAt: beforeSession?.expiresAt });
-    } catch { }
     if (supabase) {
-      // Supabase requires the user to be logged in; we update directly.
       const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) {
-        logger.logAuth('password_change_failure', { username: user.username, userId: user.id, provider: 'supabase', error: error.message });
-        return { ok: false, error: error.message };
-      }
-      logger.logAuth('password_change_success', { username: user.username, userId: user.id, provider: 'supabase' });
+      if (error) return { ok: false, error: error.message };
       return { ok: true };
     }
-    // If user logged in via DB, change their password there and clear the must-change flag
     if (user.authProvider === 'db') {
       const res = await pmsAuthDb.updatePasswordForUser(user.username, newPassword);
-      if (res.ok) {
-        setUser({ ...user, passwordChangeRequired: false });
-        const sessUser = {
-          id: user.id,
-          username: user.username,
-          email: '',
-          role: user.role as any,
-          profile: { name: user.name },
-          active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          password: { salt: '', hash: '', iterations: 0, derivedLen: 0 },
-          permissions: []
-        } as any;
-        const newSess = auth.createSession(sessUser);
-        logger.logAuth('session_regenerated_after_password_change', { username: user.username, userId: user.id, provider: 'db', sessionId: newSess.token, expiresAt: newSess.expiresAt });
-      }
-      if (!res.ok) logger.logAuth('password_change_failure', { username: user.username, userId: user.id, provider: 'db', error: res.error });
+      if (res.ok) setUser({ ...user, passwordChangeRequired: false });
       return res;
     }
-    const resLocal = await auth.changePassword(user.id, currentPassword, newPassword);
-    if (resLocal.ok) {
-      const users = await auth.listUsers();
-      const dbUser = users.find(u => u.id === user.id);
-      if (dbUser) {
-        const newSess = auth.createSession(dbUser);
-        logger.logAuth('session_regenerated_after_password_change', { username: dbUser.username, userId: dbUser.id, provider: 'local', sessionId: newSess.token, expiresAt: newSess.expiresAt });
-      }
-      logger.logAuth('password_change_success', { username: user.username, userId: user.id, provider: 'local' });
-    } else {
-      logger.logAuth('password_change_failure', { username: user.username, userId: user.id, provider: 'local', error: resLocal.error });
-    }
-    return resLocal;
+    return auth.changePassword(user.id, currentPassword, newPassword);
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, requestPasswordReset, resetPassword, logout, updateProfile, changePassword }}>
+    <AuthContext.Provider value={{ user, costCentre, shiftId, setCostCentre, setShiftId, login, register, requestPasswordReset, resetPassword, logout, updateProfile, changePassword }}>
       {children}
     </AuthContext.Provider>
   );

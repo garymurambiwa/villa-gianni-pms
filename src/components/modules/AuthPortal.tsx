@@ -9,30 +9,57 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { fetchDepartments, isMultiSelectEnabled, DepartmentNode } from '@/lib/departments';
 import { Crypto } from '@/lib/crypto';
 import wf from '@/lib/approvalWorkflow';
+import db from '@/lib/db';
 
 const AuthPortal: React.FC = () => {
-  const { user, login, register, requestPasswordReset, resetPassword } = useAuth();
-  const [tab, setTab] = React.useState<'login'|'register'|'recover'>('login');
+  const { user, login, register, requestPasswordReset, resetPassword, costCentre, setCostCentre, shiftId, setShiftId, logout } = useAuth();
+  const [tab, setTab] = React.useState<'login' | 'register' | 'recover'>('login');
   const [message, setMessage] = React.useState<string>('');
 
-  const [loginForm, setLoginForm] = React.useState({ username:'', password:'' });
-  const [regForm, setRegForm] = React.useState({ username:'', email:'', password:'', name:'', phone:'' });
-  const [recoverForm, setRecoverForm] = React.useState({ email:'', token:'', newPassword:'' });
+  const [loginForm, setLoginForm] = React.useState({ username: '', password: '' });
+  const [regForm, setRegForm] = React.useState({ username: '', email: '', password: '', name: '', phone: '' });
+  const [recoverForm, setRecoverForm] = React.useState({ email: '', token: '', newPassword: '' });
   const [role, setRole] = React.useState<string>('');
   const [roleInfoOpen, setRoleInfoOpen] = React.useState(false);
   const [deptQuery, setDeptQuery] = React.useState('');
   const [departments, setDepartments] = React.useState<DepartmentNode[]>([]);
   const [selectedDepts, setSelectedDepts] = React.useState<string[]>([]);
   const [approvalId, setApprovalId] = React.useState<string>('');
-  const [approvalStatus, setApprovalStatus] = React.useState<'idle'|'pending'|'approved'|'rejected'|'escalated'|'cancelled'>('idle');
+  const [approvalStatus, setApprovalStatus] = React.useState<'idle' | 'pending' | 'approved' | 'rejected' | 'escalated' | 'cancelled'>('idle');
   const [showCancelDialog, setShowCancelDialog] = React.useState(false);
   const [eta, setEta] = React.useState<string>('Calculating…');
   const [expectedIp, setExpectedIp] = React.useState<string>('');
 
+  const COST_CENTRES = [
+    'Room Service',
+    'Bar 1',
+    'Bar 2',
+    'Main Restaurant',
+    'Lounge Restaurant'
+  ];
+
   const doLogin = async () => {
     setMessage('');
-    const ok = await login(loginForm.username, loginForm.password);
-    setMessage(ok ? 'Logged in successfully' : 'Invalid credentials');
+    const res = await login(loginForm.username, loginForm.password);
+    if (res.success) {
+      setMessage('Logged in successfully');
+    } else {
+      setMessage(res.error?.message || 'Invalid credentials');
+    }
+  };
+
+  const handleSelectCostCentre = async (cc: string) => {
+    setCostCentre(cc);
+    try {
+      const res = await db.query('SELECT id FROM pos_shifts WHERE cost_center = $1 AND status = \'open\' LIMIT 1', [cc]);
+      if (res && 'rows' in res && Array.isArray(res.rows) && res.rows.length > 0) {
+        setShiftId(res.rows[0].id);
+      } else {
+        setShiftId(null);
+      }
+    } catch (e) {
+      console.error('Error checking shift:', e);
+    }
   };
 
   const doRegister = async () => {
@@ -41,12 +68,12 @@ const AuthPortal: React.FC = () => {
     try {
       const token = await Crypto.encryptAES256(role);
       sessionStorage.setItem('corepms_reg_role', token);
-    } catch {}
+    } catch { }
     try {
       const res = await fetch('https://api.ipify.org?format=json');
       const json = await res.json();
       setExpectedIp(String(json.ip));
-    } catch {}
+    } catch { }
     try {
       setApprovalStatus('pending');
       const payload = {
@@ -59,7 +86,7 @@ const AuthPortal: React.FC = () => {
       const rec = await wf.createApprovalRequest(payload);
       setApprovalId(rec.id);
       setMessage('Approval requested. You’ll be notified upon decision.');
-      computeETA().then(setEta).catch(()=> setEta('~48–72 hours'));
+      computeETA().then(setEta).catch(() => setEta('~48–72 hours'));
     } catch (e: any) {
       setApprovalStatus('idle');
       setMessage(e?.message || 'Failed to submit for approval');
@@ -68,7 +95,7 @@ const AuthPortal: React.FC = () => {
 
   React.useEffect(() => {
     const t = setTimeout(() => {
-      fetchDepartments(deptQuery).then(r => setDepartments(r.items)).catch(()=>{});
+      fetchDepartments(deptQuery).then(r => setDepartments(r.items)).catch(() => { });
     }, 150);
     return () => clearTimeout(t);
   }, [deptQuery]);
@@ -106,7 +133,7 @@ const AuthPortal: React.FC = () => {
         await wf.provisionPermissions(`pending_${Date.now()}`, role, selectedDepts);
         setMessage('Approved. Permissions provisioning started.');
       }
-    } catch {}
+    } catch { }
   }
 
   React.useEffect(() => {
@@ -142,185 +169,212 @@ const AuthPortal: React.FC = () => {
     setMessage(res.ok ? 'Password reset successful. Please login.' : (res.error || 'Password reset failed'));
   };
 
-  return (
-    <div className="p-6">
-      <div className="flex items-center gap-2 mb-4">
-        <Button variant={tab==='login'?'default':'outline'} onClick={()=> setTab('login')}>Login</Button>
-        <Button variant={tab==='register'?'default':'outline'} onClick={()=> setTab('register')}>Register</Button>
-        <Button variant={tab==='recover'?'default':'outline'} onClick={()=> setTab('recover')}>Recover Password</Button>
+  // 1. Station Selection View
+  if (user && !costCentre) {
+    return (
+      <div className="p-8 max-w-4xl mx-auto min-h-[600px] flex flex-col justify-center">
+        <div className="text-center mb-10">
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">Select Cost Centre</h2>
+          <p className="text-gray-600">Please choose your active workstation to continue</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {COST_CENTRES.map((cc) => (
+            <div
+              key={cc}
+              onClick={() => handleSelectCostCentre(cc)}
+              className="cursor-pointer group relative overflow-hidden rounded-2xl bg-white p-8 shadow-sm transition-all hover:shadow-xl hover:-translate-y-1 border border-gray-100"
+            >
+              <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                <div className="w-24 h-24 bg-blue-500 rounded-full -mr-12 -mt-12"></div>
+              </div>
+              <h3 className="text-xl font-bold text-gray-800 mb-2 group-hover:text-blue-600 transition-colors">{cc}</h3>
+              <p className="text-sm text-gray-500">Access Point of Sale and Inventory</p>
+              <div className="mt-6 flex items-center text-blue-600 text-sm font-semibold opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
+                Select Workstation →
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-12 text-center">
+          <Button variant="ghost" onClick={logout} className="text-gray-500 hover:text-red-600">
+            Sign out and change user
+          </Button>
+        </div>
       </div>
-      {message && <div className="text-sm p-2 mb-3 rounded bg-blue-50 text-blue-700">{message}</div>}
+    );
+  }
 
-      {tab==='login' && (
-        <div className="bg-white p-4 rounded shadow max-w-md">
-          <div className="space-y-2">
+  // 2. Authenticated View (Dashboard/Home)
+  if (user) {
+    return (
+      <div className="p-6 max-w-7xl mx-auto">
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
+          <div className="flex items-center justify-between mb-8">
             <div>
-              <Label htmlFor="login-username">Username or Email</Label>
-              <Input id="login-username" value={loginForm.username} onChange={(e)=> setLoginForm(f=> ({...f, username:e.target.value}))} />
+              <h2 className="text-2xl font-bold text-gray-900 line-clamp-1">Welcome back, {user.name}</h2>
+              <p className="text-gray-500">Authenticated Station: <span className="font-semibold text-blue-600">{costCentre}</span></p>
             </div>
-            <div>
-              <Label htmlFor="login-password">Password</Label>
-              <Input id="login-password" type="password" value={loginForm.password} onChange={(e)=> setLoginForm(f=> ({...f, password:e.target.value}))} />
+            <div className="flex gap-3">
+              <Button variant="outline" className="rounded-xl" onClick={() => setCostCentre(null)}>Switch Station</Button>
+              <Button variant="destructive" className="rounded-xl" onClick={logout}>Logout</Button>
             </div>
-            <Button onClick={doLogin}>Login</Button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="p-6 bg-blue-50 rounded-2xl border border-blue-100">
+              <h4 className="font-bold text-blue-900 mb-1">POS Status</h4>
+              <p className="text-sm text-blue-700">{shiftId ? 'Shift Open' : 'Waiting for Shift Initiation'}</p>
+            </div>
+            <div className="p-6 bg-green-50 rounded-2xl border border-green-100">
+              <h4 className="font-bold text-green-900 mb-1">Last Login</h4>
+              <p className="text-sm text-green-700">{new Date().toLocaleTimeString()}</p>
+            </div>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {tab==='register' && (
-        <div className="bg-white p-4 rounded shadow max-w-md">
-          <div className="space-y-2">
-            <div>
-              <Label htmlFor="reg-username">Username</Label>
-              <Input id="reg-username" value={regForm.username} onChange={(e)=> setRegForm(f=> ({...f, username:e.target.value}))} />
-            </div>
-            <div>
-              <Label htmlFor="reg-email">Email</Label>
-              <Input id="reg-email" type="email" value={regForm.email} onChange={(e)=> setRegForm(f=> ({...f, email:e.target.value}))} />
-            </div>
-            <div>
-              <Label htmlFor="reg-password">Password</Label>
-              <Input id="reg-password" type="password" value={regForm.password} onChange={(e)=> setRegForm(f=> ({...f, password:e.target.value}))} />
-              <div className="text-xs text-gray-500">Min 8 chars, at least 1 letter and 1 number.</div>
-            </div>
-            <div>
-              <Label htmlFor="reg-name">Full Name</Label>
-              <Input id="reg-name" value={regForm.name} onChange={(e)=> setRegForm(f=> ({...f, name:e.target.value}))} />
-            </div>
-            <div>
-              <Label htmlFor="reg-phone">Phone</Label>
-              <Input id="reg-phone" value={regForm.phone} onChange={(e)=> setRegForm(f=> ({...f, phone:e.target.value}))} />
-            </div>
-            <div>
-              <Label htmlFor="reg-role">Role</Label>
-              <div className="flex items-center gap-2">
-                <select id="reg-role" aria-describedby="role-help" className="border rounded-md px-3 py-2 w-full" value={role} onChange={async (e)=>{
-                  const r = e.target.value; setRole(r);
-                  try { const token = await Crypto.encryptAES256(r); sessionStorage.setItem('corepms_reg_role', token); } catch {}
-                }}>
-                  <option value="">Select a role</option>
-                  <option value="admin">Admin</option>
-                  <option value="manager">Manager</option>
-                  <option value="employee">Employee</option>
-                </select>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="outline" aria-label="Role info" onClick={()=> setRoleInfoOpen(true)}>?</Button>
-                    </TooltipTrigger>
-                    <TooltipContent>View role permissions and access details</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+  // 3. Unauthenticated View (Login/Register)
+  return (
+    <div className="p-6 max-w-7xl mx-auto min-h-[600px] flex flex-col justify-center items-center">
+      <div className="w-full max-w-md">
+        <div className="flex items-center gap-2 mb-8 bg-gray-50 p-2 rounded-2xl w-fit mx-auto">
+          <Button variant={tab === 'login' ? 'default' : 'ghost'} onClick={() => setTab('login')} className="rounded-xl px-6">Login</Button>
+          <Button variant={tab === 'register' ? 'default' : 'ghost'} onClick={() => setTab('register')} className="rounded-xl px-6">Register</Button>
+          <Button variant={tab === 'recover' ? 'default' : 'ghost'} onClick={() => setTab('recover')} className="rounded-xl px-6">Recover</Button>
+        </div>
+
+        {message && (
+          <div className="text-sm p-4 mb-6 rounded-2xl bg-blue-50 text-blue-700 border border-blue-100 animate-in fade-in slide-in-from-top-2">
+            {message}
+          </div>
+        )}
+
+        {tab === 'login' && (
+          <div className="bg-white p-8 rounded-3xl shadow-xl shadow-gray-100 border border-gray-100">
+            <h2 className="text-2xl font-bold mb-6 text-gray-900">Sign In</h2>
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="login-username">Username or Email</Label>
+                <Input
+                  id="login-username"
+                  placeholder="name@example.com"
+                  className="rounded-xl border-gray-200 h-12"
+                  value={loginForm.username}
+                  onChange={(e) => setLoginForm(f => ({ ...f, username: e.target.value }))}
+                />
               </div>
-              <div id="role-help" className="text-xs text-gray-500">Required. Choose the role to request.</div>
+              <div className="space-y-2">
+                <Label htmlFor="login-password">Password</Label>
+                <Input
+                  id="login-password"
+                  type="password"
+                  placeholder="••••••••"
+                  className="rounded-xl border-gray-200 h-12"
+                  value={loginForm.password}
+                  onChange={(e) => setLoginForm(f => ({ ...f, password: e.target.value }))}
+                />
+              </div>
+              <Button onClick={doLogin} className="w-full rounded-xl h-12 text-lg font-semibold shadow-lg shadow-blue-100 transition-all hover:shadow-xl hover:-translate-y-0.5">
+                Login
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {tab === 'register' && (
+          <div className="bg-white p-8 rounded-3xl shadow-xl shadow-gray-100 border border-gray-100 min-w-[400px]">
+            <h2 className="text-2xl font-bold mb-6 text-gray-900">Create Account</h2>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label htmlFor="reg-username">Username</Label>
+                  <Input id="reg-username" value={regForm.username} onChange={(e) => setRegForm(f => ({ ...f, username: e.target.value }))} className="rounded-xl" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="reg-email">Email</Label>
+                  <Input id="reg-email" type="email" value={regForm.email} onChange={(e) => setRegForm(f => ({ ...f, email: e.target.value }))} className="rounded-xl" />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="reg-password">Password</Label>
+                <Input id="reg-password" type="password" value={regForm.password} onChange={(e) => setRegForm(f => ({ ...f, password: e.target.value }))} className="rounded-xl" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="reg-name">Full Name</Label>
+                <Input id="reg-name" value={regForm.name} onChange={(e) => setRegForm(f => ({ ...f, name: e.target.value }))} className="rounded-xl" />
+              </div>
+
+              <div>
+                <Label htmlFor="reg-role">Role</Label>
+                <div className="flex items-center gap-2 mt-1">
+                  <select id="reg-role" className="border border-gray-200 rounded-xl px-3 py-2 w-full h-11" value={role} onChange={(e) => setRole(e.target.value)}>
+                    <option value="">Select Role</option>
+                    <option value="admin">Admin</option>
+                    <option value="manager">Manager</option>
+                    <option value="employee">Employee</option>
+                  </select>
+                  <Button variant="outline" className="h-11 w-11 rounded-xl" onClick={() => setRoleInfoOpen(true)}>?</Button>
+                </div>
+              </div>
+
+              <div className="pt-4">
+                <Button onClick={doRegister} className="w-full rounded-xl h-12 font-semibold" disabled={!role}>
+                  Submit Application
+                </Button>
+              </div>
             </div>
 
             <Dialog open={roleInfoOpen} onOpenChange={setRoleInfoOpen}>
-              <DialogContent aria-label="Role descriptions">
+              <DialogContent className="rounded-3xl">
                 <DialogHeader>
                   <DialogTitle>Role Permissions</DialogTitle>
-                  <DialogDescription>Summary of access levels for common roles.</DialogDescription>
                 </DialogHeader>
-                <div className="text-sm space-y-2">
-                  <p><strong>Admin:</strong> Full system access, user management, configuration.</p>
-                  <p><strong>Manager:</strong> Operational modules, approvals, limited admin views.</p>
-                  <p><strong>Employee:</strong> Assigned tasks and limited module access.</p>
+                <div className="space-y-4 py-4 text-sm text-gray-600">
+                  <p><strong>Admin:</strong> Global control, users, settings.</p>
+                  <p><strong>Manager:</strong> Department management, reports, shift controls.</p>
+                  <p><strong>Employee:</strong> Front-office tasks, order processing.</p>
                 </div>
                 <DialogFooter>
-                  <Button onClick={()=> setRoleInfoOpen(false)}>Close</Button>
+                  <Button onClick={() => setRoleInfoOpen(false)} className="rounded-xl">Close</Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
-
-            <div>
-              <Label htmlFor="dept-search">Departments</Label>
-              <Input id="dept-search" placeholder="Search departments" value={deptQuery} onChange={(e)=> setDeptQuery(e.target.value)} aria-describedby="dept-help" />
-              <div id="dept-help" className="text-xs text-gray-500">{isMultiSelectEnabled() ? 'Multiple selection enabled' : 'Single selection'}</div>
-              <ScrollArea className="mt-2 h-40 rounded border">
-                <div className="p-2" role="tree" aria-label="Departments">
-                  {departments.length === 0 && (
-                    <div className="text-xs text-gray-500">No departments found</div>
-                  )}
-                  {departments.map(root => (
-                    <DeptNode key={root.id} node={root} selected={selectedDepts} onToggle={toggleDept} depth={0} />
-                  ))}
-                </div>
-              </ScrollArea>
-            </div>
-
-            {approvalStatus !== 'idle' && (
-              <div className="mt-2" role="status" aria-live="polite">
-                <div className="flex items-center gap-2 text-sm">
-                  <span className={`px-2 py-1 rounded ${approvalStatus==='pending'?'bg-yellow-100 text-yellow-800':''}${approvalStatus==='approved'?'bg-green-100 text-green-800':''}${approvalStatus==='rejected'?'bg-red-100 text-red-800':''}${approvalStatus==='escalated'?'bg-orange-100 text-orange-800':''}${approvalStatus==='cancelled'?'bg-gray-100 text-gray-700':''}`}>{approvalStatus}</span>
-                  <span className="text-gray-600">ETA: {eta}</span>
-                </div>
-                <div className="mt-2 h-2 w-full bg-gray-200 rounded">
-                  <div className={`h-2 rounded ${approvalStatus==='pending'?'bg-yellow-500 w-1/3':''}${approvalStatus==='escalated'?'bg-orange-500 w-1/2':''}${approvalStatus==='approved'?'bg-green-600 w-full':''}${approvalStatus==='rejected'?'bg-red-600 w-full':''}${approvalStatus==='cancelled'?'bg-gray-400 w-full':''}`}></div>
-                </div>
-                {approvalStatus==='pending' && (
-                  <div className="mt-2">
-                    <Button variant="outline" onClick={()=> setShowCancelDialog(true)}>Cancel Request</Button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <Dialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
-              <DialogContent aria-label="Cancel approval">
-                <DialogHeader>
-                  <DialogTitle>Cancel Approval Request</DialogTitle>
-                  <DialogDescription>This will stop the approval process.</DialogDescription>
-                </DialogHeader>
-                <DialogFooter>
-                  <Button variant="outline" onClick={()=> setShowCancelDialog(false)}>Keep</Button>
-                  <Button onClick={onCancelRequest}>Confirm Cancel</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-
-            {approvalStatus==='approved' ? (
-              <div className="mt-2">
-                <h4 className="text-sm font-semibold">Onboarding Checklist</h4>
-                <ul className="text-sm list-disc list-inside text-gray-700">
-                  <li>Confirm email</li>
-                  <li>Review assigned permissions</li>
-                  <li>Complete profile details</li>
-                </ul>
-              </div>
-            ) : (
-              <Button onClick={doRegister} disabled={!role}>Submit for Approval</Button>
-            )}
           </div>
-        </div>
-      )}
+        )}
 
-      {tab==='recover' && (
-        <div className="bg-white p-4 rounded shadow max-w-md">
-          <div className="space-y-2">
-            <div>
-              <Label htmlFor="rec-email">Username or Email</Label>
-              <Input id="rec-email" value={recoverForm.email} onChange={(e)=> setRecoverForm(f=> ({...f, email:e.target.value}))} />
+        {tab === 'recover' && (
+          <div className="bg-white p-8 rounded-3xl shadow-xl shadow-gray-100 border border-gray-100 max-w-md">
+            <h2 className="text-2xl font-bold mb-6 text-gray-900">Reset Password</h2>
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <Label htmlFor="rec-email">Email or Username</Label>
+                <Input id="rec-email" value={recoverForm.email} onChange={(e) => setRecoverForm(f => ({ ...f, email: e.target.value }))} className="rounded-xl h-11" />
+              </div>
+              <Button variant="outline" onClick={doRequestReset} className="w-full rounded-xl h-11">Request Token</Button>
+
+              <div className="pt-4 border-t border-gray-50 space-y-4">
+                <div className="space-y-1">
+                  <Label htmlFor="rec-token">Reset Token</Label>
+                  <Input id="rec-token" value={recoverForm.token} onChange={(e) => setRecoverForm(f => ({ ...f, token: e.target.value }))} className="rounded-xl h-11" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="rec-new">New Password</Label>
+                  <Input id="rec-new" type="password" value={recoverForm.newPassword} onChange={(e) => setRecoverForm(f => ({ ...f, newPassword: e.target.value }))} className="rounded-xl h-11" />
+                </div>
+                <Button onClick={doReset} className="w-full rounded-xl h-12 font-semibold">Update Password</Button>
+              </div>
             </div>
-            <Button variant="outline" onClick={doRequestReset}>Generate Reset Token</Button>
-            <div>
-              <Label htmlFor="rec-token">Reset Token</Label>
-              <Input id="rec-token" value={recoverForm.token} onChange={(e)=> setRecoverForm(f=> ({...f, token:e.target.value}))} />
-            </div>
-            <div>
-              <Label htmlFor="rec-new">New Password</Label>
-              <Input id="rec-new" type="password" value={recoverForm.newPassword} onChange={(e)=> setRecoverForm(f=> ({...f, newPassword:e.target.value}))} />
-            </div>
-            <Button onClick={doReset}>Reset Password</Button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };
 
 export default AuthPortal;
 
-const DeptNode: React.FC<{ node: DepartmentNode; selected: string[]; onToggle: (id:string)=>void; depth: number }> = ({ node, selected, onToggle, depth }) => {
+const DeptNode: React.FC<{ node: DepartmentNode; selected: string[]; onToggle: (id: string) => void; depth: number }> = ({ node, selected, onToggle, depth }) => {
   const pad = depth * 12;
   const checked = selected.includes(node.id);
   const hasChildren = !!(node.children && node.children.length > 0);
@@ -357,15 +411,15 @@ const DeptNode: React.FC<{ node: DepartmentNode; selected: string[]; onToggle: (
         </Button>
       )}
       <input
-        type={isMultiSelectEnabled() ? 'checkbox':'radio'}
+        type={isMultiSelectEnabled() ? 'checkbox' : 'radio'}
         aria-label={`Select ${node.name}`}
         checked={checked}
-        onChange={()=> onToggle(node.id)}
+        onChange={() => onToggle(node.id)}
         className="mr-2"
       />
       <span className="text-sm">{node.name}</span>
       {!collapsed && node.children && node.children.map(ch => (
-        <DeptNode key={ch.id} node={ch} selected={selected} onToggle={onToggle} depth={depth+1} />
+        <DeptNode key={ch.id} node={ch} selected={selected} onToggle={onToggle} depth={depth + 1} />
       ))}
     </div>
   );

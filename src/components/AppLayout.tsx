@@ -23,6 +23,7 @@ import PosSettings from './modules/PosSettings';
 import { HotkeysProvider, useHotkeys } from '@/contexts/HotkeysContext';
 import APInvoiceEntry from './modules/APInvoiceEntry';
 import AuthPortal from './modules/AuthPortal';
+import { POSManagement } from './modules/POSManagement';
 import ProfileSettings from './modules/ProfileSettings';
 import TransactionClearingAdmin from './modules/TransactionClearingAdmin';
 import SuperAdminSettings from './modules/SuperAdminSettings';
@@ -315,6 +316,15 @@ const AppLayout: React.FC = () => {
             <PosSettings />
           </ErrorBoundary>
         );
+      }
+      case 'pos-management': {
+        return isManager(user?.role)
+          ? (
+            <ErrorBoundary fallbackTitle="POS Management Error" fallbackMessage="Please reload or contact support.">
+              <POSManagement />
+            </ErrorBoundary>
+          )
+          : renderAccessDenied('You do not have permission to access POS Management.', 'dashboard', 'Back to Dashboard');
       }
       case 'cityledger': {
         return isManager(user?.role)
