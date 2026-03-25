@@ -18,6 +18,24 @@ declare global {
 
 export type Role = 'admin' | 'manager' | 'frontdesk' | 'auditor' | 'posmanager' | 'housekeeping' | 'cashier' | 'barman' | 'supervisor';
 
+export const USER_ROLES = [
+  'Super Admin',
+  'Admin',
+  'FO Manager',
+  'FNB Manager',
+  'FO Supervisor',
+  'FNB Supervisor',
+  'Restaurant Cashier',
+  'Barman',
+  'Accountant',
+  'Front office Cashier',
+  'Night Auditor',
+  'House keeper',
+  'Maintenance',
+] as const;
+
+export type StandardRole = typeof USER_ROLES[number];
+
 export interface UserRecord {
   id: string;
   username: string;
@@ -178,7 +196,7 @@ export const login = async (usernameOrEmail: string, password: string): Promise<
   } else {
     // Browser DB mode via pmsAuthDb
     try {
-      const res = await pmsAuthDb.login(usernameOrEmail, password);
+      const res = await pmsAuthDb.verifyLogin(usernameOrEmail, password);
       if (res.ok && res.user) {
         const u = mapDbUser(res.user);
         const session = createSession(u);

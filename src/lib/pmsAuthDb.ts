@@ -596,8 +596,19 @@ export const pmsAuthDb = {
 
   async deleteUser(id: string): Promise<{ ok: boolean; error?: string }> {
     try {
+      // Step 1: Remove from auxiliary tables first to avoid orphan records or FK issues
+      // (Though schema might not have formal FKs, we clean up for data integrity)
+      await db.query(`DELETE FROM profiles WHERE id = ?`, [id]);
+      await db.query(`DELETE FROM admins WHERE user_id = ?`, [id]);
+      await db.query(`DELETE FROM email_verifications WHERE user_id = ?`, [id]);
+      // Note: We keep login_attempts and access_logs for audit purposes, but 
+      // they are linked by username or id string, not a hard FK that blocks deletion.
+
+      // Step 2: Remove from primary user table
       const res = await db.query(`DELETE FROM app_users WHERE id = ?`, [id]);
+      
       if ('error' in res) return { ok: false, error: res.error };
+      
       await this.recordAccessAttempt(id, 'user_deleted', { id });
       return { ok: true };
     } catch (e: any) {

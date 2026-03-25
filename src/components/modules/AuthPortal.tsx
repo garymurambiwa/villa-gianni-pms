@@ -10,6 +10,7 @@ import { fetchDepartments, isMultiSelectEnabled, DepartmentNode } from '@/lib/de
 import { Crypto } from '@/lib/crypto';
 import wf from '@/lib/approvalWorkflow';
 import db from '@/lib/db';
+import { USER_ROLES, mapStandardRoleToInternal } from '@/lib/authService';
 
 const AuthPortal: React.FC = () => {
   const { user, login, register, requestPasswordReset, resetPassword, costCentre, setCostCentre, shiftId, setShiftId, logout } = useAuth();
@@ -310,9 +311,9 @@ const AuthPortal: React.FC = () => {
                 <div className="flex items-center gap-2 mt-1">
                   <select id="reg-role" className="border border-gray-200 rounded-xl px-3 py-2 w-full h-11" value={role} onChange={(e) => setRole(e.target.value)}>
                     <option value="">Select Role</option>
-                    <option value="admin">Admin</option>
-                    <option value="manager">Manager</option>
-                    <option value="employee">Employee</option>
+                    {USER_ROLES.map(r => (
+                      <option key={r} value={mapStandardRoleToInternal(r)}>{r}</option>
+                    ))}
                   </select>
                   <Button variant="outline" className="h-11 w-11 rounded-xl" onClick={() => setRoleInfoOpen(true)}>?</Button>
                 </div>

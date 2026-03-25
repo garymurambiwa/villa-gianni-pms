@@ -1,26 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { register as authRegister, updateUser as authUpdateUser, deleteUser as authDeleteUser, mapStandardRoleToInternal, mapInternalRoleToStandard, validatePasswordStrength } from '@/lib/authService';
 import { useData } from '@/context/DataContext';
 import pmsAuthDb from '@/lib/pmsAuthDb';
+import { 
+  register as authRegister, 
+  updateUser as authUpdateUser, 
+  deleteUser as authDeleteUser, 
+  mapStandardRoleToInternal, 
+  mapInternalRoleToStandard, 
+  validatePasswordStrength,
+  USER_ROLES,
+  StandardRole
+} from '@/lib/authService';
 
-// Standardized roles and granular rights model
-const ROLE_LIST = [
-  'Super Admin',
-  'Admin',
-  'FO Manager',
-  'FNB Manager',
-  'FO Supervisor',
-  'FNB Supervisor',
-  'Restaurant Cashier',
-  'Barman',
-  'Accountant',
-  'Front office Cashier',
-  'Night Auditor',
-  'House keeper',
-  'Maintenance',
-] as const;
-
-type RoleName = typeof ROLE_LIST[number];
+type RoleName = StandardRole;
 
 type RightsKey =
   | 'admin_create_edit_users'
@@ -113,13 +105,6 @@ interface SystemUser {
   permissions: RightsKey[];
 }
 
-const mockUsers: SystemUser[] = [
-  { id: '1', username: 'admin', name: 'System Administrator', role: 'admin', active: true, lastLogin: '2025-10-29 18:30', permissions: [] },
-  { id: '2', username: 'frontdesk', name: 'Front Desk Manager', role: 'frontdesk', active: true, lastLogin: '2025-10-29 14:20', permissions: [] },
-  { id: '3', username: 'auditor', name: 'Night Auditor', role: 'auditor', active: true, lastLogin: '2025-10-29 02:15', permissions: [] },
-  { id: '4', username: 'posmanager', name: 'POS Manager', role: 'posmanager', active: true, lastLogin: '2025-10-28 20:45', permissions: [] },
-  { id: '5', username: 'housekeeping', name: 'Housekeeping Supervisor', role: 'housekeeping', active: true, lastLogin: '2025-10-29 08:00', permissions: [] }
-];
 
 export const Users: React.FC = () => {
   const { users: globalUsers, loadUsers, logs, loadLogs, loading: loadingData } = useData();
@@ -301,7 +286,7 @@ export const Users: React.FC = () => {
           onSave={async (updated) => {
             setSaving(true);
             try {
-              const roleInternal = ROLE_LIST.includes(updated.role as any) ? mapStandardRoleToInternal(updated.role) : (updated.role as any);
+              const roleInternal = USER_ROLES.includes(updated.role as any) ? mapStandardRoleToInternal(updated.role) : (updated.role as any);
               const res = await authUpdateUser(updated.id, {
                 role: roleInternal as any,
                 active: updated.active,
@@ -389,7 +374,7 @@ const NewUserForm: React.FC<{ users: SystemUser[]; onCreate: (u: SystemUser) => 
     if (!isUniqueUsername(uname)) { setError('Username must be unique'); return; }
     if (!validatePasswordStrength(password)) { setError('Password must be at least 8 characters and include uppercase, lowercase, number, and symbol'); return; }
     if (password !== confirmPassword) { setError('Passwords do not match'); return; }
-    if (!ROLE_LIST.includes(role)) { setError('Please select a valid role'); return; }
+    if (!USER_ROLES.includes(role)) { setError('Please select a valid role'); return; }
     const permissions = ALL_RIGHT_KEYS.filter(k => rights[k]) as RightsKey[];
     const res = await authRegister({
       username: uname,
@@ -438,7 +423,7 @@ const NewUserForm: React.FC<{ users: SystemUser[]; onCreate: (u: SystemUser) => 
         <div className="md:col-span-2">
           <label htmlFor="newUserRole" className="block text-sm font-medium text-gray-700 mb-1">Role</label>
           <select id="newUserRole" value={role} onChange={(e) => applyRoleDefaults(e.target.value as RoleName)} className="w-full px-4 py-2 border rounded-lg">
-            {ROLE_LIST.map(r => (
+            {USER_ROLES.map(r => (
               <option key={r} value={r}>{r}</option>
             ))}
           </select>
@@ -480,7 +465,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
-const roles = [...ROLE_LIST];
+const roles = [...USER_ROLES];
 
 const EditUserDialog: React.FC<{ user: SystemUser; onClose: () => void; onSave: (u: SystemUser) => void; saving: boolean }> = ({ user, onClose, onSave, saving }) => {
   const [form, setForm] = useState<SystemUser>({ ...user });
