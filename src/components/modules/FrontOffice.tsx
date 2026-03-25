@@ -2107,8 +2107,8 @@ export const FrontOffice: React.FC = () => {
               if (!rid) continue;
               if (!roomResMap.has(rid)) roomResMap.set(rid, []);
               roomResMap.get(rid)!.push({
-                checkIn: String(res.checkIn || res.check_in_date || ''),
-                checkOut: String(res.checkOut || res.check_out_date || ''),
+                checkIn: String(res.checkIn || res.check_in_date || '').substring(0, 10),
+                checkOut: String(res.checkOut || res.check_out_date || '').substring(0, 10),
                 status: String(res.status || '').toLowerCase(),
                 guestName: String(res.guestName || ''),
               });
@@ -2143,6 +2143,9 @@ export const FrontOffice: React.FC = () => {
                 }
                 if (s === 'VD' || s === 'VACANT DIRTY' || s === 'OD' || s === 'OCCUPIED DIRTY') {
                   return { bg: 'bg-yellow-200 border-yellow-400 text-yellow-900', label: 'Dirty', title: `Dirty (${s})` };
+                }
+                if (s === 'OCC' || s === 'OCCUPIED') {
+                  return { bg: 'bg-amber-200 border-amber-400 text-amber-950', label: 'Occupied', title: 'Occupied' };
                 }
               }
 

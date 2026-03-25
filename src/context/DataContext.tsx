@@ -91,13 +91,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Handle both string and Date object formats
             if (typeof rawCheckIn === 'string') {
               // If it's an ISO string with time, extract just the date part
-              checkIn = rawCheckIn.includes('T') ? rawCheckIn.split('T')[0] : rawCheckIn;
+              // Hande both 'T' separated (ISO) and space separated (MySQL/PG)
+              if (rawCheckIn.includes('T')) {
+                checkIn = rawCheckIn.split('T')[0];
+              } else if (rawCheckIn.includes(' ')) {
+                checkIn = rawCheckIn.split(' ')[0];
+              } else {
+                checkIn = rawCheckIn;
+              }
             } else if (rawCheckIn instanceof Date) {
               // Format Date object to YYYY-MM-DD
               const year = rawCheckIn.getFullYear();
               const month = String(rawCheckIn.getMonth() + 1).padStart(2, '0');
               const day = String(rawCheckIn.getDate()).padStart(2, '0');
-              checkIn = `${year} -${month} -${day} `;
+              checkIn = `${year}-${month}-${day}`;
             } else {
               checkIn = String(rawCheckIn);
             }
@@ -108,12 +115,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const rawCheckOut = r.check_out_date || r.checkOut;
           if (rawCheckOut) {
             if (typeof rawCheckOut === 'string') {
-              checkOut = rawCheckOut.includes('T') ? rawCheckOut.split('T')[0] : rawCheckOut;
+              if (rawCheckOut.includes('T')) {
+                checkOut = rawCheckOut.split('T')[0];
+              } else if (rawCheckOut.includes(' ')) {
+                checkOut = rawCheckOut.split(' ')[0];
+              } else {
+                checkOut = rawCheckOut;
+              }
             } else if (rawCheckOut instanceof Date) {
               const year = rawCheckOut.getFullYear();
               const month = String(rawCheckOut.getMonth() + 1).padStart(2, '0');
               const day = String(rawCheckOut.getDate()).padStart(2, '0');
-              checkOut = `${year} -${month} -${day} `;
+              checkOut = `${year}-${month}-${day}`;
             } else {
               checkOut = String(rawCheckOut);
             }
