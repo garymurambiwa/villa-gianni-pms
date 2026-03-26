@@ -600,9 +600,9 @@ const DeleteConfirmDialog: React.FC<{ user: SystemUser; onCancel: () => void; on
     <AlertDialog open onOpenChange={(o) => { if (!o) onCancel(); }}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete user “{user.username}”?</AlertDialogTitle>
+          <AlertDialogTitle>Remove user “{user.username}”?</AlertDialogTitle>
           <AlertDialogDescription>
-            This action permanently removes the user. You can’t undo this.
+            This will deactivate the user and free up their username for future use. Their record will be kept for historical audit purposes.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

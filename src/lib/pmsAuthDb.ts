@@ -66,7 +66,8 @@ export const pmsAuthDb = {
         permissions TEXT[],
         two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
         two_factor_secret TEXT,
-        pos_pin VARCHAR(6)
+        pos_pin VARCHAR(6),
+        is_deleted BOOLEAN NOT NULL DEFAULT false
       );
       CREATE INDEX IF NOT EXISTS idx_app_users_username ON app_users(username);
       CREATE INDEX IF NOT EXISTS idx_app_users_email ON app_users(email);
@@ -117,8 +118,11 @@ export const pmsAuthDb = {
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_activity TIMESTAMP`); } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP`); } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pos_pin VARCHAR(6)`); } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false`); } catch { }
     try { await db.exec(`ALTER TABLE products ADD COLUMN IF NOT EXISTS visibility_stations TEXT[]`); } catch { }
     await db.exec(createLogs);
+    // [REPAIR] Ensure all existing users have is_deleted set (safe for new/existing)
+    try { await db.exec(`UPDATE app_users SET is_deleted = false WHERE is_deleted IS NULL`); } catch { }
     await db.exec(createVerifications);
     await db.exec(createLoginAttempts);
     const createAdmins = `
@@ -592,11 +596,15 @@ export const pmsAuthDb = {
     if (!username || !password || !name) return { ok: false, error: 'Missing fields' };
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
     if (!this.validateStrongPassword(password)) return { ok: false, error: 'Weak password' };
-    const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE username = ? OR email = ?`, [username, email]);
+    const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username) = LOWER(?) OR (email IS NOT NULL AND LOWER(email) = LOWER(?))`, [username, email || '']);
     if (!('error' in exists) && exists.rows && exists.rows.length > 0) return { ok: false, error: 'User exists' };
     const id = `usr_${makeUuid()}`;
     const hash = await bcrypt.hash(password, 12);
-    const ins = await db.query(`INSERT INTO app_users (id, username, email, name, role, password_hash, active, password_change_required, is_verified, created_at, updated_at, permissions) VALUES (?, ?, ?, ?, ?, ?, true, true, false, NOW(), NOW(), ?)`, [id, username, email, name, role, hash, permissions || []]);
+    const ins = await db.query(
+      `INSERT INTO app_users (id, username, email, name, role, password_hash, active, password_change_required, is_verified, created_at, updated_at, permissions, is_deleted) 
+       VALUES (?, ?, ?, ?, ?, ?, true, true, false, NOW(), NOW(), ?, false)`, 
+      [id, username, email, name, role, hash, permissions || []]
+    );
     if ('error' in ins) return { ok: false, error: ins.error };
     
     const token = makeUuid();
@@ -629,7 +637,7 @@ export const pmsAuthDb = {
 
   async listUsers(): Promise<DbUser[]> {
     console.log('[pmsAuthDb] listUsers called');
-    const res = await db.query<DbUser>(`SELECT id, username, name, email, role, active, created_at, last_login, last_activity, permissions FROM app_users ORDER BY username ASC`);
+    const res = await db.query<DbUser>(`SELECT id, username, name, email, role, active, created_at, last_login, last_activity, permissions FROM app_users WHERE is_deleted = false ORDER BY username ASC`);
     console.log('[pmsAuthDb] listUsers result:', res);
     if ('error' in res) {
       console.error('[pmsAuthDb] listUsers error:', res.error);
@@ -640,23 +648,32 @@ export const pmsAuthDb = {
 
   async deleteUser(id: string): Promise<{ ok: boolean; error?: string }> {
     try {
-      // Step 1: Remove from auxiliary tables first to avoid orphan records or FK issues
-      // (Though schema might not have formal FKs, we clean up for data integrity)
-      await db.query(`DELETE FROM profiles WHERE id = ?`, [id]);
-      await db.query(`DELETE FROM admins WHERE user_id = ?`, [id]);
-      await db.query(`DELETE FROM email_verifications WHERE user_id = ?`, [id]);
-      // Note: We keep login_attempts and access_logs for audit purposes, but 
-      // they are linked by username or id string, not a hard FK that blocks deletion.
+      // Fetch user info first to get username/email for renaming
+      const userRes = await db.query<{ username: string; email: string }>(`SELECT username, email FROM app_users WHERE id = ?`, [id]);
+      if ('error' in userRes || !userRes.rows || userRes.rows.length === 0) return { ok: false, error: 'User not found' };
+      
+      const { username, email } = userRes.rows[0];
+      const timestamp = Date.now();
+      const deletedUsername = `${username}_del_${timestamp}`;
+      const deletedEmail = email ? `${email}_del_${timestamp}` : null;
 
-      // Step 2: Remove from primary user table
-      const res = await db.query(`DELETE FROM app_users WHERE id = ?`, [id]);
+      // Soft delete: set is_deleted=true, active=false, and rename credentials to free up unique slots
+      const res = await db.query(
+        `UPDATE app_users SET is_deleted = true, active = false, username = ?, email = ?, updated_at = NOW() WHERE id = ?`,
+        [deletedUsername, deletedEmail, id]
+      );
       
       if ('error' in res) return { ok: false, error: res.error };
       
-      await this.recordAccessAttempt(id, 'user_deleted', { id });
+      // Clean up auxiliary tables if they purely represent the user's active profile
+      await db.query(`DELETE FROM email_verifications WHERE user_id = ?`, [id]);
+      // Note: We keep profiles, admins, access_logs for audit persistence.
+      // If 'admins' is used for permission check, the is_deleted check in list/auth handles it.
+
+      await this.recordAccessAttempt(id, 'user_soft_deleted', { id, originalUsername: username });
       return { ok: true };
     } catch (e: any) {
-      return { ok: false, error: e?.message || 'Failed to delete user' };
+      return { ok: false, error: e?.message || 'Failed to soft delete user' };
     }
   },
 
