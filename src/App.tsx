@@ -27,18 +27,9 @@ import { resetToDefaultRooms } from "@/lib/roomService";
 
 const queryClient = new QueryClient();
 
-// MIGRATION: 2026-02-05 - Reset rooms
-const MIGRATION_KEY = 'room_migration_2026_02_05_v2';
-try {
-  if (!localStorage.getItem(MIGRATION_KEY)) {
-    console.log('Running room migration...');
-    resetToDefaultRooms(DEFAULT_ROOMS);
-    localStorage.setItem(MIGRATION_KEY, 'true');
-    console.log('Room migration completed.');
-  }
-} catch (e) {
-  console.error('Migration failed', e);
-}
+// MIGRATION: 2026-02-05 - Reset rooms (LEGACY - DESTRUCTIVE)
+// Removed permanently to prevent data loss during Git updates.
+// Seeding is now handled safely in databaseInitializer.ts
 
 const router = createHashRouter([
   { path: "/", element: <Index /> },

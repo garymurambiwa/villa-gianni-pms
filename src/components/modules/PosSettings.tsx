@@ -30,6 +30,7 @@ import {
   fixAllItemsVisibility
 } from '@/lib/dbSync';
 import vendors from '@/lib/vendors';
+import pmsAuthDb from '@/lib/pmsAuthDb';
 
 const defaultPalette = [
   '#4f46e5',
@@ -449,6 +450,119 @@ const SubCategoriesPanel: React.FC = () => {
     </div>
   );
 };
+
+const StationManagementPanel: React.FC = () => {
+  const { toast } = useToast();
+  const [name, setName] = React.useState('');
+  const [description, setDescription] = React.useState('');
+  const [stations, setStations] = React.useState<Array<{ id: string; name: string; description?: string; active: boolean }>>([]);
+  const [loading, setLoading] = React.useState(false);
+
+  const loadStations = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await pmsAuthDb.listCostCentres();
+      setStations(data);
+    } catch (err) {
+      toast({ title: 'Error', description: 'Failed to load stations', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  React.useEffect(() => {
+    loadStations();
+  }, [loadStations]);
+
+  const handleAdd = async () => {
+    if (!name.trim()) {
+      toast({ title: 'Validation Error', description: 'Station name is required', variant: 'destructive' });
+      return;
+    }
+    try {
+      const res = await pmsAuthDb.addCostCentre(name.trim(), description.trim());
+      if (res.ok) {
+        toast({ title: 'Success', description: `Station "${name}" created` });
+        setName('');
+        setDescription('');
+        loadStations();
+      } else {
+        toast({ title: 'Error', description: res.error || 'Failed to add station', variant: 'destructive' });
+      }
+    } catch (err) {
+      toast({ title: 'Error', description: 'Failed to add station', variant: 'destructive' });
+    }
+  };
+
+  const handleDelete = async (id: string, stationName: string) => {
+    if (!window.confirm(`Are you sure you want to deactivate station "${stationName}"?`)) return;
+    try {
+      const res = await pmsAuthDb.deleteCostCentre(id);
+      if (res.ok) {
+        toast({ title: 'Success', description: 'Station deactivated' });
+        loadStations();
+      } else {
+        toast({ title: 'Error', description: res.error || 'Failed to deactivate station', variant: 'destructive' });
+      }
+    } catch (err) {
+      toast({ title: 'Error', description: 'Failed to deactivate station', variant: 'destructive' });
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+        <div className="md:col-span-1">
+          <Label className="text-xs">Station Name</Label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Pool Bar" />
+        </div>
+        <div className="md:col-span-1">
+          <Label className="text-xs">Description (Optional)</Label>
+          <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Outdoor outlet" />
+        </div>
+        <Button className="bg-indigo-600 text-white" onClick={handleAdd}>Add Station</Button>
+      </div>
+
+      <div className="mt-4 border rounded overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b">
+            <tr>
+              <th className="p-2 text-left">Name</th>
+              <th className="p-2 text-left">Description</th>
+              <th className="p-2 text-center">Status</th>
+              <th className="p-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={4} className="p-4 text-center text-gray-500">Loading stations...</td></tr>
+            ) : stations.length === 0 ? (
+              <tr><td colSpan={4} className="p-4 text-center text-gray-500">No stations configured.</td></tr>
+            ) : stations.map((s) => (
+              <tr key={s.id} className="border-b hover:bg-gray-50">
+                <td className="p-2 font-medium">{s.name}</td>
+                <td className="p-2 text-gray-600">{s.description || '—'}</td>
+                <td className="p-2 text-center">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] ${s.active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {s.active ? 'Active' : 'Inactive'}
+                  </span>
+                </td>
+                <td className="p-2 text-right">
+                  {s.active && (
+                    <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 h-8" onClick={() => handleDelete(s.id, s.name)}>
+                      Deactivate
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 export const PosSettings: React.FC = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -482,16 +596,18 @@ export const PosSettings: React.FC = () => {
   };
 
   // Vendor creation handler
-  const handleAddVendor = () => {
+  const handleAddVendor = async () => {
     if (!vendorName.trim()) {
       toast({ title: 'Validation Error', description: 'Vendor name is required', variant: 'destructive' });
       return;
     }
 
     try {
-      const newVendor = vendors.addVendor(vendorName.trim(), 'USD', vendorTerms.trim() || 'Net 30');
-      log('VENDOR_CREATE', { vendorId: newVendor.id, vendorName: newVendor.name });
-      toast({ title: 'Success', description: `Vendor "${newVendor.name}" created successfully` });
+      const newVendor = await vendors.addVendor(vendorName.trim(), 'USD', vendorTerms.trim() || 'Net 30');
+      if (newVendor) {
+        log('VENDOR_CREATE', { vendorId: newVendor.id, vendorName: newVendor.name });
+        toast({ title: 'Success', description: `Vendor "${newVendor.name}" created successfully` });
+      }
 
       // Reset form
       setVendorName('');
@@ -523,6 +639,7 @@ export const PosSettings: React.FC = () => {
       { id: 'pos-reporting-tools', label: 'POS Reporting Tools' },
       { id: 'data-migration', label: 'Data Migration' },
       { id: 'category-gaps', label: 'Category Gaps' },
+      { id: 'station-management', label: 'Station Management (Cost Centres)' },
       { id: 'pos-user-rights', label: 'POS User Rights Management' },
     ],
     menu: [
@@ -1775,6 +1892,13 @@ export const PosSettings: React.FC = () => {
               </div>
             );
           })()}
+        </Section>
+      )}
+
+      {activeTab === 'admin' && activeSectionId === 'station-management' && (
+        <Section id="station-management" title="Station Management (Cost Centres)">
+          <div className="text-xs text-gray-600 mb-2">Configure POS outlets and cost centres. These stations will be available for shift selection and order tracking.</div>
+          <StationManagementPanel />
         </Section>
       )}
 

@@ -95,6 +95,10 @@ const VendorManagement: React.FC = () => {
   const [isRecordingBill, setIsRecordingBill] = useState(false);
   const [selectedInvoiceGroup, setSelectedInvoiceGroup] = useState<any | null>(null);
   const [showBillDetailModal, setShowBillDetailModal] = useState(false);
+  const [showEditVendorModal, setShowEditVendorModal] = useState(false);
+  const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
+  const [showDeleteVendorConfirm, setShowDeleteVendorConfirm] = useState(false);
+  const [vendorToDelete, setVendorToDelete] = useState<Vendor | null>(null);
 
   // Vendor form state
   const [vendorForm, setVendorForm] = useState({
@@ -167,6 +171,68 @@ const VendorManagement: React.FC = () => {
         status: 'active'
       });
       setShowAddVendorModal(false);
+    }
+  };
+
+  const handleEditVendor = (vendor: Vendor) => {
+    setEditingVendor(vendor);
+    setVendorForm({
+      name: vendor.name,
+      contact_person: vendor.contact_person || '',
+      phone: vendor.phone || '',
+      email: vendor.email || '',
+      address: vendor.address || '',
+      tax_id: vendor.tax_id || '',
+      payment_terms: vendor.payment_terms || 'Net 30',
+      credit_limit: vendor.credit_limit || 0,
+      current_balance: vendor.current_balance || 0,
+      status: vendor.status || 'active'
+    });
+    setShowEditVendorModal(true);
+  };
+
+  const handleUpdateVendor = async () => {
+    if (!editingVendor) return;
+    if (!vendorForm.name.trim()) {
+      toast({ title: 'Validation Error', description: 'Vendor name is required', variant: 'destructive' });
+      return;
+    }
+
+    const success = await updateVendor(editingVendor.id, vendorForm);
+    if (success) {
+      toast({ title: 'Success', description: `Vendor "${vendorForm.name}" updated successfully` });
+      setVendorForm({
+        name: '',
+        contact_person: '',
+        phone: '',
+        email: '',
+        address: '',
+        tax_id: '',
+        payment_terms: 'Net 30',
+        credit_limit: 0,
+        current_balance: 0,
+        status: 'active'
+      });
+      setEditingVendor(null);
+      setShowEditVendorModal(false);
+    }
+  };
+
+  const handleDeleteVendor = (vendor: Vendor) => {
+    setVendorToDelete(vendor);
+    setShowDeleteVendorConfirm(true);
+  };
+
+  const confirmDeleteVendor = async () => {
+    if (!vendorToDelete) return;
+
+    const success = await deleteVendor(vendorToDelete.id);
+    if (success) {
+      toast({ title: 'Success', description: `Vendor "${vendorToDelete.name}" deleted successfully` });
+      setVendorToDelete(null);
+      setShowDeleteVendorConfirm(false);
+    } else {
+      toast({ title: 'Error', description: 'Failed to delete vendor. Please try again.', variant: 'destructive' });
     }
   };
 
@@ -714,6 +780,139 @@ const VendorManagement: React.FC = () => {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Edit Vendor Modal */}
+        <Dialog open={showEditVendorModal} onOpenChange={setShowEditVendorModal}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Edit Vendor</DialogTitle>
+            </DialogHeader>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="edit-name">Vendor Name *</Label>
+                <Input
+                  id="edit-name"
+                  value={vendorForm.name}
+                  onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })}
+                  placeholder="Enter vendor name"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-contact_person">Contact Person</Label>
+                <Input
+                  id="edit-contact_person"
+                  value={vendorForm.contact_person}
+                  onChange={(e) => setVendorForm({ ...vendorForm, contact_person: e.target.value })}
+                  placeholder="Contact person"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-phone">Phone</Label>
+                <Input
+                  id="edit-phone"
+                  value={vendorForm.phone}
+                  onChange={(e) => setVendorForm({ ...vendorForm, phone: e.target.value })}
+                  placeholder="Phone number"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-email">Email</Label>
+                <Input
+                  id="edit-email"
+                  type="email"
+                  value={vendorForm.email}
+                  onChange={(e) => setVendorForm({ ...vendorForm, email: e.target.value })}
+                  placeholder="Email address"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-address">Address</Label>
+                <Input
+                  id="edit-address"
+                  value={vendorForm.address}
+                  onChange={(e) => setVendorForm({ ...vendorForm, address: e.target.value })}
+                  placeholder="Address"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-tax_id">Tax ID</Label>
+                <Input
+                  id="edit-tax_id"
+                  value={vendorForm.tax_id}
+                  onChange={(e) => setVendorForm({ ...vendorForm, tax_id: e.target.value })}
+                  placeholder="Tax ID"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-payment_terms">Payment Terms</Label>
+                <Select
+                  value={vendorForm.payment_terms}
+                  onValueChange={(value) => setVendorForm({ ...vendorForm, payment_terms: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Net 30">Net 30</SelectItem>
+                    <SelectItem value="Net 60">Net 60</SelectItem>
+                    <SelectItem value="Due on Receipt">Due on Receipt</SelectItem>
+                    <SelectItem value="COD">COD</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="edit-credit_limit">Credit Limit</Label>
+                <Input
+                  id="edit-credit_limit"
+                  type="number"
+                  value={vendorForm.credit_limit}
+                  onChange={(e) => setVendorForm({ ...vendorForm, credit_limit: parseFloat(e.target.value) || 0 })}
+                  placeholder="Credit limit"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-status">Status</Label>
+                <Select
+                  value={vendorForm.status}
+                  onValueChange={(value) => setVendorForm({ ...vendorForm, status: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex justify-end space-x-2 pt-4">
+              <Button variant="outline" onClick={() => { setShowEditVendorModal(false); setEditingVendor(null); }}>Cancel</Button>
+              <Button onClick={handleUpdateVendor}>Update Vendor</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Vendor Confirmation Dialog */}
+        <Dialog open={showDeleteVendorConfirm} onOpenChange={setShowDeleteVendorConfirm}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Confirm Delete Vendor</DialogTitle>
+            </DialogHeader>
+            <div className="py-4">
+              <p className="text-gray-700">
+                Are you sure you want to delete vendor <strong>{vendorToDelete?.name}</strong>?
+              </p>
+              <p className="text-sm text-red-600 mt-2">
+                This action cannot be undone. All associated data including expenses and payments will be permanently removed.
+              </p>
+            </div>
+            <div className="flex justify-end space-x-2">
+              <Button variant="outline" onClick={() => { setShowDeleteVendorConfirm(false); setVendorToDelete(null); }}>Cancel</Button>
+              <Button variant="destructive" onClick={confirmDeleteVendor}>Delete Vendor</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -738,6 +937,7 @@ const VendorManagement: React.FC = () => {
                     <TableHead>Email</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Balance</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -749,11 +949,29 @@ const VendorManagement: React.FC = () => {
                       <TableCell>{vendor.email}</TableCell>
                       <TableCell>{vendor.status}</TableCell>
                       <TableCell>${vendor.current_balance.toFixed(2)}</TableCell>
+                      <TableCell>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleEditVendor(vendor)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleDeleteVendor(vendor)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
                   ))}
                   {vendors.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-gray-500 py-8">
+                      <TableCell colSpan={7} className="text-center text-gray-500 py-8">
                         No vendors found. Add a vendor to get started.
                       </TableCell>
                     </TableRow>
@@ -1213,16 +1431,16 @@ const VendorManagement: React.FC = () => {
                   onMarkPaid={async (referenceNumber) => {
                     const expensesToUpdate = filteredExpenses.filter(e => e.reference_number === referenceNumber && e.status !== 'paid');
                     if (expensesToUpdate.length === 0) return;
-                    
+
                     let totalCost = 0;
                     const expenseIds: string[] = [];
-                    
+
                     for (const exp of expensesToUpdate) {
                       await updateVendorExpense(exp.id, { ...exp, status: 'paid' });
                       totalCost += exp.total_cost;
                       expenseIds.push(exp.id);
                     }
-                    
+
                     const paymentData = {
                       vendor_id: expensesToUpdate[0].vendor_id,
                       expense_ids: expenseIds.join(','),
@@ -1232,7 +1450,7 @@ const VendorManagement: React.FC = () => {
                       reference_number: `PAY-${Date.now()}`,
                       notes: `Payment for invoice ${referenceNumber}`
                     };
-                    
+
                     const paymentSuccess = await payVendor(paymentData);
                     if (paymentSuccess) {
                       toast({ title: 'Payment Processed', description: `Invoice ${referenceNumber} marked as paid` });

@@ -668,13 +668,37 @@ export const pmsAuthDb = {
     }
   },
 
-  async listCostCentres(): Promise<Array<{ id: string; name: string }>> {
+  async listCostCentres(): Promise<Array<{ id: string; name: string; description?: string; active: boolean }>> {
     try {
-      const res = await db.query<{ id: string; name: string }>(`SELECT id, name FROM cost_centres WHERE active = true ORDER BY name ASC`);
+      const res = await db.query<{ id: string; name: string; description?: string; active: boolean }>(`SELECT id, name, description, active FROM cost_centres ORDER BY name ASC`);
       if ('error' in res || !res.rows) return [];
       return res.rows;
     } catch {
       return [];
+    }
+  },
+
+  async addCostCentre(name: string, description?: string): Promise<{ ok: boolean; error?: string; id?: string }> {
+    try {
+      const id = makeUuid();
+      const res = await db.query(
+        `INSERT INTO cost_centres (id, name, description) VALUES (?, ?, ?)`,
+        [id, name, description || null]
+      );
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true, id };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to add cost centre' };
+    }
+  },
+
+  async deleteCostCentre(id: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await db.query(`UPDATE cost_centres SET active = false WHERE id = ?`, [id]);
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to delete cost centre' };
     }
   }
 }

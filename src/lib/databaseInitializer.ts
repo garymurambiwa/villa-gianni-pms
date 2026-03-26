@@ -1,6 +1,7 @@
 import db from '@/lib/db'
 import { adminPermissionFixService } from '@/lib/adminPermissionFixService'
 import pmsAuthDb from '@/lib/pmsAuthDb'
+import { DEFAULT_ROOMS } from '@/data/defaultRooms'
 
 export async function initializeDatabase(): Promise<{ ok: boolean; message?: string; error?: string }> {
   try {
@@ -148,8 +149,28 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
       await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS pos_open_unique ON pos_orders(table_number, cost_center) WHERE status = 'open'`)
     } catch (e) { /* ignore if exists */ }
 
-    // Note: No seed data is inserted - rooms and POS items will be empty
-    // User should add their own data through the application
+    // Safe room seeding: Only seed if the table is empty
+    try {
+      const roomCountRes = await db.query('SELECT COUNT(*) FROM rooms');
+      const count = parseInt((roomCountRes as any).rows[0].count);
+      
+      if (count === 0) {
+        console.log('DatabaseInitializer: Seeding default rooms...');
+        for (const room of DEFAULT_ROOMS) {
+          await db.query(
+            'INSERT INTO rooms (id, number, type, floor, rate, status) VALUES (?, ?, ?, ?, ?, ?)',
+            [room.id, room.number, room.type, room.floor || 1, room.rate, room.status]
+          );
+        }
+        console.log('DatabaseInitializer: Seeding completed.');
+      } else {
+        console.log('DatabaseInitializer: Rooms already exist, skipping seed.');
+      }
+    } catch (e) {
+      console.error('DatabaseInitializer: Room seeding failed:', e);
+    }
+    
+    // Note: User can add their own data through the application
     
     return { ok: true, message: 'DB initialized successfully' }
   } catch (e: any) {
