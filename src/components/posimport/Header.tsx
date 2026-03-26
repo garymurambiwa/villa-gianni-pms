@@ -6,17 +6,20 @@ import { Button } from '../ui/button';
 import { StartShiftModal } from './StartShiftModal';
 import { ShiftReportModal } from './ShiftReportModal';
 import { ShiftClosureModal } from '../pos/ShiftClosureModal';
+import { PINModal } from '../pos/PINModal';
 import { ShiftReading } from '../../types';
 import { canManagePOS } from '../../lib/permissions';
 // import BackOfficeSettings from './BackOfficeSettings';
 
 export const Header: React.FC = () => {
-  const { user, logout, costCentre, setCostCentre } = useAuth();
+  const { user, logout, costCentre, setCostCentre, verifyPosPin } = useAuth();
   const { settings: appSettings } = useSettings();
   const { activeShift, generateXReading, getTotals } = useShift();
   const [showStartModal, setShowStartModal] = useState(false);
   const [showClosureModal, setShowClosureModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinPurpose, setPinPurpose] = useState<'start' | 'switch' | null>(null);
   const [currentReading, setCurrentReading] = useState<ShiftReading | null>(null);
   // const [showSettings, setShowSettings] = useState(false);
 
@@ -38,6 +41,17 @@ export const Header: React.FC = () => {
     setCurrentReading(zReading);
     setShowReportModal(true);
     setShowClosureModal(false);
+  };
+
+  const handlePinSuccess = () => {
+    setShowPinModal(false);
+    if (pinPurpose === 'start') {
+      setShowStartModal(true);
+    } else if (pinPurpose === 'switch') {
+      setCostCentre(null); // This will trigger the CostCentrePicker if we have one or just clear it.
+      // Wait, let's just use navigateToModule or something if needed.
+    }
+    setPinPurpose(null);
   };
 
   // Brand logo fallback (shared with BrandHeader defaults)
@@ -94,7 +108,7 @@ export const Header: React.FC = () => {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setShowStartModal(true)}
+                    onClick={() => { setPinPurpose('start'); setShowPinModal(true); }}
                     className="bg-red-600 hover:bg-red-700 border-red-600 text-current hover:text-current transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
                   >
                     Start Shift
@@ -167,7 +181,7 @@ export const Header: React.FC = () => {
                     Station: <span className="font-bold text-white">{costCentre || 'Not Selected'}</span>
                   </div>
                   <button 
-                    onClick={() => setCostCentre(null)}
+                    onClick={() => { setPinPurpose('switch'); setShowPinModal(true); }}
                     className="text-[10px] text-purple-300 hover:text-white underline decoration-purple-400 underline-offset-2 transition-colors"
                   >
                     Switch
@@ -201,6 +215,12 @@ export const Header: React.FC = () => {
       />
 
 
+      <PINModal
+        isOpen={showPinModal}
+        onClose={() => setShowPinModal(false)}
+        onSuccess={handlePinSuccess}
+        verifyPin={verifyPosPin}
+      />
     </>
   );
 };

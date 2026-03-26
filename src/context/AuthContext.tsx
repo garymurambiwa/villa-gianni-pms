@@ -28,6 +28,9 @@ interface AuthContextType {
   logout: () => void;
   updateProfile: (patch: Partial<{ name?: string; phone?: string }>) => Promise<{ ok: boolean; error?: string }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ ok: boolean; error?: string }>;
+  verifyPosPin: (pin: string) => Promise<{ success: boolean; user?: User; error?: string }>;
+  isLocked: boolean;
+  setIsLocked: (locked: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -37,6 +40,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try { return localStorage.getItem('pms_selected_cost_centre'); } catch { return null; }
   });
   const [shiftId, setShiftId] = useState<string | null>(null);
+  const [isLocked, setIsLocked] = useState(false);
 
   const setCostCentre = (cc: string | null) => {
     setCostCentreState(cc);
@@ -291,8 +295,37 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return auth.changePassword(user.id, currentPassword, newPassword);
   };
 
+  const verifyPosPin = async (pin: string): Promise<{ success: boolean; user?: User; error?: string }> => {
+    try {
+      if (await db.isConfigured()) {
+        const res = await pmsAuthDb.verifyPosPin(pin);
+        if (res.ok && res.user) {
+          const authUser = {
+            id: res.user.id,
+            username: res.user.username,
+            name: res.user.name,
+            role: res.user.role as any,
+            propertyId: 'P001',
+            active: res.user.active,
+            authProvider: 'db'
+          } as User;
+          return { success: true, user: authUser };
+        }
+        return { success: false, error: res.error || 'Invalid PIN' };
+      }
+      return { success: false, error: 'Database not configured' };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Verification failed' };
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, costCentre, shiftId, setCostCentre, setShiftId, login, register, requestPasswordReset, resetPassword, logout, updateProfile, changePassword }}>
+    <AuthContext.Provider value={{ 
+      user, costCentre, shiftId, isLocked, setIsLocked,
+      setCostCentre, setShiftId, verifyPosPin, 
+      login, register, requestPasswordReset, resetPassword, 
+      logout, updateProfile, changePassword 
+    }}>
       {children}
     </AuthContext.Provider>
   );

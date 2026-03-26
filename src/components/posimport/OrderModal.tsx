@@ -1,12 +1,15 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { formatCurrency, getMenuItemsFromPOSStore } from '@/lib/posIntegration';
+import { formatCurrency, getMenuItems } from '@/lib/posIntegration';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import pmsAuthDb from '@/lib/pmsAuthDb';
 import menuCats, { SubTreeNode, SubCategory } from '@/lib/menuCategories';
 import cocktailEng from '@/lib/cocktailEngineering';
 import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 
 export interface MenuItem {
@@ -48,15 +51,7 @@ interface OrderModalProps {
 export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClose, onSave, menuItems }) => {
   const [items, setItems] = useState<BillItem[]>(bill?.items || []);
   const [activeCategory, setActiveCategory] = useState<'food' | 'bar'>('food');
-  const [dynamicMenu, setDynamicMenu] = useState<MenuItem[]>(() => {
-    try {
-      if (Array.isArray(menuItems) && menuItems.length) return menuItems;
-      const fromStore = getMenuItemsFromPOSStore() as MenuItem[];
-      return Array.isArray(fromStore) ? fromStore : [];
-    } catch {
-      return [];
-    }
-  });
+  const [dynamicMenu, setDynamicMenu] = useState<MenuItem[]>([]);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const { toast } = useToast();
   const [subTree, setSubTree] = useState<SubTreeNode[]>([]);
@@ -159,19 +154,10 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
 
       // Save to database
       const { db } = await import('@/lib/db');
-      await db.query(
-        `INSERT INTO products (id, name, price, cost_price, unit, visibility, department, category, category_id, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, true, NOW(), NOW())`,
-        [
-          newItem.id, 
-          newItem.name, 
-          newItem.price, 
-          Number(quickAddCostPrice) || 0,
-          quickAddUnit,
-          quickAddVisibility,
-          activeCategory === 'bar' ? 'Bar' : 'Restaurant', 
-          newItem.category, 
-          newItem.category_id
-        ]
+      const res = await db.query(
+        `INSERT INTO products (id, name, price, cost_price, unit, visibility, visibility_stations, category_id, is_stock_item, active) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true)`,
+        [newItem.id, quickAddName, Number(quickAddPrice), Number(quickAddCostPrice), quickAddUnit, JSON.stringify(quickAddStations), quickAddCategory]
       );
 
       toast({ title: 'Item Added', description: `${newItem.name} has been added to the menu.` });
@@ -180,8 +166,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
       setQuickAddPrice('');
       setQuickAddCategory('');
       setQuickAddCostPrice('');
-      setQuickAddVisibility('POS');
+      setQuickAddVisibility('POS Only');
       setQuickAddUnit('pcs');
+      setQuickAddStations([]);
     } catch (err) {
       console.error('Failed to add item:', err);
       toast({ title: 'Add Failed', description: 'Could not add item to database.', variant: 'destructive' });
@@ -194,8 +181,14 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [quickAddPrice, setQuickAddPrice] = useState('');
   const [quickAddCategory, setQuickAddCategory] = useState<string>('');
   const [quickAddCostPrice, setQuickAddCostPrice] = useState('');
-  const [quickAddVisibility, setQuickAddVisibility] = useState('POS');
+  const [quickAddVisibility, setQuickAddVisibility] = useState('POS Only');
   const [quickAddUnit, setQuickAddUnit] = useState('pcs');
+  const [quickAddStations, setQuickAddStations] = useState<string[]>([]);
+  const [availableStations, setAvailableStations] = useState<Array<{ id: string; name: string }>>([]);
+
+  useEffect(() => {
+    pmsAuthDb.listCostCentres().then(setAvailableStations);
+  }, []);
 
   // Context Menu state for item editing
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: MenuItem } | null>(null);
@@ -208,14 +201,19 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
 
   // Sync dynamicMenu with menuItems prop when it changes (asynchronously via FrontOffice API)
   useEffect(() => {
-    if (menuItems && menuItems.length > 0) {
-      setDynamicMenu(menuItems);
-    } else {
-      const fromStore = getMenuItemsFromPOSStore() as MenuItem[];
-      if (Array.isArray(fromStore) && fromStore.length > 0) {
-        setDynamicMenu(fromStore);
+    const refresh = async () => {
+      if (menuItems && menuItems.length > 0) {
+        setDynamicMenu(menuItems);
+      } else {
+        try {
+          const fromStore = await getMenuItems();
+          if (Array.isArray(fromStore) && fromStore.length > 0) {
+            setDynamicMenu(fromStore as any);
+          }
+        } catch { }
       }
-    }
+    };
+    refresh();
   }, [menuItems]);
 
   // Build categories for current department and select first by default
@@ -803,14 +801,52 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
               </div>
               <div>
                 <Label>Visibility</Label>
+                <div className="mt-1">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className="w-full justify-start text-left font-normal">
+                        {quickAddStations.length > 0 
+                          ? `${quickAddStations.length} Stations Selected` 
+                          : "Select Stations"}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-64 p-2">
+                      <div className="space-y-2">
+                        {availableStations.map(station => (
+                          <div key={station.id} className="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded">
+                            <Checkbox 
+                              id={`station-${station.id}`}
+                              checked={quickAddStations.includes(station.id)}
+                              onCheckedChange={(checked) => {
+                                if (checked) setQuickAddStations(prev => [...prev, station.id]);
+                                else setQuickAddStations(prev => prev.filter(id => id !== station.id));
+                              }}
+                            />
+                            <Label htmlFor={`station-${station.id}`} className="flex-1 cursor-pointer">
+                              {station.name}
+                            </Label>
+                          </div>
+                        ))}
+                        {availableStations.length === 0 && (
+                          <div className="text-xs text-slate-400 p-2 italic">
+                            No stations configured
+                          </div>
+                        )}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+              <div>
+                <Label>Legacy Visibility</Label>
                 <Select value={quickAddVisibility} onValueChange={setQuickAddVisibility}>
                   <SelectTrigger>
                     <SelectValue placeholder="Visibility" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="POS">POS Only</SelectItem>
-                    <SelectItem value="WEB">Web Only</SelectItem>
-                    <SelectItem value="BOTH">POS & Web</SelectItem>
+                    <SelectItem value="POS Only">POS Only</SelectItem>
+                    <SelectItem value="Web Only">Web Only</SelectItem>
+                    <SelectItem value="Both">Both</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

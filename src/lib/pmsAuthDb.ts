@@ -53,7 +53,8 @@ export const pmsAuthDb = {
         last_login TIMESTAMP,
         permissions TEXT[],
         two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
-        two_factor_secret TEXT
+        two_factor_secret TEXT,
+        pos_pin VARCHAR(6)
       );
       CREATE INDEX IF NOT EXISTS idx_app_users_username ON app_users(username);
       CREATE INDEX IF NOT EXISTS idx_app_users_email ON app_users(email);
@@ -103,6 +104,8 @@ export const pmsAuthDb = {
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS permissions TEXT[]`); } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_activity TIMESTAMP`); } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP`); } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pos_pin VARCHAR(6)`); } catch { }
+    try { await db.exec(`ALTER TABLE products ADD COLUMN IF NOT EXISTS visibility_stations TEXT[]`); } catch { }
     await db.exec(createLogs);
     await db.exec(createVerifications);
     await db.exec(createLoginAttempts);
@@ -255,12 +258,22 @@ export const pmsAuthDb = {
       CREATE INDEX IF NOT EXISTS taxes_active_idx ON taxes(active);
       CREATE INDEX IF NOT EXISTS taxes_applies_idx ON taxes(applies_to);
     `;
+    const createCostCentres = `
+      CREATE TABLE IF NOT EXISTS cost_centres (
+        id VARCHAR(36) PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        active BOOLEAN DEFAULT true,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
     await db.exec(createAdmins);
     await db.exec(createProfiles);
     await db.exec(createPrinterConfigs);
     await db.exec(createRooms);
     await db.exec(createGuests);
     await db.exec(createReservations);
+    await db.exec(createCostCentres);
     try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_inserted_at_idx ON reservations(inserted_at)`) } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_guest_idx ON reservations(guest_id)`) } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_room_idx ON reservations(room_id)`) } catch { }
@@ -636,6 +649,32 @@ export const pmsAuthDb = {
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: e?.message || 'Failed to update user' };
+    }
+  },
+
+  async verifyPosPin(pin: string): Promise<{ ok: boolean; user?: DbUser; error?: string }> {
+    try {
+      const res = await db.query<DbUser>(
+        `SELECT id, username, name, role, active, permissions FROM app_users WHERE pos_pin = ? AND active = true`,
+        [pin]
+      );
+      if ('error' in res) return { ok: false, error: res.error };
+      if (!res.rows || res.rows.length === 0) {
+        return { ok: false, error: 'Invalid PIN' };
+      }
+      return { ok: true, user: res.rows[0] };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Verification failed' };
+    }
+  },
+
+  async listCostCentres(): Promise<Array<{ id: string; name: string }>> {
+    try {
+      const res = await db.query<{ id: string; name: string }>(`SELECT id, name FROM cost_centres WHERE active = true ORDER BY name ASC`);
+      if ('error' in res || !res.rows) return [];
+      return res.rows;
+    } catch {
+      return [];
     }
   }
 }

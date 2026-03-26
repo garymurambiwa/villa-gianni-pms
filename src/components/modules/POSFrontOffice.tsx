@@ -9,6 +9,8 @@ import { OrderModal } from '@/components/posimport/OrderModal';
 import { PaymentModal } from '@/components/pos/POSIntegrationComponents';
 import { BillSummary, QuickActions } from '@/components/pos/POSIntegrationComponents';
 import { getMenuItems } from '@/lib/posIntegration';
+import { useInactivityTimeout } from '@/hooks/useInactivityTimeout';
+import { PINModal } from '@/components/pos/PINModal';
 import { generateReceiptHTML } from '@/lib/posIntegration';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -21,7 +23,14 @@ import { db } from '@/lib/db';
 export const POSFrontOffice: React.FC = () => {
   const { guests, recordFolioCharge, removeFolioCharge, loading, posOrders, savePosOrder, closePosOrder } = useData();
   const { activeShift, startShift, endShift, getTotals, addTransaction } = useShift();
-  const { user, costCentre, shiftId } = useAuth();
+  const { user, costCentre, shiftId, isLocked, setIsLocked, verifyPosPin } = useAuth();
+
+  // 90-second inactivity timeout
+  useInactivityTimeout(90000, () => {
+    if (activeShift && costCentre) {
+      setIsLocked(true);
+    }
+  }, !!activeShift && !!costCentre && !isLocked);
 
   const [mountLoading, setMountLoading] = useState<boolean>(false);
   const [tables, setTables] = useState<Array<{ id: string; number: number; status: 'available' | 'occupied' | 'suspended'; currentBill?: any }>>(
@@ -561,6 +570,15 @@ export const POSFrontOffice: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
+
+      {/* PIN Lock Overlay */}
+      <PINModal
+        isOpen={isLocked}
+        onClose={() => {}} // User cannot close without PIN
+        onSuccess={() => setIsLocked(false)}
+        title="POS Session Locked"
+        verifyPin={verifyPosPin}
+      />
 
       <div className="p-6">
         {(isLoading || mountLoading) && (
