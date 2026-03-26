@@ -62,6 +62,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [subTree, setSubTree] = useState<SubTreeNode[]>([]);
   const [subPath, setSubPath] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [itemSize, setItemSize] = useState<'sm' | 'md' | 'lg'>('md');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Close context menu when clicking elsewhere
@@ -159,8 +160,18 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
       // Save to database
       const { db } = await import('@/lib/db');
       await db.query(
-        `INSERT INTO products (id, name, price, department, category, category_id, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, true, NOW(), NOW())`,
-        [newItem.id, newItem.name, newItem.price, activeCategory === 'bar' ? 'Bar' : 'Restaurant', newItem.category, newItem.category_id]
+        `INSERT INTO products (id, name, price, cost_price, unit, visibility, department, category, category_id, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, true, NOW(), NOW())`,
+        [
+          newItem.id, 
+          newItem.name, 
+          newItem.price, 
+          Number(quickAddCostPrice) || 0,
+          quickAddUnit,
+          quickAddVisibility,
+          activeCategory === 'bar' ? 'Bar' : 'Restaurant', 
+          newItem.category, 
+          newItem.category_id
+        ]
       );
 
       toast({ title: 'Item Added', description: `${newItem.name} has been added to the menu.` });
@@ -168,6 +179,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
       setQuickAddName('');
       setQuickAddPrice('');
       setQuickAddCategory('');
+      setQuickAddCostPrice('');
+      setQuickAddVisibility('POS');
+      setQuickAddUnit('pcs');
     } catch (err) {
       console.error('Failed to add item:', err);
       toast({ title: 'Add Failed', description: 'Could not add item to database.', variant: 'destructive' });
@@ -179,6 +193,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [quickAddName, setQuickAddName] = useState('');
   const [quickAddPrice, setQuickAddPrice] = useState('');
   const [quickAddCategory, setQuickAddCategory] = useState<string>('');
+  const [quickAddCostPrice, setQuickAddCostPrice] = useState('');
+  const [quickAddVisibility, setQuickAddVisibility] = useState('POS');
+  const [quickAddUnit, setQuickAddUnit] = useState('pcs');
 
   // Context Menu state for item editing
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: MenuItem } | null>(null);
@@ -240,7 +257,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
     }
     return null;
   };
-  const getCurrentLevel = (): MenuItem[] => {
+  const getCurrentLevel = (): any[] => {
     if (!subPath.length) return subTree;
     const cur = findNode(subTree, subPath[subPath.length - 1]);
     return cur?.children || [];
@@ -265,8 +282,10 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
       setItems([...items, { menuItem, quantity: 1, subtotal: menuItem.price, preparation_level: 'n/a', manual_notes: '' }]);
     }
     try {
-      const res = cocktailEng.decrementIngredientsForCocktail(menuItem.id, 1);
-      if (res.alerts.length) toast({ title: 'Low stock', description: res.alerts.join(' • ') });
+      (async () => {
+        const res = await cocktailEng.decrementIngredientsForCocktail(menuItem.id, 1);
+        if (res.alerts.length) toast({ title: 'Low stock', description: res.alerts.join(' • ') });
+      })();
     } catch (e) {
       console.warn('[OrderModal] Ingredient decrement failed:', e);
     }
@@ -349,14 +368,42 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const displayItems = isSearching ? searchResults : subFilteredMenu;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
-        <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-6">
-          <h2 className="text-3xl font-bold">Table {tableNumber} - Order</h2>
+    <div className="fixed inset-0 bg-white z-50 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 flex justify-between items-center shadow-md">
+          <h2 className="text-2xl font-bold">Table {tableNumber} - Order</h2>
+          <div className="flex items-center gap-4">
+            <div className="flex bg-white/20 p-1 rounded-lg">
+              <button
+                onClick={() => setItemSize('sm')}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${itemSize === 'sm' ? 'bg-white text-purple-600 shadow-sm' : 'text-white hover:bg-white/10'}`}
+              >
+                Small
+              </button>
+              <button
+                onClick={() => setItemSize('md')}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${itemSize === 'md' ? 'bg-white text-purple-600 shadow-sm' : 'text-white hover:bg-white/10'}`}
+              >
+                Medium
+              </button>
+              <button
+                onClick={() => setItemSize('lg')}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${itemSize === 'lg' ? 'bg-white text-purple-600 shadow-sm' : 'text-white hover:bg-white/10'}`}
+              >
+                Large
+              </button>
+            </div>
+            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
 
-        <div className="flex h-[calc(90vh-200px)]">
-          <div className="w-2/3 p-6 overflow-y-auto border-r">
+        <div className="flex flex-1 overflow-hidden">
+          <div className="w-2/3 p-4 flex flex-col border-r h-full">
+            <div className="overflow-y-auto pr-2 pb-20">
             {/* Search bar */}
             <div className="mb-4 relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -472,7 +519,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 </div>
                 <div className="overflow-x-auto">
                   <div className="flex items-center gap-2">
-                    {getCurrentLevel().length ? getCurrentLevel().map((n: SubTreeNode) => (
+                    {getCurrentLevel().length ? getCurrentLevel().map((n: any) => (
                       <Button key={n.sub_id} variant={subPath[subPath.length - 1] === n.sub_id ? 'default' : 'outline'} onClick={() => setSubPath(prev => [...prev, n.sub_id])}>{n.name}</Button>
                     )) : (
                       <div className="text-xs text-gray-600">No sub-categories</div>
@@ -482,7 +529,12 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
               </div>
             )}
 
-            <div className="grid grid-cols-3 gap-4">
+            <div 
+              className="grid gap-3 transition-all"
+              style={{ 
+                gridTemplateColumns: `repeat(${itemSize === 'sm' ? 5 : itemSize === 'md' ? 3 : 2}, minmax(0, 1fr))` 
+              }}
+            >
               {displayItems.length === 0 && (
                 <div className="col-span-3 text-center py-12 text-gray-400">
                   {isSearching ? (
@@ -518,25 +570,31 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                   className="cursor-pointer bg-white rounded-lg shadow hover:shadow-lg transition-all p-3 border-2 border-transparent hover:border-purple-500"
                 >
                   {item.image ? (
-                    <img src={item.image} alt={item.name} className="w-full h-24 object-cover rounded mb-2" />
+                    <img src={item.image} alt={item.name} className={`${itemSize === 'sm' ? 'h-16' : itemSize === 'md' ? 'h-24' : 'h-40'} w-full object-cover rounded mb-2 transition-all`} />
                   ) : (
-                    <div className="w-full h-24 rounded mb-2 bg-gray-200" style={{ backgroundColor: (item as any).imageBgColor || '#ddd' } as React.CSSProperties} />
+                    <div className={`${itemSize === 'sm' ? 'h-16' : itemSize === 'md' ? 'h-24' : 'h-40'} w-full rounded mb-2 transition-all`} style={{ backgroundColor: (item as any).imageBgColor || '#ddd' } as React.CSSProperties} />
                   )}
-                  <div className="font-semibold text-sm">{item.name}</div>
+                  <div className={`font-semibold ${itemSize === 'sm' ? 'text-xs' : 'text-sm'}`}>{item.name}</div>
                   {isSearching && (
                     <div className="text-xs text-gray-400">{(item as any).type === 'Bar' ? '🍺 Bar' : '🍴 Restaurant'}</div>
                   )}
                   {item.description && (
                     <div className="text-xs text-gray-600 line-clamp-2">{item.description}</div>
                   )}
-                  <div className="text-purple-600 font-bold">{formatCurrency(item.price)}</div>
+                  <div className={`text-purple-600 font-bold ${itemSize === 'sm' ? 'text-xs' : 'text-base'}`}>{formatCurrency(item.price)}</div>
                 </div>
               ))}
             </div>
+            </div>
           </div>
 
-          <div className="w-1/3 p-6 bg-gray-50 flex flex-col">
-            <h3 className="text-xl font-bold mb-4">Order Items</h3>
+          <div className="w-1/3 p-4 bg-gray-50 flex flex-col shadow-inner h-full">
+            <h3 className="text-lg font-bold mb-3 flex items-center gap-2">
+              <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+              </svg>
+              Order Items
+            </h3>
             <div className="flex-1 overflow-y-auto mb-4">
               {items.map(item => (
                 <div key={item.menuItem.id} className="bg-white p-3 rounded-lg mb-2 shadow">
@@ -643,7 +701,6 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
             </div>
           </div>
         </div>
-      </div>
 
       {/* Context Menu Popup */}
       {contextMenu && (
@@ -701,18 +758,62 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 step="0.01"
               />
             </div>
-            <div>
-              <Label>Category</Label>
-              <Select value={quickAddCategory} onValueChange={setQuickAddCategory}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select category" />
-                </SelectTrigger>
-                <SelectContent>
-                  {menuCats.listCategories(activeCategory === 'bar' ? 'Bar' : 'Restaurant').map((cat: any) => (
-                    <SelectItem key={cat.category_id} value={cat.category_id}>{cat.category_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Cost Price</Label>
+                <Input
+                  type="number"
+                  value={quickAddCostPrice}
+                  onChange={(e) => setQuickAddCostPrice(e.target.value)}
+                  placeholder="0.00"
+                  step="0.01"
+                />
+              </div>
+              <div>
+                <Label>Unit</Label>
+                <Select value={quickAddUnit} onValueChange={setQuickAddUnit}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Unit" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pcs">pcs</SelectItem>
+                    <SelectItem value="kg">kg</SelectItem>
+                    <SelectItem value="g">g</SelectItem>
+                    <SelectItem value="l">l</SelectItem>
+                    <SelectItem value="ml">ml</SelectItem>
+                    <SelectItem value="box">box</SelectItem>
+                    <SelectItem value="pkt">pkt</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Category</Label>
+                <Select value={quickAddCategory} onValueChange={setQuickAddCategory}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {menuCats.listCategories(activeCategory === 'bar' ? 'Bar' : 'Restaurant').map((cat: any) => (
+                      <SelectItem key={cat.category_id} value={cat.category_id}>{cat.category_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Visibility</Label>
+                <Select value={quickAddVisibility} onValueChange={setQuickAddVisibility}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Visibility" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="POS">POS Only</SelectItem>
+                    <SelectItem value="WEB">Web Only</SelectItem>
+                    <SelectItem value="BOTH">POS & Web</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
           <DialogFooter>
@@ -764,6 +865,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
     </div>
   );
 };
