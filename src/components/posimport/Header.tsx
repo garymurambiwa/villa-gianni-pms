@@ -43,13 +43,13 @@ export const Header: React.FC = () => {
     setShowClosureModal(false);
   };
 
-  const handlePinSuccess = () => {
+  const handlePinSuccess = (verifiedUser: any) => {
     setShowPinModal(false);
     if (pinPurpose === 'start') {
+      // We could store the verifiedUser in a state if we want StartShiftModal to use it instead of useAuth().user
       setShowStartModal(true);
     } else if (pinPurpose === 'switch') {
-      setCostCentre(null); // This will trigger the CostCentrePicker if we have one or just clear it.
-      // Wait, let's just use navigateToModule or something if needed.
+      setCostCentre(null);
     }
     setPinPurpose(null);
   };

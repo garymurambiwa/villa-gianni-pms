@@ -30,7 +30,7 @@ import {
   fixAllItemsVisibility
 } from '@/lib/dbSync';
 import vendors from '@/lib/vendors';
-import pmsAuthDb from '@/lib/pmsAuthDb';
+import pmsAuthDb, { DbUser, Shift } from '@/lib/pmsAuthDb';
 
 const defaultPalette = [
   '#4f46e5',
@@ -563,6 +563,169 @@ const StationManagementPanel: React.FC = () => {
   );
 };
 
+const UserManagementPanel: React.FC = () => {
+  const { toast } = useToast();
+  const [users, setUsers] = React.useState<DbUser[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [showPinModal, setShowPinModal] = React.useState(false);
+  const [selectedUser, setSelectedUser] = React.useState<DbUser | null>(null);
+  const [newPin, setNewPin] = React.useState('');
+
+  const loadUsers = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await pmsAuthDb.listUsers();
+      setUsers(data);
+    } catch (err) {
+      toast({ title: 'Error', description: 'Failed to load users', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  React.useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
+
+  const handleUpdatePin = async () => {
+    if (!selectedUser || !/^\d{6}$/.test(newPin)) {
+      toast({ title: 'Invalid PIN', description: 'PIN must be 6 digits', variant: 'destructive' });
+      return;
+    }
+    const res = await pmsAuthDb.updateUserPin(selectedUser.id, newPin);
+    if (res.ok) {
+      toast({ title: 'Success', description: `PIN updated for ${selectedUser.name}` });
+      setShowPinModal(false);
+      setNewPin('');
+    } else {
+      toast({ title: 'Error', description: res.error || 'Update failed', variant: 'destructive' });
+    }
+  };
+
+  const togglePosAccess = async (user: DbUser, enabled: boolean) => {
+    const res = await pmsAuthDb.updateUser(user.id, { is_pos_enabled: enabled } as any);
+    if (res.ok) {
+      toast({ title: 'Success', description: `${user.name} POS access ${enabled ? 'enabled' : 'disabled'}` });
+      loadUsers();
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="text-xs text-gray-500 mb-2">Manage POS access and security PINs for all staff members.</div>
+      <div className="border rounded overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b">
+            <tr>
+              <th className="p-2 text-left">User</th>
+              <th className="p-2 text-left">Role</th>
+              <th className="p-2 text-center">POS Enabled</th>
+              <th className="p-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={4} className="p-4 text-center">Loading users...</td></tr>
+            ) : users.length === 0 ? (
+              <tr><td colSpan={4} className="p-4 text-center">No users found.</td></tr>
+            ) : users.map(u => (
+              <tr key={u.id} className="border-b hover:bg-gray-50">
+                <td className="p-2 font-medium">{u.name} <div className="text-[10px] text-gray-500 font-normal">{u.username}</div></td>
+                <td className="p-2 capitalize">{u.role}</td>
+                <td className="p-2 text-center">
+                  <Checkbox 
+                    checked={!!(u as any).is_pos_enabled} 
+                    onCheckedChange={(v) => togglePosAccess(u, !!v)} 
+                  />
+                </td>
+                <td className="p-2 text-right">
+                  <Button variant="outline" size="sm" onClick={() => { setSelectedUser(u); setShowPinModal(true); }}>Set PIN</Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <Dialog open={showPinModal} onOpenChange={setShowPinModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Set POS PIN: {selectedUser?.name}</DialogTitle></DialogHeader>
+          <div className="py-4 space-y-3">
+            <Label className="text-xs">Enter New 6-Digit PIN</Label>
+            <Input 
+              type="password" 
+              value={newPin} 
+              onChange={e => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="******"
+              className="text-center text-3xl font-mono tracking-[0.5em] h-14"
+            />
+            <div className="text-[10px] text-center text-gray-500">Staff will use this PIN to start shifts and unlock terminals.</div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPinModal(false)}>Cancel</Button>
+            <Button className="bg-blue-600 text-white" disabled={newPin.length !== 6} onClick={handleUpdatePin}>Save PIN</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+const ShiftReportingPanel: React.FC = () => {
+  const [shifts, setShifts] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    setLoading(true);
+    pmsAuthDb.listShifts().then(data => {
+      setShifts(data);
+      setLoading(false);
+    });
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <div className="text-xs text-gray-500 mb-2">Detailed view of all POS work shifts and associated sales data.</div>
+      <div className="border rounded overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b">
+            <tr>
+              <th className="p-2 text-left">Start Time</th>
+              <th className="p-2 text-left">User</th>
+              <th className="p-2 text-center">Status</th>
+              <th className="p-2 text-right">Balance</th>
+              <th className="p-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={5} className="p-4 text-center">Loading shifts...</td></tr>
+            ) : shifts.length === 0 ? (
+              <tr><td colSpan={5} className="p-4 text-center">No shifts recorded yet.</td></tr>
+            ) : shifts.map(s => (
+              <tr key={s.id} className="border-b hover:bg-gray-50">
+                <td className="p-2">{new Date(s.start_time).toLocaleString()}</td>
+                <td className="p-2 font-medium">{s.user_name}</td>
+                <td className="p-2 text-center">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${s.status === 'open' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
+                    {s.status.toUpperCase()}
+                  </span>
+                </td>
+                <td className="p-2 text-right font-mono">
+                  {s.status === 'open' ? `In: $${Number(s.start_balance).toFixed(2)}` : `Out: $${Number(s.end_balance || 0).toFixed(2)}`}
+                </td>
+                <td className="p-2 text-right">
+                  <Button variant="ghost" size="sm">Report</Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 export const PosSettings: React.FC = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -636,6 +799,8 @@ export const PosSettings: React.FC = () => {
   const tabAnchors: Record<'admin' | 'menu' | 'stock' | 'purchasing', Array<{ id: string; label: string }>> = {
     admin: [
       { id: 'receipt-branding', label: 'Receipt Branding & Contact Info' },
+      { id: 'user-management', label: 'POS User Management' },
+      { id: 'shift-reporting', label: 'Shift & Activity Reports' },
       { id: 'pos-reporting-tools', label: 'POS Reporting Tools' },
       { id: 'data-migration', label: 'Data Migration' },
       { id: 'category-gaps', label: 'Category Gaps' },
@@ -1899,6 +2064,18 @@ export const PosSettings: React.FC = () => {
         <Section id="station-management" title="Station Management (Cost Centres)">
           <div className="text-xs text-gray-600 mb-2">Configure POS outlets and cost centres. These stations will be available for shift selection and order tracking.</div>
           <StationManagementPanel />
+        </Section>
+      )}
+
+      {activeTab === 'admin' && activeSectionId === 'user-management' && (
+        <Section id="user-management" title="POS User Management">
+          <UserManagementPanel />
+        </Section>
+      )}
+
+      {activeTab === 'admin' && activeSectionId === 'shift-reporting' && (
+        <Section id="shift-reporting" title="Shift & Activity Reports">
+          <ShiftReportingPanel />
         </Section>
       )}
 

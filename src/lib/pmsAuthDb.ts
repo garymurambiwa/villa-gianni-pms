@@ -20,6 +20,18 @@ export type DbUser = {
   email?: string;
   permissions?: string[];
 }
+export type Shift = {
+  id: string;
+  user_id: string;
+  station_id: string;
+  start_time: string;
+  end_time?: string;
+  start_balance: number;
+  end_balance?: number;
+  status: 'open' | 'closed';
+  user_name?: string;
+  station_name?: string;
+}
 
 export type AccessLog = {
   id: number;
@@ -267,6 +279,21 @@ export const pmsAuthDb = {
         inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
     `;
+    const createShifts = `
+      CREATE TABLE IF NOT EXISTS pos_shifts (
+        id VARCHAR(36) PRIMARY KEY,
+        user_id VARCHAR(36) NOT NULL,
+        station_id VARCHAR(36) NOT NULL,
+        start_time TIMESTAMP NOT NULL DEFAULT NOW(),
+        end_time TIMESTAMP,
+        start_balance NUMERIC(12,2) NOT NULL DEFAULT 0,
+        end_balance NUMERIC(12,2),
+        status VARCHAR(20) NOT NULL DEFAULT 'open',
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_pos_shifts_user ON pos_shifts(user_id);
+      CREATE INDEX IF NOT EXISTS idx_pos_shifts_status ON pos_shifts(status);
+    `;
     await db.exec(createAdmins);
     await db.exec(createProfiles);
     await db.exec(createPrinterConfigs);
@@ -274,6 +301,7 @@ export const pmsAuthDb = {
     await db.exec(createGuests);
     await db.exec(createReservations);
     await db.exec(createCostCentres);
+    await db.exec(createShifts);
     try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_inserted_at_idx ON reservations(inserted_at)`) } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_guest_idx ON reservations(guest_id)`) } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_room_idx ON reservations(room_id)`) } catch { }
@@ -284,6 +312,9 @@ export const pmsAuthDb = {
     await db.exec(createOrders);
     try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(status)`) } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_inserted_at_idx ON orders(inserted_at)`) } catch { }
+    try { await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS shift_id VARCHAR(36)`) } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_pos_enabled BOOLEAN DEFAULT true`) } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pos_role VARCHAR(50)`) } catch { }
     await db.exec(createOrderItems);
     await db.exec(createInventoryItems);
     await db.exec(createInventoryMovements);
@@ -699,6 +730,79 @@ export const pmsAuthDb = {
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: e?.message || 'Failed to delete cost centre' };
+    }
+  },
+
+  // Shift Management
+  async startShift(userId: string, stationId: string, openingBalance: number): Promise<{ ok: boolean; id?: string; error?: string }> {
+    try {
+      const id = makeUuid();
+      const res = await db.query(
+        `INSERT INTO pos_shifts (id, user_id, station_id, start_balance, status) VALUES (?, ?, ?, ?, 'open')`,
+        [id, userId, stationId, openingBalance]
+      );
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true, id };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to start shift' };
+    }
+  },
+
+  async endShift(shiftId: string, closingBalance: number): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await db.query(
+        `UPDATE pos_shifts SET end_time = NOW(), end_balance = ?, status = 'closed' WHERE id = ?`,
+        [closingBalance, shiftId]
+      );
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to end shift' };
+    }
+  },
+
+  async getActiveShift(stationId: string): Promise<{ id: string; user_id: string; start_time: string; start_balance: number } | null> {
+    try {
+      const res = await db.query<{ id: string; user_id: string; start_time: string; start_balance: number }>(
+        `SELECT id, user_id, start_time, start_balance FROM pos_shifts WHERE station_id = ? AND status = 'open' ORDER BY start_time DESC LIMIT 1`,
+        [stationId]
+      );
+      if ('error' in res || !res.rows || res.rows.length === 0) return null;
+      return res.rows[0];
+    } catch {
+      return null;
+    }
+  },
+
+  async listShifts(stationId?: string): Promise<Shift[]> {
+    try {
+      let sql = `
+        SELECT s.*, u.name as user_name, c.name as station_name 
+        FROM pos_shifts s 
+        JOIN app_users u ON s.user_id = u.id
+        LEFT JOIN cost_centres c ON s.station_id = c.id
+      `;
+      const params = [];
+      if (stationId) {
+        sql += ` WHERE s.station_id = ?`;
+        params.push(stationId);
+      }
+      sql += ` ORDER BY s.start_time DESC LIMIT 50`;
+      const res = await db.query(sql, params);
+      return ('rows' in res && Array.isArray(res.rows)) ? res.rows as Shift[] : [];
+    } catch {
+      return [];
+    }
+  },
+
+  async updateUserPin(userId: string, pin: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (!/^\d{6}$/.test(pin)) return { ok: false, error: 'PIN must be exactly 6 digits' };
+      const res = await db.query(`UPDATE app_users SET pos_pin = ? WHERE id = ?`, [pin, userId]);
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to update PIN' };
     }
   }
 }

@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useMemo, useState, useEffect } from 'react';
 import { ShiftReading } from '../types';
+import pmsAuthDb from '../lib/pmsAuthDb';
 
 export type PaymentMethod = 'cash' | 'card' | 'room-charge';
 
@@ -18,9 +19,12 @@ export interface Shift {
   id: string;
   startedAt: string;
   endedAt?: string;
-  openedBy?: string;
+  openedBy?: string; // userId
+  userName?: string;
+  stationId?: string;
   openingCash: number;
   closingCash?: number;
+  status: 'open' | 'closed';
   transactions: ShiftTransaction[];
   voidedTransactions: ShiftTransaction[];
   zReadingId?: string;
@@ -28,7 +32,7 @@ export interface Shift {
 
 interface ShiftContextType {
   activeShift: Shift | null;
-  startShift: (openedBy?: string, openingCash?: number) => void;
+  startShift: (openingCash: number, notes?: string, userId?: string, stationId?: string) => Promise<void>;
   endShift: (closingCash?: number) => Promise<{ success: boolean; zReading?: ShiftReading; error?: string }>;
   addTransaction: (method: PaymentMethod, amount: number, reference?: string) => ShiftTransaction | null;
   voidTransaction: (transactionId: string, reason: string) => boolean;
@@ -54,6 +58,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       openedBy: s?.openedBy ? String(s.openedBy) : undefined,
       openingCash: Number.isFinite(Number(s?.openingCash)) ? Number(s.openingCash) : 0,
       closingCash: Number.isFinite(Number(s?.closingCash)) ? Number(s.closingCash) : undefined,
+      status: (s?.status === 'closed' ? 'closed' : 'open') as 'open' | 'closed',
       transactions: txs,
       voidedTransactions: voided,
       zReadingId: s?.zReadingId ? String(s.zReadingId) : undefined
@@ -103,17 +108,26 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     else localStorage.removeItem('corepms_activeShift');
   };
 
-  const startShift = (openedBy?: string, openingCash: number = 0) => {
-    const newShift: Shift = {
-      id: `SHIFT_${Date.now()}`,
-      startedAt: new Date().toISOString(),
-      openedBy,
-      openingCash,
-      transactions: [],
-      voidedTransactions: []
-    };
-    setActiveShift(newShift);
-    persist(newShift);
+  const startShift = async (openingCash: number = 0, notes?: string, userId?: string, stationId?: string) => {
+    try {
+      const res = await pmsAuthDb.startShift(userId || 'unknown', stationId || 'unknown', openingCash);
+      if (!res.ok) throw new Error(res.error || 'Failed to start shift in DB');
+
+      const newShift: Shift = {
+        id: res.id!,
+        startedAt: new Date().toISOString(),
+        openedBy: userId,
+        openingCash,
+        status: 'open',
+        transactions: [],
+        voidedTransactions: []
+      };
+      setActiveShift(newShift);
+      persist(newShift);
+    } catch (e: any) {
+      console.error('Shift start error:', e);
+      throw e;
+    }
   };
 
   const endShift = async (closingCash?: number): Promise<{ success: boolean; zReading?: ShiftReading; error?: string }> => {
@@ -122,14 +136,19 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     try {
+      // Sync to DB
+      const dbRes = await pmsAuthDb.endShift(activeShift.id, closingCash || 0);
+      if (!dbRes.ok) console.warn('Database endShift failed:', dbRes.error);
+
       // Import Z reading service functions
       const { generateZReading, printZReading, logZReadingAudit, storeZReading } = await import('../lib/zReadingService');
       
       const totals = getTotals();
-      const ended = { 
+      const ended: Shift = { 
         ...activeShift, 
         endedAt: new Date().toISOString(),
-        closingCash 
+        closingCash,
+        status: 'closed'
       };
 
       // Generate Z reading
@@ -188,7 +207,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addTransaction = (method: PaymentMethod, amount: number, reference?: string): ShiftTransaction | null => {
     if (!activeShift) {
       // Auto-start a shift if none exists for simplicity
-      startShift('System');
+      startShift(0, 'Auto-start', 'System', 'Unknown').catch(console.error);
     }
     const tx: ShiftTransaction = {
       id: `SFTX_${Date.now()}`,

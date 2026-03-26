@@ -11,6 +11,8 @@ import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { useShift } from '@/contexts/ShiftContext';
+import { useAuth } from '@/context/AuthContext';
 
 export interface MenuItem {
   id: string;
@@ -38,6 +40,8 @@ export interface Bill {
   status: 'open' | 'suspended' | 'paid';
   createdAt: string;
   total: number;
+  shift_id?: string;
+  user_id?: string;
 }
 
 interface OrderModalProps {
@@ -54,6 +58,8 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [dynamicMenu, setDynamicMenu] = useState<MenuItem[]>([]);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const { toast } = useToast();
+  const { activeShift } = useShift();
+  const { user } = useAuth();
   const [subTree, setSubTree] = useState<SubTreeNode[]>([]);
   const [subPath, setSubPath] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -687,7 +693,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       items,
                       status: 'open',
                       createdAt: new Date().toISOString(),
-                      total
+                      total,
+                      shift_id: activeShift?.id,
+                      user_id: user?.id
                     });
                     onClose();
                   }}
