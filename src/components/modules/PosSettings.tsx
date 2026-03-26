@@ -708,7 +708,7 @@ const ShiftReportingPanel: React.FC = () => {
                 <td className="p-2 font-medium">{s.user_name}</td>
                 <td className="p-2 text-center">
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${s.status === 'open' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
-                    {s.status.toUpperCase()}
+                    {(s.status || 'open').toUpperCase()}
                   </span>
                 </td>
                 <td className="p-2 text-right font-mono">
