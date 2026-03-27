@@ -123,6 +123,8 @@ export const pmsAuthDb = {
     await db.exec(createLogs);
     // [REPAIR] Ensure all existing users have is_deleted set (safe for new/existing)
     try { await db.exec(`UPDATE app_users SET is_deleted = false WHERE is_deleted IS NULL`); } catch { }
+    // [REPAIR] Ensure empty emails are NULL to avoid unique constraint conflicts
+    try { await db.exec(`UPDATE app_users SET email = NULL WHERE email = '' OR email = ' '`); } catch { }
     await db.exec(createVerifications);
     await db.exec(createLoginAttempts);
     const createAdmins = `
@@ -594,14 +596,16 @@ export const pmsAuthDb = {
   },
 
   async registerUser(payload: { username: string; email: string; password: string; name: string; role: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; errorType?: string; suggestions?: string[]; verifyToken?: string }> {
-    const { username, email, password, name, role, permissions } = payload || ({} as any);
+    const { username, password, name, role, permissions } = payload || ({} as any);
+    const email = (payload.email && payload.email.trim()) || null;
+    
     if (!username || !password || !name) return { ok: false, error: 'Missing fields' };
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
     if (!this.validateStrongPassword(password)) return { ok: false, error: 'Weak password' };
 
     // Check for duplicate username and email separately to provide specific feedback
     const usernameCheck = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username) = LOWER(?)`, [username]);
-    const emailCheck = email ? await db.query<{ id: string }>(`SELECT id FROM app_users WHERE email IS NOT NULL AND LOWER(email) = LOWER(?)`, [email]) : { rows: [] };
+    const emailCheck = email ? await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(email) = LOWER(?)`, [email]) : { rows: [] };
 
     const usernameExists = !('error' in usernameCheck) && usernameCheck.rows && usernameCheck.rows.length > 0;
     const emailExists = !('error' in emailCheck) && emailCheck.rows && emailCheck.rows.length > 0;
