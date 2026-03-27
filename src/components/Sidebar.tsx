@@ -117,7 +117,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
   }, [registerHotkey]);
 
   const modulesBase = [
-    { id: 'dashboard', name: 'Dashboard', icon: '📊', roles: ['admin', 'frontdesk', 'manager', 'supervisor'], section: 'Front Office' },
+    { id: 'dashboard', name: 'Dashboard', icon: '📊', roles: ['admin', 'frontdesk', 'manager', 'supervisor', 'cashier'], section: 'Front Office' },
     { id: 'frontoffice', name: 'Front Office', icon: '🏨', roles: ['admin', 'frontdesk', 'manager', 'supervisor'], section: 'Front Office' },
     { id: 'reservations', name: 'Reservations', icon: '📅', roles: ['admin', 'frontdesk', 'manager', 'supervisor'], section: 'Front Office' },
     { id: 'rooms', name: 'Rooms', icon: '🛏️', roles: ['admin', 'frontdesk', 'housekeeping', 'manager', 'supervisor'], section: 'Front Office' },
