@@ -16,7 +16,7 @@ declare global {
   }
 }
 
-export type Role = 'admin' | 'manager' | 'frontdesk' | 'auditor' | 'posmanager' | 'housekeeping' | 'cashier' | 'barman' | 'supervisor';
+export type Role = 'admin' | 'manager' | 'frontdesk' | 'auditor' | 'posmanager' | 'housekeeping' | 'cashier' | 'barman' | 'supervisor' | 'restaurant_cashier' | 'fnb_cashier';
 
 export const USER_ROLES = [
   'Super Admin',
@@ -26,6 +26,7 @@ export const USER_ROLES = [
   'FO Supervisor',
   'FNB Supervisor',
   'Restaurant Cashier',
+  'FnB Cashier',
   'Barman',
   'Accountant',
   'Front office Cashier',
@@ -316,7 +317,8 @@ export const mapStandardRoleToInternal = (name: string): Role => {
     case 'fnb manager': return 'posmanager';
     case 'fo supervisor': return 'supervisor';
     case 'fnb supervisor': return 'supervisor';
-    case 'restaurant cashier': return 'cashier';
+    case 'restaurant cashier': return 'restaurant_cashier';
+    case 'fnb cashier': return 'fnb_cashier';
     case 'front office cashier': return 'cashier';
     case 'barman': return 'barman';
     case 'accountant': return 'auditor';
@@ -334,6 +336,8 @@ export const mapInternalRoleToStandard = (role: Role): string => {
     case 'posmanager': return 'FNB Manager';
     case 'supervisor': return 'FO Supervisor';
     case 'cashier': return 'Front office Cashier';
+    case 'restaurant_cashier': return 'Restaurant Cashier';
+    case 'fnb_cashier': return 'FnB Cashier';
     case 'barman': return 'Barman';
     case 'auditor': return 'Night Auditor';
     case 'housekeeping': return 'House keeper';
