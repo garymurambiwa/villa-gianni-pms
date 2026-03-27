@@ -124,7 +124,7 @@ export const pmsAuthDb = {
     // [REPAIR] Ensure all existing users have is_deleted set (safe for new/existing)
     try { await db.exec(`UPDATE app_users SET is_deleted = false WHERE is_deleted IS NULL`); } catch { }
     // [REPAIR] Ensure empty emails are NULL to avoid unique constraint conflicts
-    try { await db.exec(`UPDATE app_users SET email = NULL WHERE email = '' OR email = ' '`); } catch { }
+    try { await db.exec(`UPDATE app_users SET email = NULL WHERE email IS NOT NULL AND (email = '' OR email ~ '^\\s*$')`); } catch { }
     await db.exec(createVerifications);
     await db.exec(createLoginAttempts);
     const createAdmins = `
