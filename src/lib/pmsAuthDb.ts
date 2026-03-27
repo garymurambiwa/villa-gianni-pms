@@ -514,7 +514,7 @@ export const pmsAuthDb = {
   },
 
   async verifyLogin(username: string, password: string): Promise<{ ok: boolean; user?: DbUser; mustChange?: boolean; error?: string }> {
-    const res = await db.query<DbUser & { password_hash: string; failed_attempts: number; lockout_until: string | null; password_changed_at: string | null }>(`SELECT id, username, name, role, active, password_change_required, created_at, password_hash, failed_attempts, lockout_until, password_changed_at, permissions FROM app_users WHERE username = ?`, [username]);
+    const res = await db.query<DbUser & { password_hash: string; failed_attempts: number; lockout_until: string | null; password_changed_at: string | null }>(`SELECT id, username, name, role, active, password_change_required, created_at, password_hash, failed_attempts, lockout_until, password_changed_at, permissions FROM app_users WHERE LOWER(username) = LOWER(?)`, [username]);
     if ('error' in res) {
       return { ok: false, error: res.error as string };
     }
@@ -544,11 +544,11 @@ export const pmsAuthDb = {
       if (nextFailed >= 10) {
         lockUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // ISO string is fine for MySQL DATETIME usually, or use JS Date
       }
-      await db.query(`UPDATE app_users SET failed_attempts = ?, lockout_until = ?, updated_at = NOW() WHERE username = ?`, [nextFailed, lockUntil ? new Date(lockUntil) : null, username]);
+      await db.query(`UPDATE app_users SET failed_attempts = ?, lockout_until = ?, updated_at = NOW() WHERE LOWER(username) = LOWER(?)`, [nextFailed, lockUntil ? new Date(lockUntil) : null, username]);
       return { ok: false, error: 'Invalid username or password' };
     }
     // Success: reset counters
-    await db.query(`UPDATE app_users SET failed_attempts = 0, lockout_until = NULL, last_login = NOW(), updated_at = NOW() WHERE username = ?`, [username]);
+    await db.query(`UPDATE app_users SET failed_attempts = 0, lockout_until = NULL, last_login = NOW(), updated_at = NOW() WHERE LOWER(username) = LOWER(?)`, [username]);
     // Unified preview policy: do not force password change in Electron preview
     const mustChange = false;
     const user: DbUser = {
@@ -561,7 +561,7 @@ export const pmsAuthDb = {
       created_at: row.created_at,
       permissions: row.permissions || [],
     };
-    await db.query(`UPDATE app_users SET password_change_required = false WHERE username = ?`, [username]);
+    await db.query(`UPDATE app_users SET password_change_required = false WHERE LOWER(username) = LOWER(?)`, [username]);
     return { ok: true, user, mustChange };
   },
 
@@ -575,7 +575,7 @@ export const pmsAuthDb = {
     }
     const hash = await bcrypt.hash(newPassword, 12);
     // Update without referencing optional columns for schema compatibility
-    const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false, password_changed_at = NOW(), failed_attempts = 0, lockout_until = NULL, updated_at = NOW() WHERE username = ?`;
+    const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false, password_changed_at = NOW(), failed_attempts = 0, lockout_until = NULL, updated_at = NOW() WHERE LOWER(username) = LOWER(?)`;
     const res = await db.query(sql, [hash, username]);
     if ('error' in res) return { ok: false, error: res.error };
     await this.recordAccessAttempt(username, 'password_changed');
@@ -598,7 +598,7 @@ export const pmsAuthDb = {
   async registerUser(payload: { username: string; email: string; password: string; name: string; role: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; errorType?: string; suggestions?: string[]; verifyToken?: string }> {
     const { username, password, name, role, permissions } = payload || ({} as any);
     const email = (payload.email && payload.email.trim()) || null;
-    
+
     if (!username || !password || !name) return { ok: false, error: 'Missing fields' };
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
     if (!this.validateStrongPassword(password)) return { ok: false, error: 'Weak password' };
@@ -684,7 +684,7 @@ export const pmsAuthDb = {
   },
 
   async resendVerification(usernameOrEmail: string): Promise<{ ok: boolean; error?: string; verifyToken?: string }> {
-    const res = await db.query<{ id: string; is_verified: number }>(`SELECT id, is_verified FROM app_users WHERE username = ? OR email = ?`, [usernameOrEmail, usernameOrEmail]);
+    const res = await db.query<{ id: string; is_verified: number }>(`SELECT id, is_verified FROM app_users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)`, [usernameOrEmail, usernameOrEmail]);
     if ('error' in res || !res.rows || res.rows.length === 0) return { ok: false, error: 'User not found' };
     if (res.rows[0].is_verified) return { ok: false, error: 'Already verified' };
     const token = makeUuid();
