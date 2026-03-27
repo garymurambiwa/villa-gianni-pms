@@ -308,6 +308,7 @@ export const pmsAuthDb = {
     await db.exec(createReservations);
     await db.exec(createCostCentres);
     await db.exec(createShifts);
+    try { await db.exec(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS user_id VARCHAR(36)`); } catch { }
     try { await db.exec(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'open'`); } catch { }
     try { await db.exec(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS start_balance NUMERIC(12,2) NOT NULL DEFAULT 0`); } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_inserted_at_idx ON reservations(inserted_at)`) } catch { }
