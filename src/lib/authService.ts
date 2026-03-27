@@ -129,7 +129,7 @@ export const listUsers = async (): Promise<UserRecord[]> => {
   return [];
 };
 
-export const register = async (payload: { username: string; email?: string; password: string; role?: Role; name?: string; phone?: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; user?: UserRecord }> => {
+export const register = async (payload: { username: string; email?: string; password: string; role?: Role; name?: string; phone?: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; errorType?: string; suggestions?: string[]; user?: UserRecord }> => {
   if (!payload.username || !payload.password) return { ok: false, error: 'Missing fields' };
 
   if (!isBrowser && window.native?.auth?.register) {
@@ -138,7 +138,7 @@ export const register = async (payload: { username: string; email?: string; pass
       if (res.ok && res.user) {
         return { ok: true, user: mapDbUser(res.user) };
       }
-      return { ok: false, error: res.error || 'Registration failed' };
+      return { ok: false, error: res.error || 'Registration failed', errorType: (res as any).errorType, suggestions: (res as any).suggestions };
     } catch (e: any) { return { ok: false, error: e.message || String(e) }; }
   } else {
     // Browser DB mode via pmsAuthDb
@@ -158,7 +158,7 @@ export const register = async (payload: { username: string; email?: string; pass
         const newUser = allUsers.find(u => u.username === payload.username);
         return { ok: true, user: newUser ? mapDbUser(newUser) : undefined };
       }
-      return { ok: false, error: res.error || 'Registration failed' };
+      return { ok: false, error: res.error || 'Registration failed', errorType: res.errorType, suggestions: res.suggestions };
     } catch (e: any) {
       return { ok: false, error: e.message || String(e) };
     }

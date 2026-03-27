@@ -593,26 +593,90 @@ export const pmsAuthDb = {
     }
   },
 
-  async registerUser(payload: { username: string; email: string; password: string; name: string; role: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; verifyToken?: string }> {
+  async registerUser(payload: { username: string; email: string; password: string; name: string; role: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; errorType?: string; suggestions?: string[]; verifyToken?: string }> {
     const { username, email, password, name, role, permissions } = payload || ({} as any);
     if (!username || !password || !name) return { ok: false, error: 'Missing fields' };
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
     if (!this.validateStrongPassword(password)) return { ok: false, error: 'Weak password' };
-    const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username) = LOWER(?) OR (email IS NOT NULL AND LOWER(email) = LOWER(?))`, [username, email || '']);
-    if (!('error' in exists) && exists.rows && exists.rows.length > 0) return { ok: false, error: 'User exists' };
+
+    // Check for duplicate username and email separately to provide specific feedback
+    const usernameCheck = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username) = LOWER(?)`, [username]);
+    const emailCheck = email ? await db.query<{ id: string }>(`SELECT id FROM app_users WHERE email IS NOT NULL AND LOWER(email) = LOWER(?)`, [email]) : { rows: [] };
+
+    const usernameExists = !('error' in usernameCheck) && usernameCheck.rows && usernameCheck.rows.length > 0;
+    const emailExists = !('error' in emailCheck) && emailCheck.rows && emailCheck.rows.length > 0;
+
+    if (usernameExists || emailExists) {
+      let errorType = 'duplicate';
+      let errorMessage = 'Username or email already exists';
+
+      if (usernameExists && emailExists) {
+        errorType = 'both_duplicate';
+        errorMessage = 'Both username and email are already registered';
+      } else if (usernameExists) {
+        errorType = 'username_duplicate';
+        errorMessage = 'Username is already taken';
+      } else {
+        errorType = 'email_duplicate';
+        errorMessage = 'Email is already registered';
+      }
+
+      // Generate alternative username suggestions
+      const suggestions = await this.generateUsernameSuggestions(username);
+
+      return { ok: false, error: errorMessage, errorType, suggestions };
+    }
+
     const id = `usr_${makeUuid()}`;
     const hash = await bcrypt.hash(password, 12);
     const ins = await db.query(
       `INSERT INTO app_users (id, username, email, name, role, password_hash, active, password_change_required, is_verified, created_at, updated_at, permissions, is_deleted) 
-       VALUES (?, ?, ?, ?, ?, ?, true, true, false, NOW(), NOW(), ?, false)`, 
+       VALUES (?, ?, ?, ?, ?, ?, true, true, false, NOW(), NOW(), ?, false)`,
       [id, username, email, name, role, hash, permissions || []]
     );
     if ('error' in ins) return { ok: false, error: ins.error };
-    
+
     const token = makeUuid();
     const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     await db.query(`INSERT INTO email_verifications (token, user_id, expires_at) VALUES (?, ?, ?)`, [token, id, expires]);
     return { ok: true, verifyToken: token };
+  },
+
+  async generateUsernameSuggestions(baseUsername: string): Promise<string[]> {
+    const suggestions: string[] = [];
+    const cleanBase = baseUsername.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // Try adding numbers
+    for (let i = 1; i <= 5; i++) {
+      const candidate = `${cleanBase}${i}`;
+      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username) = LOWER(?)`, [candidate]);
+      if ('error' in exists || !exists.rows || exists.rows.length === 0) {
+        suggestions.push(candidate);
+        if (suggestions.length >= 3) break;
+      }
+    }
+
+    // Try adding year
+    if (suggestions.length < 3) {
+      const year = new Date().getFullYear();
+      const candidate = `${cleanBase}${year}`;
+      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username) = LOWER(?)`, [candidate]);
+      if ('error' in exists || !exists.rows || exists.rows.length === 0) {
+        suggestions.push(candidate);
+      }
+    }
+
+    // Try adding random suffix
+    if (suggestions.length < 3) {
+      const randomSuffix = Math.random().toString(36).substring(2, 5);
+      const candidate = `${cleanBase}_${randomSuffix}`;
+      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username) = LOWER(?)`, [candidate]);
+      if ('error' in exists || !exists.rows || exists.rows.length === 0) {
+        suggestions.push(candidate);
+      }
+    }
+
+    return suggestions.slice(0, 3);
   },
 
   async resendVerification(usernameOrEmail: string): Promise<{ ok: boolean; error?: string; verifyToken?: string }> {
@@ -653,7 +717,7 @@ export const pmsAuthDb = {
       // Fetch user info first to get username/email for renaming
       const userRes = await db.query<{ username: string; email: string }>(`SELECT username, email FROM app_users WHERE id = ?`, [id]);
       if ('error' in userRes || !userRes.rows || userRes.rows.length === 0) return { ok: false, error: 'User not found' };
-      
+
       const { username, email } = userRes.rows[0];
       const timestamp = Date.now();
       const deletedUsername = `${username}_del_${timestamp}`;
@@ -664,9 +728,9 @@ export const pmsAuthDb = {
         `UPDATE app_users SET is_deleted = true, active = false, username = ?, email = ?, updated_at = NOW() WHERE id = ?`,
         [deletedUsername, deletedEmail, id]
       );
-      
+
       if ('error' in res) return { ok: false, error: res.error };
-      
+
       // Clean up auxiliary tables if they purely represent the user's active profile
       await db.query(`DELETE FROM email_verifications WHERE user_id = ?`, [id]);
       // Note: We keep profiles, admins, access_logs for audit persistence.
@@ -688,9 +752,9 @@ export const pmsAuthDb = {
       if (patch.active !== undefined) { sets.push(`active = ?`); params.push(patch.active); }
       if (patch.username !== undefined) { sets.push(`username = ?`); params.push(patch.username); }
       if ((patch as any).permissions !== undefined) { sets.push(`permissions = ?`); params.push((patch as any).permissions); }
-      
+
       if (sets.length === 0) return { ok: true };
-      
+
       params.push(id);
       const sql = `UPDATE app_users SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`;
       const res = await db.query(sql, params);
