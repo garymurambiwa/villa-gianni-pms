@@ -145,7 +145,7 @@ export const register = async (payload: { username: string; email?: string; pass
     try {
       const res = await pmsAuthDb.registerUser({
         username: payload.username,
-        email: payload.email || '',
+        email: (payload.email && payload.email.trim()) || null,
         password: payload.password,
         name: payload.name || payload.username,
         role: payload.role || 'staff',
