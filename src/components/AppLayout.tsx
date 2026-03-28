@@ -47,6 +47,7 @@ import '@/styles/dynamic-background.css';
 import { initializeDatabase } from '@/lib/databaseInitializer'
 import VendorManagement from './modules/VendorManagement';
 import BreakfastManager from './modules/BreakfastManager';
+import OfflineIndicator from './OfflineIndicator';
 
 const AppLayout: React.FC = () => {
   const { user } = useAuth();
@@ -450,6 +451,9 @@ const AppLayout: React.FC = () => {
 
           {/* Module content */}
           {renderModule()}
+
+          {/* Offline indicator for network status */}
+          <OfflineIndicator />
         </div>
       </div>
     </HotkeysProvider>
