@@ -7,8 +7,6 @@ import { Dashboard } from './modules/Dashboard';
 import { FrontOffice } from './modules/FrontOffice';
 import { Reservations } from './modules/Reservations';
 import { Rooms } from './modules/Rooms';
-// Lazy-load POSFrontOffice to avoid blocking render and show a fallback
-const POSFrontOfficeLazy = React.lazy(() => import('./modules/POSFrontOffice').then(m => ({ default: m.POSFrontOffice })));
 import { CityLedger } from './modules/CityLedger';
 import { Inventory } from './modules/Inventory';
 import { Reports } from './modules/Reports';
@@ -18,6 +16,27 @@ import SystemSettings from './modules/SystemSettings';
 import ErrorBoundary from './ErrorBoundary';
 import LoadingSpinner from './ui/LoadingSpinner';
 import { Button } from './ui/button';
+
+// Lazy-load POSFrontOffice with a retry mechanism for chunk load failures (common after deployment)
+const POSFrontOfficeLazy = React.lazy(() => {
+  return new Promise((resolve, reject) => {
+    import('./modules/POSFrontOffice')
+      .then(m => resolve({ default: m.POSFrontOffice }))
+      .catch(error => {
+        // Detect if the error is a loading error (ChunkLoadError)
+        const isChunkLoadError = error.message && (
+          error.message.includes('error loading dynamically imported module') ||
+          error.message.includes('Failed to fetch dynamically imported module')
+        );
+        if (isChunkLoadError) {
+          console.warn('[corepms] Chunk load failed. Attempting to reload page to get latest version.');
+          // Provide a small delay before reloading to prevent infinite reload loops
+          setTimeout(() => window.location.reload(), 1500);
+        }
+        reject(error);
+      });
+  });
+});
 import { canManagePOS, canAccessPOS, canAccessInventoryManagement, canAccessReporting, canAccessTransactionClearing, isAdmin, canManageStaff, isManager, normalizeRole } from '@/lib/permissions';
 import PosSettings from './modules/PosSettings';
 import { HotkeysProvider, useHotkeys } from '@/contexts/HotkeysContext';

@@ -46,15 +46,24 @@ class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
-      const title = this.props.fallbackTitle || 'Something went wrong';
-      const message = this.props.fallbackMessage || 'An unexpected error occurred. Please try reloading the application.';
+      const isChunkLoadError = this.state.error?.message && (
+        this.state.error.message.includes('error loading dynamically imported module') ||
+        this.state.error.message.includes('Failed to fetch dynamically imported module')
+      );
+
+      const title = isChunkLoadError ? 'New Updates Available' : (this.props.fallbackTitle || 'Something went wrong');
+      const message = isChunkLoadError 
+        ? 'A newer version of the application is available. Please click below to update.'
+        : (this.props.fallbackMessage || 'An unexpected error occurred. Please try reloading the application.');
+
       const componentStack = this.state.errorInfo?.componentStack || '';
       const copy = async () => {
         const payload = JSON.stringify({
           name: this.state.error?.name,
           message: this.state.error?.message,
           stack: (this.state.error as any)?.stack,
-          componentStack
+          componentStack,
+          isChunkLoadError
         }, null, 2);
         try { await navigator.clipboard.writeText(payload); } catch {}
       };
@@ -74,7 +83,9 @@ class ErrorBoundary extends Component<Props, State> {
               </div>
             )}
             <div className="flex gap-4 justify-center">
-              <Button onClick={this.handleReload}>Reload Application</Button>
+              <Button onClick={this.handleReload} className={isChunkLoadError ? 'bg-blue-600 hover:bg-blue-700' : ''}>
+                {isChunkLoadError ? 'Update & Refresh' : 'Reload Application'}
+              </Button>
               <Button variant="outline" onClick={() => this.setState({ hasError: false })}>
                 Try Again
               </Button>
