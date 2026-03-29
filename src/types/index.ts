@@ -5,6 +5,7 @@ export interface User {
   role: UserRole;
   propertyId: string;
   active: boolean;
+  permissions?: string[];
   passwordChangeRequired?: boolean;
   authProvider?: 'db' | 'local' | 'supabase';
 }

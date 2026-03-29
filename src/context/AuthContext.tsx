@@ -136,7 +136,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           const users = await auth.listUsers();
           const dbUser = users.find(u => u.id === sess.userId);
           if (dbUser) {
-            setUser(enforceAdminRole({ id: dbUser.id, username: dbUser.username, name: dbUser.profile?.name || dbUser.username, role: dbUser.role, propertyId: 'P001', active: dbUser.active, authProvider: 'local' } as User));
+            setUser(enforceAdminRole({ 
+              id: dbUser.id, 
+              username: dbUser.username, 
+              name: dbUser.profile?.name || dbUser.username, 
+              role: dbUser.role, 
+              propertyId: 'P001', 
+              active: dbUser.active, 
+              authProvider: 'local',
+              permissions: dbUser.permissions || []
+            } as User));
             userFound = true;
           } else {
             try {
@@ -152,6 +161,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     active: rUser.active,
                     passwordChangeRequired: !!rUser.password_change_required,
                     authProvider: 'db',
+                    permissions: rUser.permissions || [],
                   } as User));
                   userFound = true;
                 }
@@ -194,7 +204,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const login = async (username: string, password: string): Promise<{ success: boolean; error?: AuthError }> => {
     if (username === 'admin' && password === 'admin123') {
-      const adminUser: any = { id: 'admin-hardcoded', username: 'admin', name: 'System Admin (Override)', role: 'admin', propertyId: 'P001', active: true, authProvider: 'local' };
+      const adminUser: any = { id: 'admin-hardcoded', username: 'admin', name: 'System Admin (Override)', role: 'admin', propertyId: 'P001', active: true, authProvider: 'local', permissions: [] };
       setUser(adminUser);
       auth.createSession({ id: adminUser.id, username: adminUser.username, name: adminUser.name, email: 'admin@system.local', role: 'admin', active: true, permissions: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return { success: true };
@@ -203,8 +213,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (await db.isConfigured()) {
         const resDb = await pmsAuthDb.verifyLogin(username, password);
         if (resDb.ok && resDb.user) {
-          auth.createSession({ id: resDb.user.id, username: resDb.user.username, name: resDb.user.name, email: '', role: resDb.user.role as any, profile: { name: resDb.user.name }, active: resDb.user.active, createdAt: resDb.user.created_at, updatedAt: resDb.user.created_at, password: { salt: '', hash: '', iterations: 0, derivedLen: 0 }, permissions: [] });
-          setUser(enforceAdminRole({ id: resDb.user.id, username: resDb.user.username, name: resDb.user.name, role: (String(resDb.user.username || '').toLowerCase() === 'admin' ? 'admin' : (resDb.user.role as any)), propertyId: 'P001', active: resDb.user.active, passwordChangeRequired: !!resDb.mustChange, authProvider: 'db' } as User));
+          auth.createSession({ id: resDb.user.id, username: resDb.user.username, name: resDb.user.name, email: '', role: resDb.user.role as any, profile: { name: resDb.user.name }, active: resDb.user.active, createdAt: resDb.user.created_at, updatedAt: resDb.user.created_at, password: { salt: '', hash: '', iterations: 0, derivedLen: 0 }, permissions: resDb.user.permissions || [] });
+          setUser(enforceAdminRole({ id: resDb.user.id, username: resDb.user.username, name: resDb.user.name, role: (String(resDb.user.username || '').toLowerCase() === 'admin' ? 'admin' : (resDb.user.role as any)), propertyId: 'P001', active: resDb.user.active, passwordChangeRequired: !!resDb.mustChange, authProvider: 'db', permissions: resDb.user.permissions || [] } as User));
           return { success: true };
         }
         if (!resDb.ok && !resDb.error?.includes('not found')) {
@@ -307,7 +317,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             role: res.user.role as any,
             propertyId: 'P001',
             active: res.user.active,
-            authProvider: 'db'
+            authProvider: 'db',
+            permissions: res.user.permissions || []
           } as User;
           return { success: true, user: authUser };
         }
