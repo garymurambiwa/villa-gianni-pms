@@ -118,7 +118,7 @@ export const generateZReadingHTML = (
           .no-print { display: none; }
         }
         body { 
-          font-family: 'Courier New', monospace; 
+          font-family: Arial, sans-serif; 
           max-width: 600px; 
           margin: 0 auto; 
           padding: 20px; 
@@ -126,14 +126,14 @@ export const generateZReadingHTML = (
         }
         .center { text-align: center; }
         .bold { font-weight: bold; }
-        .header { border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
+        .header { border-bottom: 1px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
         .outlet-badge { background: #333; color: #fff; padding: 4px 12px; border-radius: 4px; display: inline-block; margin-top: 5px; }
         table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-        td, th { padding: 4px 8px; border-bottom: 1px dotted #666; }
+        td, th { padding: 4px 8px; border-bottom: 1px solid #eee; }
         .right { text-align: right; }
-        .section { margin: 15px 0; border-top: 1px solid #ccc; padding-top: 10px; }
+        .section { margin: 15px 0; border-top: 1px solid #eee; padding-top: 10px; }
         .highlight { background-color: #f0f0f0; font-weight: bold; }
-        .cash-summary { border: 2px solid #000; padding: 10px; margin: 15px 0; }
+        .cash-summary { border: 1px solid #000; padding: 10px; margin: 15px 0; }
       </style>
     </head>
     <body>

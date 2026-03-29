@@ -167,7 +167,7 @@ export const decrementInventory = (soldItems: Array<{ name: string; quantity: nu
         const qty = Number(si.quantity || 0);
         const name = String(si.name || '').toLowerCase();
         await db.query(
-          `UPDATE inventory_items SET stock_level = GREATEST(stock_level - ?, 0) WHERE LOWER(name) = ?`,
+          `UPDATE inventory_items SET stock_level = GREATEST(stock_level - ?, 0) WHERE LOWER(name::text) = ?`,
           [qty, name]
         );
       }
@@ -337,19 +337,20 @@ export const generateReceiptHTML = (
           body { margin: 1cm; }
         }
         body {
-          font-family: 'Courier New', monospace;
+          font-family: Arial, sans-serif;
+          font-size: 12px;
           max-width: ${settings.paper_size === '58mm' ? '200px' : '300px'};
           margin: 0 auto;
           padding: 20px;
         }
         .center { text-align: center; }
         .bold { font-weight: bold; }
-        .large { font-size: 18px; }
+        .large { font-size: 16px; }
         table { width: 100%; border-collapse: collapse; }
-        td, th { padding: 4px; }
+        td, th { padding: 4px; border-bottom: 1px solid #f0f0f0; }
         .right { text-align: right; }
-        .border-top { border-top: 2px solid black; }
-        .border-bottom { border-bottom: 2px solid black; }
+        .border-top { border-top: 1px solid #ccc; }
+        .border-bottom { border-bottom: 1px solid #ccc; }
         .signature-line { border-bottom: 1px solid black; height: 40px; margin: 10px 0; }
       </style>
     </head>
@@ -695,12 +696,12 @@ export const generateShiftXReadingHTML = (
       <title>${title}</title>
       <style>
         @media print { @page { margin: 0; } body { margin: 1cm; } }
-        body { font-family: 'Courier New', monospace; max-width: 600px; margin: 0 auto; padding: 20px; }
+        body { font-family: Arial, sans-serif; font-size: 12px; max-width: 600px; margin: 0 auto; padding: 20px; }
         .center { text-align: center; }
         .bold { font-weight: bold; }
         .outlet-badge { background: #333; color: #fff; padding: 4px 12px; border-radius: 4px; display: inline-block; margin: 5px 0; }
         table { width: 100%; border-collapse: collapse; }
-        td, th { padding: 6px; border-bottom: 1px solid #ddd; }
+        td, th { padding: 6px; border-bottom: 1px solid #eee; }
         .right { text-align: right; }
       </style>
     </head>

@@ -66,7 +66,7 @@ export const listExpenses = async (): Promise<ExpenseTxn[]> => {
 
 export const findByInvoice = async (invoiceRef: string): Promise<ExpenseTxn | undefined> => {
   try {
-    const res = await db.query('SELECT * FROM expenses WHERE LOWER(invoice_ref) = LOWER(?)', [invoiceRef]);
+    const res = await db.query('SELECT * FROM expenses WHERE LOWER(invoice_ref::text) = LOWER(?::text)', [invoiceRef]);
     if ('rows' in res && res.rows.length > 0) {
       return mapRow(res.rows[0]);
     }
@@ -199,7 +199,7 @@ export const filterExpenses = async (f: ExpenseFilter): Promise<ExpenseTxn[]> =>
   if (f.from) { query += ' AND date >= ?'; params.push(f.from); }
   if (f.to) { query += ' AND date <= ?'; params.push(f.to); }
   if (f.glAccountId) { query += ' AND gl_account_id = ?'; params.push(f.glAccountId); }
-  if (f.costCenter) { query += ' AND LOWER(cost_center) = LOWER(?)'; params.push(f.costCenter); }
+  if (f.costCenter) { query += ' AND LOWER(cost_center::text) = LOWER(?::text)'; params.push(f.costCenter); }
 
   query += ' ORDER BY date DESC';
 

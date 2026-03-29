@@ -64,11 +64,11 @@ const SuperAdminSettings: React.FC = () => {
           // Fallback to env if available and no config saved
           const envConn = (import.meta as any)?.env?.VITE_DB_CONN || (window as any)?.VITE_DB_CONN;
           if (typeof envConn === 'string' && envConn.startsWith('postgres')) {
-             // Parse simple postgres string for initial display if needed, or just leave default
-             setDbMsg('Loaded default configuration.');
+            // Parse simple postgres string for initial display if needed, or just leave default
+            setDbMsg('Loaded default configuration.');
           }
         }
-      } catch {}
+      } catch { }
     })();
     return () => { mounted = false }
   }, []);
@@ -99,12 +99,12 @@ const SuperAdminSettings: React.FC = () => {
           setDbConfig(configToSave as DbConfig);
         }
       }
-      
+
       if (!configToSave.host) throw new Error('Host is required');
       const res = await db.saveConnectionConfig(configToSave);
       if (!res.ok) throw new Error(res.error || 'Failed to save configuration');
       setDbMsg('Configuration saved and database pool initialized.');
-      
+
       // Log audit event
       try {
         await pmsAuthDb.recordAccessAttempt(user?.username || 'admin', 'db_connection_updated', {
@@ -113,7 +113,7 @@ const SuperAdminSettings: React.FC = () => {
           user: configToSave.user,
           db: configToSave.database
         });
-      } catch {} // Ignore logging errors if DB is just being set up
+      } catch { } // Ignore logging errors if DB is just being set up
     } catch (e: any) {
       setDbErr(e?.message || 'Failed to save configuration.');
     }
@@ -127,7 +127,7 @@ const SuperAdminSettings: React.FC = () => {
         const parsed = parseConnString(conn);
         if (parsed) configToTest = { ...configToTest, ...parsed };
       }
-      
+
       const res = await db.testConnection(configToTest);
       if (!res.ok) throw new Error(res.error || 'Test failed');
       setDbMsg(`Connected successfully. Server: ${res.serverVersion || 'unknown'}`);
@@ -155,7 +155,7 @@ const SuperAdminSettings: React.FC = () => {
       try {
         const res = await (window as any).native.app.getTrainingMode();
         setTraining(!!res?.trainingMode);
-      } catch {}
+      } catch { }
     })();
   }, []);
   const toggleTraining = async (flag: boolean) => {
@@ -180,7 +180,7 @@ const SuperAdminSettings: React.FC = () => {
         const cfg = await (window as any).native.persistence.load('rooms_seed', []);
         const txt = Array.isArray(cfg) ? JSON.stringify(cfg, null, 2) : JSON.stringify([], null, 2);
         setRoomsText(txt);
-      } catch {}
+      } catch { }
     })();
   }, []);
   const saveRoomsConfig = async () => {
@@ -228,15 +228,15 @@ const SuperAdminSettings: React.FC = () => {
     try {
       const configured = await db.isConfigured();
       if (!configured) { setPrepErr('Database not configured. Configure the connection first.'); setPrepBusy(false); return; }
-      
+
       // First, run the permission fix to ensure admin user exists with proper permissions
       console.log('Running admin permission fix...');
       const permissionFix = await adminPermissionFixService.diagnoseAndFix();
-      
+
       if (!permissionFix.success) {
         throw new Error(`Permission fix failed: ${permissionFix.error}`);
       }
-      
+
       console.log('Permission fix completed, proceeding with cleanup...');
       await pmsAuthDb.init();
       const res = await pmsAuthDb.cleanupTestData('admin');
@@ -270,7 +270,7 @@ const SuperAdminSettings: React.FC = () => {
       const r2 = await q(`SELECT COUNT(*)::int AS c FROM public.guests`)
       const r3 = await q(`SELECT COUNT(*)::int AS c FROM public.login_attempts`)
       const r4 = await q(`SELECT COUNT(*)::int AS c FROM public.email_verifications`)
-      const r5 = await q(`SELECT COUNT(*)::int AS c FROM public.app_users WHERE lower(username) <> lower($1)`, ['admin'])
+      const r5 = await q(`SELECT COUNT(*)::int AS c FROM public.app_users WHERE lower(username::text) <> lower($1::text)`, ['admin'])
       checks.reservations = ('error' in r1) ? null : (r1.rows?.[0]?.c ?? null)
       checks.guests = ('error' in r2) ? null : (r2.rows?.[0]?.c ?? null)
       checks.login_attempts = ('error' in r3) ? null : (r3.rows?.[0]?.c ?? null)
@@ -339,13 +339,13 @@ const SuperAdminSettings: React.FC = () => {
       {err && (<div className="p-3 mb-3 rounded bg-red-50 text-red-700">{err}</div>)}
       <div className="bg-white p-4 rounded shadow max-w-xl">
         <label htmlFor="sa-code" className="text-sm font-medium">New Authorization Code</label>
-        <Input id="sa-code" type="password" value={code} onChange={(e)=> setCode(e.target.value)} placeholder="Enter new authorization code" />
+        <Input id="sa-code" type="password" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Enter new authorization code" />
         <div className="text-xs text-gray-500 mt-1">Minimum 16 characters; allowed characters A–Z, a–z, 0–9 and !@#$%^&*()_+-=&#123;&#125;:;"'&lt;&gt;?,.</div>
         <label htmlFor="sa-confirm" className="text-sm font-medium mt-3">Confirm Authorization Code</label>
-        <Input id="sa-confirm" type="password" value={confirm} onChange={(e)=> setConfirm(e.target.value)} placeholder="Re-enter authorization code" />
+        <Input id="sa-confirm" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Re-enter authorization code" />
         <div className="mt-3 flex items-center gap-2">
           <Button onClick={save} className="bg-blue-600 text-white hover:bg-blue-700" disabled={!validFormat || !matching}>Save Code</Button>
-          <Button variant="outline" onClick={()=> { setCode(''); setConfirm(''); setErr(''); setMsg(''); }}>Reset</Button>
+          <Button variant="outline" onClick={() => { setCode(''); setConfirm(''); setErr(''); setMsg(''); }}>Reset</Button>
         </div>
       </div>
 
@@ -355,7 +355,7 @@ const SuperAdminSettings: React.FC = () => {
         {dbMsg && (<div className="p-3 mb-3 rounded bg-green-50 text-green-700">{dbMsg}</div>)}
         {dbErr && (<div className="p-3 mb-3 rounded bg-red-50 text-red-700">{dbErr}</div>)}
         <label htmlFor="db-conn" className="text-sm font-medium">Database Connection String</label>
-        <Input id="db-conn" type="text" value={conn} onChange={(e)=> setConn(e.target.value)} placeholder="mysql://root:password@localhost:3306/corepms" />
+        <Input id="db-conn" type="text" value={conn} onChange={(e) => setConn(e.target.value)} placeholder="mysql://root:password@localhost:3306/corepms" />
         <div className="mt-3 flex items-center gap-2">
           <Button onClick={applyConn} className="bg-indigo-600 text-white hover:bg-indigo-700">Save Connection</Button>
           <Button onClick={testConn} disabled={testing} variant="outline">{testing ? 'Testing…' : 'Test Connection'}</Button>
@@ -384,7 +384,7 @@ const SuperAdminSettings: React.FC = () => {
         {roomsMsg && (<div className="p-3 mb-3 rounded bg-green-50 text-green-700">{roomsMsg}</div>)}
         {roomsErr && (<div className="p-3 mb-3 rounded bg-red-50 text-red-700">{roomsErr}</div>)}
         <div className="text-sm text-gray-600 mb-2">Paste JSON array of room objects with fields: number, type, rate.</div>
-        <textarea className="w-full border rounded p-2 text-sm h-40" value={roomsText} onChange={(e)=> setRoomsText(e.target.value)} />
+        <textarea className="w-full border rounded p-2 text-sm h-40" value={roomsText} onChange={(e) => setRoomsText(e.target.value)} />
         <div className="mt-3 flex items-center gap-2">
           <Button variant="outline" onClick={saveRoomsConfig}>Save Config</Button>
           <Button onClick={seedRooms} disabled={roomsBusy || !training} className="bg-green-600 text-white hover:bg-green-700">{roomsBusy ? 'Seeding…' : 'Seed Rooms'}</Button>
@@ -406,11 +406,11 @@ const SuperAdminSettings: React.FC = () => {
         <p className="text-sm text-gray-600 mb-2">Removes test data, preserves the Super User Admin (username <code>admin</code>, password <code>admin123</code>), runs optimization, and creates a backup.</p>
         <div className="flex items-center gap-2">
           <Button onClick={runCleanup} disabled={prepBusy} className="bg-red-600 text-white hover:bg-red-700">{prepBusy ? 'Running…' : 'Run Cleanup'}</Button>
-          <Button variant="outline" onClick={()=> { setPrepMsg(''); setPrepErr(''); setPrepDetails(null); }}>Reset</Button>
+          <Button variant="outline" onClick={() => { setPrepMsg(''); setPrepErr(''); setPrepDetails(null); }}>Reset</Button>
         </div>
         {prepDetails && (
           <div className="mt-3 text-xs text-gray-700">
-            <div>Deleted: {Object.entries(prepDetails.deletedCounts || {}).map(([k,v]) => `${k}=${v}`).join(', ')}</div>
+            <div>Deleted: {Object.entries(prepDetails.deletedCounts || {}).map(([k, v]) => `${k}=${v}`).join(', ')}</div>
             <div>Backup: {String(prepDetails.backupPath || '')}{prepDetails.backupWarning ? ` (Note: ${prepDetails.backupWarning})` : ''}</div>
           </div>
         )}
@@ -424,7 +424,7 @@ const SuperAdminSettings: React.FC = () => {
         <p className="text-sm text-gray-600 mb-2">Verifies cleanup (tables empty, logs recorded), then runs standard backup and writes metadata.</p>
         <div className="flex items-center gap-2">
           <Button onClick={runVerifyAndBackup} disabled={backupBusy} className="bg-indigo-600 text-white hover:bg-indigo-700">{backupBusy ? 'Running…' : 'Verify & Backup'}</Button>
-          <Button variant="outline" onClick={()=> { setBackupMsg(''); setBackupErr(''); setBackupInfo(null); }}>Reset</Button>
+          <Button variant="outline" onClick={() => { setBackupMsg(''); setBackupErr(''); setBackupInfo(null); }}>Reset</Button>
         </div>
         {backupInfo && (
           <div className="mt-3 text-xs text-gray-700">
@@ -478,7 +478,7 @@ const AccessLogsPanel: React.FC = () => {
         } else if (l.detail && typeof l.detail === 'object') {
           ok = !!(l.detail as any).ok;
         }
-      } catch {}
+      } catch { }
       if (ok === true) entry.success += 1; else if (ok === false) entry.failure += 1; else entry.failure += 0;
       entry.last = l.ts;
       map.set(u, entry);
@@ -487,7 +487,7 @@ const AccessLogsPanel: React.FC = () => {
   }, [logs]);
 
   const exportCsv = () => {
-    const header = ['id','ts','username','event','detail'];
+    const header = ['id', 'ts', 'username', 'event', 'detail'];
     const escape = (v: any) => {
       const s = typeof v === 'string' ? v : JSON.stringify(v);
       const q = s?.replace(/"/g, '""') || '';
@@ -512,27 +512,27 @@ const AccessLogsPanel: React.FC = () => {
       <div className="flex flex-wrap items-end gap-3 mb-3">
         <div>
           <label className="text-sm">Username</label>
-          <Input value={filters.username || ''} onChange={(e)=> setFilters(f => ({ ...f, username: e.target.value || undefined }))} placeholder="e.g., Super User" />
+          <Input value={filters.username || ''} onChange={(e) => setFilters(f => ({ ...f, username: e.target.value || undefined }))} placeholder="e.g., Super User" />
         </div>
         <div>
           <label className="text-sm">Event</label>
-          <Input value={filters.event || ''} onChange={(e)=> setFilters(f => ({ ...f, event: e.target.value || undefined }))} placeholder="e.g., login_attempt" />
+          <Input value={filters.event || ''} onChange={(e) => setFilters(f => ({ ...f, event: e.target.value || undefined }))} placeholder="e.g., login_attempt" />
         </div>
         <div>
           <label className="text-sm">From</label>
-          <Input type="datetime-local" value={filters.from || ''} onChange={(e)=> setFilters(f => ({ ...f, from: e.target.value || undefined }))} />
+          <Input type="datetime-local" value={filters.from || ''} onChange={(e) => setFilters(f => ({ ...f, from: e.target.value || undefined }))} />
         </div>
         <div>
           <label className="text-sm">To</label>
-          <Input type="datetime-local" value={filters.to || ''} onChange={(e)=> setFilters(f => ({ ...f, to: e.target.value || undefined }))} />
+          <Input type="datetime-local" value={filters.to || ''} onChange={(e) => setFilters(f => ({ ...f, to: e.target.value || undefined }))} />
         </div>
         <div>
           <label className="text-sm">Limit</label>
-          <Input type="number" min={1} max={500} value={filters.limit || 50} onChange={(e)=> setFilters(f => ({ ...f, limit: Number(e.target.value || 50) }))} />
+          <Input type="number" min={1} max={500} value={filters.limit || 50} onChange={(e) => setFilters(f => ({ ...f, limit: Number(e.target.value || 50) }))} />
         </div>
         <div className="flex items-center gap-2">
           <Button onClick={load} disabled={loading}>{loading ? 'Loading…' : 'Refresh'}</Button>
-          <Button variant="outline" onClick={()=> { setFilters({ limit: 50 }); load(); }}>Clear Filters</Button>
+          <Button variant="outline" onClick={() => { setFilters({ limit: 50 }); load(); }}>Clear Filters</Button>
           <Button variant="secondary" onClick={exportCsv}>Export CSV</Button>
         </div>
       </div>

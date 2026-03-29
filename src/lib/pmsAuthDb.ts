@@ -433,7 +433,7 @@ export const pmsAuthDb = {
     const configured = await db.isConfigured();
     if (!configured) return { ok: false };
     await this.init();
-    const row = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username) = lower('admin')`);
+    const row = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username::text) = lower('admin'::text)`);
     if (!('error' in row) && row.rows && row.rows.length > 0) {
       const id = row.rows[0].id;
       const hash = await bcrypt.hash('admin123', 12);
@@ -486,10 +486,10 @@ export const pmsAuthDb = {
       await del(`DELETE FROM login_attempts`, [], 'login_attempts');
       await del(`DELETE FROM email_verifications`, [], 'email_verifications');
       await del(`DELETE FROM access_logs WHERE user_username IS NULL OR user_username <> ?`, [preserveUsername], 'access_logs');
-      await del(`DELETE FROM app_users WHERE lower(username) <> lower(?)`, [preserveUsername], 'app_users');
+      await del(`DELETE FROM app_users WHERE lower(username::text) <> lower(?::text)`, [preserveUsername], 'app_users');
 
       // Ensure preserved admin user exists and is active
-      const adminRow = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username) = lower(?)`, [preserveUsername]);
+      const adminRow = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username::text) = lower(?::text)`, [preserveUsername]);
       if ('error' in adminRow) throw new Error(adminRow.error);
       if (!adminRow.rows || adminRow.rows.length === 0) {
         const id = `usr_${makeUuid()}`;
@@ -499,7 +499,7 @@ export const pmsAuthDb = {
         if ('error' in ins) throw new Error(ins.error);
       } else {
         // Update without touching columns that may not exist on older schema
-        await db.query(`UPDATE app_users SET role = 'admin', active = true WHERE lower(username) = lower(?)`, [preserveUsername]);
+        await db.query(`UPDATE app_users SET role = 'admin', active = true WHERE lower(username::text) = lower(?::text)`, [preserveUsername]);
       }
 
       await this.recordAccessAttempt(preserveUsername, 'cleanup_executed', { deletedCounts: stats });
@@ -516,7 +516,7 @@ export const pmsAuthDb = {
   },
 
   async verifyLogin(username: string, password: string): Promise<{ ok: boolean; user?: DbUser; mustChange?: boolean; error?: string }> {
-    const res = await db.query<DbUser & { password_hash: string; failed_attempts: number; lockout_until: string | null; password_changed_at: string | null }>(`SELECT id, username, name, role, active, password_change_required, created_at, password_hash, failed_attempts, lockout_until, password_changed_at, permissions FROM app_users WHERE LOWER(username) = LOWER(?)`, [username]);
+    const res = await db.query<DbUser & { password_hash: string; failed_attempts: number; lockout_until: string | null; password_changed_at: string | null }>(`SELECT id, username, name, role, active, password_change_required, created_at, password_hash, failed_attempts, lockout_until, password_changed_at, permissions FROM app_users WHERE LOWER(username::text) = LOWER(?::text)`, [username]);
     if ('error' in res) {
       return { ok: false, error: res.error as string };
     }
@@ -546,11 +546,11 @@ export const pmsAuthDb = {
       if (nextFailed >= 10) {
         lockUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // ISO string is fine for MySQL DATETIME usually, or use JS Date
       }
-      await db.query(`UPDATE app_users SET failed_attempts = ?, lockout_until = ?, updated_at = NOW() WHERE LOWER(username) = LOWER(?)`, [nextFailed, lockUntil ? new Date(lockUntil) : null, username]);
+      await db.query(`UPDATE app_users SET failed_attempts = ?, lockout_until = ?, updated_at = NOW() WHERE LOWER(username::text) = LOWER(?::text)`, [nextFailed, lockUntil ? new Date(lockUntil) : null, username]);
       return { ok: false, error: 'Invalid username or password' };
     }
     // Success: reset counters
-    await db.query(`UPDATE app_users SET failed_attempts = 0, lockout_until = NULL, last_login = NOW(), updated_at = NOW() WHERE LOWER(username) = LOWER(?)`, [username]);
+    await db.query(`UPDATE app_users SET failed_attempts = 0, lockout_until = NULL, last_login = NOW(), updated_at = NOW() WHERE LOWER(username::text) = LOWER(?::text)`, [username]);
     // Unified preview policy: do not force password change in Electron preview
     const mustChange = false;
     const user: DbUser = {
@@ -563,7 +563,7 @@ export const pmsAuthDb = {
       created_at: row.created_at,
       permissions: row.permissions || [],
     };
-    await db.query(`UPDATE app_users SET password_change_required = false WHERE LOWER(username) = LOWER(?)`, [username]);
+    await db.query(`UPDATE app_users SET password_change_required = false WHERE LOWER(username::text) = LOWER(?::text)`, [username]);
     return { ok: true, user, mustChange };
   },
 
@@ -577,7 +577,7 @@ export const pmsAuthDb = {
     }
     const hash = await bcrypt.hash(newPassword, 12);
     // Update without referencing optional columns for schema compatibility
-    const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false, password_changed_at = NOW(), failed_attempts = 0, lockout_until = NULL, updated_at = NOW() WHERE LOWER(username) = LOWER(?)`;
+    const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false, password_changed_at = NOW(), failed_attempts = 0, lockout_until = NULL, updated_at = NOW() WHERE LOWER(username::text) = LOWER(?::text)`;
     const res = await db.query(sql, [hash, username]);
     if ('error' in res) return { ok: false, error: res.error };
     await this.recordAccessAttempt(username, 'password_changed');
@@ -587,7 +587,7 @@ export const pmsAuthDb = {
   async updatePasswordForUserUnsafe(username: string, newPassword: string): Promise<{ ok: boolean; error?: string }> {
     try {
       const hash = await bcrypt.hash(newPassword, 12);
-      const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false WHERE lower(username) = lower(?)`;
+      const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false WHERE lower(username::text) = lower(?::text)`;
       const res = await db.query(sql, [hash, username]);
       if ('error' in res) return { ok: false, error: res.error };
       await this.recordAccessAttempt(username, 'password_changed_unsafe');
@@ -606,8 +606,8 @@ export const pmsAuthDb = {
     if (!this.validateStrongPassword(password)) return { ok: false, error: 'Weak password' };
 
     // Check for duplicate username and email separately to provide specific feedback
-    const usernameCheck = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username) = LOWER(?)`, [username]);
-    const emailCheck = email ? await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(email) = LOWER(?)`, [email]) : { rows: [] };
+    const usernameCheck = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username::text) = LOWER(?::text)`, [username]);
+    const emailCheck = email ? await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(email::text) = LOWER(?::text)`, [email]) : { rows: [] };
 
     const usernameExists = !('error' in usernameCheck) && usernameCheck.rows && usernameCheck.rows.length > 0;
     const emailExists = !('error' in emailCheck) && emailCheck.rows && emailCheck.rows.length > 0;
@@ -655,7 +655,7 @@ export const pmsAuthDb = {
     // Try adding numbers
     for (let i = 1; i <= 5; i++) {
       const candidate = `${cleanBase}${i}`;
-      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username) = LOWER(?)`, [candidate]);
+      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username::text) = LOWER(?::text)`, [candidate]);
       if ('error' in exists || !exists.rows || exists.rows.length === 0) {
         suggestions.push(candidate);
         if (suggestions.length >= 3) break;
@@ -666,7 +666,7 @@ export const pmsAuthDb = {
     if (suggestions.length < 3) {
       const year = new Date().getFullYear();
       const candidate = `${cleanBase}${year}`;
-      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username) = LOWER(?)`, [candidate]);
+      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username::text) = LOWER(?::text)`, [candidate]);
       if ('error' in exists || !exists.rows || exists.rows.length === 0) {
         suggestions.push(candidate);
       }
@@ -676,7 +676,7 @@ export const pmsAuthDb = {
     if (suggestions.length < 3) {
       const randomSuffix = Math.random().toString(36).substring(2, 5);
       const candidate = `${cleanBase}_${randomSuffix}`;
-      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username) = LOWER(?)`, [candidate]);
+      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username::text) = LOWER(?::text)`, [candidate]);
       if ('error' in exists || !exists.rows || exists.rows.length === 0) {
         suggestions.push(candidate);
       }
@@ -686,7 +686,7 @@ export const pmsAuthDb = {
   },
 
   async resendVerification(usernameOrEmail: string): Promise<{ ok: boolean; error?: string; verifyToken?: string }> {
-    const res = await db.query<{ id: string; is_verified: number }>(`SELECT id, is_verified FROM app_users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)`, [usernameOrEmail, usernameOrEmail]);
+    const res = await db.query<{ id: string; is_verified: number }>(`SELECT id, is_verified FROM app_users WHERE LOWER(username::text) = LOWER(?::text) OR LOWER(email::text) = LOWER(?::text)`, [usernameOrEmail, usernameOrEmail]);
     if ('error' in res || !res.rows || res.rows.length === 0) return { ok: false, error: 'User not found' };
     if (res.rows[0].is_verified) return { ok: false, error: 'Already verified' };
     const token = makeUuid();
