@@ -11,7 +11,16 @@ import { fetchDepartments, isMultiSelectEnabled, DepartmentNode } from '@/lib/de
 import { Crypto } from '@/lib/crypto';
 import wf from '@/lib/approvalWorkflow';
 import db from '@/lib/db';
+import pmsAuthDb from '@/lib/pmsAuthDb';
 import { USER_ROLES, mapStandardRoleToInternal } from '@/lib/authService';
+
+const DEFAULT_COST_CENTRES = [
+  'Room Service',
+  'Bar 1',
+  'Bar 2',
+  'Main Restaurant',
+  'Lounge Restaurant'
+];
 
 const AuthPortal: React.FC = () => {
   const { user, login, register, requestPasswordReset, resetPassword, costCentre, setCostCentre, shiftId, setShiftId, logout } = useAuth();
@@ -32,14 +41,30 @@ const AuthPortal: React.FC = () => {
   const [showCancelDialog, setShowCancelDialog] = React.useState(false);
   const [eta, setEta] = React.useState<string>('Calculating…');
   const [expectedIp, setExpectedIp] = React.useState<string>('');
+  const [costCentres, setCostCentres] = React.useState<string[]>(DEFAULT_COST_CENTRES);
+  const [costCentresLoading, setCostCentresLoading] = React.useState(true);
 
-  const COST_CENTRES = [
-    'Room Service',
-    'Bar 1',
-    'Bar 2',
-    'Main Restaurant',
-    'Lounge Restaurant'
-  ];
+  // Load cost centres from database (Station Management), fall back to defaults on first run
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const rows = await pmsAuthDb.listCostCentres();
+        if (!cancelled && Array.isArray(rows) && rows.length > 0) {
+          // DB has stations configured — use only active ones
+          const active = rows.filter(r => r.active).map(r => r.name);
+          setCostCentres(active);
+        }
+        // If DB returns empty array, keep hardcoded defaults (first-time setup)
+      } catch {
+        // keep defaults
+      } finally {
+        if (!cancelled) setCostCentresLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, []);
 
   const doLogin = async () => {
     setMessage('');
@@ -181,24 +206,33 @@ const AuthPortal: React.FC = () => {
           <h2 className="text-3xl font-bold text-gray-900 mb-2">Select Cost Centre</h2>
           <p className="text-gray-600">Please choose your active workstation to continue</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {COST_CENTRES.map((cc) => (
-            <div
-              key={cc}
-              onClick={() => handleSelectCostCentre(cc)}
-              className="cursor-pointer group relative overflow-hidden rounded-2xl bg-white p-8 shadow-sm transition-all hover:shadow-xl hover:-translate-y-1 border border-gray-100"
-            >
-              <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                <div className="w-24 h-24 bg-blue-500 rounded-full -mr-12 -mt-12"></div>
+        {costCentresLoading ? (
+          <div className="text-center text-gray-500 py-12">Loading available stations...</div>
+        ) : costCentres.length === 0 ? (
+          <div className="text-center text-gray-500 py-12">
+            <p className="mb-2 font-semibold">No cost centres configured.</p>
+            <p className="text-sm">Please add stations in POS Settings &rarr; Station Management.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {costCentres.map((cc) => (
+              <div
+                key={cc}
+                onClick={() => handleSelectCostCentre(cc)}
+                className="cursor-pointer group relative overflow-hidden rounded-2xl bg-white p-8 shadow-sm transition-all hover:shadow-xl hover:-translate-y-1 border border-gray-100"
+              >
+                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <div className="w-24 h-24 bg-blue-500 rounded-full -mr-12 -mt-12"></div>
+                </div>
+                <h3 className="text-xl font-bold text-gray-800 mb-2 group-hover:text-blue-600 transition-colors">{cc}</h3>
+                <p className="text-sm text-gray-500">Access Point of Sale and Inventory</p>
+                <div className="mt-6 flex items-center text-blue-600 text-sm font-semibold opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
+                  Select Workstation →
+                </div>
               </div>
-              <h3 className="text-xl font-bold text-gray-800 mb-2 group-hover:text-blue-600 transition-colors">{cc}</h3>
-              <p className="text-sm text-gray-500">Access Point of Sale and Inventory</p>
-              <div className="mt-6 flex items-center text-blue-600 text-sm font-semibold opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
-                Select Workstation →
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
         <div className="mt-12 text-center">
           <Button variant="ghost" onClick={logout} className="text-gray-500 hover:text-red-600">
             Sign out and change user
