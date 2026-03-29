@@ -15,7 +15,7 @@ export const canOverrideTransactions = (role: Role) => ['admin', 'supervisor', '
 export const canAccessDashboards = (role: Role) => ['admin', 'manager', 'supervisor', 'frontdesk', 'cashier'].includes(normalizeRole(role));
 
 // POS management permissions
-export const canManagePOS = (role: Role) => isManager(role);
+export const canManagePOS = (role: Role) => isManager(role) || normalizeRole(role) === 'posmanager';
 export const canEditStockItem = (role: Role) => isManager(role);
 export const canFixStockItem = (role: Role) => isManager(role);
 export const canDeleteStockItem = (role: Role) => isManager(role);

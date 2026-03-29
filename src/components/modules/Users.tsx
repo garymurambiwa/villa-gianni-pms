@@ -82,7 +82,7 @@ const DEFAULT_ROLE_RIGHTS: Record<RoleName, RightsKey[]> = {
   'Super Admin': [...ALL_RIGHT_KEYS],
   'Admin': [...ALL_RIGHT_KEYS],
   'FO Manager': ['fo_checkin_checkout', 'fo_reservations_edit', 'fo_process_room_payments', 'fo_access_folios', 'fo_view_room_status', 'fin_view_reports_pl', 'fin_access_ledgers_readonly'],
-  'FNB Manager': ['fnb_process_orders', 'fnb_apply_discounts_voids', 'fnb_manage_inventory', 'fin_view_reports_pl', 'fin_access_ledgers_readonly', 'admin_view_audit_logs'],
+  'FNB Manager': ['fnb_process_orders', 'fnb_apply_discounts_voids', 'fnb_manage_inventory', 'fin_view_reports_pl', 'fin_access_ledgers_readonly', 'admin_view_audit_logs', 'admin_change_global_config'],
   'FO Supervisor': ['fo_checkin_checkout', 'fo_reservations_edit', 'fo_process_room_payments', 'fo_access_folios', 'fo_view_room_status', 'fin_view_reports_pl'],
   'FNB Supervisor': ['fnb_process_orders', 'fnb_apply_discounts_voids', 'fnb_manage_inventory', 'fin_view_reports_pl'],
   'Restaurant Cashier': ['fnb_process_orders', 'fnb_apply_discounts_voids'],

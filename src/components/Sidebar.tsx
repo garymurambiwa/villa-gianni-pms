@@ -125,8 +125,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
     { id: 'rate-management', name: 'Rate Management', icon: '💹', roles: ['admin', 'manager', 'supervisor'], section: 'Back Office' },
 
     { id: 'pos', name: 'POS System', icon: '🍽️', roles: ['admin', 'posmanager', 'manager', 'cashier', 'barman', 'supervisor'], section: 'POS' },
-    { id: 'pos-management', name: 'POS Management', icon: '📊', roles: ['admin', 'manager', 'supervisor'], section: 'POS' },
-    { id: 'pos-settings', name: 'POS Settings', icon: '⚙️', roles: ['admin', 'manager', 'supervisor'], section: 'POS' },
+    { id: 'pos-management', name: 'POS Management', icon: '📊', roles: ['admin', 'manager', 'supervisor', 'posmanager'], section: 'POS' },
+    { id: 'pos-settings', name: 'POS Settings', icon: '⚙️', roles: ['admin', 'manager', 'supervisor', 'posmanager'], section: 'POS' },
     { id: 'inventory', name: 'Inventory', icon: '📦', roles: ['admin', 'posmanager', 'manager', 'supervisor', 'barman'], section: 'POS' },
 
     { id: 'accounting', name: 'Accounting', icon: '📒', roles: ['admin', 'manager', 'auditor', 'supervisor'], section: 'Back Office' },
@@ -236,7 +236,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
                     {module.id === 'pos-settings' && canManagePOS(user?.role) && (
                       <>
                         <span className="ml-2">🔒</span>
-                        <span className="ml-2 text-[10px] uppercase tracking-wide bg-red-600 text-white px-2 py-1 rounded">Admin/Supervisor</span>
+                        <span className="ml-2 text-[10px] uppercase tracking-wide bg-red-600 text-white px-2 py-1 rounded">Restricted</span>
                       </>
                     )}
                   </button>

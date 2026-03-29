@@ -338,7 +338,7 @@ const AppLayout: React.FC = () => {
         );
       }
       case 'pos-management': {
-        return isManager(user?.role)
+        return (isManager(user?.role) || normalizeRole(user?.role) === 'posmanager')
           ? (
             <ErrorBoundary fallbackTitle="POS Management Error" fallbackMessage="Please reload or contact support.">
               <POSManagement />
