@@ -167,7 +167,7 @@ export const decrementInventory = (soldItems: Array<{ name: string; quantity: nu
         const qty = Number(si.quantity || 0);
         const name = String(si.name || '').toLowerCase();
         await db.query(
-          `UPDATE inventory_items SET stock_level = GREATEST(stock_level - ?, 0) WHERE LOWER(name::text) = ?`,
+          `UPDATE inventory_items SET stock_level = GREATEST(stock_level - ?, 0) WHERE LOWER(name::text) = LOWER(?::text)`,
           [qty, name]
         );
       }

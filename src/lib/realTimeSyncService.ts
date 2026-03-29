@@ -200,7 +200,7 @@ export class RealTimeSyncService {
 
     try {
       // Wait for database to be ready
-      const isReady = await db.waitForReady(5, 1000);
+      const isReady = await db.waitForReady();
       if (!isReady) {
         throw new Error('Database not ready for sync');
       }
@@ -249,7 +249,7 @@ export class RealTimeSyncService {
       this.stats.set(moduleName, stats);
       
       console.log(`[RealTimeSync] ${moduleName} sync completed in ${Date.now() - startTime}ms`);
-    } catch (error) {
+    } catch (error: Error | unknown) {
       // Update stats on error
       stats.errorCount++;
       stats.lastError = error instanceof Error ? error.message : String(error);
@@ -319,7 +319,7 @@ export class RealTimeSyncService {
    */
   private async syncPosOrders(): Promise<void> {
     try {
-      const result = await db.query('SELECT * FROM pos_orders WHERE LOWER(status) = ?', ['open']);
+      const result = await db.query('SELECT * FROM pos_orders WHERE LOWER(status::text) = LOWER(?::text)', ['open']);
       if ('error' in result) {
         throw new Error(`POS orders sync failed: ${(result as any).error}`);
       }

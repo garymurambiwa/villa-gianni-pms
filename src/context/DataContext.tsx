@@ -241,7 +241,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Load POS & Inventory Data
-      const posRes = await db.query('SELECT * FROM pos_orders WHERE LOWER(status) = ?', ['open']);
+      const posRes = await db.query('SELECT * FROM pos_orders WHERE LOWER(status::text) = LOWER(?::text)', ['open']);
       if ('rows' in posRes) {
         const normalized = (posRes.rows || []).map((o: any) => {
           let itemsArr: any[] = [];
