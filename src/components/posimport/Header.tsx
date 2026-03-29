@@ -14,7 +14,7 @@ import { canManagePOS } from '../../lib/permissions';
 export const Header: React.FC = () => {
   const { user, logout, costCentre, setCostCentre, verifyPosPin } = useAuth();
   const { settings: appSettings } = useSettings();
-  const { activeShift, generateXReading, getTotals } = useShift();
+  const { activeShift, generateXReading, getTotals, clearActiveShift } = useShift();
   const [showStartModal, setShowStartModal] = useState(false);
   const [showClosureModal, setShowClosureModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -49,6 +49,7 @@ export const Header: React.FC = () => {
       // We could store the verifiedUser in a state if we want StartShiftModal to use it instead of useAuth().user
       setShowStartModal(true);
     } else if (pinPurpose === 'switch') {
+      clearActiveShift();
       setCostCentre(null);
     }
     setPinPurpose(null);

@@ -72,9 +72,8 @@ export const POSFrontOffice: React.FC = () => {
     const refresh = async () => {
       try {
         const list = await getMenuItems(costCentre || undefined);
-        // Add empty image property to ensure type compatibility
         const safeList = Array.isArray(list) ? list : [];
-        console.log("[POS Items Debug - Retrieved]", safeList.length, "items");
+        console.log("[POS Items Debug - Retrieved]", safeList.length, "items for cost centre:", costCentre);
         if (safeList.length > 0) {
           console.log("[POS Items Debug - Example]", safeList[0]);
           const barItems = safeList.filter((i: any) => i.category === 'bar');
@@ -85,13 +84,12 @@ export const POSFrontOffice: React.FC = () => {
         setMenuItems(listWithImages);
       } catch (err) { console.error('Menu refresh failed', err); }
     };
-    // Initial and periodic refresh (every 60s) to meet 5-minute SLA comfortably
     refresh();
     const iv = setInterval(refresh, 60_000);
     const onStorage = (e: StorageEvent) => { if (e.key === 'corepms_pos_items') refresh(); };
     window.addEventListener('storage', onStorage);
     return () => { clearInterval(iv); window.removeEventListener('storage', onStorage); };
-  }, []);
+  }, [costCentre]);
 
   useEffect(() => {
     // Clear potentially stale localStorage on mount to ensure clean slate if needed
@@ -206,53 +204,54 @@ export const POSFrontOffice: React.FC = () => {
   const debouncedTimerRef = useRef<any>(null);
   const pendingBillRef = useRef<any>(null);
 
-  useEffect(() => {
-    const run = async () => {
-      setMountLoading(true);
-      try {
-        const ready = await db.waitForReady();
-        if (!ready) {
-          setConnError('Database initialization timed out after 90s');
-          setMountLoading(false);
-          return;
-        }
-        const cfg = await db.getConnectionConfig();
-        if (cfg && cfg.host && cfg.host !== '0.0.0.0') {
-          setConnError('Database not bound to 0.0.0.0');
-        } else {
-          setConnError(null);
-        }
-        const res = await db.query(`SELECT table_id, status FROM table_status WHERE cost_center = $1`, [costCentre || 'Main Restaurant']);
-        if ('rows' in res) {
-          const statusMap: Record<string, 'available' | 'occupied' | 'suspended'> = {};
-          const safeRows = Array.isArray(res.rows) ? res.rows : [];
-          safeRows.forEach((r: any) => {
-            // Map database status to frontend status
-            if (r.status === 'open') {
-              statusMap[r.table_id] = 'available';
-            } else if (r.status === 'occupied') {
-              statusMap[r.table_id] = 'occupied';
-            } else if (r.status === 'closed') {
-              statusMap[r.table_id] = 'suspended';
-            }
-          });
-
-          setTables(prev => {
-            const safePrev = Array.isArray(prev) ? prev : [];
-            return safePrev.map(t => {
-              const status = statusMap[t.id] || t.status;
-              return { ...t, status, cost_center: costCentre || 'Main Restaurant' };
-            });
-          });
-        }
-      } catch (e: any) {
-        setConnError(e?.message || 'Failed to fetch table status');
-      } finally {
+  const fetchTablesForCostCentre = useCallback(async (cc: string) => {
+    setMountLoading(true);
+    try {
+      const ready = await db.waitForReady();
+      if (!ready) {
+        setConnError('Database initialization timed out after 90s');
         setMountLoading(false);
+        return;
       }
-    };
-    run();
+      const cfg = await db.getConnectionConfig();
+      if (cfg && cfg.host && cfg.host !== '0.0.0.0') {
+        setConnError('Database not bound to 0.0.0.0');
+      } else {
+        setConnError(null);
+      }
+      const res = await db.query(`SELECT table_id, status FROM table_status WHERE cost_center = $1`, [cc || 'Main Restaurant']);
+      if ('rows' in res) {
+        const statusMap: Record<string, 'available' | 'occupied' | 'suspended'> = {};
+        const safeRows = Array.isArray(res.rows) ? res.rows : [];
+        safeRows.forEach((r: any) => {
+          if (r.status === 'open') {
+            statusMap[r.table_id] = 'available';
+          } else if (r.status === 'occupied') {
+            statusMap[r.table_id] = 'occupied';
+          } else if (r.status === 'closed') {
+            statusMap[r.table_id] = 'suspended';
+          }
+        });
+
+        setTables(prev => {
+          const safePrev = Array.isArray(prev) ? prev : [];
+          return safePrev.map(t => {
+            const status = statusMap[t.id] || 'available';
+            return { ...t, status, cost_center: cc || 'Main Restaurant', currentBill: statusMap[t.id] === 'occupied' ? t.currentBill : undefined };
+          });
+        });
+      }
+    } catch (e: any) {
+      setConnError(e?.message || 'Failed to fetch table status');
+    } finally {
+      setMountLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!costCentre) return;
+    fetchTablesForCostCentre(costCentre);
+  }, [costCentre, fetchTablesForCostCentre]);
 
   const updateTableStatus = useCallback(async (tableId: string, status: 'available' | 'occupied' | 'suspended') => {
     const mapped = status === 'suspended' ? 'closed' : (status === 'available' ? 'open' : status);
@@ -571,6 +570,17 @@ export const POSFrontOffice: React.FC = () => {
     <div className="min-h-screen bg-gray-50">
       <Header />
 
+      {/* When no cost centre selected, show transition message; AuthPortal handles station selection */}
+      {!costCentre && (
+        <div className="flex items-center justify-center py-20">
+          <div className="text-center">
+            <div className="text-6xl mb-4">🍽️</div>
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">Switching Station</h2>
+            <p className="text-gray-500">Please select your new cost centre below.</p>
+          </div>
+        </div>
+      )}
+
       {/* PIN Lock Overlay */}
       <PINModal
         isOpen={isLocked}
@@ -580,6 +590,7 @@ export const POSFrontOffice: React.FC = () => {
         verifyPin={verifyPosPin}
       />
 
+      {costCentre && (
       <div className="p-6">
         {(isLoading || mountLoading) && (
           <div className="bg-white rounded-xl shadow p-6 text-center text-gray-600">Loading...</div>
@@ -847,6 +858,7 @@ export const POSFrontOffice: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
       {orderModal?.open && (
         <OrderModal

@@ -39,6 +39,7 @@ interface ShiftContextType {
   getTotals: () => { cash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number };
   getEndedShifts: () => Shift[];
   clearEndedShifts: () => void;
+  clearActiveShift: () => void;
   generateXReading: () => ShiftReading | null;
   generateZReading: (closingCash?: number) => ShiftReading | null;
   getZReadings: () => ShiftReading[];
@@ -279,6 +280,11 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     localStorage.removeItem('corepms_endedShifts');
   };
 
+  const clearActiveShift = (): void => {
+    setActiveShift(null);
+    persist(null);
+  };
+
   const generateXReading = (): ShiftReading | null => {
     if (!activeShift) return null;
     
@@ -341,6 +347,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     getTotals,
     getEndedShifts,
     clearEndedShifts,
+    clearActiveShift,
     generateXReading,
     generateZReading,
     getZReadings

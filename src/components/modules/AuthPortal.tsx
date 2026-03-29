@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { useShift } from '@/contexts/ShiftContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -14,6 +15,7 @@ import { USER_ROLES, mapStandardRoleToInternal } from '@/lib/authService';
 
 const AuthPortal: React.FC = () => {
   const { user, login, register, requestPasswordReset, resetPassword, costCentre, setCostCentre, shiftId, setShiftId, logout } = useAuth();
+  const { clearActiveShift } = useShift();
   const [tab, setTab] = React.useState<'login' | 'register' | 'recover'>('login');
   const [message, setMessage] = React.useState<string>('');
 
@@ -51,6 +53,7 @@ const AuthPortal: React.FC = () => {
 
   const handleSelectCostCentre = async (cc: string) => {
     setCostCentre(cc);
+    clearActiveShift();
     try {
       const res = await db.query('SELECT id FROM pos_shifts WHERE cost_center = $1 AND status = \'open\' LIMIT 1', [cc]);
       if (res && 'rows' in res && Array.isArray(res.rows) && res.rows.length > 0) {
@@ -216,7 +219,7 @@ const AuthPortal: React.FC = () => {
               <p className="text-gray-500">Authenticated Station: <span className="font-semibold text-blue-600">{costCentre}</span></p>
             </div>
             <div className="flex gap-3">
-              <Button variant="outline" className="rounded-xl" onClick={() => setCostCentre(null)}>Switch Station</Button>
+              <Button variant="outline" className="rounded-xl" onClick={() => { clearActiveShift(); setCostCentre(null); }}>Switch Station</Button>
               <Button variant="destructive" className="rounded-xl" onClick={logout}>Logout</Button>
             </div>
           </div>
