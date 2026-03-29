@@ -24,7 +24,7 @@ export interface DbConfig {
 // Convert MySQL-style ? placeholders to PostgreSQL $1, $2, etc.
 function convertPlaceholders(sql: string): string {
   let idx = 0;
-  return sql.replace(/\?/g, () => `${++idx}`);
+  return sql.replace(/\?/g, () => `$${++idx}`);
 }
 
 // Extract table name from SQL statement
