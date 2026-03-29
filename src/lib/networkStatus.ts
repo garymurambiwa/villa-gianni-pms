@@ -74,7 +74,7 @@ class NetworkStatusMonitor {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-            const response = await fetch('/favicon.ico', {
+            const response = await fetch('/', {
                 method: 'HEAD',
                 mode: 'same-origin',
                 cache: 'no-store',

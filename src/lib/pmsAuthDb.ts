@@ -287,9 +287,9 @@ export const pmsAuthDb = {
     `;
     const createShifts = `
       CREATE TABLE IF NOT EXISTS pos_shifts (
-        id VARCHAR(36) PRIMARY KEY,
-        user_id VARCHAR(36) NOT NULL,
-        station_id VARCHAR(36) NOT NULL,
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        station_id VARCHAR(255) NOT NULL,
         start_time TIMESTAMP NOT NULL DEFAULT NOW(),
         end_time TIMESTAMP,
         start_balance NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -308,8 +308,9 @@ export const pmsAuthDb = {
     await db.exec(createReservations);
     await db.exec(createCostCentres);
     await db.exec(createShifts);
-    try { await db.exec(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS user_id VARCHAR(36)`); } catch { }
-    try { await db.exec(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS station_id VARCHAR(36)`); } catch { }
+    try { await db.exec(`ALTER TABLE pos_shifts ALTER COLUMN id TYPE VARCHAR(255)`); } catch { }
+    try { await db.exec(`ALTER TABLE pos_shifts ALTER COLUMN user_id TYPE VARCHAR(255)`); } catch { }
+    try { await db.exec(`ALTER TABLE pos_shifts ALTER COLUMN station_id TYPE VARCHAR(255)`); } catch { }
     try { await db.exec(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'open'`); } catch { }
     try { await db.exec(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS start_balance NUMERIC(12,2) NOT NULL DEFAULT 0`); } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_inserted_at_idx ON reservations(inserted_at)`) } catch { }
@@ -322,7 +323,8 @@ export const pmsAuthDb = {
     await db.exec(createOrders);
     try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(status)`) } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_inserted_at_idx ON orders(inserted_at)`) } catch { }
-    try { await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS shift_id VARCHAR(36)`) } catch { }
+    try { await db.exec(`ALTER TABLE orders ALTER COLUMN shift_id TYPE VARCHAR(255)`) } catch { }
+    try { await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS shift_id VARCHAR(255)`) } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_pos_enabled BOOLEAN DEFAULT true`) } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pos_role VARCHAR(50)`) } catch { }
     await db.exec(createOrderItems);
