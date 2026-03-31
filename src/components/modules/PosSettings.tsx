@@ -25,9 +25,12 @@ import {
   syncPosItemToDb,
   deletePosItemFromDb,
   performFullSync,
-  ensureTablesExist
+  ensureTablesExist,
+  fixItemVisibility,
+  fixAllItemsVisibility
 } from '@/lib/dbSync';
 import vendors from '@/lib/vendors';
+import pmsAuthDb, { DbUser, Shift } from '@/lib/pmsAuthDb';
 
 const defaultPalette = [
   '#4f46e5',
@@ -447,6 +450,282 @@ const SubCategoriesPanel: React.FC = () => {
     </div>
   );
 };
+
+const StationManagementPanel: React.FC = () => {
+  const { toast } = useToast();
+  const [name, setName] = React.useState('');
+  const [description, setDescription] = React.useState('');
+  const [stations, setStations] = React.useState<Array<{ id: string; name: string; description?: string; active: boolean }>>([]);
+  const [loading, setLoading] = React.useState(false);
+
+  const loadStations = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await pmsAuthDb.listCostCentres();
+      setStations(data);
+    } catch (err) {
+      toast({ title: 'Error', description: 'Failed to load stations', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  React.useEffect(() => {
+    loadStations();
+  }, [loadStations]);
+
+  const handleAdd = async () => {
+    if (!name.trim()) {
+      toast({ title: 'Validation Error', description: 'Station name is required', variant: 'destructive' });
+      return;
+    }
+    try {
+      const res = await pmsAuthDb.addCostCentre(name.trim(), description.trim());
+      if (res.ok) {
+        toast({ title: 'Success', description: `Station "${name}" created` });
+        setName('');
+        setDescription('');
+        loadStations();
+      } else {
+        toast({ title: 'Error', description: res.error || 'Failed to add station', variant: 'destructive' });
+      }
+    } catch (err) {
+      toast({ title: 'Error', description: 'Failed to add station', variant: 'destructive' });
+    }
+  };
+
+  const handleDelete = async (id: string, stationName: string) => {
+    if (!window.confirm(`Are you sure you want to deactivate station "${stationName}"?`)) return;
+    try {
+      const res = await pmsAuthDb.deleteCostCentre(id);
+      if (res.ok) {
+        toast({ title: 'Success', description: 'Station deactivated' });
+        loadStations();
+      } else {
+        toast({ title: 'Error', description: res.error || 'Failed to deactivate station', variant: 'destructive' });
+      }
+    } catch (err) {
+      toast({ title: 'Error', description: 'Failed to deactivate station', variant: 'destructive' });
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+        <div className="md:col-span-1">
+          <Label className="text-xs">Station Name</Label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Pool Bar" />
+        </div>
+        <div className="md:col-span-1">
+          <Label className="text-xs">Description (Optional)</Label>
+          <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Outdoor outlet" />
+        </div>
+        <Button className="bg-indigo-600 text-white" onClick={handleAdd}>Add Station</Button>
+      </div>
+
+      <div className="mt-4 border rounded overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b">
+            <tr>
+              <th className="p-2 text-left">Name</th>
+              <th className="p-2 text-left">Description</th>
+              <th className="p-2 text-center">Status</th>
+              <th className="p-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={4} className="p-4 text-center text-gray-500">Loading stations...</td></tr>
+            ) : stations.length === 0 ? (
+              <tr><td colSpan={4} className="p-4 text-center text-gray-500">No stations configured.</td></tr>
+            ) : stations.map((s) => (
+              <tr key={s.id} className="border-b hover:bg-gray-50">
+                <td className="p-2 font-medium">{s.name}</td>
+                <td className="p-2 text-gray-600">{s.description || '—'}</td>
+                <td className="p-2 text-center">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] ${s.active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {s.active ? 'Active' : 'Inactive'}
+                  </span>
+                </td>
+                <td className="p-2 text-right">
+                  {s.active && (
+                    <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 h-8" onClick={() => handleDelete(s.id, s.name)}>
+                      Deactivate
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+const UserManagementPanel: React.FC = () => {
+  const { toast } = useToast();
+  const [users, setUsers] = React.useState<DbUser[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [showPinModal, setShowPinModal] = React.useState(false);
+  const [selectedUser, setSelectedUser] = React.useState<DbUser | null>(null);
+  const [newPin, setNewPin] = React.useState('');
+
+  const loadUsers = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await pmsAuthDb.listUsers();
+      setUsers(data);
+    } catch (err) {
+      toast({ title: 'Error', description: 'Failed to load users', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  React.useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
+
+  const handleUpdatePin = async () => {
+    if (!selectedUser || !/^\d{6}$/.test(newPin)) {
+      toast({ title: 'Invalid PIN', description: 'PIN must be 6 digits', variant: 'destructive' });
+      return;
+    }
+    const res = await pmsAuthDb.updateUserPin(selectedUser.id, newPin);
+    if (res.ok) {
+      toast({ title: 'Success', description: `PIN updated for ${selectedUser.name}` });
+      setShowPinModal(false);
+      setNewPin('');
+    } else {
+      toast({ title: 'Error', description: res.error || 'Update failed', variant: 'destructive' });
+    }
+  };
+
+  const togglePosAccess = async (user: DbUser, enabled: boolean) => {
+    const res = await pmsAuthDb.updateUser(user.id, { is_pos_enabled: enabled } as any);
+    if (res.ok) {
+      toast({ title: 'Success', description: `${user.name} POS access ${enabled ? 'enabled' : 'disabled'}` });
+      loadUsers();
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="text-xs text-gray-500 mb-2">Manage POS access and security PINs for all staff members.</div>
+      <div className="border rounded overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b">
+            <tr>
+              <th className="p-2 text-left">User</th>
+              <th className="p-2 text-left">Role</th>
+              <th className="p-2 text-center">POS Enabled</th>
+              <th className="p-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={4} className="p-4 text-center">Loading users...</td></tr>
+            ) : users.length === 0 ? (
+              <tr><td colSpan={4} className="p-4 text-center">No users found.</td></tr>
+            ) : users.map(u => (
+              <tr key={u.id} className="border-b hover:bg-gray-50">
+                <td className="p-2 font-medium">{u.name} <div className="text-[10px] text-gray-500 font-normal">{u.username}</div></td>
+                <td className="p-2 capitalize">{u.role}</td>
+                <td className="p-2 text-center">
+                  <Checkbox 
+                    checked={!!(u as any).is_pos_enabled} 
+                    onCheckedChange={(v) => togglePosAccess(u, !!v)} 
+                  />
+                </td>
+                <td className="p-2 text-right">
+                  <Button variant="outline" size="sm" onClick={() => { setSelectedUser(u); setShowPinModal(true); }}>Set PIN</Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <Dialog open={showPinModal} onOpenChange={setShowPinModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Set POS PIN: {selectedUser?.name}</DialogTitle></DialogHeader>
+          <div className="py-4 space-y-3">
+            <Label className="text-xs">Enter New 6-Digit PIN</Label>
+            <Input 
+              type="password" 
+              value={newPin} 
+              onChange={e => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="******"
+              className="text-center text-3xl font-mono tracking-[0.5em] h-14"
+            />
+            <div className="text-[10px] text-center text-gray-500">Staff will use this PIN to start shifts and unlock terminals.</div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPinModal(false)}>Cancel</Button>
+            <Button className="bg-blue-600 text-white" disabled={newPin.length !== 6} onClick={handleUpdatePin}>Save PIN</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+const ShiftReportingPanel: React.FC = () => {
+  const [shifts, setShifts] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    setLoading(true);
+    pmsAuthDb.listShifts().then(data => {
+      setShifts(data);
+      setLoading(false);
+    });
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <div className="text-xs text-gray-500 mb-2">Detailed view of all POS work shifts and associated sales data.</div>
+      <div className="border rounded overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b">
+            <tr>
+              <th className="p-2 text-left">Start Time</th>
+              <th className="p-2 text-left">User</th>
+              <th className="p-2 text-center">Status</th>
+              <th className="p-2 text-right">Balance</th>
+              <th className="p-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={5} className="p-4 text-center">Loading shifts...</td></tr>
+            ) : shifts.length === 0 ? (
+              <tr><td colSpan={5} className="p-4 text-center">No shifts recorded yet.</td></tr>
+            ) : shifts.map(s => (
+              <tr key={s.id} className="border-b hover:bg-gray-50">
+                <td className="p-2">{new Date(s.start_time).toLocaleString()}</td>
+                <td className="p-2 font-medium">{s.user_name}</td>
+                <td className="p-2 text-center">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${s.status === 'open' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
+                    {(s.status || 'open').toUpperCase()}
+                  </span>
+                </td>
+                <td className="p-2 text-right font-mono">
+                  {s.status === 'open' ? `In: $${Number(s.start_balance).toFixed(2)}` : `Out: $${Number(s.end_balance || 0).toFixed(2)}`}
+                </td>
+                <td className="p-2 text-right">
+                  <Button variant="ghost" size="sm">Report</Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 export const PosSettings: React.FC = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -480,16 +759,18 @@ export const PosSettings: React.FC = () => {
   };
 
   // Vendor creation handler
-  const handleAddVendor = () => {
+  const handleAddVendor = async () => {
     if (!vendorName.trim()) {
       toast({ title: 'Validation Error', description: 'Vendor name is required', variant: 'destructive' });
       return;
     }
 
     try {
-      const newVendor = vendors.addVendor(vendorName.trim(), 'USD', vendorTerms.trim() || 'Net 30');
-      log('VENDOR_CREATE', { vendorId: newVendor.id, vendorName: newVendor.name });
-      toast({ title: 'Success', description: `Vendor "${newVendor.name}" created successfully` });
+      const newVendor = await vendors.addVendor(vendorName.trim(), 'USD', vendorTerms.trim() || 'Net 30');
+      if (newVendor) {
+        log('VENDOR_CREATE', { vendorId: newVendor.id, vendorName: newVendor.name });
+        toast({ title: 'Success', description: `Vendor "${newVendor.name}" created successfully` });
+      }
 
       // Reset form
       setVendorName('');
@@ -518,9 +799,12 @@ export const PosSettings: React.FC = () => {
   const tabAnchors: Record<'admin' | 'menu' | 'stock' | 'purchasing', Array<{ id: string; label: string }>> = {
     admin: [
       { id: 'receipt-branding', label: 'Receipt Branding & Contact Info' },
+      { id: 'user-management', label: 'POS User Management' },
+      { id: 'shift-reporting', label: 'Shift & Activity Reports' },
       { id: 'pos-reporting-tools', label: 'POS Reporting Tools' },
       { id: 'data-migration', label: 'Data Migration' },
       { id: 'category-gaps', label: 'Category Gaps' },
+      { id: 'station-management', label: 'Station Management (Cost Centres)' },
       { id: 'pos-user-rights', label: 'POS User Rights Management' },
     ],
     menu: [
@@ -876,6 +1160,12 @@ export const PosSettings: React.FC = () => {
 
   const saveStockItem = () => {
     if (!validate()) return;
+
+    // FIX: Auto-assign Bar visibility when costCenter is 'bar'
+    // This ensures items assigned to Bar menu automatically show as Bar:Yes
+    const effectiveBarVisible = costCenter === 'bar' ? true : barVisible;
+    const effectiveRestaurantVisible = costCenter === 'restaurant' ? true : restaurantVisible;
+
     const base = {
       name: itemName.trim(),
       qtyReceived,
@@ -884,8 +1174,11 @@ export const PosSettings: React.FC = () => {
       costPrice: Number(costPrice.toFixed(2)),
       sellingPrice: Number(sellingPrice.toFixed(2)),
       costCenter,
+      // FIX: Include type field for proper department handling in sync
+      type: costCenter === 'bar' ? 'Bar' : (costCenter === 'restaurant' ? 'Restaurant' : ''),
       inventoryCategory: inventoryCategory || undefined,
-      visibility: { bar: barVisible, restaurant: restaurantVisible },
+      // FIX: Use effective visibility with auto-assignment
+      visibility: { bar: effectiveBarVisible, restaurant: effectiveRestaurantVisible },
       cosPercent: computedCOS,
       gpAmount,
       gpPercent,
@@ -1099,8 +1392,18 @@ export const PosSettings: React.FC = () => {
     }
   };
 
-  const [importSummary, setImportSummary] = React.useState<{ imported: number; created: number; updated: number; errors: string[]; total: number } | null>(null);
-  const [lastImportSummary, setLastImportSummary] = React.useState<{ imported: number; created: number; updated: number; errors: string[]; total: number } | null>(null);
+  const [importSummary, setImportSummary] = React.useState<{ imported: number; created: number; updated: number; errors: string[]; total: number; pendingCategoryReview?: number } | null>(null);
+  const [lastImportSummary, setLastImportSummary] = React.useState<{ imported: number; created: number; updated: number; errors: string[]; total: number; pendingCategoryReview?: number } | null>(null);
+  const [pendingCategoryQueue, setPendingCategoryQueue] = React.useState<any[]>([]);
+  const [showPendingQueue, setShowPendingQueue] = React.useState(false);
+
+  // Load pending category queue on mount
+  React.useEffect(() => {
+    try {
+      const queue = JSON.parse(localStorage.getItem('corepms_pending_category_queue') || '[]');
+      setPendingCategoryQueue(queue);
+    } catch { }
+  }, []);
 
   React.useEffect(() => {
     if (!isManager && !isAdminRole) return;
@@ -1169,16 +1472,73 @@ export const PosSettings: React.FC = () => {
           const gpPercent = cols[gpPctIdx] ? Number(cols[gpPctIdx]) : (sellingPrice ? (gpAmount / sellingPrice) * 100 : 0);
           const notes = cols[notesIdx] || '';
           const id = cols[idIdx] || `ITEM_${Date.now()}_${i}`;
-          // Resolve category
+          // Resolve category with intelligent mapping and pending queue support
           let category_id: string | null = null;
+          let pendingCategoryReview = false;
           const catIdVal = catIdIdx >= 0 ? (cols[catIdIdx] || '').trim() : '';
           const catNameVal = catNameIdx >= 0 ? (cols[catNameIdx] || '').trim() : '';
+
+          // Default category IDs for fallback
+          const defaultBarCategory = 'CAT_BAR_GEN';
+          const defaultRestCategory = 'CAT_REST_GEN';
+
           if (catIdVal) {
-            category_id = catIdVal;
+            // Validate that the category_id exists
+            const dept = costCenter === 'bar' ? 'Bar' : 'Restaurant';
+            const existingCat = menuCats.listCategories(dept as any).find(c => c.category_id === catIdVal);
+            if (existingCat) {
+              category_id = catIdVal;
+            } else {
+              // Category ID doesn't exist - mark for pending review
+              category_id = costCenter === 'bar' ? defaultBarCategory : defaultRestCategory;
+              pendingCategoryReview = true;
+              // Store pending category mapping for later review
+              const pendingQueue = JSON.parse(localStorage.getItem('corepms_pending_category_queue') || '[]');
+              pendingQueue.push({
+                itemId: id,
+                itemName: name,
+                requestedCategoryId: catIdVal,
+                assignedCategoryId: category_id,
+                department: costCenter,
+                timestamp: new Date().toISOString()
+              });
+              localStorage.setItem('corepms_pending_category_queue', JSON.stringify(pendingQueue.slice(-100)));
+            }
           } else if (catNameVal) {
+            // Try to match by category name
             const dept = costCenter === 'bar' ? 'Bar' : 'Restaurant';
             const found = menuCats.listCategories(dept as any).find(c => c.category_name.toLowerCase() === catNameVal.toLowerCase());
-            if (found) category_id = found.category_id; else errors.push(`Row ${i + 1}: unknown CategoryName '${catNameVal}' for department '${dept}'`);
+            if (found) {
+              category_id = found.category_id;
+            } else {
+              // Category name doesn't exist - try fuzzy matching
+              const allCats = menuCats.listCategories(dept as any);
+              const fuzzyMatch = allCats.find(c =>
+                c.category_name.toLowerCase().includes(catNameVal.toLowerCase()) ||
+                catNameVal.toLowerCase().includes(c.category_name.toLowerCase())
+              );
+              if (fuzzyMatch) {
+                category_id = fuzzyMatch.category_id;
+              } else {
+                // Assign to default category and mark for review
+                category_id = costCenter === 'bar' ? defaultBarCategory : defaultRestCategory;
+                pendingCategoryReview = true;
+                // Store pending category mapping for later review
+                const pendingQueue = JSON.parse(localStorage.getItem('corepms_pending_category_queue') || '[]');
+                pendingQueue.push({
+                  itemId: id,
+                  itemName: name,
+                  requestedCategoryName: catNameVal,
+                  assignedCategoryId: category_id,
+                  department: costCenter,
+                  timestamp: new Date().toISOString()
+                });
+                localStorage.setItem('corepms_pending_category_queue', JSON.stringify(pendingQueue.slice(-100)));
+              }
+            }
+          } else {
+            // No category specified - assign default based on cost center
+            category_id = costCenter === 'bar' ? defaultBarCategory : defaultRestCategory;
           }
           // InventoryCategory parsing
           let inventoryCategory: 'kitchen' | 'cellar' | undefined = undefined;
@@ -1237,7 +1597,11 @@ export const PosSettings: React.FC = () => {
           toast({ title: 'Cloud Sync Failed', description: 'Could not connect to database.', variant: 'destructive' });
         }
 
-        const summary = { imported: parsed.length, created, updated, errors, total: next.length };
+        // Get updated pending queue count
+        const currentPendingQueue = JSON.parse(localStorage.getItem('corepms_pending_category_queue') || '[]');
+        const pendingCategoryReview = currentPendingQueue.length;
+
+        const summary = { imported: parsed.length, created, updated, errors, total: next.length, pendingCategoryReview };
         setImportSummary(summary);
         setLastImportSummary(summary);
         try { localStorage.setItem('corepms_pos_last_import_summary', JSON.stringify(summary)); } catch { }
@@ -1284,9 +1648,11 @@ export const PosSettings: React.FC = () => {
         const invCat = it.inventoryCategory === 'kitchen' || it.inventoryCategory === 'cellar'
           ? it.inventoryCategory
           : (isBar ? 'cellar' : center === 'restaurant' ? 'kitchen' : it.inventoryCategory);
+        // FIX: Don't overwrite explicit visibility settings - only set defaults if undefined
+        // This preserves user-assigned visibility values
         const vis = {
-          bar: isBar ? true : !!it.visibility?.bar,
-          restaurant: center === 'restaurant' ? true : !!it.visibility?.restaurant,
+          bar: it.visibility?.bar !== undefined ? !!it.visibility?.bar : (isBar ? true : !!it.visibility?.bar),
+          restaurant: it.visibility?.restaurant !== undefined ? !!it.visibility?.restaurant : (center === 'restaurant' ? true : !!it.visibility?.restaurant),
         };
         const merged = { ...it, category_id: newCatId, inventoryCategory: invCat, visibility: vis };
         if (
@@ -1304,6 +1670,42 @@ export const PosSettings: React.FC = () => {
     } catch (e) {
       logSettingsError('migrate_categories', e);
       toast({ title: 'Migration failed', description: 'Could not migrate categories', variant: 'destructive' });
+    }
+  };
+
+  // FIX: Function to fix visibility in database - corrects items with incorrect visibility settings
+  const fixVisibilityInDatabase = async () => {
+    toast({ title: 'Fixing visibility...', description: 'This may take a moment', duration: 2000 });
+    try {
+      const result = await fixAllItemsVisibility();
+      if (result.success) {
+        toast({ title: 'Visibility fixed', description: `Fixed ${result.synced} items in database`, duration: 3000 });
+        // Reload data from database
+        refreshData?.();
+      } else {
+        toast({ title: 'Fix failed', description: result.error || 'Unknown error', variant: 'destructive' });
+      }
+    } catch (err) {
+      console.error('[PosSettings] Fix visibility error:', err);
+      toast({ title: 'Fix error', description: String(err), variant: 'destructive' });
+    }
+  };
+
+  // FIX: Function to fix a specific item (e.g., ABSOLUTE VODKA)
+  const fixSpecificItem = async (itemId: string, itemName: string, targetCostCenter: string, targetVisibility: { bar: boolean; restaurant: boolean }) => {
+    toast({ title: 'Fixing item...', description: `Updating ${itemName}`, duration: 2000 });
+    try {
+      const result = await fixItemVisibility(itemId, targetCostCenter, targetVisibility);
+      if (result.success) {
+        toast({ title: 'Item fixed', description: `${itemName} updated successfully`, duration: 3000 });
+        // Reload data from database
+        refreshData?.();
+      } else {
+        toast({ title: 'Fix failed', description: result.error || 'Unknown error', variant: 'destructive' });
+      }
+    } catch (err) {
+      console.error('[PosSettings] Fix item error:', err);
+      toast({ title: 'Fix error', description: String(err), variant: 'destructive' });
     }
   };
 
@@ -1438,11 +1840,18 @@ export const PosSettings: React.FC = () => {
                     <SelectValue placeholder="Select unit" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="piece">piece</SelectItem>
                     <SelectItem value="each">each</SelectItem>
                     <SelectItem value="kg">kg</SelectItem>
+                    <SelectItem value="g">g</SelectItem>
+                    <SelectItem value="gram">gram</SelectItem>
                     <SelectItem value="lb">lb</SelectItem>
+                    <SelectItem value="oz">oz</SelectItem>
                     <SelectItem value="ml">ml</SelectItem>
+                    <SelectItem value="milliliter">milliliter</SelectItem>
                     <SelectItem value="L">L</SelectItem>
+                    <SelectItem value="liter">liter</SelectItem>
+                    <SelectItem value="tot">tot (tray)</SelectItem>
                   </SelectContent>
                 </Select>
                 {errors.unitOfMeasure && <div className="text-xs text-red-600 mt-1">{errors.unitOfMeasure}</div>}
@@ -1651,6 +2060,25 @@ export const PosSettings: React.FC = () => {
         </Section>
       )}
 
+      {activeTab === 'admin' && activeSectionId === 'station-management' && (
+        <Section id="station-management" title="Station Management (Cost Centres)">
+          <div className="text-xs text-gray-600 mb-2">Configure POS outlets and cost centres. These stations will be available for shift selection and order tracking.</div>
+          <StationManagementPanel />
+        </Section>
+      )}
+
+      {activeTab === 'admin' && activeSectionId === 'user-management' && (
+        <Section id="user-management" title="POS User Management">
+          <UserManagementPanel />
+        </Section>
+      )}
+
+      {activeTab === 'admin' && activeSectionId === 'shift-reporting' && (
+        <Section id="shift-reporting" title="Shift & Activity Reports">
+          <ShiftReportingPanel />
+        </Section>
+      )}
+
       {/* Import Summary Modal */}
       <Dialog open={!!importSummary} onOpenChange={(open) => setImportSummary(open ? importSummary : null)}>
         <DialogContent className="max-w-lg">
@@ -1664,6 +2092,16 @@ export const PosSettings: React.FC = () => {
                 <div>Created: <span className="font-semibold text-green-700">{importSummary.created}</span></div>
                 <div>Updated: <span className="font-semibold text-blue-700">{importSummary.updated}</span></div>
                 <div>Total Items: <span className="font-semibold">{importSummary.total}</span></div>
+                {(importSummary.pendingCategoryReview ?? 0) > 0 && (
+                  <div className="col-span-2 mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                    <div className="font-semibold text-yellow-800">
+                      Pending Category Review: {importSummary.pendingCategoryReview} items
+                    </div>
+                    <div className="text-xs text-yellow-700 mt-1">
+                      These items were assigned to default categories because their requested categories don't exist. Review and assign proper categories.
+                    </div>
+                  </div>
+                )}
               </div>
               <div>
                 <div className="font-semibold mb-1">Errors ({importSummary.errors.length})</div>

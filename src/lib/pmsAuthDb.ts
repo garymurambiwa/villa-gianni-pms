@@ -17,6 +17,20 @@ export type DbUser = {
   active: boolean;
   password_change_required: boolean;
   created_at: string;
+  email?: string;
+  permissions?: string[];
+}
+export type Shift = {
+  id: string;
+  user_id: string;
+  station_id: string;
+  start_time: string;
+  end_time?: string;
+  start_balance: number;
+  end_balance?: number;
+  status: 'open' | 'closed';
+  user_name?: string;
+  station_name?: string;
 }
 
 export type AccessLog = {
@@ -51,7 +65,9 @@ export const pmsAuthDb = {
         last_login TIMESTAMP,
         permissions TEXT[],
         two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
-        two_factor_secret TEXT
+        two_factor_secret TEXT,
+        pos_pin VARCHAR(6),
+        is_deleted BOOLEAN NOT NULL DEFAULT false
       );
       CREATE INDEX IF NOT EXISTS idx_app_users_username ON app_users(username);
       CREATE INDEX IF NOT EXISTS idx_app_users_email ON app_users(email);
@@ -101,7 +117,14 @@ export const pmsAuthDb = {
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS permissions TEXT[]`); } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_activity TIMESTAMP`); } catch { }
     try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP`); } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pos_pin VARCHAR(6)`); } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false`); } catch { }
+    try { await db.exec(`ALTER TABLE products ADD COLUMN IF NOT EXISTS visibility_stations TEXT[]`); } catch { }
     await db.exec(createLogs);
+    // [REPAIR] Ensure all existing users have is_deleted set (safe for new/existing)
+    try { await db.exec(`UPDATE app_users SET is_deleted = false WHERE is_deleted IS NULL`); } catch { }
+    // [REPAIR] Ensure empty emails are NULL to avoid unique constraint conflicts
+    try { await db.exec(`UPDATE app_users SET email = NULL WHERE email IS NOT NULL AND (email = '' OR email ~ '^\\s*$')`); } catch { }
     await db.exec(createVerifications);
     await db.exec(createLoginAttempts);
     const createAdmins = `
@@ -253,12 +276,43 @@ export const pmsAuthDb = {
       CREATE INDEX IF NOT EXISTS taxes_active_idx ON taxes(active);
       CREATE INDEX IF NOT EXISTS taxes_applies_idx ON taxes(applies_to);
     `;
+    const createCostCentres = `
+      CREATE TABLE IF NOT EXISTS cost_centres (
+        id VARCHAR(36) PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        active BOOLEAN DEFAULT true,
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `;
+    const createShifts = `
+      CREATE TABLE IF NOT EXISTS pos_shifts (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        station_id VARCHAR(255) NOT NULL,
+        start_time TIMESTAMP NOT NULL DEFAULT NOW(),
+        end_time TIMESTAMP,
+        start_balance NUMERIC(12,2) NOT NULL DEFAULT 0,
+        end_balance NUMERIC(12,2),
+        status VARCHAR(20) NOT NULL DEFAULT 'open',
+        inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_pos_shifts_user ON pos_shifts(user_id);
+      CREATE INDEX IF NOT EXISTS idx_pos_shifts_status ON pos_shifts(status);
+    `;
     await db.exec(createAdmins);
     await db.exec(createProfiles);
     await db.exec(createPrinterConfigs);
     await db.exec(createRooms);
     await db.exec(createGuests);
     await db.exec(createReservations);
+    await db.exec(createCostCentres);
+    await db.exec(createShifts);
+    try { await db.exec(`ALTER TABLE pos_shifts ALTER COLUMN id TYPE VARCHAR(255)`); } catch { }
+    try { await db.exec(`ALTER TABLE pos_shifts ALTER COLUMN user_id TYPE VARCHAR(255)`); } catch { }
+    try { await db.exec(`ALTER TABLE pos_shifts ALTER COLUMN station_id TYPE VARCHAR(255)`); } catch { }
+    try { await db.exec(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'open'`); } catch { }
+    try { await db.exec(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS start_balance NUMERIC(12,2) NOT NULL DEFAULT 0`); } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_inserted_at_idx ON reservations(inserted_at)`) } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_guest_idx ON reservations(guest_id)`) } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS reservations_room_idx ON reservations(room_id)`) } catch { }
@@ -269,6 +323,10 @@ export const pmsAuthDb = {
     await db.exec(createOrders);
     try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(status)`) } catch { }
     try { await db.exec(`CREATE INDEX IF NOT EXISTS orders_inserted_at_idx ON orders(inserted_at)`) } catch { }
+    try { await db.exec(`ALTER TABLE orders ALTER COLUMN shift_id TYPE VARCHAR(255)`) } catch { }
+    try { await db.exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS shift_id VARCHAR(255)`) } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_pos_enabled BOOLEAN DEFAULT true`) } catch { }
+    try { await db.exec(`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pos_role VARCHAR(50)`) } catch { }
     await db.exec(createOrderItems);
     await db.exec(createInventoryItems);
     await db.exec(createInventoryMovements);
@@ -377,7 +435,7 @@ export const pmsAuthDb = {
     const configured = await db.isConfigured();
     if (!configured) return { ok: false };
     await this.init();
-    const row = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username) = lower('admin')`);
+    const row = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username::text) = lower('admin'::text)`);
     if (!('error' in row) && row.rows && row.rows.length > 0) {
       const id = row.rows[0].id;
       const hash = await bcrypt.hash('admin123', 12);
@@ -430,10 +488,10 @@ export const pmsAuthDb = {
       await del(`DELETE FROM login_attempts`, [], 'login_attempts');
       await del(`DELETE FROM email_verifications`, [], 'email_verifications');
       await del(`DELETE FROM access_logs WHERE user_username IS NULL OR user_username <> ?`, [preserveUsername], 'access_logs');
-      await del(`DELETE FROM app_users WHERE lower(username) <> lower(?)`, [preserveUsername], 'app_users');
+      await del(`DELETE FROM app_users WHERE lower(username::text) <> lower(?::text)`, [preserveUsername], 'app_users');
 
       // Ensure preserved admin user exists and is active
-      const adminRow = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username) = lower(?)`, [preserveUsername]);
+      const adminRow = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username::text) = lower(?::text)`, [preserveUsername]);
       if ('error' in adminRow) throw new Error(adminRow.error);
       if (!adminRow.rows || adminRow.rows.length === 0) {
         const id = `usr_${makeUuid()}`;
@@ -443,7 +501,7 @@ export const pmsAuthDb = {
         if ('error' in ins) throw new Error(ins.error);
       } else {
         // Update without touching columns that may not exist on older schema
-        await db.query(`UPDATE app_users SET role = 'admin', active = true WHERE lower(username) = lower(?)`, [preserveUsername]);
+        await db.query(`UPDATE app_users SET role = 'admin', active = true WHERE lower(username::text) = lower(?::text)`, [preserveUsername]);
       }
 
       await this.recordAccessAttempt(preserveUsername, 'cleanup_executed', { deletedCounts: stats });
@@ -460,7 +518,7 @@ export const pmsAuthDb = {
   },
 
   async verifyLogin(username: string, password: string): Promise<{ ok: boolean; user?: DbUser; mustChange?: boolean; error?: string }> {
-    const res = await db.query<DbUser & { password_hash: string; failed_attempts: number; lockout_until: string | null; password_changed_at: string | null }>(`SELECT id, username, name, role, active, password_change_required, created_at, password_hash, failed_attempts, lockout_until, password_changed_at FROM app_users WHERE username = ?`, [username]);
+    const res = await db.query<DbUser & { password_hash: string; failed_attempts: number; lockout_until: string | null; password_changed_at: string | null }>(`SELECT id, username, name, role, active, password_change_required, created_at, password_hash, failed_attempts, lockout_until, password_changed_at, permissions FROM app_users WHERE LOWER(username::text) = LOWER(?::text)`, [username]);
     if ('error' in res) {
       return { ok: false, error: res.error as string };
     }
@@ -490,11 +548,11 @@ export const pmsAuthDb = {
       if (nextFailed >= 10) {
         lockUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // ISO string is fine for MySQL DATETIME usually, or use JS Date
       }
-      await db.query(`UPDATE app_users SET failed_attempts = ?, lockout_until = ?, updated_at = NOW() WHERE username = ?`, [nextFailed, lockUntil ? new Date(lockUntil) : null, username]);
+      await db.query(`UPDATE app_users SET failed_attempts = ?, lockout_until = ?, updated_at = NOW() WHERE LOWER(username::text) = LOWER(?::text)`, [nextFailed, lockUntil ? new Date(lockUntil) : null, username]);
       return { ok: false, error: 'Invalid username or password' };
     }
     // Success: reset counters
-    await db.query(`UPDATE app_users SET failed_attempts = 0, lockout_until = NULL, last_login = NOW(), updated_at = NOW() WHERE username = ?`, [username]);
+    await db.query(`UPDATE app_users SET failed_attempts = 0, lockout_until = NULL, last_login = NOW(), updated_at = NOW() WHERE LOWER(username::text) = LOWER(?::text)`, [username]);
     // Unified preview policy: do not force password change in Electron preview
     const mustChange = false;
     const user: DbUser = {
@@ -505,8 +563,9 @@ export const pmsAuthDb = {
       active: !!row.active,
       password_change_required: !!row.password_change_required,
       created_at: row.created_at,
+      permissions: row.permissions || [],
     };
-    await db.query(`UPDATE app_users SET password_change_required = false WHERE username = ?`, [username]);
+    await db.query(`UPDATE app_users SET password_change_required = false WHERE LOWER(username::text) = LOWER(?::text)`, [username]);
     return { ok: true, user, mustChange };
   },
 
@@ -520,7 +579,7 @@ export const pmsAuthDb = {
     }
     const hash = await bcrypt.hash(newPassword, 12);
     // Update without referencing optional columns for schema compatibility
-    const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false, password_changed_at = NOW(), failed_attempts = 0, lockout_until = NULL, updated_at = NOW() WHERE username = ?`;
+    const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false, password_changed_at = NOW(), failed_attempts = 0, lockout_until = NULL, updated_at = NOW() WHERE LOWER(username::text) = LOWER(?::text)`;
     const res = await db.query(sql, [hash, username]);
     if ('error' in res) return { ok: false, error: res.error };
     await this.recordAccessAttempt(username, 'password_changed');
@@ -530,7 +589,7 @@ export const pmsAuthDb = {
   async updatePasswordForUserUnsafe(username: string, newPassword: string): Promise<{ ok: boolean; error?: string }> {
     try {
       const hash = await bcrypt.hash(newPassword, 12);
-      const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false WHERE lower(username) = lower(?)`;
+      const sql = `UPDATE app_users SET password_hash = ?, password_change_required = false WHERE lower(username::text) = lower(?::text)`;
       const res = await db.query(sql, [hash, username]);
       if ('error' in res) return { ok: false, error: res.error };
       await this.recordAccessAttempt(username, 'password_changed_unsafe');
@@ -540,26 +599,96 @@ export const pmsAuthDb = {
     }
   },
 
-  async registerUser(payload: { username: string; email: string; password: string; name: string; role: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; verifyToken?: string }> {
-    const { username, email, password, name, role, permissions } = payload || ({} as any);
-    if (!username || !email || !password || !name) return { ok: false, error: 'Missing fields' };
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
+  async registerUser(payload: { username: string; email: string; password: string; name: string; role: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; errorType?: string; suggestions?: string[]; verifyToken?: string }> {
+    const { username, password, name, role, permissions } = payload || ({} as any);
+    const email = (payload.email && payload.email.trim()) || null;
+
+    if (!username || !password || !name) return { ok: false, error: 'Missing fields' };
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
     if (!this.validateStrongPassword(password)) return { ok: false, error: 'Weak password' };
-    const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE username = ? OR email = ?`, [username, email]);
-    if (!('error' in exists) && exists.rows && exists.rows.length > 0) return { ok: false, error: 'User exists' };
+
+    // Check for duplicate username and email separately to provide specific feedback
+    const usernameCheck = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username::text) = LOWER(?::text)`, [username]);
+    const emailCheck = email ? await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(email::text) = LOWER(?::text)`, [email]) : { rows: [] };
+
+    const usernameExists = !('error' in usernameCheck) && usernameCheck.rows && usernameCheck.rows.length > 0;
+    const emailExists = !('error' in emailCheck) && emailCheck.rows && emailCheck.rows.length > 0;
+
+    if (usernameExists || emailExists) {
+      let errorType = 'duplicate';
+      let errorMessage = 'Username or email already exists';
+
+      if (usernameExists && emailExists) {
+        errorType = 'both_duplicate';
+        errorMessage = 'Both username and email are already registered';
+      } else if (usernameExists) {
+        errorType = 'username_duplicate';
+        errorMessage = 'Username is already taken';
+      } else {
+        errorType = 'email_duplicate';
+        errorMessage = 'Email is already registered';
+      }
+
+      // Generate alternative username suggestions
+      const suggestions = await this.generateUsernameSuggestions(username);
+
+      return { ok: false, error: errorMessage, errorType, suggestions };
+    }
+
     const id = `usr_${makeUuid()}`;
     const hash = await bcrypt.hash(password, 12);
-    const ins = await db.query(`INSERT INTO app_users (id, username, email, name, role, password_hash, active, password_change_required, is_verified, created_at, updated_at, permissions) VALUES (?, ?, ?, ?, ?, ?, true, true, false, NOW(), NOW(), ?)`, [id, username, email, name, role, hash, permissions || []]);
+    const ins = await db.query(
+      `INSERT INTO app_users (id, username, email, name, role, password_hash, active, password_change_required, is_verified, created_at, updated_at, permissions, is_deleted) 
+       VALUES (?, ?, ?, ?, ?, ?, true, true, false, NOW(), NOW(), ?, false)`,
+      [id, username, email, name, role, hash, permissions || []]
+    );
     if ('error' in ins) return { ok: false, error: ins.error };
-    
+
     const token = makeUuid();
     const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     await db.query(`INSERT INTO email_verifications (token, user_id, expires_at) VALUES (?, ?, ?)`, [token, id, expires]);
     return { ok: true, verifyToken: token };
   },
 
+  async generateUsernameSuggestions(baseUsername: string): Promise<string[]> {
+    const suggestions: string[] = [];
+    const cleanBase = baseUsername.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // Try adding numbers
+    for (let i = 1; i <= 5; i++) {
+      const candidate = `${cleanBase}${i}`;
+      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username::text) = LOWER(?::text)`, [candidate]);
+      if ('error' in exists || !exists.rows || exists.rows.length === 0) {
+        suggestions.push(candidate);
+        if (suggestions.length >= 3) break;
+      }
+    }
+
+    // Try adding year
+    if (suggestions.length < 3) {
+      const year = new Date().getFullYear();
+      const candidate = `${cleanBase}${year}`;
+      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username::text) = LOWER(?::text)`, [candidate]);
+      if ('error' in exists || !exists.rows || exists.rows.length === 0) {
+        suggestions.push(candidate);
+      }
+    }
+
+    // Try adding random suffix
+    if (suggestions.length < 3) {
+      const randomSuffix = Math.random().toString(36).substring(2, 5);
+      const candidate = `${cleanBase}_${randomSuffix}`;
+      const exists = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username::text) = LOWER(?::text)`, [candidate]);
+      if ('error' in exists || !exists.rows || exists.rows.length === 0) {
+        suggestions.push(candidate);
+      }
+    }
+
+    return suggestions.slice(0, 3);
+  },
+
   async resendVerification(usernameOrEmail: string): Promise<{ ok: boolean; error?: string; verifyToken?: string }> {
-    const res = await db.query<{ id: string; is_verified: number }>(`SELECT id, is_verified FROM app_users WHERE username = ? OR email = ?`, [usernameOrEmail, usernameOrEmail]);
+    const res = await db.query<{ id: string; is_verified: number }>(`SELECT id, is_verified FROM app_users WHERE LOWER(username::text) = LOWER(?::text) OR LOWER(email::text) = LOWER(?::text)`, [usernameOrEmail, usernameOrEmail]);
     if ('error' in res || !res.rows || res.rows.length === 0) return { ok: false, error: 'User not found' };
     if (res.rows[0].is_verified) return { ok: false, error: 'Already verified' };
     const token = makeUuid();
@@ -582,7 +711,7 @@ export const pmsAuthDb = {
 
   async listUsers(): Promise<DbUser[]> {
     console.log('[pmsAuthDb] listUsers called');
-    const res = await db.query<DbUser>(`SELECT id, username, name, email, role, active, created_at, last_login, last_activity FROM app_users ORDER BY username ASC`);
+    const res = await db.query<DbUser>(`SELECT id, username, name, email, role, active, created_at, last_login, last_activity, permissions FROM app_users WHERE is_deleted = false ORDER BY username ASC`);
     console.log('[pmsAuthDb] listUsers result:', res);
     if ('error' in res) {
       console.error('[pmsAuthDb] listUsers error:', res.error);
@@ -593,12 +722,32 @@ export const pmsAuthDb = {
 
   async deleteUser(id: string): Promise<{ ok: boolean; error?: string }> {
     try {
-      const res = await db.query(`DELETE FROM app_users WHERE id = ?`, [id]);
+      // Fetch user info first to get username/email for renaming
+      const userRes = await db.query<{ username: string; email: string }>(`SELECT username, email FROM app_users WHERE id = ?`, [id]);
+      if ('error' in userRes || !userRes.rows || userRes.rows.length === 0) return { ok: false, error: 'User not found' };
+
+      const { username, email } = userRes.rows[0];
+      const timestamp = Date.now();
+      const deletedUsername = `${username}_del_${timestamp}`;
+      const deletedEmail = email ? `${email}_del_${timestamp}` : null;
+
+      // Soft delete: set is_deleted=true, active=false, and rename credentials to free up unique slots
+      const res = await db.query(
+        `UPDATE app_users SET is_deleted = true, active = false, username = ?, email = ?, updated_at = NOW() WHERE id = ?`,
+        [deletedUsername, deletedEmail, id]
+      );
+
       if ('error' in res) return { ok: false, error: res.error };
-      await this.recordAccessAttempt(id, 'user_deleted', { id });
+
+      // Clean up auxiliary tables if they purely represent the user's active profile
+      await db.query(`DELETE FROM email_verifications WHERE user_id = ?`, [id]);
+      // Note: We keep profiles, admins, access_logs for audit persistence.
+      // If 'admins' is used for permission check, the is_deleted check in list/auth handles it.
+
+      await this.recordAccessAttempt(id, 'user_soft_deleted', { id, originalUsername: username });
       return { ok: true };
     } catch (e: any) {
-      return { ok: false, error: e?.message || 'Failed to delete user' };
+      return { ok: false, error: e?.message || 'Failed to soft delete user' };
     }
   },
 
@@ -611,9 +760,9 @@ export const pmsAuthDb = {
       if (patch.active !== undefined) { sets.push(`active = ?`); params.push(patch.active); }
       if (patch.username !== undefined) { sets.push(`username = ?`); params.push(patch.username); }
       if ((patch as any).permissions !== undefined) { sets.push(`permissions = ?`); params.push((patch as any).permissions); }
-      
+
       if (sets.length === 0) return { ok: true };
-      
+
       params.push(id);
       const sql = `UPDATE app_users SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`;
       const res = await db.query(sql, params);
@@ -622,6 +771,129 @@ export const pmsAuthDb = {
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: e?.message || 'Failed to update user' };
+    }
+  },
+
+  async verifyPosPin(pin: string): Promise<{ ok: boolean; user?: DbUser; error?: string }> {
+    try {
+      const res = await db.query<DbUser>(
+        `SELECT id, username, name, role, active, permissions FROM app_users WHERE pos_pin = ? AND active = true`,
+        [pin]
+      );
+      if ('error' in res) return { ok: false, error: res.error };
+      if (!res.rows || res.rows.length === 0) {
+        return { ok: false, error: 'Invalid PIN' };
+      }
+      return { ok: true, user: res.rows[0] };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Verification failed' };
+    }
+  },
+
+  async listCostCentres(): Promise<Array<{ id: string; name: string; description?: string; active: boolean }>> {
+    try {
+      const res = await db.query<{ id: string; name: string; description?: string; active: boolean }>(`SELECT id, name, description, active FROM cost_centres ORDER BY name ASC`);
+      if ('error' in res || !res.rows) return [];
+      return res.rows;
+    } catch {
+      return [];
+    }
+  },
+
+  async addCostCentre(name: string, description?: string): Promise<{ ok: boolean; error?: string; id?: string }> {
+    try {
+      const id = makeUuid();
+      const res = await db.query(
+        `INSERT INTO cost_centres (id, name, description) VALUES (?, ?, ?)`,
+        [id, name, description || null]
+      );
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true, id };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to add cost centre' };
+    }
+  },
+
+  async deleteCostCentre(id: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await db.query(`UPDATE cost_centres SET active = false WHERE id = ?`, [id]);
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to delete cost centre' };
+    }
+  },
+
+  // Shift Management
+  async startShift(userId: string, stationId: string, openingBalance: number): Promise<{ ok: boolean; id?: string; error?: string }> {
+    try {
+      const id = makeUuid();
+      const res = await db.query(
+        `INSERT INTO pos_shifts (id, user_id, station_id, start_balance, status) VALUES (?, ?, ?, ?, 'open')`,
+        [id, userId, stationId, openingBalance]
+      );
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true, id };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to start shift' };
+    }
+  },
+
+  async endShift(shiftId: string, closingBalance: number): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await db.query(
+        `UPDATE pos_shifts SET end_time = NOW(), end_balance = ?, status = 'closed' WHERE id = ?`,
+        [closingBalance, shiftId]
+      );
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to end shift' };
+    }
+  },
+
+  async getActiveShift(stationId: string): Promise<{ id: string; user_id: string; start_time: string; start_balance: number } | null> {
+    try {
+      const res = await db.query<{ id: string; user_id: string; start_time: string; start_balance: number }>(
+        `SELECT id, user_id, start_time, start_balance FROM pos_shifts WHERE station_id = ? AND status = 'open' ORDER BY start_time DESC LIMIT 1`,
+        [stationId]
+      );
+      if ('error' in res || !res.rows || res.rows.length === 0) return null;
+      return res.rows[0];
+    } catch {
+      return null;
+    }
+  },
+
+  async listShifts(stationId?: string): Promise<Shift[]> {
+    try {
+      let sql = `
+        SELECT s.*, u.name as user_name, c.name as station_name 
+        FROM pos_shifts s 
+        JOIN app_users u ON s.user_id = u.id
+        LEFT JOIN cost_centres c ON s.station_id = c.id
+      `;
+      const params = [];
+      if (stationId) {
+        sql += ` WHERE s.station_id = ?`;
+        params.push(stationId);
+      }
+      sql += ` ORDER BY s.start_time DESC LIMIT 50`;
+      const res = await db.query(sql, params);
+      return ('rows' in res && Array.isArray(res.rows)) ? res.rows as Shift[] : [];
+    } catch {
+      return [];
+    }
+  },
+
+  async updateUserPin(userId: string, pin: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (!/^\d{6}$/.test(pin)) return { ok: false, error: 'PIN must be exactly 6 digits' };
+      const res = await db.query(`UPDATE app_users SET pos_pin = ? WHERE id = ?`, [pin, userId]);
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Failed to update PIN' };
     }
   }
 }

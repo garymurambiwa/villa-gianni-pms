@@ -1,6 +1,7 @@
 import db from '@/lib/db'
 import { adminPermissionFixService } from '@/lib/adminPermissionFixService'
 import pmsAuthDb from '@/lib/pmsAuthDb'
+import { DEFAULT_ROOMS } from '@/data/defaultRooms'
 
 export async function initializeDatabase(): Promise<{ ok: boolean; message?: string; error?: string }> {
   try {
@@ -52,13 +53,29 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
           items JSONB,
           total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
           status VARCHAR(50) NOT NULL DEFAULT 'open',
+          cost_center VARCHAR(50),
+          shift_id VARCHAR(36),
           created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS pos_shifts (
+          id VARCHAR(36) PRIMARY KEY,
+          cost_center VARCHAR(50) NOT NULL,
+          opened_by VARCHAR(36) NOT NULL,
+          opened_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          closed_at TIMESTAMP,
+          opening_cash NUMERIC(12,2) NOT NULL DEFAULT 0,
+          closing_cash NUMERIC(12,2),
+          status VARCHAR(20) NOT NULL DEFAULT 'open',
+          inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
         );
         
         CREATE TABLE IF NOT EXISTS table_status (
-          table_id VARCHAR(20) PRIMARY KEY,
+          table_id VARCHAR(20),
+          cost_center VARCHAR(50),
           status VARCHAR(50) NOT NULL DEFAULT 'available',
-          last_update TIMESTAMP NOT NULL DEFAULT NOW()
+          last_update TIMESTAMP NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (table_id, cost_center)
         );
         
         CREATE TABLE IF NOT EXISTS inventory_items (
@@ -110,9 +127,12 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
       console.log('Table creation note:', e)
     }
 
-    // Patch existing rooms table to add missing columns (safe for existing deployments)
+    // Patch existing tables to add missing columns (safe for existing deployments)
     try { await db.exec(`ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true`); } catch (e) { console.log('rooms.is_active column note:', e); }
     try { await db.exec(`ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1`); } catch (e) { console.log('rooms.floor column note:', e); }
+    try { await db.exec(`ALTER TABLE pos_orders ADD COLUMN IF NOT EXISTS cost_center VARCHAR(50)`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE pos_orders ADD COLUMN IF NOT EXISTS shift_id VARCHAR(36)`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE table_status ADD COLUMN IF NOT EXISTS cost_center VARCHAR(50) DEFAULT 'Main Restaurant'`); } catch (e) { }
     
     // Create indexes
     try {
@@ -120,13 +140,37 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
       await db.exec(`CREATE INDEX IF NOT EXISTS idx_reservations_room ON reservations(room_id)`)
       await db.exec(`CREATE INDEX IF NOT EXISTS idx_reservations_status ON reservations(status)`)
       await db.exec(`CREATE INDEX IF NOT EXISTS idx_pos_orders_status ON pos_orders(status)`)
+      await db.exec(`CREATE INDEX IF NOT EXISTS idx_pos_orders_cost_center ON pos_orders(cost_center)`)
+      await db.exec(`CREATE INDEX IF NOT EXISTS idx_pos_shifts_status ON pos_shifts(status)`)
       await db.exec(`CREATE INDEX IF NOT EXISTS idx_table_status_status ON table_status(status)`)
+      await db.exec(`CREATE INDEX IF NOT EXISTS idx_table_status_cost_center ON table_status(cost_center)`)
       await db.exec(`CREATE INDEX IF NOT EXISTS idx_table_status_last_update ON table_status(last_update)`)
-      await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS pos_open_unique ON pos_orders(table_number) WHERE status = 'open'`)
+      await db.exec(`DROP INDEX IF EXISTS pos_open_unique`);
+      await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS pos_open_unique ON pos_orders(table_number, cost_center) WHERE status = 'open'`)
     } catch (e) { /* ignore if exists */ }
 
-    // Note: No seed data is inserted - rooms and POS items will be empty
-    // User should add their own data through the application
+    // Safe room seeding: Only seed if the table is empty
+    try {
+      const roomCountRes = await db.query('SELECT COUNT(*) FROM rooms');
+      const count = parseInt((roomCountRes as any).rows[0].count);
+      
+      if (count === 0) {
+        console.log('DatabaseInitializer: Seeding default rooms...');
+        for (const room of DEFAULT_ROOMS) {
+          await db.query(
+            'INSERT INTO rooms (id, number, type, floor, rate, status) VALUES (?, ?, ?, ?, ?, ?)',
+            [room.id, room.number, room.type, room.floor || 1, room.rate, room.status]
+          );
+        }
+        console.log('DatabaseInitializer: Seeding completed.');
+      } else {
+        console.log('DatabaseInitializer: Rooms already exist, skipping seed.');
+      }
+    } catch (e) {
+      console.error('DatabaseInitializer: Room seeding failed:', e);
+    }
+    
+    // Note: User can add their own data through the application
     
     return { ok: true, message: 'DB initialized successfully' }
   } catch (e: any) {

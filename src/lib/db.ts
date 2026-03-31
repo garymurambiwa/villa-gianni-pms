@@ -1,5 +1,8 @@
 // Web-only DB helper connecting to Neon (Serverless)
 import { Pool, neonConfig } from '@neondatabase/serverless';
+import { offlineCache } from './offlineCache';
+import { networkStatus } from './networkStatus';
+import { offlineSync } from './offlineSync';
 
 // Default connection for browser users (Neon with WebSocket support)
 // Use only the environment variable; no fallback to avoid cross-environment data leakage
@@ -21,7 +24,13 @@ export interface DbConfig {
 // Convert MySQL-style ? placeholders to PostgreSQL $1, $2, etc.
 function convertPlaceholders(sql: string): string {
   let idx = 0;
-  return sql.replace(/\?/g, () => `$${++idx}`);
+  return sql.replace(/\?/g, () => '$' + (++idx));
+}
+
+// Extract table name from SQL statement
+function extractTableName(sql: string): string {
+  const match = sql.match(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+[`']?([\w]+)[`']?/i);
+  return match ? match[1] : 'unknown';
 }
 
 // Browser-side Pool Singleton
@@ -96,6 +105,30 @@ export const db = {
       }
     }
 
+    // Check if this is a write operation (INSERT, UPDATE, DELETE)
+    const isWriteOperation = /^\s*(INSERT|UPDATE|DELETE)/i.test(sql);
+
+    // If offline and this is a write operation, queue it
+    if (isWriteOperation && networkStatus.isOffline()) {
+      console.log('[DB-Web] Offline detected, queuing write operation:', sql);
+
+      try {
+        await offlineCache.queueOperation({
+          type: sql.trim().split(/\s+/)[0].toUpperCase() as 'INSERT' | 'UPDATE' | 'DELETE',
+          table: extractTableName(sql),
+          sql,
+          params,
+          metadata: { queuedAt: Date.now() }
+        });
+
+        // Return optimistic response
+        return { rows: [], rowCount: 0 };
+      } catch (e: any) {
+        console.error('[DB-Web] Failed to queue operation:', e);
+        return { error: e.message };
+      }
+    }
+
     const pgSql = convertPlaceholders(sql);
     try {
       const pool = await getBrowserPool();
@@ -106,9 +139,33 @@ export const db = {
       return { rows: res.rows, rowCount: res.rowCount || 0 };
     } catch (e: any) {
       console.error(`[DB-Web-Error] ${e.message}`, sql);
+
+      // If this is a write operation and we get a timeout, queue it
+      if (isWriteOperation && e.message.includes('timeout')) {
+        console.log('[DB-Web] Timeout detected, queuing write operation:', sql);
+
+        try {
+          await offlineCache.queueOperation({
+            type: sql.trim().split(/\s+/)[0].toUpperCase() as 'INSERT' | 'UPDATE' | 'DELETE',
+            table: extractTableName(sql),
+            sql,
+            params,
+            metadata: { queuedAt: Date.now(), error: e.message }
+          });
+
+          // Return optimistic response
+          return { rows: [], rowCount: 0 };
+        } catch (queueError: any) {
+          console.error('[DB-Web] Failed to queue operation:', queueError);
+          return { error: e.message };
+        }
+      }
+
       return { error: e.message };
     }
   },
+
+
 
   async exec(sql: string, actorUserId?: string): Promise<ExecResult> {
     const isLocal = BROWSER_DSN?.includes('localhost');

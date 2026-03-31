@@ -1,5 +1,5 @@
 export type AccessUser = { id?: string; role?: string; username?: string } | null | undefined
-export type AccessSession = { userId?: string; expiresAt?: number } | null | undefined
+export type AccessSession = { userId?: string; expiresAt?: number | string } | null | undefined
 
 export function normalizeRole(role?: string) {
   return String(role || '').toLowerCase()

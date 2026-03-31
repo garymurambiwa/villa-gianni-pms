@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Badge } from '../ui/badge';
 import { Checkbox } from '../ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
-import { format, differenceInCalendarDays } from 'date-fns';
+import { format, differenceInCalendarDays, addDays, startOfToday } from 'date-fns';
 import { Calendar, CreditCard, Search, UserCheck, UserX, Printer, Utensils, AlertTriangle, FileText, FileSearch, Settings, LayoutGrid, ArrowRightLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { getResPackageLabel, computeTotalRate, sanitizePackageCode } from '@/lib/packageUtils';
@@ -66,6 +66,11 @@ export const FrontOffice: React.FC = () => {
   const [chargeDescription, setChargeDescription] = useState('');
   const [chargeError, setChargeError] = useState<string | null>(null);
   const [roomStatusDialogOpen, setRoomStatusDialogOpen] = useState(false);
+
+  // Room Availability Grid state
+  const [roomAvailGridOpen, setRoomAvailGridOpen] = useState(false);
+  const [gridStartDate, setGridStartDate] = useState<Date>(() => startOfToday());
+  const [gridDays, setGridDays] = useState<7 | 14 | 30>(7);
 
   // Transfer Room State
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
@@ -1014,6 +1019,10 @@ export const FrontOffice: React.FC = () => {
             <FileSearch className="mr-2 h-4 w-4" />
             Guest Lookup
           </Button>
+          <Button variant="outline" onClick={() => { setGridStartDate(startOfToday()); setRoomAvailGridOpen(true); }}>
+            <LayoutGrid className="mr-2 h-4 w-4" />
+            Room Availability
+          </Button>
           <Button variant="outline" onClick={() => setPrintOptionsOpen(true)}>
             <Utensils className="mr-2 h-4 w-4" />
             Print Restaurant Guest List
@@ -1137,9 +1146,10 @@ export const FrontOffice: React.FC = () => {
                     </TableRow>
                   ) : (
                     inHouse.map((res) => {
-                      // Find the room assigned to this reservation
-                      const room = rooms.find(r => r.id === res.room_id);
-                      const roomNumber = room?.number || 'Unassigned';
+                      // Prefer the SQL-joined room_number already on the reservation (always up-to-date),
+                      // fall back to client-side room lookup if for some reason it's missing.
+                      const room = rooms.find(r => String(r.id) === String(res.room_id));
+                      const roomNumber = res.roomNumber || room?.number || 'Unassigned';
                       return (
                         <TableRow key={res.id}>
                           <TableCell className="font-bold">{roomNumber}</TableCell>
@@ -2046,6 +2056,181 @@ export const FrontOffice: React.FC = () => {
         isOpen={quickCheckInOpen}
         onClose={() => setQuickCheckInOpen(false)}
       />
+
+      {/* ── Room Availability Grid ── */}
+      <Dialog open={roomAvailGridOpen} onOpenChange={setRoomAvailGridOpen}>
+        <DialogContent className="max-w-[95vw] w-full max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="px-5 pt-4 pb-3 border-b">
+            <DialogTitle>Room Availability Grid</DialogTitle>
+            <DialogDescription className="sr-only">Visual room availability calendar</DialogDescription>
+          </DialogHeader>
+
+          {/* Controls */}
+          <div className="flex items-center justify-between gap-3 px-5 py-2 border-b bg-gray-50">
+            <div className="flex items-center gap-2">
+              {/* Day range selector */}
+              <select
+                className="border rounded px-2 py-1 text-sm bg-white"
+                value={gridDays}
+                onChange={e => setGridDays(Number(e.target.value) as 7 | 14 | 30)}
+              >
+                <option value={7}>7 Days</option>
+                <option value={14}>14 Days</option>
+                <option value={30}>30 Days</option>
+              </select>
+              <Button variant="outline" size="sm" onClick={() => setGridStartDate(d => addDays(d, -gridDays))}>Previous</Button>
+              <Button variant="outline" size="sm" onClick={() => setGridStartDate(startOfToday())}>Today</Button>
+              <Button variant="outline" size="sm" onClick={() => setGridStartDate(d => addDays(d, gridDays))}>Next</Button>
+            </div>
+            {/* Legend */}
+            <div className="flex items-center gap-4 text-xs text-gray-600">
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-green-100 border border-green-300"></span>Vacant</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-blue-200 border border-blue-400"></span>Booked</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-amber-200 border border-amber-400"></span>Occupied</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-gray-200 border border-gray-400"></span>Checked Out</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-yellow-200 border border-yellow-400"></span>Dirty</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-red-200 border border-red-400"></span>OOO</span>
+            </div>
+          </div>
+
+          {/* Grid */}
+          {(() => {
+            const today = format(startOfToday(), 'yyyy-MM-dd');
+            const dateColumns = Array.from({ length: gridDays }, (_, i) => addDays(gridStartDate, i));
+            const sortedRooms = [...rooms].sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true }));
+
+            // Build a lookup: roomId → array of {checkIn, checkOut, status}
+            type ResSlot = { checkIn: string; checkOut: string; status: string; guestName: string };
+            const roomResMap = new Map<string, ResSlot[]>();
+            for (const res of reservations) {
+              const rid = String(res.room_id || '');
+              if (!rid) continue;
+              if (!roomResMap.has(rid)) roomResMap.set(rid, []);
+              roomResMap.get(rid)!.push({
+                checkIn: String(res.checkIn || res.check_in_date || '').substring(0, 10),
+                checkOut: String(res.checkOut || res.check_out_date || '').substring(0, 10),
+                status: String(res.status || '').toLowerCase(),
+                guestName: String(res.guestName || ''),
+              });
+            }
+
+            const getCellInfo = (room: any, date: Date): { bg: string; label: string; title: string } => {
+              const dateStr = format(date, 'yyyy-MM-dd');
+              const isToday = dateStr === today;
+
+              const slots = roomResMap.get(String(room.id)) || [];
+              for (const slot of slots) {
+                if (!slot.checkIn || !slot.checkOut) continue;
+                if (dateStr >= slot.checkIn && dateStr < slot.checkOut) {
+                  const displayName = slot.guestName ? (slot.guestName.split(' ')[0] || slot.guestName) : '';
+                  if (slot.status === 'checked-in') {
+                    return { bg: 'bg-amber-200 border-amber-400 text-amber-950', label: displayName, title: `Occupied — ${slot.guestName}` };
+                  }
+                  if (slot.status === 'checked-out') {
+                    return { bg: 'bg-gray-200 border-gray-400 text-gray-700', label: displayName, title: `Checked Out — ${slot.guestName}` };
+                  }
+                  if (slot.status === 'confirmed' || slot.status === 'pending') {
+                    return { bg: 'bg-blue-200 border-blue-400 text-blue-950', label: displayName, title: `Booked — ${slot.guestName}` };
+                  }
+                }
+              }
+
+              // Today's Room Status Overlay (if no reservation)
+              if (isToday) {
+                const s = String(room.status || '').toUpperCase();
+                if (s === 'OOO' || s === 'OUT OF ORDER') {
+                  return { bg: 'bg-red-200 border-red-400 text-red-900', label: 'OOO', title: 'Out of Order' };
+                }
+                if (s === 'VD' || s === 'VACANT DIRTY' || s === 'OD' || s === 'OCCUPIED DIRTY') {
+                  return { bg: 'bg-yellow-200 border-yellow-400 text-yellow-900', label: 'Dirty', title: `Dirty (${s})` };
+                }
+                if (s === 'OCC' || s === 'OCCUPIED') {
+                  return { bg: 'bg-amber-200 border-amber-400 text-amber-950', label: 'Occupied', title: 'Occupied' };
+                }
+              }
+
+              return { bg: 'bg-green-100 border-green-300 text-green-900', label: '', title: 'Vacant' };
+            };
+
+            return (
+              <div className="flex-1 overflow-auto">
+                <table className="border-collapse w-full text-xs select-none" style={{ minWidth: `${160 + gridDays * 68}px` }}>
+                  <thead className="sticky top-0 z-10 bg-white shadow-sm">
+                    <tr>
+                      <th className="sticky left-0 z-20 bg-gray-50 border border-gray-200 px-3 py-2 text-left font-semibold text-gray-700 min-w-[160px] w-[160px]">Room</th>
+                      {dateColumns.map(date => {
+                        const ds = format(date, 'yyyy-MM-dd');
+                        const isToday = ds === today;
+                        return (
+                          <th
+                            key={ds}
+                            className={`border border-gray-200 px-1 py-2 text-center font-medium min-w-[68px] w-[68px] ${isToday ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-600'
+                              }`}
+                          >
+                            <div className="text-sm font-bold">{format(date, 'd')}</div>
+                            <div className={`text-[10px] font-normal ${isToday ? 'text-blue-100' : 'text-gray-400'}`}>{format(date, 'EEE')}</div>
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedRooms.map((room, ri) => (
+                      <tr key={room.id} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+                        <td className="sticky left-0 z-10 border border-gray-200 px-3 py-2 bg-inherit min-w-[160px] w-[160px]">
+                          <div className="font-semibold text-gray-800">{room.number}</div>
+                          <div className="text-[10px] text-gray-400 truncate">{room.type}</div>
+                        </td>
+                        {dateColumns.map(date => {
+                          const { bg, title, label } = getCellInfo(room, date);
+                          const ds = format(date, 'yyyy-MM-dd');
+                          const isToday = ds === today;
+                          const isVacant = title === 'Vacant';
+                          return (
+                            <td
+                              key={ds}
+                              title={title}
+                              onClick={() => {
+                                if (isVacant) {
+                                  // Find the room and pre-select it in QuickCheckInModal
+                                  const room = rooms.find((r: any) => r.id === room.id);
+                                  if (room) {
+                                    // Set the selected room in the QuickCheckInModal
+                                    (window as any).__quickCheckInRoomId = room.id;
+                                    (window as any).__quickCheckInRoomNumber = room.number;
+                                  }
+                                  setQuickCheckInOpen(true);
+                                }
+                              }}
+                              className={`border ${isToday ? 'border-blue-400' : 'border-gray-200'
+                                } ${bg} h-10 min-w-[68px] w-[68px] text-center ${isVacant ? 'cursor-pointer hover:opacity-50' : 'cursor-default'} transition-opacity hover:opacity-75 relative`}
+                            >
+                              {label && (
+                                <div className="flex items-center justify-center h-full w-full">
+                                  <span className="truncate max-w-full px-1 text-[10px] font-medium leading-tight">
+                                    {label}
+                                  </span>
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                    {sortedRooms.length === 0 && (
+                      <tr><td colSpan={gridDays + 1} className="py-10 text-center text-gray-400 italic">No rooms found</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+
+          <div className="px-5 py-3 border-t flex justify-end bg-gray-50">
+            <Button variant="outline" onClick={() => setRoomAvailGridOpen(false)}>Close</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div >
   );
 };

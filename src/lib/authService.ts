@@ -16,7 +16,26 @@ declare global {
   }
 }
 
-export type Role = 'admin' | 'manager' | 'frontdesk' | 'auditor' | 'posmanager' | 'housekeeping' | 'cashier' | 'barman' | 'supervisor';
+export type Role = 'admin' | 'manager' | 'frontdesk' | 'auditor' | 'posmanager' | 'housekeeping' | 'cashier' | 'barman' | 'supervisor' | 'restaurant_cashier' | 'fnb_cashier';
+
+export const USER_ROLES = [
+  'Super Admin',
+  'Admin',
+  'FO Manager',
+  'FNB Manager',
+  'FO Supervisor',
+  'FNB Supervisor',
+  'Restaurant Cashier',
+  'FnB Cashier',
+  'Barman',
+  'Accountant',
+  'Front office Cashier',
+  'Night Auditor',
+  'House keeper',
+  'Maintenance',
+] as const;
+
+export type StandardRole = typeof USER_ROLES[number];
 
 export interface UserRecord {
   id: string;
@@ -111,7 +130,7 @@ export const listUsers = async (): Promise<UserRecord[]> => {
   return [];
 };
 
-export const register = async (payload: { username: string; email?: string; password: string; role?: Role; name?: string; phone?: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; user?: UserRecord }> => {
+export const register = async (payload: { username: string; email?: string; password: string; role?: Role; name?: string; phone?: string; permissions?: string[] }): Promise<{ ok: boolean; error?: string; errorType?: string; suggestions?: string[]; user?: UserRecord }> => {
   if (!payload.username || !payload.password) return { ok: false, error: 'Missing fields' };
 
   if (!isBrowser && window.native?.auth?.register) {
@@ -120,14 +139,14 @@ export const register = async (payload: { username: string; email?: string; pass
       if (res.ok && res.user) {
         return { ok: true, user: mapDbUser(res.user) };
       }
-      return { ok: false, error: res.error || 'Registration failed' };
+      return { ok: false, error: res.error || 'Registration failed', errorType: (res as any).errorType, suggestions: (res as any).suggestions };
     } catch (e: any) { return { ok: false, error: e.message || String(e) }; }
   } else {
     // Browser DB mode via pmsAuthDb
     try {
       const res = await pmsAuthDb.registerUser({
         username: payload.username,
-        email: payload.email || '',
+        email: (payload.email && payload.email.trim()) || null,
         password: payload.password,
         name: payload.name || payload.username,
         role: payload.role || 'staff',
@@ -140,7 +159,7 @@ export const register = async (payload: { username: string; email?: string; pass
         const newUser = allUsers.find(u => u.username === payload.username);
         return { ok: true, user: newUser ? mapDbUser(newUser) : undefined };
       }
-      return { ok: false, error: res.error || 'Registration failed' };
+      return { ok: false, error: res.error || 'Registration failed', errorType: res.errorType, suggestions: res.suggestions };
     } catch (e: any) {
       return { ok: false, error: e.message || String(e) };
     }
@@ -178,7 +197,7 @@ export const login = async (usernameOrEmail: string, password: string): Promise<
   } else {
     // Browser DB mode via pmsAuthDb
     try {
-      const res = await pmsAuthDb.login(usernameOrEmail, password);
+      const res = await pmsAuthDb.verifyLogin(usernameOrEmail, password);
       if (res.ok && res.user) {
         const u = mapDbUser(res.user);
         const session = createSession(u);
@@ -298,7 +317,8 @@ export const mapStandardRoleToInternal = (name: string): Role => {
     case 'fnb manager': return 'posmanager';
     case 'fo supervisor': return 'supervisor';
     case 'fnb supervisor': return 'supervisor';
-    case 'restaurant cashier': return 'cashier';
+    case 'restaurant cashier': return 'restaurant_cashier';
+    case 'fnb cashier': return 'fnb_cashier';
     case 'front office cashier': return 'cashier';
     case 'barman': return 'barman';
     case 'accountant': return 'auditor';
@@ -316,6 +336,8 @@ export const mapInternalRoleToStandard = (role: Role): string => {
     case 'posmanager': return 'FNB Manager';
     case 'supervisor': return 'FO Supervisor';
     case 'cashier': return 'Front office Cashier';
+    case 'restaurant_cashier': return 'Restaurant Cashier';
+    case 'fnb_cashier': return 'FnB Cashier';
     case 'barman': return 'Barman';
     case 'auditor': return 'Night Auditor';
     case 'housekeeping': return 'House keeper';

@@ -9,6 +9,8 @@ import { OrderModal } from '@/components/posimport/OrderModal';
 import { PaymentModal } from '@/components/pos/POSIntegrationComponents';
 import { BillSummary, QuickActions } from '@/components/pos/POSIntegrationComponents';
 import { getMenuItems } from '@/lib/posIntegration';
+import { useInactivityTimeout } from '@/hooks/useInactivityTimeout';
+import { PINModal } from '@/components/pos/PINModal';
 import { generateReceiptHTML } from '@/lib/posIntegration';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -21,7 +23,14 @@ import { db } from '@/lib/db';
 export const POSFrontOffice: React.FC = () => {
   const { guests, recordFolioCharge, removeFolioCharge, loading, posOrders, savePosOrder, closePosOrder } = useData();
   const { activeShift, startShift, endShift, getTotals, addTransaction } = useShift();
-  const { user } = useAuth();
+  const { user, costCentre, shiftId, isLocked, setIsLocked, verifyPosPin } = useAuth();
+
+  // 90-second inactivity timeout
+  useInactivityTimeout(90000, () => {
+    if (activeShift && costCentre) {
+      setIsLocked(true);
+    }
+  }, !!activeShift && !!costCentre && !isLocked);
 
   const [mountLoading, setMountLoading] = useState<boolean>(false);
   const [tables, setTables] = useState<Array<{ id: string; number: number; status: 'available' | 'occupied' | 'suspended'; currentBill?: any }>>(
@@ -62,10 +71,9 @@ export const POSFrontOffice: React.FC = () => {
   useEffect(() => {
     const refresh = async () => {
       try {
-        const list = await getMenuItems();
-        // Add empty image property to ensure type compatibility
+        const list = await getMenuItems(costCentre || undefined);
         const safeList = Array.isArray(list) ? list : [];
-        console.log("[POS Items Debug - Retrieved]", safeList.length, "items");
+        console.log("[POS Items Debug - Retrieved]", safeList.length, "items for cost centre:", costCentre);
         if (safeList.length > 0) {
           console.log("[POS Items Debug - Example]", safeList[0]);
           const barItems = safeList.filter((i: any) => i.category === 'bar');
@@ -76,13 +84,12 @@ export const POSFrontOffice: React.FC = () => {
         setMenuItems(listWithImages);
       } catch (err) { console.error('Menu refresh failed', err); }
     };
-    // Initial and periodic refresh (every 60s) to meet 5-minute SLA comfortably
     refresh();
     const iv = setInterval(refresh, 60_000);
     const onStorage = (e: StorageEvent) => { if (e.key === 'corepms_pos_items') refresh(); };
     window.addEventListener('storage', onStorage);
     return () => { clearInterval(iv); window.removeEventListener('storage', onStorage); };
-  }, []);
+  }, [costCentre]);
 
   useEffect(() => {
     // Clear potentially stale localStorage on mount to ensure clean slate if needed
@@ -197,66 +204,65 @@ export const POSFrontOffice: React.FC = () => {
   const debouncedTimerRef = useRef<any>(null);
   const pendingBillRef = useRef<any>(null);
 
-  useEffect(() => {
-    const run = async () => {
-      setMountLoading(true);
-      try {
-        const ready = await db.waitForReady(180, 500);
-        if (!ready) {
-          setConnError('Database initialization timed out after 90s');
-          setMountLoading(false);
-          return;
-        }
-        const cfg = await db.getConnectionConfig();
-        if (cfg && cfg.host && cfg.host !== '0.0.0.0') {
-          setConnError('Database not bound to 0.0.0.0');
-        } else {
-          setConnError(null);
-        }
-        const res = await db.query(`SELECT table_id, status FROM table_status`);
-        if ('rows' in res) {
-          const statusMap: Record<string, 'available' | 'occupied' | 'suspended'> = {};
-          const safeRows = Array.isArray(res.rows) ? res.rows : [];
-          safeRows.forEach((r: any) => {
-            // Map database status to frontend status
-            if (r.status === 'open') {
-              statusMap[r.table_id] = 'available';
-            } else if (r.status === 'occupied') {
-              statusMap[r.table_id] = 'occupied';
-            } else if (r.status === 'closed') {
-              statusMap[r.table_id] = 'suspended';
-            }
-          });
-
-          setTables(prev => {
-            const safePrev = Array.isArray(prev) ? prev : [];
-            return safePrev.map(t => {
-              if (statusMap[t.id]) {
-                return { ...t, status: statusMap[t.id] };
-              }
-              return t;
-            });
-          });
-        }
-      } catch (e: any) {
-        setConnError(e?.message || 'Failed to fetch table status');
-      } finally {
+  const fetchTablesForCostCentre = useCallback(async (cc: string) => {
+    setMountLoading(true);
+    try {
+      const ready = await db.waitForReady();
+      if (!ready) {
+        setConnError('Database initialization timed out after 90s');
         setMountLoading(false);
+        return;
       }
-    };
-    run();
+      const cfg = await db.getConnectionConfig();
+      if (cfg && cfg.host && cfg.host !== '0.0.0.0') {
+        setConnError('Database not bound to 0.0.0.0');
+      } else {
+        setConnError(null);
+      }
+      const res = await db.query(`SELECT table_id, status FROM table_status WHERE cost_center = $1`, [cc || 'Main Restaurant']);
+      if ('rows' in res) {
+        const statusMap: Record<string, 'available' | 'occupied' | 'suspended'> = {};
+        const safeRows = Array.isArray(res.rows) ? res.rows : [];
+        safeRows.forEach((r: any) => {
+          if (r.status === 'open') {
+            statusMap[r.table_id] = 'available';
+          } else if (r.status === 'occupied') {
+            statusMap[r.table_id] = 'occupied';
+          } else if (r.status === 'closed') {
+            statusMap[r.table_id] = 'suspended';
+          }
+        });
+
+        setTables(prev => {
+          const safePrev = Array.isArray(prev) ? prev : [];
+          return safePrev.map(t => {
+            const status = statusMap[t.id] || 'available';
+            return { ...t, status, cost_center: cc || 'Main Restaurant', currentBill: statusMap[t.id] === 'occupied' ? t.currentBill : undefined };
+          });
+        });
+      }
+    } catch (e: any) {
+      setConnError(e?.message || 'Failed to fetch table status');
+    } finally {
+      setMountLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!costCentre) return;
+    fetchTablesForCostCentre(costCentre);
+  }, [costCentre, fetchTablesForCostCentre]);
 
   const updateTableStatus = useCallback(async (tableId: string, status: 'available' | 'occupied' | 'suspended') => {
     const mapped = status === 'suspended' ? 'closed' : (status === 'available' ? 'open' : status);
     try {
       await db.query(
         `
-          INSERT INTO table_status (table_id, status, last_update)
-          VALUES ($1, $2, NOW())
-          ON CONFLICT (table_id) DO UPDATE SET status = EXCLUDED.status, last_update = NOW()
+          INSERT INTO table_status (table_id, status, cost_center, last_update)
+          VALUES ($1, $2, $3, NOW())
+          ON CONFLICT (table_id, cost_center) DO UPDATE SET status = EXCLUDED.status, last_update = NOW()
         `,
-        [tableId, mapped]
+        [tableId, mapped, costCentre || 'Main Restaurant']
       );
     } catch { }
   }, []);
@@ -288,7 +294,7 @@ export const POSFrontOffice: React.FC = () => {
   }, []);
 
   const clearBill = useCallback(async (tableId: string) => {
-    if (closePosOrder) await closePosOrder(tableId);
+    if (closePosOrder) await closePosOrder(tableId, costCentre || undefined);
     setTables(prev => {
       const safePrev = Array.isArray(prev) ? prev : [];
       return safePrev.map(t => t.id === tableId ? { ...t, currentBill: undefined, status: 'available' } : t);
@@ -472,7 +478,13 @@ export const POSFrontOffice: React.FC = () => {
     debouncedTimerRef.current = setTimeout(async () => {
       const current = pendingBillRef.current;
       const ok = await (typeof savePosOrder === 'function'
-        ? savePosOrder({ table: current.tableId, items: current.items, total: current.total })
+        ? savePosOrder({ 
+            table: current.tableId, 
+            items: current.items, 
+            total: current.total,
+            cost_center: costCentre || 'Main Restaurant',
+            shift_id: shiftId
+          })
         : Promise.resolve(true));
       if (!ok) {
         setTables(prev);
@@ -523,7 +535,7 @@ export const POSFrontOffice: React.FC = () => {
     // Auto-deplete inventory for sold items
     try {
       const soldItems = bill.items.map((i: any) => ({ name: i.menuItem.name, quantity: Number(i.quantity || 0) }));
-      decrementInventory(soldItems);
+      decrementInventory(soldItems, costCentre || 'Main Restaurant', shiftId || 'unknown');
     } catch (err) {
       console.warn('Inventory depletion failed:', err);
       logPaymentError('inventory', err, { billId: bill.id });
@@ -531,7 +543,7 @@ export const POSFrontOffice: React.FC = () => {
 
     // Close POS order in DB to prevent reversion to occupied state
     if (closePosOrder) {
-      await closePosOrder(bill.tableId);
+      await closePosOrder(bill.tableId, costCentre || undefined);
     }
 
     setTables(prev => prev.map(t =>
@@ -558,6 +570,27 @@ export const POSFrontOffice: React.FC = () => {
     <div className="min-h-screen bg-gray-50">
       <Header />
 
+      {/* When no cost centre selected, show transition message; AuthPortal handles station selection */}
+      {!costCentre && (
+        <div className="flex items-center justify-center py-20">
+          <div className="text-center">
+            <div className="text-6xl mb-4">🍽️</div>
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">Switching Station</h2>
+            <p className="text-gray-500">Please select your new cost centre below.</p>
+          </div>
+        </div>
+      )}
+
+      {/* PIN Lock Overlay */}
+      <PINModal
+        isOpen={isLocked}
+        onClose={() => {}} // User cannot close without PIN
+        onSuccess={() => setIsLocked(false)}
+        title="POS Session Locked"
+        verifyPin={verifyPosPin}
+      />
+
+      {costCentre && (
       <div className="p-6">
         {(isLoading || mountLoading) && (
           <div className="bg-white rounded-xl shadow p-6 text-center text-gray-600">Loading...</div>
@@ -634,7 +667,7 @@ export const POSFrontOffice: React.FC = () => {
               {(visibleTables || []).map(table => (
                 <TableCard
                   key={table.id}
-                  table={table as any}
+                  table={{ ...table, cost_center: costCentre || 'Main Restaurant' } as any}
                   onClick={() => handleTableClick(table.id)}
                   onToggleSuspend={() => toggleSuspend(table.id)}
                   onClearBill={() => clearBill(table.id)}
@@ -825,6 +858,7 @@ export const POSFrontOffice: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
       {orderModal?.open && (
         <OrderModal

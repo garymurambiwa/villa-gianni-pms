@@ -7,7 +7,7 @@ import bcrypt from 'bcryptjs';
  * This service resolves the "ADMIN_CHECK_FAILED" error by ensuring proper admin permissions
  */
 export class AdminPermissionFixService {
-  
+
   /**
    * Diagnoses and fixes admin permission issues
    * @returns Promise with diagnostic results
@@ -40,9 +40,9 @@ export class AdminPermissionFixService {
 
       // Step 3: Check for existing admin user
       const adminCheck = await db.query(
-        `SELECT id, username, role, active FROM app_users WHERE lower(username) = lower('admin')`
+        `SELECT id, username, role, active FROM app_users WHERE lower(username::text) = lower('admin'::text)`
       );
-      
+
       if ('error' in adminCheck) {
         return {
           success: false,
@@ -55,14 +55,14 @@ export class AdminPermissionFixService {
       if (adminCheck.rows && adminCheck.rows.length > 0) {
         adminUser = adminCheck.rows[0];
         console.log(`✅ Admin user found: ${adminUser.username}`);
-        
+
         // Ensure admin role
         if (adminUser.role !== 'admin') {
           const updateResult = await db.query(
             `UPDATE app_users SET role = 'admin' WHERE id = ?`,
             [adminUser.id]
           );
-          
+
           if ('error' in updateResult) {
             return {
               success: false,
@@ -76,13 +76,13 @@ export class AdminPermissionFixService {
         console.log('⚠️  No admin user found. Creating default admin...');
         const id = `usr_${Date.now()}`;
         const passwordHash = await bcrypt.hash('admin123', 12);
-        
+
         const createResult = await db.query(
           `INSERT INTO app_users (id, username, name, role, password_hash, active, password_change_required) 
            VALUES (?, ?, ?, ?, ?, true, false)`,
           [id, 'admin', 'System Administrator', 'admin', passwordHash]
         );
-        
+
         if ('error' in createResult) {
           return {
             success: false,
@@ -90,7 +90,7 @@ export class AdminPermissionFixService {
             error: createResult.error
           };
         }
-        
+
         console.log('✅ Default admin user created');
         adminUser = { id, username: 'admin', role: 'admin', active: true };
       }
@@ -98,7 +98,7 @@ export class AdminPermissionFixService {
       // Step 4: Execute cleanup process
       console.log('🧹 Executing cleanup process...');
       const cleanupResult = await pmsAuthDb.cleanupTestData('admin');
-      
+
       if (!cleanupResult.ok) {
         return {
           success: false,
@@ -113,7 +113,7 @@ export class AdminPermissionFixService {
       // Step 5: Create backup
       console.log('💾 Creating database backup...');
       const backupResult = await db.exportSqlDump({ actorUserId: adminUser.id });
-      
+
       if (!backupResult.ok) {
         console.warn('⚠️  Backup creation failed:', backupResult.error);
       }
@@ -144,12 +144,12 @@ export class AdminPermissionFixService {
         error: error instanceof Error ? error.message : String(error)
       };
     }
-  } 
+  }
 
   /** 
     * Quick fix for common permission issues 
-    */ 
-  async quickFix(): Promise<{ success: boolean; message: string; error?: string }> { 
+    */
+  async quickFix(): Promise<{ success: boolean; message: string; error?: string }> {
     try {
       const configured = await db.isConfigured();
       if (!configured) {
@@ -158,9 +158,9 @@ export class AdminPermissionFixService {
 
       // Ensure admin user exists with proper role
       const adminCheck = await db.query(
-        `SELECT id FROM app_users WHERE lower(username) = lower('admin') AND role = 'admin' AND active = true`
+        `SELECT id FROM app_users WHERE lower(username::text) = lower('admin'::text) AND role = 'admin' AND active = true`
       );
-      
+
       if ('error' in adminCheck) {
         return { success: false, message: 'Database query failed', error: adminCheck.error };
       }
@@ -169,7 +169,7 @@ export class AdminPermissionFixService {
         // Create or fix admin user
         const id = `usr_${Date.now()}`;
         const passwordHash = await bcrypt.hash('admin123', 12);
-        
+
         // MySQL ON DUPLICATE KEY UPDATE
         await db.query(
           `INSERT INTO app_users (id, username, name, role, password_hash, active, password_change_required) 
@@ -177,7 +177,7 @@ export class AdminPermissionFixService {
            ON CONFLICT (username) DO UPDATE SET role = 'admin', active = true`,
           [id, 'admin', 'System Administrator', 'admin', passwordHash]
         );
-        
+
         return { success: true, message: 'Admin user created/updated successfully' };
       }
 
@@ -189,7 +189,7 @@ export class AdminPermissionFixService {
         error: error instanceof Error ? error.message : String(error)
       };
     }
-  } 
+  }
 
   async restoreAdminPrivileges(): Promise<{ success: boolean; details?: Record<string, any>; error?: string }> {
     try {
@@ -202,7 +202,7 @@ export class AdminPermissionFixService {
       const details: Record<string, any> = {};
       for (const u of usernames) {
         const row = await db.query(
-          `SELECT id, username, role, active FROM app_users WHERE lower(username) = lower(?)`,
+          `SELECT id, username, role, active FROM app_users WHERE lower(username::text) = lower(?::text)`,
           [u]
         );
         if ('error' in row) {
@@ -246,6 +246,6 @@ export class AdminPermissionFixService {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
-} 
+}
 
 export const adminPermissionFixService = new AdminPermissionFixService(); 

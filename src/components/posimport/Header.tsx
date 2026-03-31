@@ -6,17 +6,20 @@ import { Button } from '../ui/button';
 import { StartShiftModal } from './StartShiftModal';
 import { ShiftReportModal } from './ShiftReportModal';
 import { ShiftClosureModal } from '../pos/ShiftClosureModal';
+import { PINModal } from '../pos/PINModal';
 import { ShiftReading } from '../../types';
 import { canManagePOS } from '../../lib/permissions';
 // import BackOfficeSettings from './BackOfficeSettings';
 
 export const Header: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, costCentre, setCostCentre, verifyPosPin } = useAuth();
   const { settings: appSettings } = useSettings();
-  const { activeShift, generateXReading, getTotals } = useShift();
+  const { activeShift, generateXReading, getTotals, clearActiveShift } = useShift();
   const [showStartModal, setShowStartModal] = useState(false);
   const [showClosureModal, setShowClosureModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinPurpose, setPinPurpose] = useState<'start' | 'switch' | null>(null);
   const [currentReading, setCurrentReading] = useState<ShiftReading | null>(null);
   // const [showSettings, setShowSettings] = useState(false);
 
@@ -38,6 +41,18 @@ export const Header: React.FC = () => {
     setCurrentReading(zReading);
     setShowReportModal(true);
     setShowClosureModal(false);
+  };
+
+  const handlePinSuccess = (verifiedUser: any) => {
+    setShowPinModal(false);
+    if (pinPurpose === 'start') {
+      // We could store the verifiedUser in a state if we want StartShiftModal to use it instead of useAuth().user
+      setShowStartModal(true);
+    } else if (pinPurpose === 'switch') {
+      clearActiveShift();
+      setCostCentre(null);
+    }
+    setPinPurpose(null);
   };
 
   // Brand logo fallback (shared with BrandHeader defaults)
@@ -94,7 +109,7 @@ export const Header: React.FC = () => {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setShowStartModal(true)}
+                    onClick={() => { setPinPurpose('start'); setShowPinModal(true); }}
                     className="bg-red-600 hover:bg-red-700 border-red-600 text-current hover:text-current transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
                   >
                     Start Shift
@@ -155,12 +170,32 @@ export const Header: React.FC = () => {
                 </Button>
               )}
 
-              <div className="border-l border-purple-400 pl-4">
-                <div className="text-sm font-semibold">{user?.name}</div>
-                <div className="text-xs text-purple-200">{user?.role || 'Staff'}</div>
+              <div className="border-l border-purple-400 pl-4 flex flex-col justify-center">
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-semibold">{user?.name}</div>
+                  <div className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded uppercase tracking-wider font-bold">
+                    {user?.role || 'Staff'}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs text-purple-200">
+                    Station: <span className="font-bold text-white">{costCentre || 'Not Selected'}</span>
+                  </div>
+                  <button 
+                    onClick={() => { setPinPurpose('switch'); setShowPinModal(true); }}
+                    className="text-[10px] text-purple-300 hover:text-white underline decoration-purple-400 underline-offset-2 transition-colors"
+                  >
+                    Switch
+                  </button>
+                </div>
               </div>
 
-              <Button variant="destructive" size="sm" onClick={logout}>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={logout}
+                className="text-white hover:bg-white/10"
+              >
                 Logout
               </Button>
             </div>
@@ -181,6 +216,12 @@ export const Header: React.FC = () => {
       />
 
 
+      <PINModal
+        isOpen={showPinModal}
+        onClose={() => setShowPinModal(false)}
+        onSuccess={handlePinSuccess}
+        verifyPin={verifyPosPin}
+      />
     </>
   );
 };

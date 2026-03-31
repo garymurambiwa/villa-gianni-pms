@@ -35,6 +35,24 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
         return s === 'available' || s === 'vacant' || String(r.status).toUpperCase() === 'VC';
     });
 
+    // Whenever the modal opens, check for pre-selected room from Room Availability Grid
+    React.useEffect(() => {
+        if (isOpen) {
+            const preSelectedRoomId = (window as any).__quickCheckInRoomId;
+            const preSelectedRoomNumber = (window as any).__quickCheckInRoomNumber;
+            if (preSelectedRoomId) {
+                setRoomId(preSelectedRoomId);
+                const room = rooms.find(r => r.id === preSelectedRoomId);
+                if (room) {
+                    setRate(String(room.rate || '0'));
+                }
+                // Clear the global selection after using it
+                (window as any).__quickCheckInRoomId = undefined;
+                (window as any).__quickCheckInRoomNumber = undefined;
+            }
+        }
+    }, [isOpen, rooms]);
+
     // Whenever a room is selected, update the rate to the room's default rate if empty
     const handleRoomChange = (val: string) => {
         setRoomId(val);

@@ -202,10 +202,18 @@ const NightAudit: React.FC = () => {
   };
 
   const todayISO = new Date().toISOString().slice(0,10);
+
+  /** Safely parse a date string — returns null if the value is missing or invalid. */
+  const safeISODate = (raw: any): string | null => {
+    if (!raw) return null;
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  };
+
   const guestsNeedingReview = React.useMemo(() => {
     return guests.filter(g => {
       const hasBalance = Number(g.folioBalance || 0) > 0;
-      const dueToday = g.checkOutDate && new Date(g.checkOutDate).toISOString().slice(0,10) === todayISO;
+      const dueToday = safeISODate(g.checkOutDate) === todayISO;
       return hasBalance || dueToday;
     });
   }, [guests, todayISO]);
@@ -469,7 +477,7 @@ const NightAudit: React.FC = () => {
                 <tr key={g.id} className="border-t">
                   <td className="py-2 pr-4">{g.name}</td>
                   <td className="py-2 pr-4">{g.roomNumber || '—'}</td>
-                  <td className="py-2 pr-4">{g.checkOutDate ? new Date(g.checkOutDate).toLocaleDateString() : '—'}</td>
+                  <td className="py-2 pr-4">{safeISODate(g.checkOutDate) ?? '—'}</td>
                   <td className="py-2 pr-4">${Number(g.folioBalance || 0).toFixed(2)}</td>
                 </tr>
               ))}

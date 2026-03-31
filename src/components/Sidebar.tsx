@@ -117,7 +117,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
   }, [registerHotkey]);
 
   const modulesBase = [
-    { id: 'dashboard', name: 'Dashboard', icon: '📊', roles: ['admin', 'frontdesk', 'manager', 'supervisor'], section: 'Front Office' },
+    { id: 'dashboard', name: 'Dashboard', icon: '📊', roles: ['admin', 'frontdesk', 'manager', 'supervisor', 'cashier'], section: 'Front Office' },
     { id: 'frontoffice', name: 'Front Office', icon: '🏨', roles: ['admin', 'frontdesk', 'manager', 'supervisor'], section: 'Front Office' },
     { id: 'reservations', name: 'Reservations', icon: '📅', roles: ['admin', 'frontdesk', 'manager', 'supervisor'], section: 'Front Office' },
     { id: 'rooms', name: 'Rooms', icon: '🛏️', roles: ['admin', 'frontdesk', 'housekeeping', 'manager', 'supervisor'], section: 'Front Office' },
@@ -125,7 +125,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
     { id: 'rate-management', name: 'Rate Management', icon: '💹', roles: ['admin', 'manager', 'supervisor'], section: 'Back Office' },
 
     { id: 'pos', name: 'POS System', icon: '🍽️', roles: ['admin', 'posmanager', 'manager', 'cashier', 'barman', 'supervisor'], section: 'POS' },
-    { id: 'pos-settings', name: 'POS Settings', icon: '⚙️', roles: ['admin', 'manager', 'supervisor'], section: 'POS' },
+    { id: 'pos-management', name: 'POS Management', icon: '📊', roles: ['admin', 'manager', 'supervisor', 'posmanager'], section: 'POS' },
+    { id: 'pos-settings', name: 'POS Settings', icon: '⚙️', roles: ['admin', 'manager', 'supervisor', 'posmanager'], section: 'POS' },
     { id: 'inventory', name: 'Inventory', icon: '📦', roles: ['admin', 'posmanager', 'manager', 'supervisor', 'barman'], section: 'POS' },
 
     { id: 'accounting', name: 'Accounting', icon: '📒', roles: ['admin', 'manager', 'auditor', 'supervisor'], section: 'Back Office' },
@@ -146,7 +147,38 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
     // Remove five existing entries now consolidated under FO Setting
     .filter(m => !['superadmin-settings', 'admin-management', 'profile-admin', 'profile', 'tx-clearing'].includes(m.id));
 
-  const availableModules = modules.filter(m => m.roles.map(r => r.toLowerCase()).includes(String(user?.role || '').toLowerCase()));
+  // Permission mapping: Module ID -> Required RightsKey from Users.tsx
+  const modulePermissions: Record<string, string> = {
+    'frontoffice': 'fo_checkin_checkout',
+    'reservations': 'fo_reservations_edit',
+    'rooms': 'fo_view_room_status',
+    'rate-management': 'fo_reservations_edit',
+    'pos': 'fnb_process_orders',
+    'pos-management': 'fnb_process_orders',
+    'pos-settings': 'admin_change_global_config',
+    'inventory': 'fnb_manage_inventory',
+    'accounting': 'fin_access_ledgers_readonly',
+    'night-audit': 'fin_night_audit_closing',
+    'reports': 'fin_view_reports_pl',
+    'fo-setting': 'admin_change_global_config',
+    'users': 'admin_create_edit_users',
+    'maintenance': 'ops_work_orders',
+    'breakfast-management': 'fnb_process_orders',
+  };
+
+  const availableModules = modules.filter(m => {
+    const userRole = String(user?.role || '').toLowerCase();
+    const hasRole = m.roles.map(r => r.toLowerCase()).includes(userRole);
+    
+    // Check granular permissions
+    const requiredPermission = modulePermissions[m.id];
+    const hasPermission = requiredPermission && user?.permissions?.includes(requiredPermission);
+    
+    // Always show dashboard if they have any access
+    if (m.id === 'dashboard') return true;
+    
+    return hasRole || hasPermission;
+  });
   const sections = ['Front Office', 'POS', 'Back Office'];
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
@@ -204,7 +236,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
                     {module.id === 'pos-settings' && canManagePOS(user?.role) && (
                       <>
                         <span className="ml-2">🔒</span>
-                        <span className="ml-2 text-[10px] uppercase tracking-wide bg-red-600 text-white px-2 py-1 rounded">Admin/Supervisor</span>
+                        <span className="ml-2 text-[10px] uppercase tracking-wide bg-red-600 text-white px-2 py-1 rounded">Restricted</span>
                       </>
                     )}
                   </button>

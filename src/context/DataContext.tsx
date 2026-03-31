@@ -42,13 +42,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         roomRes = await db.query('SELECT * FROM rooms WHERE is_active IS DISTINCT FROM false ORDER BY number');
         // Also ensure the column exists for future queries (safe ALTER IF NOT EXISTS)
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => {});
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => {});
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => { });
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => { });
       } catch (_colErr) {
         // Column doesn't exist yet — fall back to all rooms and add the column
         roomRes = await db.query('SELECT * FROM rooms ORDER BY number');
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => {});
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => {});
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => { });
+        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => { });
       }
       if ('rows' in roomRes) {
         const normalized = (roomRes.rows || []).map((r: any) => {
@@ -91,13 +91,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Handle both string and Date object formats
             if (typeof rawCheckIn === 'string') {
               // If it's an ISO string with time, extract just the date part
-              checkIn = rawCheckIn.includes('T') ? rawCheckIn.split('T')[0] : rawCheckIn;
+              // Hande both 'T' separated (ISO) and space separated (MySQL/PG)
+              if (rawCheckIn.includes('T')) {
+                checkIn = rawCheckIn.split('T')[0];
+              } else if (rawCheckIn.includes(' ')) {
+                checkIn = rawCheckIn.split(' ')[0];
+              } else {
+                checkIn = rawCheckIn;
+              }
             } else if (rawCheckIn instanceof Date) {
               // Format Date object to YYYY-MM-DD
               const year = rawCheckIn.getFullYear();
               const month = String(rawCheckIn.getMonth() + 1).padStart(2, '0');
               const day = String(rawCheckIn.getDate()).padStart(2, '0');
-              checkIn = `${year} -${month} -${day} `;
+              checkIn = `${year}-${month}-${day}`;
             } else {
               checkIn = String(rawCheckIn);
             }
@@ -108,12 +115,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const rawCheckOut = r.check_out_date || r.checkOut;
           if (rawCheckOut) {
             if (typeof rawCheckOut === 'string') {
-              checkOut = rawCheckOut.includes('T') ? rawCheckOut.split('T')[0] : rawCheckOut;
+              if (rawCheckOut.includes('T')) {
+                checkOut = rawCheckOut.split('T')[0];
+              } else if (rawCheckOut.includes(' ')) {
+                checkOut = rawCheckOut.split(' ')[0];
+              } else {
+                checkOut = rawCheckOut;
+              }
             } else if (rawCheckOut instanceof Date) {
               const year = rawCheckOut.getFullYear();
               const month = String(rawCheckOut.getMonth() + 1).padStart(2, '0');
               const day = String(rawCheckOut.getDate()).padStart(2, '0');
-              checkOut = `${year} -${month} -${day} `;
+              checkOut = `${year}-${month}-${day}`;
             } else {
               checkOut = String(rawCheckOut);
             }
@@ -138,6 +151,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             nationalityCode: r.nationality_code || '',
             nationalityName: r.nationality_name || '',
             bookingSource: r.booking_source || '',
+            // Map source to originRegion for Dashboard revenue reporting
+            originRegion: r.source || r.booking_source || '',
             partnerCode: r.partner_code || '',
             utmSource: r.utm_source || '',
             utmMedium: r.utm_medium || '',
@@ -226,7 +241,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Load POS & Inventory Data
-      const posRes = await db.query('SELECT * FROM pos_orders WHERE LOWER(status) = ?', ['open']);
+      const posRes = await db.query('SELECT * FROM pos_orders WHERE LOWER(status::text) = LOWER(?::text)', ['open']);
       if ('rows' in posRes) {
         const normalized = (posRes.rows || []).map((o: any) => {
           let itemsArr: any[] = [];
@@ -268,8 +283,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             rawCat.includes('drink') ||
             rawCat.includes('alcohol');
 
-          let derivedCategoryId = p.category_id; // Use existing if present
-          if (!derivedCategoryId) {
+          // CRITICAL: Preserve explicitly assigned category_id from database
+          // Only derive default category if category_id is null/undefined/empty
+          let derivedCategoryId = p.category_id;
+
+          // Only derive category if none explicitly set - preserve user assignments
+          if (!derivedCategoryId || derivedCategoryId === '' || derivedCategoryId === null) {
             if (isBar) {
               if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice')) {
                 derivedCategoryId = 'CAT_BAR_BEV';
@@ -754,9 +773,16 @@ check_in_date = ?, check_out_date = ?, status = ?,
         items: Array.isArray(orderData.items) ? orderData.items : [],
         total_amount: Number(orderData.total || 0),
         status: 'OPEN',
+        cost_center: orderData.cost_center,
+        shift_id: orderData.shift_id
       };
+      
       setPosOrders((prev: any[]) => {
-        const idx = prev.findIndex((p: any) => String(p.table_number) === provisional.table_number && String(p.status) === 'OPEN');
+        const idx = prev.findIndex((p: any) => 
+          String(p.table_number) === provisional.table_number && 
+          String(p.status) === 'OPEN' &&
+          p.cost_center === provisional.cost_center
+        );
         if (idx >= 0) {
           const copy = prev.slice();
           copy[idx] = { ...prev[idx], ...provisional };
@@ -767,29 +793,47 @@ check_in_date = ?, check_out_date = ?, status = ?,
 
       // Generate unique ID for the POS order
       const orderId = `POS${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      // PostgreSQL uses ON CONFLICT instead of ON DUPLICATE KEY UPDATE
-      // First try to update existing order, if not found, insert new one
-      const updateSql = "UPDATE pos_orders SET items = ?::jsonb, total_amount = ?, status = ? WHERE table_number = ? AND status = 'open' RETURNING id";
-      const updateParams = [JSON.stringify(provisional.items), provisional.total_amount, 'open', provisional.table_number];
+      
+      // Try to update existing order for this table AND cost center
+      const updateSql = "UPDATE pos_orders SET items = ?::jsonb, total_amount = ?, status = ?, shift_id = ? WHERE table_number = ? AND status = 'open' AND cost_center = ? RETURNING id";
+      const updateParams = [
+        JSON.stringify(provisional.items), 
+        provisional.total_amount, 
+        'open', 
+        provisional.shift_id,
+        provisional.table_number,
+        provisional.cost_center
+      ];
       const updateResult = await db.query(updateSql, updateParams);
 
       // If no rows updated, insert new order
-      if (!('error' in updateResult) && 'rows' in updateResult && updateResult.rows.length === 0) {
-        const insertSql = "INSERT INTO pos_orders (id, table_number, items, total_amount, status) VALUES (?, ?, ?::jsonb, ?, 'open')";
-        const insertParams = [orderId, provisional.table_number, JSON.stringify(provisional.items), provisional.total_amount];
+      if (!('error' in updateResult) && 'rows' in updateResult && (updateResult as any).rows.length === 0) {
+        const insertSql = "INSERT INTO pos_orders (id, table_number, items, total_amount, status, cost_center, shift_id) VALUES (?, ?, ?::jsonb, ?, 'open', ?, ?)";
+        const insertParams = [
+          orderId, 
+          provisional.table_number, 
+          JSON.stringify(provisional.items), 
+          provisional.total_amount,
+          provisional.cost_center,
+          provisional.shift_id
+        ];
         const insertResult = await db.query(insertSql, insertParams);
         if ('error' in insertResult) {
           console.error('POS order insert details:', { params: insertParams, error: (insertResult as any).error });
           const dbError = (insertResult as any).error?.message || (insertResult as any).error || 'Unknown DB Error';
-          setPosOrders((prev: any[]) => prev.filter((p: any) => String(p.table_number) !== provisional.table_number || String(p.status) !== 'OPEN'));
-          toast({ title: 'Database Write Failed', description: `POS order insert failed: ${dbError} `, variant: 'destructive' });
+          setPosOrders((prev: any[]) => prev.filter((p: any) => 
+            !(String(p.table_number) === provisional.table_number && String(p.status) === 'OPEN' && p.cost_center === provisional.cost_center)
+          ));
+          toast({ title: 'Database Write Failed', description: `POS order insert failed: ${dbError}`, variant: 'destructive' });
           return false;
         }
       } else if ('error' in updateResult) {
         console.error('POS order update details:', { params: updateParams, error: (updateResult as any).error });
         const dbError = (updateResult as any).error?.message || (updateResult as any).error || 'Unknown DB Error';
-        setPosOrders((prev: any[]) => prev.filter((p: any) => String(p.table_number) !== provisional.table_number || String(p.status) !== 'OPEN'));
-        toast({ title: 'Database Write Failed', description: `POS order update failed: ${dbError} `, variant: 'destructive' });
+        setPosOrders((prev: any[]) => prev.filter((p: any) => 
+          !(String(p.table_number) === provisional.table_number && String(p.status) === 'OPEN' && p.cost_center === provisional.cost_center)
+        ));
+        toast({ title: 'Database Write Failed', description: `POS order update failed: ${dbError}`, variant: 'destructive' });
         return false;
       }
 
@@ -801,15 +845,21 @@ check_in_date = ?, check_out_date = ?, status = ?,
     }
   };
 
-  const closePosOrder = async (tableNumber: string): Promise<boolean> => {
+  const closePosOrder = async (tableNumber: string, costCentre?: string): Promise<boolean> => {
     try {
       // 1. Close the order in pos_orders
-      const sql = "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open'";
-      const result = await db.query(sql, [tableNumber]);
+      const query = costCentre 
+        ? "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open' AND cost_center = ?"
+        : "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open'";
+      const params = costCentre ? [tableNumber, costCentre] : [tableNumber];
+      const result = await db.query(query, params);
 
       // 2. Update table_status to 'open' (available)
-      const tableSql = "INSERT INTO table_status (table_id, status, last_update) VALUES (?, 'open', NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'open', last_update = NOW()";
-      await db.query(tableSql, [tableNumber]);
+      const tableSql = costCentre
+        ? "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'open', ?, NOW()) ON CONFLICT (table_id, cost_center) DO UPDATE SET status = 'open', last_update = NOW()"
+        : "INSERT INTO table_status (table_id, status, last_update) VALUES (?, 'open', NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'open', last_update = NOW()";
+      const tableParams = costCentre ? [tableNumber, costCentre] : [tableNumber];
+      await db.query(tableSql, tableParams);
 
       if ('error' in result) {
         console.error('Close POS order failed:', (result as any).error);
@@ -817,7 +867,9 @@ check_in_date = ?, check_out_date = ?, status = ?,
       }
 
       // Update local state
-      setPosOrders((prev: any[]) => prev.filter((p: any) => String(p.table_number) !== tableNumber || String(p.status) !== 'OPEN'));
+      setPosOrders((prev: any[]) => prev.filter((p: any) => 
+        !(String(p.table_number) === tableNumber && String(p.status) === 'OPEN' && (!costCentre || p.cost_center === costCentre))
+      ));
 
       return true;
     } catch (e: any) {
@@ -1969,6 +2021,27 @@ END;
         // Column may already exist, which is fine
       }
 
+      // Add void_status column to vendor_expenses (ACTIVE/VOIDED) — data-safe, defaults all existing rows to ACTIVE
+      try {
+        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS void_status TEXT DEFAULT 'ACTIVE'; `);
+      } catch (e) {
+        // Column may already exist, which is fine
+      }
+
+      // Add voided_at column to vendor_expenses (timestamp when voided)
+      try {
+        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS voided_at TIMESTAMP DEFAULT NULL; `);
+      } catch (e) {
+        // Column may already exist, which is fine
+      }
+
+      // Add voided_reason column to vendor_expenses (reason text for audit trail)
+      try {
+        await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS voided_reason TEXT DEFAULT NULL; `);
+      } catch (e) {
+        // Column may already exist, which is fine
+      }
+
       // Add created_at column to vendor_payments if it doesn't exist
       try {
         await db.query(`ALTER TABLE vendor_payments ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
@@ -2389,6 +2462,50 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
     }
   };
 
+  // VENDORS - Void an expense (soft-void: keeps record for audit trail)
+  const voidVendorExpense = async (expenseId: string, reason: string): Promise<boolean> => {
+    try {
+      // Safety check: fetch current status before voiding
+      const checkRes = await db.query(
+        `SELECT status, void_status FROM vendor_expenses WHERE id = ?`,
+        [expenseId]
+      );
+      const row = ('rows' in checkRes && checkRes.rows?.length > 0) ? checkRes.rows[0] : null;
+      if (!row) {
+        toast({ title: 'Not Found', description: 'Expense record not found', variant: 'destructive' });
+        return false;
+      }
+      if (row.void_status === 'VOIDED') {
+        toast({ title: 'Already Voided', description: 'This expense has already been voided', variant: 'destructive' });
+        return false;
+      }
+      if (!['pending', 'approved'].includes(row.status)) {
+        toast({ title: 'Cannot Void', description: 'Only pending or approved expenses can be voided', variant: 'destructive' });
+        return false;
+      }
+
+      const sql = `UPDATE vendor_expenses
+        SET void_status = 'VOIDED', voided_at = NOW(), voided_reason = ?, status = 'voided', updated_at = NOW()
+        WHERE id = ?`;
+      const result = await db.query(sql, [reason || 'No reason provided', expenseId]);
+      if ('error' in result) {
+        console.error('Vendor expense void failed:', result.error);
+        toast({ title: 'Database Write Failed', description: 'Vendor expense could not be voided', variant: 'destructive' });
+        return false;
+      }
+
+      // Notify report views to refresh
+      try { window.dispatchEvent(new CustomEvent('vendor:data:updated')); } catch { }
+
+      await loadVendorExpenses();
+      return true;
+    } catch (e: any) {
+      console.error('Void vendor expense error:', e?.message || e);
+      toast({ title: 'Database Write Failed', description: 'Vendor expense could not be voided', variant: 'destructive' });
+      return false;
+    }
+  };
+
   // VENDORS - Process a vendor payment
   const payVendor = async (paymentData: any): Promise<boolean> => {
     try {
@@ -2481,7 +2598,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
         name: userData.username, // Using username as name if not provided
         role: userData.role || 'user'
       });
-      
+
       if (!res.ok) {
         console.error('User registration failed:', res.error);
         toast({ title: 'Registration Failed', description: res.error || 'User could not be created', variant: 'destructive' });
@@ -2555,7 +2672,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       recordFolioCharge, recordFolioPayment, removeFolioCharge,
       bulkUpdateRoomStatus, bulkDeleteRooms, getRoomAudit, revertRoomChange,
       addCityLedgerAccount, updateCityLedgerAccount, addCityLedgerTransaction, addCityLedgerNote,
-      addVendor, updateVendor, deleteVendor, addVendorExpense, updateVendorExpense, deleteVendorExpense, payVendor, loadVendorPayments,
+      addVendor, updateVendor, deleteVendor, addVendorExpense, updateVendorExpense, deleteVendorExpense, voidVendorExpense, payVendor, loadVendorPayments,
       addUser, // Add user management function
       users, loadUsers,
       logs, loadLogs,

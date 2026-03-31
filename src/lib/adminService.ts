@@ -41,7 +41,7 @@ export async function searchUsers(query: string): Promise<ProfileRow[] | { error
       const term = `%${String(query || '').trim()}%`
       const sql = `SELECT id, email, name AS full_name, role, NULL AS property_id, active AS is_active
                    FROM app_users
-                   WHERE lower(username) LIKE lower(?) OR lower(email) LIKE lower(?)
+                   WHERE lower(username::text) LIKE lower(?::text) OR lower(email::text) LIKE lower(?::text)
                    ORDER BY updated_at DESC
                    LIMIT 25`
       const res = await db.query<ProfileRow>(sql, [term, term])

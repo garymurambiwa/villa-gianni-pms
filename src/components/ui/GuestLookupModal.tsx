@@ -63,7 +63,7 @@ export const GuestLookupModal: React.FC<Props> = ({ open, onClose, onSelect }) =
 
   const canUse = (() => {
     const r = String(user?.role || '').toLowerCase()
-    return ['admin','manager','supervisor','frontdesk','cashier','auditor'].includes(r)
+    return ['admin', 'manager', 'supervisor', 'frontdesk', 'cashier', 'auditor'].includes(r)
   })()
 
   const totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE))
@@ -83,10 +83,10 @@ export const GuestLookupModal: React.FC<Props> = ({ open, onClose, onSelect }) =
       if (hasDb) {
         const conds: string[] = []
         const params: any[] = []
-        if (qName) { conds.push(`lower(g.full_name) like lower(?)`); params.push(`%${qName}%`) }
+        if (qName) { conds.push(`lower(g.full_name::text) like lower(?::text)`); params.push(`%${qName}%`) }
         if (query.reservationId) { conds.push(`r.id = ?`); params.push(query.reservationId) }
         if (query.phone) { conds.push(`g.phone like ?`); params.push(`%${query.phone}%`) }
-        if (query.email) { conds.push(`lower(g.email) like lower(?)`); params.push(`%${query.email}%`) }
+        if (query.email) { conds.push(`lower(g.email::text) like lower(?::text)`); params.push(`%${query.email}%`) }
         if (query.startDate) { conds.push(`r.check_in_date >= ?`); params.push(query.startDate) }
         if (query.endDate) { conds.push(`r.check_out_date <= ?`); params.push(query.endDate) }
         const where = conds.length ? `where ${conds.join(' and ')}` : ''
@@ -122,7 +122,7 @@ export const GuestLookupModal: React.FC<Props> = ({ open, onClose, onSelect }) =
         const toDateStr = (d: any) => {
           try {
             const dt = d instanceof Date ? d : new Date(d)
-            return dt.toISOString().slice(0,10)
+            return dt.toISOString().slice(0, 10)
           } catch { return '' }
         }
         const rs = reservations.filter(r => {
@@ -152,7 +152,7 @@ export const GuestLookupModal: React.FC<Props> = ({ open, onClose, onSelect }) =
         const raw = localStorage.getItem('corepms_guest_lookup_audit')
         const list = raw ? JSON.parse(raw) : []
         localStorage.setItem('corepms_guest_lookup_audit', JSON.stringify([audit, ...list].slice(0, 500)))
-      } catch {}
+      } catch { }
     } catch (e: any) {
       setError(e?.message || 'Search failed')
     } finally {
@@ -173,11 +173,11 @@ export const GuestLookupModal: React.FC<Props> = ({ open, onClose, onSelect }) =
       const raw = localStorage.getItem('corepms_guest_lookup_audit')
       const list = raw ? JSON.parse(raw) : []
       localStorage.setItem('corepms_guest_lookup_audit', JSON.stringify([audit, ...list].slice(0, 500)))
-    } catch {}
+    } catch { }
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v)=> { if (!v) onClose() }}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
       <DialogContent className="max-w-[800px] w-[800px] h-[600px] sm:w-[95vw] sm:h-[80vh]">
         <DialogHeader>
           <DialogTitle>Guest Lookup</DialogTitle>
@@ -186,38 +186,38 @@ export const GuestLookupModal: React.FC<Props> = ({ open, onClose, onSelect }) =
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label className="text-xs">First Name</Label>
-            <Input value={query.firstName} onChange={(e)=> setQuery(q=>({...q, firstName: e.target.value}))} placeholder="First name" aria-label="Guest first name" />
+            <Input value={query.firstName} onChange={(e) => setQuery(q => ({ ...q, firstName: e.target.value }))} placeholder="First name" aria-label="Guest first name" />
           </div>
           <div>
             <Label className="text-xs">Last Name</Label>
-            <Input value={query.lastName} onChange={(e)=> setQuery(q=>({...q, lastName: e.target.value}))} placeholder="Last name" aria-label="Guest last name" />
+            <Input value={query.lastName} onChange={(e) => setQuery(q => ({ ...q, lastName: e.target.value }))} placeholder="Last name" aria-label="Guest last name" />
           </div>
           <div>
             <Label className="text-xs">Reservation ID</Label>
-            <Input value={query.reservationId} onChange={(e)=> setQuery(q=>({...q, reservationId: e.target.value}))} placeholder="e.g. RES123" aria-label="Reservation ID" />
+            <Input value={query.reservationId} onChange={(e) => setQuery(q => ({ ...q, reservationId: e.target.value }))} placeholder="e.g. RES123" aria-label="Reservation ID" />
           </div>
           <div>
             <Label className="text-xs">Phone</Label>
-            <Input value={query.phone} onChange={(e)=> setQuery(q=>({...q, phone: e.target.value}))} placeholder="Phone number" aria-label="Phone number" />
+            <Input value={query.phone} onChange={(e) => setQuery(q => ({ ...q, phone: e.target.value }))} placeholder="Phone number" aria-label="Phone number" />
           </div>
           <div>
             <Label className="text-xs">Email</Label>
-            <Input value={query.email} onChange={(e)=> setQuery(q=>({...q, email: e.target.value}))} placeholder="Email address" aria-label="Email address" />
+            <Input value={query.email} onChange={(e) => setQuery(q => ({ ...q, email: e.target.value }))} placeholder="Email address" aria-label="Email address" />
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Start Date</Label>
-              <Input type="date" value={query.startDate} onChange={(e)=> setQuery(q=>({...q, startDate: e.target.value}))} aria-label="Start date" />
+              <Input type="date" value={query.startDate} onChange={(e) => setQuery(q => ({ ...q, startDate: e.target.value }))} aria-label="Start date" />
             </div>
             <div>
               <Label className="text-xs">End Date</Label>
-              <Input type="date" value={query.endDate} onChange={(e)=> setQuery(q=>({...q, endDate: e.target.value}))} aria-label="End date" />
+              <Input type="date" value={query.endDate} onChange={(e) => setQuery(q => ({ ...q, endDate: e.target.value }))} aria-label="End date" />
             </div>
           </div>
         </div>
 
         <div className="mt-3 text-xs text-gray-600" aria-live="polite">
-          {loading ? 'Searching…' : `${results.length} result${results.length===1?'':'s'} found`}
+          {loading ? 'Searching…' : `${results.length} result${results.length === 1 ? '' : 's'} found`}
         </div>
         {error && <div role="alert" className="text-sm text-red-600">{error}</div>}
 
@@ -230,21 +230,21 @@ export const GuestLookupModal: React.FC<Props> = ({ open, onClose, onSelect }) =
               <div className="p-4 text-sm text-gray-500">No results</div>
             )}
             {!loading && pageSlice.map((row, idx) => (
-              <button key={idx} className="w-full text-left p-3 hover:bg-muted/50 focus:bg-muted focus:outline-none" onClick={()=> selectRow(row)} aria-label={`Select ${row.reservation?.guestName || row.guest?.name || 'record'}`}>
+              <button key={idx} className="w-full text-left p-3 hover:bg-muted/50 focus:bg-muted focus:outline-none" onClick={() => selectRow(row)} aria-label={`Select ${row.reservation?.guestName || row.guest?.name || 'record'}`}>
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="font-medium">{row.reservation?.guestName || row.guest?.name}</div>
                     <div className="text-xs text-gray-600">{maskEmail(row.guest?.email || (row as any).email || '')} • {maskPhone(row.guest?.phone || (row as any).phone || '')}</div>
                   </div>
                   <div className="text-right text-xs">
-                {row.reservation ? (
-                  <>
-                        <div>Stay: {(()=>{ try { const d = (row.reservation as any).checkIn; const dt = d instanceof Date ? d : new Date(d); return dt.toISOString().slice(0,10)} catch { return String((row.reservation as any).checkIn||'') } })()} → {(()=>{ try { const d = (row.reservation as any).checkOut; const dt = d instanceof Date ? d : new Date(d); return dt.toISOString().slice(0,10)} catch { return String((row.reservation as any).checkOut||'') } })()}</div>
+                    {row.reservation ? (
+                      <>
+                        <div>Stay: {(() => { try { const d = (row.reservation as any).checkIn; const dt = d instanceof Date ? d : new Date(d); return dt.toISOString().slice(0, 10) } catch { return String((row.reservation as any).checkIn || '') } })()} → {(() => { try { const d = (row.reservation as any).checkOut; const dt = d instanceof Date ? d : new Date(d); return dt.toISOString().slice(0, 10) } catch { return String((row.reservation as any).checkOut || '') } })()}</div>
                         <div>Status: {row.reservation.status}</div>
-                  </>
-                ) : (
-                  <div className="text-gray-500">No reservation</div>
-                )}
+                      </>
+                    ) : (
+                      <div className="text-gray-500">No reservation</div>
+                    )}
                   </div>
                 </div>
                 {row.reservation && (
@@ -271,8 +271,8 @@ export const GuestLookupModal: React.FC<Props> = ({ open, onClose, onSelect }) =
         <div className="mt-3 flex items-center justify-between">
           <div className="text-xs">Page {page} / {totalPages}</div>
           <div className="flex gap-2">
-            <Button variant="outline" disabled={page<=1} onClick={()=> setPage(p=> Math.max(1, p-1))}>Prev</Button>
-            <Button variant="outline" disabled={page>=totalPages} onClick={()=> setPage(p=> Math.min(totalPages, p+1))}>Next</Button>
+            <Button variant="outline" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</Button>
+            <Button variant="outline" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</Button>
           </div>
         </div>
 

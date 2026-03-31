@@ -1,6 +1,12 @@
-import { expect, vi } from 'vitest'
+import { expect, vi, afterEach } from 'vitest'
+import { cleanup } from '@testing-library/react'
 import * as matchers from '@testing-library/jest-dom/matchers'
 expect.extend(matchers as any)
+
+// Unmount React trees and clear Radix UI portal elements after every test
+afterEach(() => {
+  cleanup()
+})
 
 if (!window.alert) {
   // @ts-ignore

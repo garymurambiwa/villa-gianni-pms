@@ -1,9 +1,18 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { formatCurrency, getMenuItemsFromPOSStore } from '@/lib/posIntegration';
+import { formatCurrency, getMenuItems } from '@/lib/posIntegration';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import pmsAuthDb from '@/lib/pmsAuthDb';
 import menuCats, { SubTreeNode, SubCategory } from '@/lib/menuCategories';
 import cocktailEng from '@/lib/cocktailEngineering';
 import { useToast } from '@/hooks/use-toast';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
+import { useShift } from '@/contexts/ShiftContext';
+import { useAuth } from '@/context/AuthContext';
 
 export interface MenuItem {
   id: string;
@@ -31,6 +40,8 @@ export interface Bill {
   status: 'open' | 'suspended' | 'paid';
   createdAt: string;
   total: number;
+  shift_id?: string;
+  user_id?: string;
 }
 
 interface OrderModalProps {
@@ -44,32 +55,171 @@ interface OrderModalProps {
 export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClose, onSave, menuItems }) => {
   const [items, setItems] = useState<BillItem[]>(bill?.items || []);
   const [activeCategory, setActiveCategory] = useState<'food' | 'bar'>('food');
-  const [dynamicMenu, setDynamicMenu] = useState<MenuItem[]>(() => {
-    try {
-      if (Array.isArray(menuItems) && menuItems.length) return menuItems;
-      const fromStore = getMenuItemsFromPOSStore() as MenuItem[];
-      return Array.isArray(fromStore) ? fromStore : [];
-    } catch {
-      return [];
-    }
-  });
+  const [dynamicMenu, setDynamicMenu] = useState<MenuItem[]>([]);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const { toast } = useToast();
+  const { activeShift } = useShift();
+  const { user } = useAuth();
   const [subTree, setSubTree] = useState<SubTreeNode[]>([]);
   const [subPath, setSubPath] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [itemSize, setItemSize] = useState<'sm' | 'md' | 'lg'>('md');
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Close context menu when clicking elsewhere
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, []);
+
+  // Handle context menu (right-click) on menu items
+  const handleContextMenu = (e: React.MouseEvent, item: MenuItem) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, item });
+  };
+
+  // Handle long-press on touch devices
+  const handleLongPress = (e: React.TouchEvent, item: MenuItem) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      setContextMenu({ x: touch.clientX, y: touch.clientY, item });
+    }
+  };
+
+  // Open item edit modal from context menu
+  const openItemEdit = (item: MenuItem) => {
+    setEditingItem(item);
+    setEditItemPrice(String(item.price));
+    setEditItemCategory(item.category_id || '');
+    setEditItemCost('');
+    setEditItemUnit('');
+    setShowItemEdit(true);
+    setContextMenu(null);
+  };
+
+  // Save edited item to database and update local state
+  const saveItemEdit = async () => {
+    if (!editingItem) return;
+    try {
+      // Update in localStorage
+      const raw = localStorage.getItem('corepms_pos_items');
+      const list = raw ? JSON.parse(raw) : [];
+      const updatedList = list.map((it: any) =>
+        it.id === editingItem.id
+          ? { ...it, price: Number(editItemPrice), category_id: editItemCategory || it.category_id }
+          : it
+      );
+      localStorage.setItem('corepms_pos_items', JSON.stringify(updatedList));
+
+      // Update local state
+      setDynamicMenu(prev => prev.map(it =>
+        it.id === editingItem.id
+          ? { ...it, price: Number(editItemPrice), category_id: editItemCategory || it.category_id }
+          : it
+      ));
+
+      // Sync to database
+      const { db } = await import('@/lib/db');
+      await db.query(
+        `UPDATE products SET price = ?, category_id = ?, updated_at = NOW() WHERE id = ?`,
+        [Number(editItemPrice), editItemCategory || null, editingItem.id]
+      );
+
+      toast({ title: 'Item Updated', description: `${editingItem.name} has been updated.` });
+      setShowItemEdit(false);
+      setEditingItem(null);
+    } catch (err) {
+      console.error('Failed to update item:', err);
+      toast({ title: 'Update Failed', description: 'Could not update item in database.', variant: 'destructive' });
+    }
+  };
+
+  // Quick Add handler
+  const handleQuickAdd = async () => {
+    if (!quickAddName.trim() || !quickAddPrice) return;
+    try {
+      const newItem = {
+        id: `ITEM_${Date.now()}`,
+        name: quickAddName.trim(),
+        price: Number(quickAddPrice),
+        category: activeCategory as 'food' | 'bar',
+        category_id: quickAddCategory || (activeCategory === 'bar' ? 'CAT_BAR_GEN' : 'CAT_REST_GEN'),
+        image: '',
+        description: ''
+      };
+
+      // Save to localStorage
+      const raw = localStorage.getItem('corepms_pos_items');
+      const list = raw ? JSON.parse(raw) : [];
+      const updatedList = [newItem, ...list];
+      localStorage.setItem('corepms_pos_items', JSON.stringify(updatedList.slice(0, 500)));
+
+      // Update local state
+      setDynamicMenu(prev => [newItem, ...prev]);
+
+      // Save to database
+      const { db } = await import('@/lib/db');
+      const res = await db.query(
+        `INSERT INTO products (id, name, price, cost_price, unit, visibility, visibility_stations, category_id, is_stock_item, active) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true)`,
+        [newItem.id, quickAddName, Number(quickAddPrice), Number(quickAddCostPrice), quickAddUnit, JSON.stringify(quickAddStations), quickAddCategory]
+      );
+
+      toast({ title: 'Item Added', description: `${newItem.name} has been added to the menu.` });
+      setShowQuickAdd(false);
+      setQuickAddName('');
+      setQuickAddPrice('');
+      setQuickAddCategory('');
+      setQuickAddCostPrice('');
+      setQuickAddVisibility('POS Only');
+      setQuickAddUnit('pcs');
+      setQuickAddStations([]);
+    } catch (err) {
+      console.error('Failed to add item:', err);
+      toast({ title: 'Add Failed', description: 'Could not add item to database.', variant: 'destructive' });
+    }
+  };
+
+  // Quick Add Item state
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [quickAddName, setQuickAddName] = useState('');
+  const [quickAddPrice, setQuickAddPrice] = useState('');
+  const [quickAddCategory, setQuickAddCategory] = useState<string>('');
+  const [quickAddCostPrice, setQuickAddCostPrice] = useState('');
+  const [quickAddVisibility, setQuickAddVisibility] = useState('POS Only');
+  const [quickAddUnit, setQuickAddUnit] = useState('pcs');
+  const [quickAddStations, setQuickAddStations] = useState<string[]>([]);
+  const [availableStations, setAvailableStations] = useState<Array<{ id: string; name: string }>>([]);
+
+  useEffect(() => {
+    pmsAuthDb.listCostCentres().then(setAvailableStations);
+  }, []);
+
+  // Context Menu state for item editing
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: MenuItem } | null>(null);
+  const [showItemEdit, setShowItemEdit] = useState(false);
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [editItemPrice, setEditItemPrice] = useState('');
+  const [editItemCategory, setEditItemCategory] = useState<string>('');
+  const [editItemCost, setEditItemCost] = useState('');
+  const [editItemUnit, setEditItemUnit] = useState<string>('');
 
   // Sync dynamicMenu with menuItems prop when it changes (asynchronously via FrontOffice API)
   useEffect(() => {
-    if (menuItems && menuItems.length > 0) {
-      setDynamicMenu(menuItems);
-    } else {
-      const fromStore = getMenuItemsFromPOSStore() as MenuItem[];
-      if (Array.isArray(fromStore) && fromStore.length > 0) {
-        setDynamicMenu(fromStore);
+    const refresh = async () => {
+      if (menuItems && menuItems.length > 0) {
+        setDynamicMenu(menuItems);
+      } else {
+        try {
+          const fromStore = await getMenuItems();
+          if (Array.isArray(fromStore) && fromStore.length > 0) {
+            setDynamicMenu(fromStore as any);
+          }
+        } catch { }
       }
-    }
+    };
+    refresh();
   }, [menuItems]);
 
   // Build categories for current department and select first by default
@@ -111,7 +261,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
     }
     return null;
   };
-  const getCurrentLevel = (): MenuItem[] => {
+  const getCurrentLevel = (): any[] => {
     if (!subPath.length) return subTree;
     const cur = findNode(subTree, subPath[subPath.length - 1]);
     return cur?.children || [];
@@ -136,8 +286,10 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
       setItems([...items, { menuItem, quantity: 1, subtotal: menuItem.price, preparation_level: 'n/a', manual_notes: '' }]);
     }
     try {
-      const res = cocktailEng.decrementIngredientsForCocktail(menuItem.id, 1);
-      if (res.alerts.length) toast({ title: 'Low stock', description: res.alerts.join(' • ') });
+      (async () => {
+        const res = await cocktailEng.decrementIngredientsForCocktail(menuItem.id, 1);
+        if (res.alerts.length) toast({ title: 'Low stock', description: res.alerts.join(' • ') });
+      })();
     } catch (e) {
       console.warn('[OrderModal] Ingredient decrement failed:', e);
     }
@@ -220,14 +372,42 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const displayItems = isSearching ? searchResults : subFilteredMenu;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
-        <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-6">
-          <h2 className="text-3xl font-bold">Table {tableNumber} - Order</h2>
+    <div className="fixed inset-0 bg-white z-50 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 flex justify-between items-center shadow-md">
+          <h2 className="text-2xl font-bold">Table {tableNumber} - Order</h2>
+          <div className="flex items-center gap-4">
+            <div className="flex bg-white/20 p-1 rounded-lg">
+              <button
+                onClick={() => setItemSize('sm')}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${itemSize === 'sm' ? 'bg-white text-purple-600 shadow-sm' : 'text-white hover:bg-white/10'}`}
+              >
+                Small
+              </button>
+              <button
+                onClick={() => setItemSize('md')}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${itemSize === 'md' ? 'bg-white text-purple-600 shadow-sm' : 'text-white hover:bg-white/10'}`}
+              >
+                Medium
+              </button>
+              <button
+                onClick={() => setItemSize('lg')}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${itemSize === 'lg' ? 'bg-white text-purple-600 shadow-sm' : 'text-white hover:bg-white/10'}`}
+              >
+                Large
+              </button>
+            </div>
+            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
 
-        <div className="flex h-[calc(90vh-200px)]">
-          <div className="w-2/3 p-6 overflow-y-auto border-r">
+        <div className="flex flex-1 overflow-hidden">
+          <div className="w-2/3 p-4 flex flex-col border-r h-full">
+            <div className="overflow-y-auto pr-2 pb-20">
             {/* Search bar */}
             <div className="mb-4 relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -258,6 +438,18 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 </button>
               )}
             </div>
+
+            {/* Quick Add Item Button */}
+            <Button
+              variant="outline"
+              className="ml-2 text-purple-600 border-purple-200 hover:bg-purple-50"
+              onClick={() => {
+                setQuickAddCategory(activeCategory === 'bar' ? 'CAT_BAR_GEN' : 'CAT_REST_GEN');
+                setShowQuickAdd(true);
+              }}
+            >
+              + Quick Add
+            </Button>
 
             {/* Search results indicator */}
             {isSearching && (
@@ -331,7 +523,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 </div>
                 <div className="overflow-x-auto">
                   <div className="flex items-center gap-2">
-                    {getCurrentLevel().length ? getCurrentLevel().map((n: SubTreeNode) => (
+                    {getCurrentLevel().length ? getCurrentLevel().map((n: any) => (
                       <Button key={n.sub_id} variant={subPath[subPath.length - 1] === n.sub_id ? 'default' : 'outline'} onClick={() => setSubPath(prev => [...prev, n.sub_id])}>{n.name}</Button>
                     )) : (
                       <div className="text-xs text-gray-600">No sub-categories</div>
@@ -341,7 +533,12 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
               </div>
             )}
 
-            <div className="grid grid-cols-3 gap-4">
+            <div 
+              className="grid gap-3 transition-all"
+              style={{ 
+                gridTemplateColumns: `repeat(${itemSize === 'sm' ? 5 : itemSize === 'md' ? 3 : 2}, minmax(0, 1fr))` 
+              }}
+            >
               {displayItems.length === 0 && (
                 <div className="col-span-3 text-center py-12 text-gray-400">
                   {isSearching ? (
@@ -360,28 +557,48 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 <div
                   key={item.id}
                   onClick={() => { addItem(item); if (isSearching) setSearchQuery(''); }}
+                  onContextMenu={(e) => handleContextMenu(e, item)}
+                  onTouchEnd={(e) => {
+                    // Simple long-press detection
+                    const touch = e.touches[0];
+                    const element = e.currentTarget;
+                    let pressTimer: NodeJS.Timeout;
+                    const startPress = () => {
+                      pressTimer = setTimeout(() => handleContextMenu({ clientX: touch.clientX, clientY: touch.clientY } as any, item), 500);
+                    };
+                    const cancelPress = () => clearTimeout(pressTimer);
+                    element.addEventListener('touchstart', startPress);
+                    element.addEventListener('touchend', cancelPress);
+                    element.addEventListener('touchmove', cancelPress);
+                  }}
                   className="cursor-pointer bg-white rounded-lg shadow hover:shadow-lg transition-all p-3 border-2 border-transparent hover:border-purple-500"
                 >
                   {item.image ? (
-                    <img src={item.image} alt={item.name} className="w-full h-24 object-cover rounded mb-2" />
+                    <img src={item.image} alt={item.name} className={`${itemSize === 'sm' ? 'h-16' : itemSize === 'md' ? 'h-24' : 'h-40'} w-full object-cover rounded mb-2 transition-all`} />
                   ) : (
-                    <div className="w-full h-24 rounded mb-2 bg-gray-200" style={{ backgroundColor: (item as any).imageBgColor || '#ddd' } as React.CSSProperties} />
+                    <div className={`${itemSize === 'sm' ? 'h-16' : itemSize === 'md' ? 'h-24' : 'h-40'} w-full rounded mb-2 transition-all`} style={{ backgroundColor: (item as any).imageBgColor || '#ddd' } as React.CSSProperties} />
                   )}
-                  <div className="font-semibold text-sm">{item.name}</div>
+                  <div className={`font-semibold ${itemSize === 'sm' ? 'text-xs' : 'text-sm'}`}>{item.name}</div>
                   {isSearching && (
                     <div className="text-xs text-gray-400">{(item as any).type === 'Bar' ? '🍺 Bar' : '🍴 Restaurant'}</div>
                   )}
                   {item.description && (
                     <div className="text-xs text-gray-600 line-clamp-2">{item.description}</div>
                   )}
-                  <div className="text-purple-600 font-bold">{formatCurrency(item.price)}</div>
+                  <div className={`text-purple-600 font-bold ${itemSize === 'sm' ? 'text-xs' : 'text-base'}`}>{formatCurrency(item.price)}</div>
                 </div>
               ))}
             </div>
+            </div>
           </div>
 
-          <div className="w-1/3 p-6 bg-gray-50 flex flex-col">
-            <h3 className="text-xl font-bold mb-4">Order Items</h3>
+          <div className="w-1/3 p-4 bg-gray-50 flex flex-col shadow-inner h-full">
+            <h3 className="text-lg font-bold mb-3 flex items-center gap-2">
+              <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+              </svg>
+              Order Items
+            </h3>
             <div className="flex-1 overflow-y-auto mb-4">
               {items.map(item => (
                 <div key={item.menuItem.id} className="bg-white p-3 rounded-lg mb-2 shadow">
@@ -476,7 +693,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       items,
                       status: 'open',
                       createdAt: new Date().toISOString(),
-                      total
+                      total,
+                      shift_id: activeShift?.id,
+                      user_id: user?.id
                     });
                     onClose();
                   }}
@@ -488,7 +707,209 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
             </div>
           </div>
         </div>
-      </div>
+
+      {/* Context Menu Popup */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[160px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+            onClick={() => {
+              addItem(contextMenu.item);
+              setContextMenu(null);
+            }}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add to Order
+          </button>
+          <button
+            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+            onClick={() => openItemEdit(contextMenu.item)}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            Edit Item
+          </button>
+        </div>
+      )}
+
+      {/* Quick Add Item Dialog */}
+      <Dialog open={showQuickAdd} onOpenChange={setShowQuickAdd}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Quick Add Menu Item</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Item Name</Label>
+              <Input
+                value={quickAddName}
+                onChange={(e) => setQuickAddName(e.target.value)}
+                placeholder="e.g., Grilled Chicken"
+              />
+            </div>
+            <div>
+              <Label>Price</Label>
+              <Input
+                type="number"
+                value={quickAddPrice}
+                onChange={(e) => setQuickAddPrice(e.target.value)}
+                placeholder="0.00"
+                step="0.01"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Cost Price</Label>
+                <Input
+                  type="number"
+                  value={quickAddCostPrice}
+                  onChange={(e) => setQuickAddCostPrice(e.target.value)}
+                  placeholder="0.00"
+                  step="0.01"
+                />
+              </div>
+              <div>
+                <Label>Unit</Label>
+                <Select value={quickAddUnit} onValueChange={setQuickAddUnit}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Unit" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pcs">pcs</SelectItem>
+                    <SelectItem value="kg">kg</SelectItem>
+                    <SelectItem value="g">g</SelectItem>
+                    <SelectItem value="l">l</SelectItem>
+                    <SelectItem value="ml">ml</SelectItem>
+                    <SelectItem value="box">box</SelectItem>
+                    <SelectItem value="pkt">pkt</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Category</Label>
+                <Select value={quickAddCategory} onValueChange={setQuickAddCategory}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {menuCats.listCategories(activeCategory === 'bar' ? 'Bar' : 'Restaurant').map((cat: any) => (
+                      <SelectItem key={cat.category_id} value={cat.category_id}>{cat.category_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Visibility</Label>
+                <div className="mt-1">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className="w-full justify-start text-left font-normal">
+                        {quickAddStations.length > 0 
+                          ? `${quickAddStations.length} Stations Selected` 
+                          : "Select Stations"}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-64 p-2">
+                      <div className="space-y-2">
+                        {availableStations.map(station => (
+                          <div key={station.id} className="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded">
+                            <Checkbox 
+                              id={`station-${station.id}`}
+                              checked={quickAddStations.includes(station.id)}
+                              onCheckedChange={(checked) => {
+                                if (checked) setQuickAddStations(prev => [...prev, station.id]);
+                                else setQuickAddStations(prev => prev.filter(id => id !== station.id));
+                              }}
+                            />
+                            <Label htmlFor={`station-${station.id}`} className="flex-1 cursor-pointer">
+                              {station.name}
+                            </Label>
+                          </div>
+                        ))}
+                        {availableStations.length === 0 && (
+                          <div className="text-xs text-slate-400 p-2 italic">
+                            No stations configured
+                          </div>
+                        )}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+              <div>
+                <Label>Legacy Visibility</Label>
+                <Select value={quickAddVisibility} onValueChange={setQuickAddVisibility}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Visibility" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="POS Only">POS Only</SelectItem>
+                    <SelectItem value="Web Only">Web Only</SelectItem>
+                    <SelectItem value="Both">Both</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowQuickAdd(false)}>Cancel</Button>
+            <Button onClick={handleQuickAdd} disabled={!quickAddName.trim() || !quickAddPrice}>Add Item</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Item Dialog */}
+      <Dialog open={showItemEdit} onOpenChange={setShowItemEdit}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Menu Item</DialogTitle>
+          </DialogHeader>
+          {editingItem && (
+            <div className="space-y-4">
+              <div>
+                <Label>Item Name</Label>
+                <Input value={editingItem.name} disabled />
+              </div>
+              <div>
+                <Label>Price</Label>
+                <Input
+                  type="number"
+                  value={editItemPrice}
+                  onChange={(e) => setEditItemPrice(e.target.value)}
+                  step="0.01"
+                />
+              </div>
+              <div>
+                <Label>Category</Label>
+                <Select value={editItemCategory} onValueChange={setEditItemCategory}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {menuCats.listCategories(editingItem.category === 'bar' ? 'Bar' : 'Restaurant').map((cat: any) => (
+                      <SelectItem key={cat.category_id} value={cat.category_id}>{cat.category_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowItemEdit(false)}>Cancel</Button>
+            <Button onClick={saveItemEdit}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
     </div>
   );
 };

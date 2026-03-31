@@ -129,7 +129,7 @@ export const processPayment = (
 /**
  * Decrement inventory quantities based on sold items
  */
-export const decrementInventory = (soldItems: Array<{ name: string; quantity: number }>) => {
+export const decrementInventory = (soldItems: Array<{ name: string; quantity: number }>, costCenter?: string, shiftId?: string) => {
   try {
     const raw = localStorage.getItem('corepms_pos_items');
     const list = raw ? JSON.parse(raw) : [];
@@ -148,11 +148,13 @@ export const decrementInventory = (soldItems: Array<{ name: string; quantity: nu
       action: 'INVENTORY_DEPLETION',
       entity: 'STOCK',
       timestamp: new Date().toISOString(),
-      details: soldItems
+      details: soldItems,
+      cost_center: costCenter,
+      shift_id: shiftId
     };
     const ar = localStorage.getItem('corepms_pos_audit');
     const al = ar ? JSON.parse(ar) : [];
-    localStorage.setItem('corepms_pos_audit', JSON.stringify([audit, ...al].slice(0, 200)));
+    localStorage.setItem('corepms_pos_audit', JSON.stringify([audit, ...al].slice(0, 1000)));
   } catch (err) {
     console.error('Failed to decrement inventory', err);
   }
@@ -165,7 +167,7 @@ export const decrementInventory = (soldItems: Array<{ name: string; quantity: nu
         const qty = Number(si.quantity || 0);
         const name = String(si.name || '').toLowerCase();
         await db.query(
-          `UPDATE inventory_items SET stock_level = GREATEST(stock_level - ?, 0) WHERE LOWER(name) = ?`,
+          `UPDATE inventory_items SET stock_level = GREATEST(stock_level - ?, 0) WHERE LOWER(name::text) = LOWER(?::text)`,
           [qty, name]
         );
       }
@@ -222,53 +224,38 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
   }
 };
 
-export const getMenuItems = async (): Promise<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; description?: string; category_id?: string; subCategory?: string; }>> => {
+export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; description?: string; category_id?: string; subCategory?: string; unitOfMeasure?: string; costPrice?: number; }>> => {
   try {
     const isConfigured = await db.isConfigured();
     if (isConfigured) {
       // Use products table as source of truth
       const res = await db.query(
-        `SELECT id, name, price, department, category, active FROM products WHERE active = true`
+        `SELECT id, name, price, department, category, active, category_id, sub_id, unit, cost_price, bar_visibility, restaurant_visibility FROM products WHERE active = true`
       );
       if ('rows' in res && Array.isArray(res.rows)) {
         return res.rows
-          .map((r: Record<string, unknown>) => {
+          .map((r: any) => {
             const rawCat = String(r.department || r.category || '').toLowerCase();
-            // Simple heuristic for Bar vs Food, defaulting to Food
-            const isBar = rawCat.includes('bar') ||
-              rawCat.includes('beverage') ||
-              rawCat.includes('cocktail') ||
-              rawCat.includes('beer') ||
-              rawCat.includes('wine') ||
-              rawCat.includes('cider') ||
-              rawCat.includes('liquor') ||
-              rawCat.includes('spirit') ||
-              rawCat.includes('drink') ||
-              rawCat.includes('alcohol');
-
-            const category: 'food' | 'bar' = isBar ? 'bar' : 'food';
+            const isBarItem = rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('drink') || !!r.bar_visibility;
+            
+            const category: 'food' | 'bar' = isBarItem ? 'bar' : 'food';
             const price = Number(r.price || 0);
 
-            // Filter out items with no price to prevent $0.00 items cluttering POS
             if (price <= 0) return null;
 
-            // Map imported products to default Categories to ensure they appear in POS tabs
-            // Otherwise, OrderModal filters them out if they don't match active category ID.
+            // Filter by cost centre if specified
+            if (costCentre) {
+              const ccLower = costCentre.toLowerCase();
+              const isBarStation = ccLower.includes('bar');
+              const isRestaurantStation = ccLower.includes('restaurant') || ccLower.includes('room service');
+              
+              if (isBarStation && !r.bar_visibility) return null;
+              if (isRestaurantStation && !r.restaurant_visibility) return null;
+            }
+
             let category_id = r.category_id ? String(r.category_id) : undefined;
-            if (!category_id) {
-              if (category === 'bar') {
-                if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice')) {
-                  category_id = 'CAT_BAR_BEV';
-                } else {
-                  category_id = 'CAT_BAR_GEN';
-                }
-              } else {
-                if (rawCat.includes('main') || rawCat.includes('entree')) {
-                  category_id = 'CAT_REST_MAIN';
-                } else {
-                  category_id = 'CAT_REST_GEN';
-                }
-              }
+            if (!category_id || category_id === '') {
+              category_id = isBarItem ? 'CAT_BAR_GEN' : 'CAT_REST_GEN';
             }
 
             return {
@@ -278,7 +265,9 @@ export const getMenuItems = async (): Promise<Array<{ id: string; name: string; 
               category,
               description: '',
               subCategory: String(r.category || r.department || ''),
-              category_id
+              category_id,
+              unitOfMeasure: r.unit ? String(r.unit) : undefined,
+              costPrice: r.cost_price ? Number(r.cost_price) : undefined
             };
           })
           .filter((item): item is NonNullable<typeof item> => item !== null);
@@ -348,19 +337,20 @@ export const generateReceiptHTML = (
           body { margin: 1cm; }
         }
         body {
-          font-family: 'Courier New', monospace;
+          font-family: Arial, sans-serif;
+          font-size: 12px;
           max-width: ${settings.paper_size === '58mm' ? '200px' : '300px'};
           margin: 0 auto;
           padding: 20px;
         }
         .center { text-align: center; }
         .bold { font-weight: bold; }
-        .large { font-size: 18px; }
+        .large { font-size: 16px; }
         table { width: 100%; border-collapse: collapse; }
-        td, th { padding: 4px; }
+        td, th { padding: 4px; border-bottom: 1px solid #f0f0f0; }
         .right { text-align: right; }
-        .border-top { border-top: 2px solid black; }
-        .border-bottom { border-bottom: 2px solid black; }
+        .border-top { border-top: 1px solid #ccc; }
+        .border-bottom { border-bottom: 1px solid #ccc; }
         .signature-line { border-bottom: 1px solid black; height: 40px; margin: 10px 0; }
       </style>
     </head>
@@ -706,12 +696,12 @@ export const generateShiftXReadingHTML = (
       <title>${title}</title>
       <style>
         @media print { @page { margin: 0; } body { margin: 1cm; } }
-        body { font-family: 'Courier New', monospace; max-width: 600px; margin: 0 auto; padding: 20px; }
+        body { font-family: Arial, sans-serif; font-size: 12px; max-width: 600px; margin: 0 auto; padding: 20px; }
         .center { text-align: center; }
         .bold { font-weight: bold; }
         .outlet-badge { background: #333; color: #fff; padding: 4px 12px; border-radius: 4px; display: inline-block; margin: 5px 0; }
         table { width: 100%; border-collapse: collapse; }
-        td, th { padding: 6px; border-bottom: 1px solid #ddd; }
+        td, th { padding: 6px; border-bottom: 1px solid #eee; }
         .right { text-align: right; }
       </style>
     </head>

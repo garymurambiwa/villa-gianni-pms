@@ -47,7 +47,7 @@ async function withRetry(fn, retries = 3, delay = 1000) {
 // Convert MySQL-style ? placeholders to PostgreSQL $1, $2, etc.
 function convertPlaceholders(sql) {
     let idx = 0;
-    return sql.replace(/\?/g, () => `$${++idx}`);
+    return sql.replace(/\?/g, () => '$' + (++idx));
 }
 
 module.exports = {

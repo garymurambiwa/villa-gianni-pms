@@ -5,6 +5,7 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
 import { useShift } from '../../contexts/ShiftContext';
+import { useAuth } from '../../context/AuthContext';
 
 interface StartShiftModalProps {
   open: boolean;
@@ -16,12 +17,13 @@ export const StartShiftModal: React.FC<StartShiftModalProps> = ({ open, onClose 
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const { startShift } = useShift();
+  const { user, costCentre } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await startShift(parseFloat(openingCash), notes);
+      await startShift(parseFloat(openingCash), notes, user?.id, costCentre || undefined);
       onClose();
       setOpeningCash('0');
       setNotes('');
