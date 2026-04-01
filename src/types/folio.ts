@@ -39,6 +39,7 @@ export interface Folio {
   balance: number;
   status: 'open' | 'closed' | 'pending';
   transactions: Transaction[];
+  paymentMethod?: string;
 }
 
 export interface FolioSummary {

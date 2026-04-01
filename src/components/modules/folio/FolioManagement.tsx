@@ -19,7 +19,7 @@ import taxSvc from "@/lib/taxService";
 import { errorTracker } from "@/lib/errorTracker";
 
 const FolioManagement: React.FC = () => {
-  const { guests, rooms, reservations, folioCharges } = useData();
+  const { guests, rooms, reservations, folioCharges, folios: foliosMetadata } = useData();
   const { user } = useAuth();
   const { toast } = useToast();
   const [selectedFolio, setSelectedFolio] = useState<Folio | null>(null);
@@ -74,12 +74,13 @@ const FolioManagement: React.FC = () => {
         updatedAt: new Date(),
         balance: computedBalance > 0 ? computedBalance : (guest.folioBalance || 0),
         status: "open" as const,
-        transactions: guestTransactions
+        transactions: guestTransactions,
+        paymentMethod: foliosMetadata.find((fm: any) => fm.guest_id === guest.id && fm.status === 'open')?.payment_method
       };
     });
     
     setFolios(newFolios);
-  }, [guests, folioCharges]);
+  }, [guests, folioCharges, foliosMetadata]);
 
   const handleFolioSelect = (folio: Folio) => {
     setSelectedFolio(folio);

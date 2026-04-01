@@ -23,6 +23,7 @@ export interface SyncConfig {
     vendors: boolean;
     vendorExpenses: boolean;
     vendorPayments: boolean;
+    folios: boolean;
   };
   /** Maximum number of retries for failed syncs */
   maxRetries: number;
@@ -58,6 +59,7 @@ export class RealTimeSyncService {
         vendors: true,
         vendorExpenses: true,
         vendorPayments: true,
+        folios: true,
       },
       maxRetries: 3,
       timeoutMs: 5000,
@@ -237,6 +239,9 @@ export class RealTimeSyncService {
         case 'vendorPayments':
           await this.syncVendorPayments();
           break;
+        case 'folios':
+          await this.syncFolios();
+          break;
         default:
           console.warn(`[RealTimeSync] Unknown module: ${moduleName}`);
           return;
@@ -263,23 +268,19 @@ export class RealTimeSyncService {
    * Sync rooms data
    */
   private async syncRooms(): Promise<void> {
+    const result = await db.query('SELECT * FROM rooms ORDER BY number');
+    if ('error' in result) {
+      throw new Error(`Rooms sync failed: ${(result as any).error}`);
+    }
+    
+    // Store in localStorage for immediate availability
     try {
-      const result = await db.query('SELECT * FROM rooms ORDER BY number');
-      if ('error' in result) {
-        throw new Error(`Rooms sync failed: ${(result as any).error}`);
-      }
-      
-      // Store in localStorage for immediate availability
-      try {
-        localStorage.setItem('corepms_rooms_sync', JSON.stringify({
-          data: result.rows || [],
-          timestamp: new Date().toISOString()
-        }));
-      } catch (e) {
-        console.warn('Could not cache rooms data to localStorage:', e);
-      }
-    } catch (error) {
-      throw error;
+      localStorage.setItem('corepms_rooms_sync', JSON.stringify({
+        data: result.rows || [],
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not cache rooms data to localStorage:', e);
     }
   }
 
@@ -287,30 +288,26 @@ export class RealTimeSyncService {
    * Sync reservations data
    */
   private async syncReservations(): Promise<void> {
+    const result = await db.query(`
+      SELECT r.*, g.full_name as guest_name, g.email as guest_email, g.phone as guest_phone,
+             rm.number as room_number
+      FROM reservations r
+      LEFT JOIN guests g ON r.guest_id = g.id
+      LEFT JOIN rooms rm ON r.room_id = rm.id
+      ORDER BY r.check_in_date
+    `);
+    if ('error' in result) {
+      throw new Error(`Reservations sync failed: ${(result as any).error}`);
+    }
+    
+    // Store in localStorage for immediate availability
     try {
-      const result = await db.query(`
-        SELECT r.*, g.full_name as guest_name, g.email as guest_email, g.phone as guest_phone,
-               rm.number as room_number
-        FROM reservations r
-        LEFT JOIN guests g ON r.guest_id = g.id
-        LEFT JOIN rooms rm ON r.room_id = rm.id
-        ORDER BY r.check_in_date
-      `);
-      if ('error' in result) {
-        throw new Error(`Reservations sync failed: ${(result as any).error}`);
-      }
-      
-      // Store in localStorage for immediate availability
-      try {
-        localStorage.setItem('corepms_reservations_sync', JSON.stringify({
-          data: result.rows || [],
-          timestamp: new Date().toISOString()
-        }));
-      } catch (e) {
-        console.warn('Could not cache reservations data to localStorage:', e);
-      }
-    } catch (error) {
-      throw error;
+      localStorage.setItem('corepms_reservations_sync', JSON.stringify({
+        data: result.rows || [],
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not cache reservations data to localStorage:', e);
     }
   }
 
@@ -318,23 +315,19 @@ export class RealTimeSyncService {
    * Sync POS orders data
    */
   private async syncPosOrders(): Promise<void> {
+    const result = await db.query('SELECT * FROM pos_orders WHERE LOWER(status::text) = LOWER(?::text)', ['open']);
+    if ('error' in result) {
+      throw new Error(`POS orders sync failed: ${(result as any).error}`);
+    }
+    
+    // Store in localStorage for immediate availability
     try {
-      const result = await db.query('SELECT * FROM pos_orders WHERE LOWER(status::text) = LOWER(?::text)', ['open']);
-      if ('error' in result) {
-        throw new Error(`POS orders sync failed: ${(result as any).error}`);
-      }
-      
-      // Store in localStorage for immediate availability
-      try {
-        localStorage.setItem('corepms_pos_orders_sync', JSON.stringify({
-          data: result.rows || [],
-          timestamp: new Date().toISOString()
-        }));
-      } catch (e) {
-        console.warn('Could not cache POS orders data to localStorage:', e);
-      }
-    } catch (error) {
-      throw error;
+      localStorage.setItem('corepms_pos_orders_sync', JSON.stringify({
+        data: result.rows || [],
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not cache POS orders data to localStorage:', e);
     }
   }
 
@@ -342,23 +335,19 @@ export class RealTimeSyncService {
    * Sync inventory data
    */
   private async syncInventory(): Promise<void> {
+    const result = await db.query('SELECT * FROM inventory_items ORDER BY name');
+    if ('error' in result) {
+      throw new Error(`Inventory sync failed: ${(result as any).error}`);
+    }
+    
+    // Store in localStorage for immediate availability
     try {
-      const result = await db.query('SELECT * FROM inventory_items ORDER BY name');
-      if ('error' in result) {
-        throw new Error(`Inventory sync failed: ${(result as any).error}`);
-      }
-      
-      // Store in localStorage for immediate availability
-      try {
-        localStorage.setItem('corepms_inventory_sync', JSON.stringify({
-          data: result.rows || [],
-          timestamp: new Date().toISOString()
-        }));
-      } catch (e) {
-        console.warn('Could not cache inventory data to localStorage:', e);
-      }
-    } catch (error) {
-      throw error;
+      localStorage.setItem('corepms_inventory_sync', JSON.stringify({
+        data: result.rows || [],
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not cache inventory data to localStorage:', e);
     }
   }
 
@@ -366,23 +355,19 @@ export class RealTimeSyncService {
    * Sync folio charges data
    */
   private async syncFolioCharges(): Promise<void> {
+    const result = await db.query('SELECT * FROM folio_charges ORDER BY posting_date DESC, inserted_at DESC');
+    if ('error' in result) {
+      throw new Error(`Folio charges sync failed: ${(result as any).error}`);
+    }
+    
+    // Store in localStorage for immediate availability
     try {
-      const result = await db.query('SELECT * FROM folio_charges ORDER BY posting_date DESC, inserted_at DESC');
-      if ('error' in result) {
-        throw new Error(`Folio charges sync failed: ${(result as any).error}`);
-      }
-      
-      // Store in localStorage for immediate availability
-      try {
-        localStorage.setItem('corepms_folio_charges_sync', JSON.stringify({
-          data: result.rows || [],
-          timestamp: new Date().toISOString()
-        }));
-      } catch (e) {
-        console.warn('Could not cache folio charges data to localStorage:', e);
-      }
-    } catch (error) {
-      throw error;
+      localStorage.setItem('corepms_folio_charges_sync', JSON.stringify({
+        data: result.rows || [],
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not cache folio charges data to localStorage:', e);
     }
   }
 
@@ -390,23 +375,19 @@ export class RealTimeSyncService {
    * Sync guests data
    */
   private async syncGuests(): Promise<void> {
+    const result = await db.query('SELECT * FROM guests ORDER BY full_name');
+    if ('error' in result) {
+      throw new Error(`Guests sync failed: ${(result as any).error}`);
+    }
+    
+    // Store in localStorage for immediate availability
     try {
-      const result = await db.query('SELECT * FROM guests ORDER BY full_name');
-      if ('error' in result) {
-        throw new Error(`Guests sync failed: ${(result as any).error}`);
-      }
-      
-      // Store in localStorage for immediate availability
-      try {
-        localStorage.setItem('corepms_guests_sync', JSON.stringify({
-          data: result.rows || [],
-          timestamp: new Date().toISOString()
-        }));
-      } catch (e) {
-        console.warn('Could not cache guests data to localStorage:', e);
-      }
-    } catch (error) {
-      throw error;
+      localStorage.setItem('corepms_guests_sync', JSON.stringify({
+        data: result.rows || [],
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not cache guests data to localStorage:', e);
     }
   }
 
@@ -414,31 +395,27 @@ export class RealTimeSyncService {
    * Sync city ledger data
    */
   private async syncCityLedger(): Promise<void> {
+    // Sync city ledger accounts
+    const accountsResult = await db.query('SELECT * FROM city_ledger_accounts ORDER BY account_name');
+    if ('error' in accountsResult) {
+      throw new Error(`City ledger accounts sync failed: ${(accountsResult as any).error}`);
+    }
+
+    // Sync city ledger transactions
+    const transactionsResult = await db.query('SELECT *, COALESCE(date_field, date) as date FROM city_ledger_transactions ORDER BY COALESCE(date_field, date) DESC');
+    if ('error' in transactionsResult) {
+      throw new Error(`City ledger transactions sync failed: ${(transactionsResult as any).error}`);
+    }
+
+    // Store in localStorage for immediate availability
     try {
-      // Sync city ledger accounts
-      const accountsResult = await db.query('SELECT * FROM city_ledger_accounts ORDER BY account_name');
-      if ('error' in accountsResult) {
-        throw new Error(`City ledger accounts sync failed: ${(accountsResult as any).error}`);
-      }
-
-      // Sync city ledger transactions
-      const transactionsResult = await db.query('SELECT *, COALESCE(date_field, date) as date FROM city_ledger_transactions ORDER BY COALESCE(date_field, date) DESC');
-      if ('error' in transactionsResult) {
-        throw new Error(`City ledger transactions sync failed: ${(transactionsResult as any).error}`);
-      }
-
-      // Store in localStorage for immediate availability
-      try {
-        localStorage.setItem('corepms_city_ledger_sync', JSON.stringify({
-          accounts: accountsResult.rows || [],
-          transactions: transactionsResult.rows || [],
-          timestamp: new Date().toISOString()
-        }));
-      } catch (e) {
-        console.warn('Could not cache city ledger data to localStorage:', e);
-      }
-    } catch (error) {
-      throw error;
+      localStorage.setItem('corepms_city_ledger_sync', JSON.stringify({
+        accounts: accountsResult.rows || [],
+        transactions: transactionsResult.rows || [],
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not cache city ledger data to localStorage:', e);
     }
   }
 
@@ -446,23 +423,19 @@ export class RealTimeSyncService {
    * Sync vendors data
    */
   private async syncVendors(): Promise<void> {
+    const result = await db.query('SELECT * FROM vendors ORDER BY name');
+    if ('error' in result) {
+      throw new Error(`Vendors sync failed: ${(result as any).error}`);
+    }
+    
+    // Store in localStorage for immediate availability
     try {
-      const result = await db.query('SELECT * FROM vendors ORDER BY name');
-      if ('error' in result) {
-        throw new Error(`Vendors sync failed: ${(result as any).error}`);
-      }
-      
-      // Store in localStorage for immediate availability
-      try {
-        localStorage.setItem('corepms_vendors_sync', JSON.stringify({
-          data: result.rows || [],
-          timestamp: new Date().toISOString()
-        }));
-      } catch (e) {
-        console.warn('Could not cache vendors data to localStorage:', e);
-      }
-    } catch (error) {
-      throw error;
+      localStorage.setItem('corepms_vendors_sync', JSON.stringify({
+        data: result.rows || [],
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not cache vendors data to localStorage:', e);
     }
   }
 
@@ -470,23 +443,19 @@ export class RealTimeSyncService {
    * Sync vendor expenses data
    */
   private async syncVendorExpenses(): Promise<void> {
+    const result = await db.query('SELECT * FROM vendor_expenses ORDER BY expense_date DESC, created_at DESC');
+    if ('error' in result) {
+      throw new Error(`Vendor expenses sync failed: ${(result as any).error}`);
+    }
+    
+    // Store in localStorage for immediate availability
     try {
-      const result = await db.query('SELECT * FROM vendor_expenses ORDER BY expense_date DESC, created_at DESC');
-      if ('error' in result) {
-        throw new Error(`Vendor expenses sync failed: ${(result as any).error}`);
-      }
-      
-      // Store in localStorage for immediate availability
-      try {
-        localStorage.setItem('corepms_vendor_expenses_sync', JSON.stringify({
-          data: result.rows || [],
-          timestamp: new Date().toISOString()
-        }));
-      } catch (e) {
-        console.warn('Could not cache vendor expenses data to localStorage:', e);
-      }
-    } catch (error) {
-      throw error;
+      localStorage.setItem('corepms_vendor_expenses_sync', JSON.stringify({
+        data: result.rows || [],
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not cache vendor expenses data to localStorage:', e);
     }
   }
 
@@ -494,23 +463,38 @@ export class RealTimeSyncService {
    * Sync vendor payments data
    */
   private async syncVendorPayments(): Promise<void> {
+    const result = await db.query('SELECT * FROM vendor_payments ORDER BY payment_date DESC, created_at DESC');
+    if ('error' in result) {
+      throw new Error(`Vendor payments sync failed: ${(result as any).error}`);
+    }
+    
+    // Store in localStorage for immediate availability
     try {
-      const result = await db.query('SELECT * FROM vendor_payments ORDER BY payment_date DESC, created_at DESC');
-      if ('error' in result) {
-        throw new Error(`Vendor payments sync failed: ${(result as any).error}`);
-      }
-      
-      // Store in localStorage for immediate availability
-      try {
-        localStorage.setItem('corepms_vendor_payments_sync', JSON.stringify({
-          data: result.rows || [],
-          timestamp: new Date().toISOString()
-        }));
-      } catch (e) {
-        console.warn('Could not cache vendor payments data to localStorage:', e);
-      }
-    } catch (error) {
-      throw error;
+      localStorage.setItem('corepms_vendor_payments_sync', JSON.stringify({
+        data: result.rows || [],
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not cache vendor payments data to localStorage:', e);
+    }
+  }
+
+  /**
+   * Sync folios data
+   */
+  private async syncFolios(): Promise<void> {
+    const result = await db.query('SELECT * FROM folios');
+    if ('error' in result) {
+      throw new Error(`Folios sync failed: ${(result as any).error}`);
+    }
+    
+    try {
+      localStorage.setItem('corepms_folios_sync', JSON.stringify({
+        data: result.rows || [],
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.warn('Could not cache folios data to localStorage:', e);
     }
   }
 

@@ -964,6 +964,115 @@ export async function ensureTablesExist(): Promise<boolean> {
 }
 
 // ============================================================================
+// FOLIO SYNC
+// ============================================================================
+
+/**
+ * Sync a folio to the database
+ */
+export async function syncFolioToDb(folio: any): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+
+    // We use a simplified insert/update for folio metadata (like payment method)
+    // The id might be folio-guestId string from UI or a real UUID
+    const sql = `
+      INSERT INTO folios (
+        id, guest_id, room_number, status, balance, payment_method, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        room_number = EXCLUDED.room_number,
+        status = EXCLUDED.status,
+        balance = EXCLUDED.balance,
+        payment_method = EXCLUDED.payment_method,
+        updated_at = NOW()
+    `;
+
+    // Ensure we have a valid UUID if possible, or use the string ID as is if the DB allows it (default is UUID)
+    // If the DB column is UUID, we might need to be careful.
+    // In V4 migration, folios.id is UUID.
+    
+    // Check if the id is a valid UUID
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(folio.id);
+    const dbId = isUuid ? folio.id : undefined;
+
+    // If it's not a UUID (e.g. "folio-123"), we might need to look up or ignore
+    // However, for this requirement, we'll try to upsert by guest_id if no UUID is provided
+    if (!dbId) {
+      const upsertByGuestSql = `
+        INSERT INTO folios (
+          guest_id, room_number, status, balance, payment_method, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (guest_id) WHERE status = 'open' DO UPDATE SET
+          payment_method = EXCLUDED.payment_method,
+          updated_at = NOW()
+      `;
+      const result = await db.query(upsertByGuestSql, [
+        folio.guestId,
+        folio.roomNumber || null,
+        folio.status || 'open',
+        Number(folio.balance || 0),
+        folio.paymentMethod || null
+      ]);
+      if ('error' in result) return { success: false, error: (result as any).error };
+      return { success: true, synced: 1 };
+    }
+
+    const params = [
+      dbId,
+      folio.guestId,
+      folio.roomNumber || null,
+      folio.status || 'open',
+      Number(folio.balance || 0),
+      folio.paymentMethod || null
+    ];
+
+    const result = await db.query(sql, params);
+    if ('error' in result) return { success: false, error: (result as any).error };
+
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    console.error('[dbSync] Folio sync error:', err?.message || err);
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Load folios from database
+ */
+export async function loadFoliosFromDb(guestId?: string): Promise<{ success: boolean; folios: any[]; error?: string }> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, folios: [] };
+
+    let sql = 'SELECT * FROM folios';
+    const params: any[] = [];
+    if (guestId) {
+      sql += ' WHERE guest_id = $1';
+      params.push(guestId);
+    }
+
+    const result = await db.query(sql, params);
+    if ('error' in result) return { success: false, folios: [], error: (result as any).error };
+
+    const folios = ('rows' in result ? result.rows : []).map((row: any) => ({
+      id: row.id,
+      guestId: row.guest_id,
+      roomNumber: row.room_number,
+      status: row.status,
+      balance: Number(row.balance || 0),
+      paymentMethod: row.payment_method,
+      updatedAt: row.updated_at
+    }));
+
+    return { success: true, folios };
+  } catch (err: any) {
+    return { success: false, folios: [], error: err?.message || String(err) };
+  }
+}
+
+// ============================================================================
 // FOLIO CHARGES SYNC
 // ============================================================================
 

@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import { syncFolioToDb } from "@/lib/dbSync";
 
 interface FolioDetailsProps {
   folio: Folio;
@@ -38,7 +39,7 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
 
   // Payment Method State
   const [paymentMethodDialogOpen, setPaymentMethodDialogOpen] = useState(false);
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(folio.paymentMethod || "");
   const { toast } = useToast();
 
   const paymentMethods = [
@@ -49,13 +50,29 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
     { id: "check", name: "Check" }
   ];
 
-  const handlePaymentMethodSubmit = () => {
+  const handlePaymentMethodSubmit = async () => {
     if (!selectedPaymentMethod) return;
     const method = paymentMethods.find(m => m.id === selectedPaymentMethod);
-    toast({
-      title: "Payment Method Selected",
-      description: `Folio payment method set to ${method?.name}. (UI Only - No live data affected)`,
-    });
+    
+    // Persist to database
+    const updatedFolio = { ...folio, paymentMethod: selectedPaymentMethod };
+    const syncRes = await syncFolioToDb(updatedFolio);
+    
+    if (syncRes.success) {
+      toast({
+        title: "Payment Method Saved",
+        description: `Folio payment method permanently set to ${method?.name}.`,
+      });
+      // Optionally update local state if folio is handled by parent
+      // folio.paymentMethod = selectedPaymentMethod; 
+    } else {
+      toast({
+        title: "Sync Error",
+        description: "Failed to save payment method to database.",
+        variant: "destructive"
+      });
+    }
+    
     setPaymentMethodDialogOpen(false);
   };
 

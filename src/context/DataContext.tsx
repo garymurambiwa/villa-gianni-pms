@@ -26,6 +26,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [vendorPayments, setVendorPayments] = useState<Record<string, unknown>[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const [folios, setFolios] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [realTimeSyncService, setRealTimeSyncService] = useState<RealTimeSyncService | null>(null);
   const [isRealTimeSyncActive, setIsRealTimeSyncActive] = useState(false);
@@ -355,6 +356,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (e) {
           console.warn('Failed to sync inventory to localStorage', e);
         }
+      }
+
+      // Load Folios metadata (payment methods etc)
+      try {
+        const folioRes = await db.query('SELECT * FROM folios');
+        if ('rows' in folioRes) {
+          setFolios(folioRes.rows || []);
+        }
+      } catch (err) {
+        console.warn('[DataContext] Failed to load folios metadata from DB', err);
       }
 
       setLastUpdateTs(Date.now());
@@ -2665,7 +2676,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
 
   return (
     <DataContext.Provider value={{
-      rooms, guests, reservations, posOrders, inventory, folioCharges,
+      rooms, guests, reservations, posOrders, inventory, folioCharges, folios,
       vendors, vendorExpenses, vendorPayments,
       addRoom, updateRoom, deleteRoom, createReservation, updateReservation, savePosOrder, closePosOrder, updateGuest, updateStock,
       checkInGuest, checkOutGuest, updateRoomStatus, addFolioCharge,
