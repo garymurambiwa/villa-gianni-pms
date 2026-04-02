@@ -116,6 +116,11 @@ const FolioManagement: React.FC = () => {
     setOverrideOpen(true);
   };
 
+  const handlePaymentPosted = (updatedFolio: Folio) => {
+    setFolios(prev => prev.map(f => f.id === updatedFolio.id ? updatedFolio : f));
+    setSelectedFolio(updatedFolio);
+  };
+
   const handleTransfer = (sourceId: string, targetId: string, txnIds: string[]) => {
     setFolios(prev => {
       const sourceIndex = prev.findIndex(f => f.id === sourceId);
@@ -237,6 +242,7 @@ const FolioManagement: React.FC = () => {
                       guests={guests}
                       onVoid={handleVoid}
                       onTransfer={handleTransfer}
+                      onPaymentPosted={handlePaymentPosted}
                       availableFolios={folios.filter(f => f.id !== selectedFolio.id && f.status === "open")}
                     />
                   </TabsContent>

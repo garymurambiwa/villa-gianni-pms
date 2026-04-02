@@ -3,24 +3,25 @@ import { Folio, Transaction } from "@/types/folio";
 import { Guest } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { syncFolioToDb } from "@/lib/dbSync";
+import PostPaymentModal from "./PostPaymentModal";
 
 interface FolioDetailsProps {
   folio: Folio;
   guests: Guest[];
   onVoid?: (transactionId: string, reason: string) => void;
   onTransfer?: (sourceId: string, targetId: string, txnIds: string[]) => void;
+  onPaymentPosted?: (updatedFolio: Folio) => void;
   availableFolios?: Folio[];
 }
 
-const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTransfer, availableFolios = [] }) => {
+const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTransfer, onPaymentPosted, availableFolios = [] }) => {
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [voidReason, setVoidReason] = useState("");
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
@@ -37,44 +38,9 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [targetFolioId, setTargetFolioId] = useState("");
 
-  // Payment Method State
-  const [paymentMethodDialogOpen, setPaymentMethodDialogOpen] = useState(false);
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(folio.paymentMethod || "");
+  // Post Payment State
+  const [postPaymentOpen, setPostPaymentOpen] = useState(false);
   const { toast } = useToast();
-
-  const paymentMethods = [
-    { id: "cash", name: "Cash" },
-    { id: "credit_card", name: "Credit Card" },
-    { id: "mpesa", name: "M-Pesa" },
-    { id: "bank_transfer", name: "Bank Transfer" },
-    { id: "check", name: "Check" }
-  ];
-
-  const handlePaymentMethodSubmit = async () => {
-    if (!selectedPaymentMethod) return;
-    const method = paymentMethods.find(m => m.id === selectedPaymentMethod);
-    
-    // Persist to database
-    const updatedFolio = { ...folio, paymentMethod: selectedPaymentMethod };
-    const syncRes = await syncFolioToDb(updatedFolio);
-    
-    if (syncRes.success) {
-      toast({
-        title: "Payment Method Saved",
-        description: `Folio payment method permanently set to ${method?.name}.`,
-      });
-      // Optionally update local state if folio is handled by parent
-      // folio.paymentMethod = selectedPaymentMethod; 
-    } else {
-      toast({
-        title: "Sync Error",
-        description: "Failed to save payment method to database.",
-        variant: "destructive"
-      });
-    }
-    
-    setPaymentMethodDialogOpen(false);
-  };
 
   const guest = guests.find(g => g.id === folio.guestId);
 
@@ -193,14 +159,15 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
               className="max-w-[250px]"
             />
           </div>
-          <div className="flex gap-2 w-full md:w-auto justify-end">
+           <div className="flex gap-2 w-full md:w-auto justify-end">
              <Button 
                variant="outline" 
                size="sm" 
-               onClick={() => setPaymentMethodDialogOpen(true)}
+               onClick={() => setPostPaymentOpen(true)}
                className="bg-green-50 hover:bg-green-100 text-green-700 border-green-200"
+               aria-label="Post a payment to the guest folio"
              >
-               Payment Method
+               Post Payment
              </Button>
              <Button 
                variant="outline" 
@@ -372,37 +339,14 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
         </DialogContent>
       </Dialog>
 
-      <Dialog open={paymentMethodDialogOpen} onOpenChange={setPaymentMethodDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Select Payment Method</DialogTitle>
-            <DialogDescription>
-              Choose the preferred payment method for this folio. This will only be saved locally for the current session.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label>Payment Method</Label>
-              <Select value={selectedPaymentMethod} onValueChange={setSelectedPaymentMethod}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select method..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {paymentMethods.map(m => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPaymentMethodDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handlePaymentMethodSubmit} disabled={!selectedPaymentMethod}>Apply</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <PostPaymentModal
+        open={postPaymentOpen}
+        onOpenChange={setPostPaymentOpen}
+        folio={folio}
+        guests={guests}
+        currentBalance={balanceSummary.balance}
+        onPaymentPosted={onPaymentPosted}
+      />
     </div>
   );
 };
