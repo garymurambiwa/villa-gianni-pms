@@ -32,6 +32,8 @@ const PAYMENT_TYPES = [
   { id: "cash", label: "Cash" },
   { id: "swipe", label: "Swipe" },
   { id: "ecocash", label: "Ecocash" },
+  { id: "bank_transfer", label: "Bank Transfer" },
+  { id: "gift", label: "Gift (Special Promotions)" },
 ] as const;
 
 type PaymentTypeId = typeof PAYMENT_TYPES[number]["id"];

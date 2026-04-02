@@ -33,6 +33,7 @@ export const USER_ROLES = [
   'Night Auditor',
   'House keeper',
   'Maintenance',
+  'Auditor',
 ] as const;
 
 export type StandardRole = typeof USER_ROLES[number];
@@ -309,25 +310,26 @@ export const resetPassword = async (token: string, newPassword: string) => ({ ok
 export const initAuth = async () => { }; // Stub
 
 export const mapStandardRoleToInternal = (name: string): Role => {
-  const n = (name || '').toLowerCase();
-  switch (n) {
-    case 'super admin': return 'admin';
-    case 'admin': return 'admin';
-    case 'fo manager': return 'manager';
-    case 'fnb manager': return 'posmanager';
-    case 'fo supervisor': return 'supervisor';
-    case 'fnb supervisor': return 'supervisor';
-    case 'restaurant cashier': return 'restaurant_cashier';
-    case 'fnb cashier': return 'fnb_cashier';
-    case 'front office cashier': return 'cashier';
-    case 'barman': return 'barman';
-    case 'accountant': return 'auditor';
-    case 'night auditor': return 'auditor';
-    case 'house keeper': return 'housekeeping';
-    case 'maintenance': return 'supervisor';
-    default: return 'frontdesk';
-  }
-};
+    const n = (name || '').toLowerCase();
+    switch (n) {
+      case 'super admin': return 'admin';
+      case 'admin': return 'admin';
+      case 'fo manager': return 'manager';
+      case 'fnb manager': return 'posmanager';
+      case 'fo supervisor': return 'supervisor';
+      case 'fnb supervisor': return 'supervisor';
+      case 'restaurant cashier': return 'restaurant_cashier';
+      case 'fnb cashier': return 'fnb_cashier';
+      case 'front office cashier': return 'cashier';
+      case 'barman': return 'barman';
+      case 'accountant': return 'auditor';
+      case 'night auditor': return 'auditor';
+      case 'auditor': return 'auditor';
+      case 'house keeper': return 'housekeeping';
+      case 'maintenance': return 'supervisor';
+      default: return 'frontdesk';
+    }
+  };
 
 export const mapInternalRoleToStandard = (role: Role): string => {
   switch (role) {

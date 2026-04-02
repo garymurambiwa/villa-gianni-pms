@@ -30,7 +30,9 @@ type RightsKey =
   | 'fin_view_reports_pl'
   | 'fin_access_ledgers_readonly'
   | 'ops_work_orders'
-  | 'ops_change_room_ooo';
+  | 'ops_change_room_ooo'
+  | 'print_reports'
+  | 'print_folios';
 
 const RIGHTS_CATEGORIES: Array<{ title: string; rights: Array<{ key: RightsKey; label: string }> }> = [
   {
@@ -49,6 +51,7 @@ const RIGHTS_CATEGORIES: Array<{ title: string; rights: Array<{ key: RightsKey; 
       { key: 'fo_process_room_payments', label: 'Process Room Payments & Post Charges' },
       { key: 'fo_access_folios', label: 'Access All Guest Folios & Billing History' },
       { key: 'fo_view_room_status', label: 'View Current Room Status & Housekeeping Reports' },
+      { key: 'print_folios', label: 'Print Folio Statements & Invoices' },
     ],
   },
   {
@@ -65,6 +68,7 @@ const RIGHTS_CATEGORIES: Array<{ title: string; rights: Array<{ key: RightsKey; 
       { key: 'fin_night_audit_closing', label: 'Perform End-of-Day/Night Audit Closing Procedures' },
       { key: 'fin_view_reports_pl', label: 'View Detailed Financial Reports & P&L' },
       { key: 'fin_access_ledgers_readonly', label: 'Access Accounting Ledgers (Read-Only)' },
+      { key: 'print_reports', label: 'Print Financial Reports & Statements' },
     ],
   },
   {
@@ -76,7 +80,26 @@ const RIGHTS_CATEGORIES: Array<{ title: string; rights: Array<{ key: RightsKey; 
   },
 ];
 
-const ALL_RIGHT_KEYS = RIGHTS_CATEGORIES.flatMap(c => c.rights.map(r => r.key));
+const ALL_RIGHT_KEYS: RightsKey[] = [
+  'admin_create_edit_users',
+  'admin_view_audit_logs',
+  'admin_change_global_config',
+  'fo_checkin_checkout',
+  'fo_reservations_edit',
+  'fo_process_room_payments',
+  'fo_access_folios',
+  'fo_view_room_status',
+  'print_folios',
+  'fnb_process_orders',
+  'fnb_apply_discounts_voids',
+  'fnb_manage_inventory',
+  'fin_night_audit_closing',
+  'fin_view_reports_pl',
+  'fin_access_ledgers_readonly',
+  'print_reports',
+  'ops_work_orders',
+  'ops_change_room_ooo',
+];
 
 const DEFAULT_ROLE_RIGHTS: Record<RoleName, RightsKey[]> = {
   'Super Admin': [...ALL_RIGHT_KEYS],
@@ -92,6 +115,7 @@ const DEFAULT_ROLE_RIGHTS: Record<RoleName, RightsKey[]> = {
   'Night Auditor': ['fin_night_audit_closing', 'fin_view_reports_pl', 'fin_access_ledgers_readonly', 'fo_access_folios', 'fo_checkin_checkout'],
   'House keeper': ['fo_view_room_status'],
   'Maintenance': ['ops_work_orders', 'ops_change_room_ooo', 'fo_view_room_status'],
+  'Auditor': ['fin_view_reports_pl', 'fin_access_ledgers_readonly', 'fo_access_folios', 'admin_view_audit_logs', 'print_reports', 'print_folios'],
 };
 
 interface SystemUser {

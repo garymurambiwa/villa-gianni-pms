@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { db } from '../lib/db';
 import { v4 as uuidv4 } from 'uuid';
 import { toast } from '@/hooks/use-toast';
-import { performFullSync, ensureTablesExist, loadCategoriesFromDb } from '@/lib/dbSync';
+import { performFullSync, ensureTablesExist, loadCategoriesFromDb, loadFolioChargesFromDb } from '@/lib/dbSync';
 import menuCats from '@/lib/menuCategories';
 import { RealTimeSyncService } from '@/lib/realTimeSyncService';
 import { refreshRooms } from '@/lib/roomService';
@@ -180,13 +180,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setReservations(normalizedReservations);
       }
 
-      // Load folio charges from localStorage (persisted by night audit and POS)
+      // Load folio charges from database instead of just localStorage
       let loadedFolioCharges: any[] = [];
       try {
+        const result = await loadFolioChargesFromDb();
+        if (result.success && result.charges) {
+          loadedFolioCharges = result.charges;
+          // Synchronize down to local storage for offline cases
+          localStorage.setItem('corepms_folioCharges', JSON.stringify(result.charges));
+        } else {
+          // Fallback to local storage
+          const rawCharges = localStorage.getItem('corepms_folioCharges');
+          loadedFolioCharges = rawCharges ? JSON.parse(rawCharges) : [];
+        }
+      } catch {
         const rawCharges = localStorage.getItem('corepms_folioCharges');
         loadedFolioCharges = rawCharges ? JSON.parse(rawCharges) : [];
-      } catch {
-        loadedFolioCharges = [];
       }
       setFolioCharges(loadedFolioCharges);
 

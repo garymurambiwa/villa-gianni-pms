@@ -73,10 +73,36 @@ export const GLAccounting: React.FC = () => {
   const [validation, setValidation] = useState<{ status?: string; missing?: string[] } | null>(null);
   const [smoke, setSmoke] = useState<{ nightAudit?: string; expense?: string } | null>(null);
   const [expenseForm, setExpenseForm] = useState({ date: new Date().toISOString().slice(0,10), vendorId: '', invoiceRef: '', paymentMethod: 'Cash' as any, amount: '', currency: 'USD', glAccountId: '', costCenter: '', description: '', attachmentName: '', attachmentDataURL: '' });
-  const [expenses, setExpenses] = useState(expenseSvc.listExpenses());
-  const [vendorsList, setVendorsList] = useState(vendors.listVendors());
+  const [expenses, setExpenses] = useState<any[]>([]);
+  const [vendorsList, setVendorsList] = useState<any[]>([]);
   const [approveThreshold] = useState(500);
-  const [pending, setPending] = useState(expenseSvc.listPendingApproval());
+  const [pending, setPending] = useState<any[]>([]);
+  const [apAging, setApAging] = useState<any>({ current: [], d1_30: [], d31_60: [], d61_90: [], over90: [] });
+  const [deptBreakdown, setDeptBreakdown] = useState<any[]>([]);
+  const [dailyCashFlow, setDailyCashFlow] = useState<number>(0);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const [exps, vnds, pnds, aging, dept, cf] = await Promise.all([
+          expenseSvc.listExpenses(),
+          vendors.listVendors(),
+          expenseSvc.listPendingApproval(),
+          expenseSvc.getAPAging(range.to),
+          expenseSvc.departmentalBreakdown(range.from, range.to),
+          expenseSvc.getDailyCashFlow(new Date().toISOString().slice(0,10))
+        ]);
+        setExpenses(exps);
+        setVendorsList(vnds);
+        setPending(pnds);
+        setApAging(aging);
+        setDeptBreakdown(dept);
+        setDailyCashFlow(cf.net);
+      } catch (err) {
+        console.error("Error loading GL accounting data:", err);
+      }
+    })();
+  }, [range]);
   const [commentDraft, setCommentDraft] = useState<Record<string,string>>({});
   const { user } = useAuth();
   const isMgr = isManager(user?.role);
@@ -409,10 +435,10 @@ export const GLAccounting: React.FC = () => {
           </div>
         </div>
         <div className="mt-3 flex gap-2 items-center">
-          <Button className="bg-indigo-600 text-white" onClick={()=>{
+          <Button className="bg-indigo-600 text-white" onClick={async ()=>{
             const amt = Number(expenseForm.amount||0);
-            const res = expenseSvc.addExpense({ date: expenseForm.date, vendorId: expenseForm.vendorId, invoiceRef: expenseForm.invoiceRef, paymentMethod: expenseForm.paymentMethod, amount: amt, currency: expenseForm.currency, glAccountId: expenseForm.glAccountId, costCenter: expenseForm.costCenter, description: expenseForm.description, attachmentName: expenseForm.attachmentName, attachmentDataURL: expenseForm.attachmentDataURL });
-            if (res.ok) { setExpenses(expenseSvc.listExpenses()); setExpenseForm({ ...expenseForm, invoiceRef:'', amount:'', description:'', attachmentName:'', attachmentDataURL:'' }); }
+            const res = await expenseSvc.addExpense({ date: expenseForm.date, vendorId: expenseForm.vendorId, invoiceRef: expenseForm.invoiceRef, paymentMethod: expenseForm.paymentMethod, amount: amt, currency: expenseForm.currency, glAccountId: expenseForm.glAccountId, costCenter: expenseForm.costCenter, description: expenseForm.description, attachmentName: expenseForm.attachmentName, attachmentDataURL: expenseForm.attachmentDataURL });
+            if (res.ok) { const exps = await expenseSvc.listExpenses(); setExpenses(exps); setExpenseForm({ ...expenseForm, invoiceRef:'', amount:'', description:'', attachmentName:'', attachmentDataURL:'' }); }
           }}>Add Expense</Button>
           <div className="text-xs text-gray-600">Approval threshold: ${approveThreshold}+ requires manager sign-off.</div>
         </div>
@@ -431,8 +457,8 @@ export const GLAccounting: React.FC = () => {
                   <td className="p-2">{r.status}</td>
                   <td className="p-2">
                     <div className="flex items-center gap-2">
-                      {r.status==='pending_approval' && <Button variant="outline" onClick={()=>{ const ok = expenseSvc.approveExpense(r.id); if (ok.ok) setExpenses(expenseSvc.listExpenses()); }}>Approve</Button>}
-                      {r.status==='approved' && <Button className="bg-green-600 text-white" onClick={()=>{ const ok = expenseSvc.postExpenseToGL(r.id); if (ok.ok) setExpenses(expenseSvc.listExpenses()); }}>Post to GL</Button>}
+                      {r.status==='pending_approval' && <Button variant="outline" onClick={async ()=>{ const ok = await expenseSvc.approveExpense(r.id); if (ok.ok) { const exps = await expenseSvc.listExpenses(); setExpenses(exps); } }}>Approve</Button>}
+                      {r.status==='approved' && <Button className="bg-green-600 text-white" onClick={async ()=>{ const ok = await expenseSvc.postExpenseToGL(r.id); if (ok.ok) { const exps = await expenseSvc.listExpenses(); setExpenses(exps); } }}>Post to GL</Button>}
                     </div>
                   </td>
                 </tr>
@@ -502,44 +528,44 @@ export const GLAccounting: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={()=>{
-            const rows = expenseSvc.filterExpenses({ from: range.from, to: range.to });
+          <Button variant="outline" onClick={async ()=>{
+            const rows = await expenseSvc.filterExpenses({ from: range.from, to: range.to });
             const blob = expenseSvc.exportCSV(rows);
             const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='expenses.csv'; a.click(); URL.revokeObjectURL(url);
           }}>Export CSV</Button>
-          <div className="text-xs text-gray-600">Daily Cash Flow (today): $ {expenseSvc.getDailyCashFlow(new Date().toISOString().slice(0,10)).net.toFixed(2)} net</div>
+          <div className="text-xs text-gray-600">Daily Cash Flow (today): $ {dailyCashFlow.toFixed(2)} net</div>
         </div>
 
         {/* AP Aging */}
         <div className="mt-4 border rounded p-3">
           <div className="font-semibold mb-2">A/P Aging</div>
-          {(()=>{ const ag = expenseSvc.getAPAging(range.to); const total = (arr: any[])=> arr.reduce((s,r)=> s + r.amount,0); return (
+          {(()=>{ const ag = apAging; const total = (arr: any[])=> (arr || []).reduce((s,r)=> s + r.amount,0); return (
             <div className="grid grid-cols-1 md:grid-cols-5 gap-2 text-sm">
-              <div className="p-2 bg-gray-50 rounded">Current: $ {total(ag.current).toFixed(2)} ({ag.current.length})</div>
-              <div className="p-2 bg-gray-50 rounded">1–30: $ {total(ag.d1_30).toFixed(2)} ({ag.d1_30.length})</div>
-              <div className="p-2 bg-gray-50 rounded">31–60: $ {total(ag.d31_60).toFixed(2)} ({ag.d31_60.length})</div>
-              <div className="p-2 bg-gray-50 rounded">61–90: $ {total(ag.d61_90).toFixed(2)} ({ag.d61_90.length})</div>
-              <div className="p-2 bg-gray-50 rounded">&gt;90: $ {total(ag.over90).toFixed(2)} ({ag.over90.length})</div>
+              <div className="p-2 bg-gray-50 rounded">Current: $ {total(ag.current).toFixed(2)} ({ag.current?.length || 0})</div>
+              <div className="p-2 bg-gray-50 rounded">1–30: $ {total(ag.d1_30).toFixed(2)} ({ag.d1_30?.length || 0})</div>
+              <div className="p-2 bg-gray-50 rounded">31–60: $ {total(ag.d31_60).toFixed(2)} ({ag.d31_60?.length || 0})</div>
+              <div className="p-2 bg-gray-50 rounded">61–90: $ {total(ag.d61_90).toFixed(2)} ({ag.d61_90?.length || 0})</div>
+              <div className="p-2 bg-gray-50 rounded">&gt;90: $ {total(ag.over90).toFixed(2)} ({ag.over90?.length || 0})</div>
             </div>
           ); })()}
           <div className="mt-3 overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr><th className="p-2">Bucket</th><th className="p-2">Date</th><th className="p-2">Vendor</th><th className="p-2">Invoice</th><th className="p-2 text-right">Amount</th><th className="p-2">Days</th></tr></thead>
               <tbody>
-                {(()=>{ const ag = expenseSvc.getAPAging(range.to); const row = (e:any,b:string)=> (
+                {(()=>{ const ag = apAging; const row = (e:any,b:string)=> (
                   <tr key={e.id}><td className="p-2">{b}</td><td className="p-2">{e.date}</td><td className="p-2">{vendorsList.find(v=>v.id===e.vendorId)?.name || e.vendorId}</td><td className="p-2">{e.invoiceRef}</td><td className="p-2 text-right">${e.amount.toFixed(2)}</td><td className="p-2">{Math.floor((new Date(range.to).getTime() - new Date(e.date).getTime())/(1000*60*60*24))}</td></tr>
                 ); return [
-                  ...ag.current.map(e=> row(e,'Current')),
-                  ...ag.d1_30.map(e=> row(e,'1–30')),
-                  ...ag.d31_60.map(e=> row(e,'31–60')),
-                  ...ag.d61_90.map(e=> row(e,'61–90')),
-                  ...ag.over90.map(e=> row(e,'>90')),
+                  ...(ag.current || []).map((e: any)=> row(e,'Current')),
+                  ...(ag.d1_30 || []).map((e: any)=> row(e,'1–30')),
+                  ...(ag.d31_60 || []).map((e: any)=> row(e,'31–60')),
+                  ...(ag.d61_90 || []).map((e: any)=> row(e,'61–90')),
+                  ...(ag.over90 || []).map((e: any)=> row(e,'>90')),
                 ]; })()}
               </tbody>
             </table>
           </div>
           <div className="mt-2">
-            <Button variant="outline" onClick={()=>{ const ag = expenseSvc.getAPAging(range.to); const rows = ['bucket,date,vendor,invoice,amount,days']; const push=(e:any,b:string)=> rows.push([b,e.date,(vendorsList.find(v=>v.id===e.vendorId)?.name||e.vendorId),e.invoiceRef,e.amount,Math.floor((new Date(range.to).getTime()-new Date(e.date).getTime())/(1000*60*60*24))].join(',')); ag.current.forEach(e=>push(e,'Current')); ag.d1_30.forEach(e=>push(e,'1-30')); ag.d31_60.forEach(e=>push(e,'31-60')); ag.d61_90.forEach(e=>push(e,'61-90')); ag.over90.forEach(e=>push(e,'>90')); const blob = new Blob([rows.join('\n')], { type:'text/csv' }); const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ap_aging_detail.csv'; a.click(); URL.revokeObjectURL(url); }}>Export AP Aging CSV</Button>
+            <Button variant="outline" onClick={()=>{ const ag = apAging; const rows = ['bucket,date,vendor,invoice,amount,days']; const push=(e:any,b:string)=> rows.push([b,e.date,(vendorsList.find(v=>v.id===e.vendorId)?.name||e.vendorId),e.invoiceRef,e.amount,Math.floor((new Date(range.to).getTime()-new Date(e.date).getTime())/(1000*60*60*24))].join(',')); (ag.current||[]).forEach((e:any)=>push(e,'Current')); (ag.d1_30||[]).forEach((e:any)=>push(e,'1-30')); (ag.d31_60||[]).forEach((e:any)=>push(e,'31-60')); (ag.d61_90||[]).forEach((e:any)=>push(e,'61-90')); (ag.over90||[]).forEach((e:any)=>push(e,'>90')); const blob = new Blob([rows.join('\n')], { type:'text/csv' }); const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ap_aging_detail.csv'; a.click(); URL.revokeObjectURL(url); }}>Export AP Aging CSV</Button>
           </div>
         </div>
 
@@ -550,7 +576,7 @@ export const GLAccounting: React.FC = () => {
             <table className="w-full text-sm">
               <thead><tr><th className="p-2 text-left">Cost Center</th><th className="p-2 text-right">Total</th></tr></thead>
               <tbody>
-                {expenseSvc.departmentalBreakdown(range.from, range.to).map(r => (
+                {deptBreakdown.map(r => (
                   <tr key={r.costCenter}><td className="p-2">{r.costCenter}</td><td className="p-2 text-right">$ {r.total.toFixed(2)}</td></tr>
                 ))}
               </tbody>
@@ -689,7 +715,7 @@ export const GLAccounting: React.FC = () => {
                     </td>
                     <td className="p-2">
                       <div className="flex items-center gap-2">
-                        <Button variant="outline" onClick={()=>{ const text = (commentDraft[r.id]||'').trim(); if (text) expenseSvc.addComment(r.id, 'manager', text); const ok = expenseSvc.approveExpense(r.id); if (ok.ok) { setPending(expenseSvc.listPendingApproval()); setExpenses(expenseSvc.listExpenses()); } }}>Approve</Button>
+                        <Button variant="outline" onClick={async ()=>{ const text = (commentDraft[r.id]||'').trim(); if (text) await expenseSvc.addComment(r.id, 'manager', text); const ok = await expenseSvc.approveExpense(r.id); if (ok.ok) { const [pnds, exps] = await Promise.all([expenseSvc.listPendingApproval(), expenseSvc.listExpenses()]); setPending(pnds); setExpenses(exps); } }}>Approve</Button>
                       </div>
                     </td>
                   </tr>

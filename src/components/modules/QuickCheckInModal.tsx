@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useData } from '../../context/DataContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
@@ -28,6 +28,8 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
     const [rate, setRate] = useState('');
     const [packageCode, setPackageCode] = useState('RO');
     const [loading, setLoading] = useState(false);
+    const [checkInDate, setCheckInDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+    const [checkOutDate, setCheckOutDate] = useState(format(addDays(new Date(), 1), 'yyyy-MM-dd'));
 
     // Filter for available rooms
     const availableRooms = rooms.filter(r => {
@@ -53,6 +55,15 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
         }
     }, [isOpen, rooms]);
 
+    // Update check-out date when check-in date or nights change
+    useEffect(() => {
+        if (checkInDate && nights) {
+            const checkIn = new Date(checkInDate);
+            const nightsNum = parseInt(nights) || 1;
+            setCheckOutDate(format(addDays(checkIn, nightsNum), 'yyyy-MM-dd'));
+        }
+    }, [checkInDate, nights]);
+
     // Whenever a room is selected, update the rate to the room's default rate if empty
     const handleRoomChange = (val: string) => {
         setRoomId(val);
@@ -72,10 +83,6 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
         setLoading(true);
 
         try {
-            const today = new Date();
-            const checkInDate = format(today, 'yyyy-MM-dd');
-            const checkOutDate = format(addDays(today, parseInt(nights)), 'yyyy-MM-dd');
-
             const selectedRoom = rooms.find(r => r.id === roomId);
 
             console.log('[QuickCheckIn] Calling createReservation...');
@@ -204,6 +211,29 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
                                 min="1"
                                 value={nights}
                                 onChange={(e) => setNights(e.target.value)}
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4">
+                        <div className="space-y-2">
+                            <Label htmlFor="checkInDate">Check-In Date <span className="text-red-500">*</span></Label>
+                            <Input
+                                id="checkInDate"
+                                type="date"
+                                value={checkInDate}
+                                onChange={(e) => setCheckInDate(e.target.value)}
+                                required
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="checkOutDate">Check-Out Date <span className="text-red-500">*</span></Label>
+                            <Input
+                                id="checkOutDate"
+                                type="date"
+                                value={checkOutDate}
+                                onChange={(e) => setCheckOutDate(e.target.value)}
                                 required
                             />
                         </div>
