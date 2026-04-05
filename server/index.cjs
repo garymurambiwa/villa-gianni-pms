@@ -96,6 +96,163 @@ app.get('/api/setup/init-db', async (req, res) => {
 });
 
 
+// ─── Inventory Reconciliation API Endpoints ─────────────────────────────────────
+
+// GET /api/inventory/periods
+app.get('/api/inventory/periods', async (req, res) => {
+    try {
+        const result = await db.query(
+            'SELECT * FROM inventory_periods ORDER BY period_year DESC, period_month DESC'
+        );
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/inventory/periods
+app.post('/api/inventory/periods', async (req, res) => {
+    const { period_name, period_year, period_month, start_date, end_date, status, opening_stock_value, created_by } = req.body;
+    if (!period_name || !period_year || !period_month || !start_date || !end_date) {
+        return res.status(400).json({ ok: false, error: 'Missing required fields' });
+    }
+    try {
+        const result = await db.query(
+            `INSERT INTO inventory_periods (period_name, period_year, period_month, start_date, end_date, status, opening_stock_value, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [period_name, period_year, period_month, start_date, end_date, status || 'open', opening_stock_value || 0, created_by]
+        );
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// PUT /api/inventory/periods/:id
+app.put('/api/inventory/periods/:id', async (req, res) => {
+    const { id } = req.params;
+    const fields = [];
+    const values = [];
+    const allowedFields = ['period_name', 'status', 'closing_stock_value', 'variance_value', 'cogs_value', 'kitchen_cogs', 'cellar_cogs', 'closed_by', 'closed_reason'];
+    
+    for (const field of allowedFields) {
+        if (req.body[field] !== undefined) {
+            fields.push(`${field} = ?`);
+            values.push(req.body[field]);
+        }
+    }
+    
+    if (fields.length === 0) {
+        return res.status(400).json({ ok: false, error: 'No fields to update' });
+    }
+    
+    values.push(id);
+    
+    try {
+        const result = await db.query(
+            `UPDATE inventory_periods SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`,
+            values
+        );
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/inventory/transactions
+app.get('/api/inventory/transactions', async (req, res) => {
+    const { period_id, limit } = req.query;
+    let sql = 'SELECT * FROM inventory_transactions WHERE is_deleted = false';
+    const params = [];
+    
+    if (period_id) {
+        sql += ' AND period_id = ?';
+        params.push(period_id);
+    }
+    
+    sql += ' ORDER BY transaction_date DESC';
+    
+    if (limit) {
+        sql += ' LIMIT ?';
+        params.push(parseInt(limit));
+    }
+    
+    try {
+        const result = await db.query(sql, params);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/inventory/transactions
+app.post('/api/inventory/transactions', async (req, res) => {
+    const { transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, supplier_name, created_by, is_historical_backfill } = req.body;
+    if (!transaction_type || !transaction_number || !transaction_date || !department) {
+        return res.status(400).json({ ok: false, error: 'Missing required fields' });
+    }
+    try {
+        const result = await db.query(
+            `INSERT INTO inventory_transactions (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, supplier_name, created_by, is_historical_backfill)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [transaction_type, transaction_number, period_id, transaction_date, department, total_quantity || 0, total_value || 0, supplier_name, created_by, is_historical_backfill || false]
+        );
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/inventory/audit
+app.get('/api/inventory/audit', async (req, res) => {
+    const { period_id, limit } = req.query;
+    let sql = 'SELECT * FROM inventory_period_audit';
+    const params = [];
+    
+    if (period_id) {
+        sql += ' WHERE period_id = ?';
+        params.push(period_id);
+    }
+    
+    sql += ' ORDER BY timestamp DESC';
+    
+    if (limit) {
+        sql += ' LIMIT ?';
+        params.push(parseInt(limit));
+    }
+    
+    try {
+        const result = await db.query(sql, params);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/inventory/close
+app.post('/api/inventory/close', async (req, res) => {
+    const { period_id, closing_stock_value, variance_value, cogs_value, kitchen_cogs, cellar_cogs, closed_by, closed_reason } = req.body;
+    if (!period_id) {
+        return res.status(400).json({ ok: false, error: 'Period ID required' });
+    }
+    try {
+        const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = ?', [period_id]);
+        if (!periodRes.rows || periodRes.rows.length === 0) {
+            return res.status(404).json({ ok: false, error: 'Period not found' });
+        }
+        
+        const result = await db.query(
+            `UPDATE inventory_periods 
+             SET status = 'closed', closing_stock_value = ?, variance_value = ?, cogs_value = ?, kitchen_cogs = ?, cellar_cogs = ?, closed_at = NOW(), closed_by = ?, closed_reason = ?, is_locked = true, locked_at = NOW()
+             WHERE id = ?`,
+            [closing_stock_value, variance_value, cogs_value, kitchen_cogs, cellar_cogs, closed_by, closed_reason, period_id]
+        );
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
 // 2. Serve Static Assets (Frontend)
 // Serve dist folder
 const distPath = path.join(__dirname, '..', 'dist');
