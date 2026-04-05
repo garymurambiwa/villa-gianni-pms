@@ -2,6 +2,7 @@ import db from '@/lib/db'
 import { adminPermissionFixService } from '@/lib/adminPermissionFixService'
 import pmsAuthDb from '@/lib/pmsAuthDb'
 import { DEFAULT_ROOMS } from '@/data/defaultRooms'
+import { databaseMigrationService } from './databaseMigrationService'
 
 export async function initializeDatabase(): Promise<{ ok: boolean; message?: string; error?: string }> {
   try {
@@ -10,6 +11,15 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
     
     const test = await db.testConnection()
     if (!test.ok) return { ok: false, error: test.error || 'DB_CONNECTION_FAILED' }
+    
+    try {
+      const migrationResult = await databaseMigrationService.runMigrations()
+      if (!migrationResult.success) {
+        console.log('[DatabaseInitializer] Migration warnings:', migrationResult.message)
+      }
+    } catch (e: any) {
+      console.log('[DatabaseInitializer] Migration note:', e.message)
+    }
     
     // Initialize auth tables (PostgreSQL)
     await pmsAuthDb.init()

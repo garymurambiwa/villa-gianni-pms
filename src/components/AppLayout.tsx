@@ -67,6 +67,7 @@ import { initializeDatabase } from '@/lib/databaseInitializer'
 import VendorManagement from './modules/VendorManagement';
 import BreakfastManager from './modules/BreakfastManager';
 import OfflineIndicator from './OfflineIndicator';
+import { InventoryReconciliation } from './modules/InventoryReconciliation';
 
 const AppLayout: React.FC = () => {
   const { user } = useAuth();
@@ -293,6 +294,17 @@ const AppLayout: React.FC = () => {
           )
           : renderAccessDenied('You do not have permission to access Tax Configuration.', 'accounting', 'Back to Accounting');
       }
+      case 'inventory-recon': {
+        const role = normalizeRole(user?.role);
+        const allowed = ['admin', 'manager', 'auditor', 'supervisor'].includes(role);
+        return allowed
+          ? (
+            <ErrorBoundary fallbackTitle="Inventory Reconciliation Error" fallbackMessage="Please reload or contact support.">
+              <InventoryReconciliation />
+            </ErrorBoundary>
+          )
+          : renderAccessDenied('You do not have permission to access Inventory Reconciliation.', 'accounting', 'Back to Accounting');
+      }
       case 'pos': return (
         canAccessPOS(user?.role)
           ? (
@@ -439,6 +451,17 @@ const AppLayout: React.FC = () => {
             </ErrorBoundary>
           )
           : renderAccessDenied('You do not have permission to access Breakfast Management.', 'dashboard', 'Back to Dashboard');
+      }
+      case 'inventory-audit': {
+        const role = normalizeRole(user?.role);
+        const allowed = ['admin', 'manager', 'auditor', 'supervisor'].includes(role);
+        return allowed
+          ? (
+            <ErrorBoundary fallbackTitle="Inventory Audit Error" fallbackMessage="Please reload or contact support.">
+              <InventoryReconciliation />
+            </ErrorBoundary>
+          )
+          : renderAccessDenied('You do not have permission to access Inventory Audit.', 'dashboard', 'Back to Dashboard');
       }
       default: return <Dashboard />;
     }

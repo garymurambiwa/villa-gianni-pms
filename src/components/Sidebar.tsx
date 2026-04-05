@@ -131,6 +131,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
 
     { id: 'accounting', name: 'Accounting', icon: '📒', roles: ['admin', 'manager', 'auditor', 'supervisor'], section: 'Back Office' },
     { id: 'night-audit', name: 'Night Audit', icon: '🌙', roles: ['admin', 'manager', 'auditor', 'supervisor'], section: 'Back Office' },
+    { id: 'inventory-audit', name: 'Inventory Audit', icon: '📋', roles: ['admin', 'manager', 'auditor', 'supervisor'], section: 'Back Office' },
     { id: 'reports', name: 'Reports', icon: '📈', roles: ['admin', 'auditor', 'manager', 'supervisor'], section: 'Back Office' },
     { id: 'fo-setting', name: 'FO Setting', icon: '⚙️', roles: ['admin', 'manager', 'frontdesk', 'auditor', 'posmanager', 'housekeeping', 'cashier', 'barman', 'supervisor'], section: 'Back Office' },
     { id: 'users', name: 'User Management', icon: '👥', roles: ['admin', 'supervisor'], section: 'Back Office' },
@@ -157,6 +158,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
     'pos-management': 'fnb_process_orders',
     'pos-settings': 'admin_change_global_config',
     'inventory': 'fnb_manage_inventory',
+    'inventory-audit': 'fin_night_audit_closing',
     'accounting': 'fin_access_ledgers_readonly',
     'night-audit': 'fin_night_audit_closing',
     'reports': 'fin_view_reports_pl',

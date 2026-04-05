@@ -85,72 +85,38 @@ export class DatabaseMigrationService {
    * Gets all migration files from the migrations directory
    */
   private async getMigrationFiles(): Promise<Migration[]> {
+    const knownMigrations: Migration[] = [
+      { version: 'V1', name: 'init_core_schema', filename: 'V1__init_core_schema.sql', sql: '', checksum: '' },
+      { version: 'V3', name: 'add_package_code', filename: 'V3__add_package_code.sql', sql: '', checksum: '' },
+      { version: 'V4_reservation_fields', name: 'add_reservation_fields', filename: 'V4__add_reservation_fields.sql', sql: '', checksum: '' },
+      { version: 'V4_folio_billing', name: 'add_folio_billing_tables', filename: 'V4__add_folio_billing_tables.sql', sql: '', checksum: '' },
+      { version: 'V5', name: 'add_reconciliation_logs', filename: 'V5__add_reconciliation_logs.sql', sql: '', checksum: '' },
+      { version: 'V6', name: 'add_accounting_module_tables', filename: 'V6__add_accounting_module_tables.sql', sql: '', checksum: '' },
+      { version: 'V7', name: 'add_breakfast_packages', filename: 'V7__add_breakfast_packages.sql', sql: '', checksum: '' },
+      { version: 'V8', name: 'fnb_manager_pos_access', filename: 'V8__fnb_manager_pos_access.sql', sql: '', checksum: '' },
+      { version: 'V10', name: 'inventory_reconciliation', filename: 'V10__inventory_reconciliation.sql', sql: '', checksum: '' },
+    ];
+
+    return knownMigrations.sort((a, b) => {
+      const numA = parseInt(a.version.replace(/\D/g, '')) || 0;
+      const numB = parseInt(b.version.replace(/\D/g, '')) || 0;
+      return numA - numB;
+    });
+  }
+
+  /**
+   * Load migration SQL content from bundled resources
+   */
+  private async loadMigrationContent(filename: string): Promise<string> {
+    const migrationContent: Record<string, string> = {};
     try {
-      // In Electron renderer, we need to get migration files from main process
-      // For now, we'll define migrations statically based on what we know exists
-      const knownMigrations: Migration[] = [
-        {
-          version: 'V1',
-          name: 'init_core_schema',
-          filename: 'V1__init_core_schema.sql',
-          sql: '', // Will be loaded dynamically
-          checksum: ''
-        },
-        {
-          version: 'V3',
-          name: 'add_package_code',
-          filename: 'V3__add_package_code.sql',
-          sql: '',
-          checksum: ''
-        },
-        {
-          version: 'V4_reservation_fields',
-          name: 'add_reservation_fields',
-          filename: 'V4__add_reservation_fields.sql',
-          sql: '',
-          checksum: ''
-        },
-        {
-          version: 'V4_folio_billing',
-          name: 'add_folio_billing_tables',
-          filename: 'V4__add_folio_billing_tables.sql',
-          sql: '',
-          checksum: ''
-        },
-        {
-          version: 'V5',
-          name: 'add_reconciliation_logs',
-          filename: 'V5__add_reconciliation_logs.sql',
-          sql: '',
-          checksum: ''
-        },
-        {
-          version: 'V6',
-          name: 'add_accounting_module_tables',
-          filename: 'V6__add_accounting_module_tables.sql',
-          sql: '',
-          checksum: ''
-        },
-        {
-          version: 'V7',
-          name: 'add_breakfast_packages',
-          filename: 'V7__add_breakfast_packages.sql',
-          sql: '',
-          checksum: ''
-        }
-      ];
-
-      // Sort migrations by version
-      return knownMigrations.sort((a, b) => {
-        // Extract numeric parts for proper sorting
-        const numA = parseInt(a.version.replace(/\D/g, '')) || 0;
-        const numB = parseInt(b.version.replace(/\D/g, '')) || 0;
-        return numA - numB;
-      });
-
-    } catch (error) {
-      console.error('[MigrationService] Failed to get migration files:', error);
-      return [];
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const migrationPath = path.join('db', 'migration', filename);
+      const content = await fs.readFile(migrationPath, 'utf-8');
+      return content;
+    } catch {
+      return migrationContent[filename] || '';
     }
   }
 
@@ -268,9 +234,12 @@ export class DatabaseMigrationService {
       // Apply each pending migration
       for (const migration of pendingMigrations) {
         try {
-          // Load migration SQL content (in a real implementation, this would read from files)
-          // For now, we'll simulate this by marking migrations as applied
-          migration.sql = `-- Migration content for ${migration.version}`;
+          // Load migration SQL content from file
+          migration.sql = await this.loadMigrationContent(migration.filename);
+          if (!migration.sql) {
+            console.warn(`[MigrationService] No SQL content found for ${migration.version}, using placeholder`);
+            migration.sql = `-- Migration content for ${migration.version}`;
+          }
           migration.checksum = this.calculateChecksum(migration.sql);
           
           const migrationResult = await this.applyMigration(migration);
