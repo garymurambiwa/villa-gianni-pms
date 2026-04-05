@@ -1,0 +1,770 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
+import db from '@/lib/db';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Checkbox } from '@/components/ui/checkbox';
+
+interface InventoryPeriod {
+  id: string;
+  period_name: string;
+  period_year: number;
+  period_month: number;
+  start_date: string;
+  end_date: string;
+  status: 'future' | 'open' | 'reconciling' | 'closed' | 'locked';
+  opening_stock_value: number;
+  closing_stock_value: number | null;
+  received_value: number;
+  variance_value: number | null;
+  kitchen_cogs: number;
+  cellar_cogs: number;
+  closed_at: string | null;
+  closed_by: string | null;
+  is_locked: boolean;
+}
+
+interface InventoryTransaction {
+  id: string;
+  transaction_type: 'purchase' | 'grv' | 'adjustment' | 'transfer' | 'variance_writeoff';
+  transaction_number: string;
+  period_id: string | null;
+  transaction_date: string;
+  department: string;
+  total_quantity: number;
+  total_value: number;
+  supplier_name: string | null;
+  is_deleted: boolean;
+  created_by: string | null;
+}
+
+interface InventoryReconciliation {
+  id: string;
+  period_id: string;
+  reconciliation_number: string;
+  reconciliation_date: string;
+  kitchen_opening_qty: number;
+  kitchen_received_qty: number;
+  kitchen_physical_qty: number | null;
+  kitchen_variance_qty: number | null;
+  kitchen_variance_value: number | null;
+  cellar_opening_qty: number;
+  cellar_received_qty: number;
+  cellar_physical_qty: number | null;
+  cellar_variance_qty: number | null;
+  cellar_variance_value: number | null;
+  total_opening_value: number;
+  total_received_value: number;
+  total_physical_value: number | null;
+  total_variance_value: number | null;
+  status: 'draft' | 'review' | 'confirmed' | 'reversed';
+}
+
+interface Product {
+  id: string;
+  name: string;
+  department: 'Kitchen' | 'Cellar';
+  stock_level: number;
+  cost_price: number;
+  last_inventory_period_id: string | null;
+  last_physical_qty: number | null;
+  last_physical_date: string | null;
+}
+
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'future': return 'bg-gray-100 text-gray-800';
+    case 'open': return 'bg-green-100 text-green-800';
+    case 'reconciling': return 'bg-amber-100 text-amber-800';
+    case 'closed': return 'bg-blue-100 text-blue-800';
+    case 'locked': return 'bg-red-100 text-red-800';
+    default: return 'bg-gray-100 text-gray-800';
+  }
+};
+
+export const InventoryReconciliation: React.FC = () => {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  
+  const [periods, setPeriods] = useState<InventoryPeriod[]>([]);
+  const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
+  const [selectedPeriod, setSelectedPeriod] = useState<InventoryPeriod | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showNewPeriodDialog, setShowNewPeriodDialog] = useState(false);
+  const [showBackfillDialog, setShowBackfillDialog] = useState(false);
+  const [showCloseDialog, setShowCloseDialog] = useState(false);
+  
+  const [newPeriod, setNewPeriod] = useState({
+    periodYear: new Date().getFullYear(),
+    periodMonth: new Date().getMonth() + 1,
+    startDate: '',
+    endDate: '',
+    isInitial: false
+  });
+  
+  const [physicalCounts, setPhysicalCounts] = useState<Record<string, number>>({});
+  const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
+  const [closeReason, setCloseReason] = useState('');
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const periodRes = await db.query(
+        'SELECT * FROM inventory_periods ORDER BY period_year DESC, period_month DESC'
+      );
+      if ('rows' in periodRes) {
+        setPeriods(periodRes.rows as InventoryPeriod[]);
+      }
+      
+      const txRes = await db.query(
+        'SELECT * FROM inventory_transactions WHERE is_deleted = false ORDER BY transaction_date DESC LIMIT 100'
+      );
+      if ('rows' in txRes) {
+        setTransactions(txRes.rows as InventoryTransaction[]);
+      }
+    } catch (e: any) {
+      console.error('Load data error:', e);
+      setPeriods([]);
+      setTransactions([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const loadProducts = async (periodId: string) => {
+    try {
+      const prodRes = await db.query(
+        `SELECT p.id, p.name, p.department, p.stock_level, p.cost_price, 
+         p.last_inventory_period_id, p.last_physical_qty, p.last_physical_date
+         FROM products p 
+         WHERE p.is_stock_item = true AND p.department IN ('Kitchen', 'Cellar')
+         ORDER BY p.department, p.name`
+      );
+      if ('rows' in prodRes) {
+        setProducts(prodRes.rows as Product[]);
+      }
+    } catch (e: any) {
+      console.error('Load products error:', e);
+      setProducts([]);
+    }
+  };
+
+  const createPeriod = async () => {
+    if (!newPeriod.startDate || !newPeriod.endDate) {
+      toast({ title: 'Please select start and end dates', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      const existingRes = await db.query(
+        'SELECT id FROM inventory_periods WHERE period_year = ? AND period_month = ?',
+        [newPeriod.periodYear, newPeriod.periodMonth]
+      );
+      if ('rows' in existingRes && existingRes.rows.length > 0) {
+        toast({ title: 'Period already exists for this month', variant: 'destructive' });
+        return;
+      }
+
+      let openingStockValue = 0;
+      if (!newPeriod.isInitial) {
+        const latestRes = await db.query(
+          'SELECT closing_stock_value FROM inventory_periods WHERE status IN (?, ?) ORDER BY period_year DESC, period_month DESC LIMIT 1',
+          ['closed', 'locked']
+        );
+        if ('rows' in latestRes && latestRes.rows.length > 0) {
+          openingStockValue = Number(latestRes.rows[0].closing_stock_value || 0);
+        }
+      } else {
+        const stockRes = await db.query(
+          `SELECT SUM(p.stock_level * p.cost_price) as total FROM products p WHERE p.is_stock_item = true`
+        );
+        if ('rows' in stockRes && stockRes.rows.length > 0) {
+          openingStockValue = Number(stockRes.rows[0].total || 0);
+        }
+      }
+
+      const monthName = new Date(newPeriod.periodYear, newPeriod.periodMonth - 1).toLocaleString('default', { month: 'long' });
+      const periodName = `${monthName} ${newPeriod.periodYear}`;
+
+      await db.query(
+        `INSERT INTO inventory_periods (period_name, period_year, period_month, start_date, end_date, status, opening_stock_value, received_value, kitchen_cogs, cellar_cogs, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [periodName, newPeriod.periodYear, newPeriod.periodMonth, newPeriod.startDate, newPeriod.endDate, 'open', openingStockValue, 0, 0, 0, user?.name]
+      );
+
+      await db.query(
+        `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, is_historical_backfill)
+         VALUES (currval('inventory_periods_id_seq'), 'PERIOD_CREATED', ?, ?, false)`,
+        [user?.id, user?.name]
+      );
+
+      toast({ title: 'Inventory period created successfully' });
+      setShowNewPeriodDialog(false);
+      loadData();
+    } catch (e: any) {
+      console.error('Create period error:', e);
+      toast({ title: 'Failed to create period', variant: 'destructive' });
+    }
+  };
+
+  const openPeriod = async (periodId: string) => {
+    try {
+      const openRes = await db.query("SELECT id FROM inventory_periods WHERE status = 'open'");
+      if ('rows' in openRes && openRes.rows.length > 0) {
+        toast({ title: 'Another period is already open', variant: 'destructive' });
+        return;
+      }
+
+      await db.query(
+        `UPDATE inventory_periods SET status = 'open', reopened_at = NOW(), reopened_by = ? WHERE id = ?`,
+        [user?.name, periodId]
+      );
+
+      toast({ title: 'Period opened successfully' });
+      loadData();
+    } catch (e: any) {
+      toast({ title: 'Failed to open period', variant: 'destructive' });
+    }
+  };
+
+  const startReconciliation = async (periodId: string) => {
+    try {
+      await db.query(
+        `UPDATE inventory_periods SET status = 'reconciling' WHERE id = ?`,
+        [periodId]
+      );
+
+      const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = ?', [periodId]);
+      if ('rows' in periodRes && periodRes.rows.length > 0) {
+        const period = periodRes.rows[0] as InventoryPeriod;
+        setSelectedPeriod(period);
+        await loadProducts(periodId);
+      }
+
+      toast({ title: 'Reconciliation started' });
+      loadData();
+    } catch (e: any) {
+      toast({ title: 'Failed to start reconciliation', variant: 'destructive' });
+    }
+  };
+
+  const savePhysicalCounts = async () => {
+    if (!selectedPeriod) return;
+
+    try {
+      for (const [productId, qty] of Object.entries(physicalCounts)) {
+        await db.query(
+          `UPDATE products SET last_inventory_period_id = ?, last_physical_qty = ?, last_physical_date = ? WHERE id = ?`,
+          [selectedPeriod.id, qty, new Date().toISOString().split('T')[0], productId]
+        );
+      }
+
+      toast({ title: 'Physical counts saved' });
+    } catch (e: any) {
+      toast({ title: 'Failed to save counts', variant: 'destructive' });
+    }
+  };
+
+  const closePeriod = async () => {
+    if (!selectedPeriod) return;
+
+    try {
+      const kitchenProds = products.filter(p => p.department === 'Kitchen');
+      const cellarProds = products.filter(p => p.department === 'Cellar');
+      
+      const kitchenOp = kitchenProds.reduce((sum, p) => sum + (p.last_physical_qty || p.stock_level || 0), 0);
+      const cellarOp = cellarProds.reduce((sum, p) => sum + (p.last_physical_qty || p.stock_level || 0), 0);
+      
+      const kitchenRec = transactions
+        .filter(t => t.period_id === selectedPeriod.id && t.department === 'Kitchen')
+        .reduce((sum, t) => sum + t.total_quantity, 0);
+      const cellarRec = transactions
+        .filter(t => t.period_id === selectedPeriod.id && t.department === 'Cellar')
+        .reduce((sum, t) => sum + t.total_quantity, 0);
+      
+      const kitchenExp = kitchenOp + kitchenRec;
+      const cellarExp = cellarOp + cellarRec;
+      
+      const physKitchen = kitchenProds.reduce((sum, p) => sum + (physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0)), 0);
+      const physCellar = cellarProds.reduce((sum, p) => sum + (physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0)), 0);
+      
+      const kitchenVar = physKitchen - kitchenExp;
+      const cellarVar = physCellar - cellarExp;
+      
+      const kitchenVarVal = kitchenVar * 2.5;
+      const cellarVarVal = cellarVar * 4.0;
+      
+      const closingVal = (physKitchen + physCellar) * 3.0;
+      const cogsVal = selectedPeriod.opening_stock_value + selectedPeriod.received_value - closingVal;
+      
+      await db.query(
+        `UPDATE inventory_periods 
+         SET status = 'closed', closing_stock_value = ?, variance_value = ?, cogs_value = ?,
+             kitchen_cogs = ?, cellar_cogs = ?, closed_at = NOW(), closed_by = ?, closed_reason = ?
+         WHERE id = ?`,
+        [closingVal, kitchenVarVal + cellarVarVal, cogsVal, 
+         kitchenVarVal, cellarVarVal, user?.name, closeReason, selectedPeriod.id]
+      );
+
+      for (const product of products) {
+        const newQty = physicalCounts[product.id] || product.last_physical_qty || product.stock_level;
+        await db.query(`UPDATE products SET stock_level = ? WHERE id = ?`, [newQty, product.id]);
+      }
+
+      toast({ title: 'Period closed successfully' });
+      setShowCloseDialog(false);
+      loadData();
+    } catch (e: any) {
+      console.error('Close period error:', e);
+      toast({ title: 'Failed to close period', variant: 'destructive' });
+    }
+  };
+
+  const addBackfill = async () => {
+    if (!selectedPeriod || selectedProducts.size === 0) {
+      toast({ title: 'Please select products to backfill', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      for (const productId of selectedProducts) {
+        const product = products.find(p => p.id === productId);
+        if (product && physicalCounts[productId]) {
+          const qty = parseFloat(String(physicalCounts[productId])) || 0;
+          
+          await db.query(
+            `INSERT INTO inventory_transactions 
+             (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, created_by, is_historical_backfill)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, true)`,
+            ['adjustment', `BF-${Date.now()}`, selectedPeriod.id, new Date().toISOString().split('T')[0],
+             product.department, qty, qty * product.cost_price, user?.name]
+          );
+
+          await db.query(
+            `UPDATE inventory_periods SET received_value = received_value + ? WHERE id = ?`,
+            [qty * product.cost_price, selectedPeriod.id]
+          );
+        }
+      }
+
+      toast({ title: 'Backfill added successfully' });
+      setShowBackfillDialog(false);
+      loadData();
+    } catch (e: any) {
+      toast({ title: 'Failed to add backfill', variant: 'destructive' });
+    }
+  };
+
+  const calculateVariance = (opening: number, received: number, physical: number) => {
+    const expected = opening + received;
+    return { expected, variance: physical - expected };
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading inventory data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Inventory Reconciliation</h1>
+          <p className="text-gray-600">Period-based stock reconciliation and audit trail</p>
+        </div>
+        <Button onClick={() => setShowNewPeriodDialog(true)}>
+          New Period
+        </Button>
+      </div>
+
+      <Tabs defaultValue="periods">
+        <TabsList>
+          <TabsTrigger value="periods">Periods</TabsTrigger>
+          <TabsTrigger value="transactions">Transactions</TabsTrigger>
+          <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="periods">
+          <Card>
+            <CardHeader>
+              <CardTitle>Inventory Periods</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Period</TableHead>
+                    <TableHead>Dates</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Opening</TableHead>
+                    <TableHead>Received</TableHead>
+                    <TableHead>Variance</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {periods.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-8 text-gray-500">
+                        No inventory periods found. Create one to get started.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    periods.map(period => (
+                      <TableRow key={period.id}>
+                        <TableCell className="font-medium">{period.period_name}</TableCell>
+                        <TableCell>
+                          {period.start_date} - {period.end_date}
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={getStatusColor(period.status)}>
+                            {period.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>${period.opening_stock_value?.toFixed(2)}</TableCell>
+                        <TableCell>${period.received_value?.toFixed(2)}</TableCell>
+                        <TableCell className={period.variance_value ? (period.variance_value < 0 ? 'text-red-600' : 'text-green-600') : ''}>
+                          ${period.variance_value?.toFixed(2) || '0.00'}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-2">
+                            {period.status === 'future' && (
+                              <Button size="sm" variant="outline" onClick={() => openPeriod(period.id)}>
+                                Open
+                              </Button>
+                            )}
+                            {period.status === 'open' && (
+                              <Button size="sm" variant="outline" onClick={() => startReconciliation(period.id)}>
+                                Start Recon
+                              </Button>
+                            )}
+                            {period.status === 'reconciling' && (
+                              <>
+                                <Button size="sm" variant="outline" onClick={() => {
+                                  setSelectedPeriod(period);
+                                  loadProducts(period.id);
+                                  setShowBackfillDialog(true);
+                                }}>
+                                  Backfill
+                                </Button>
+                                <Button size="sm" onClick={() => {
+                                  setSelectedPeriod(period);
+                                  loadProducts(period.id);
+                                  setShowCloseDialog(true);
+                                }}>
+                                  Close
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="transactions">
+          <Card>
+            <CardHeader>
+              <CardTitle>Inventory Transactions</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Number</TableHead>
+                    <TableHead>Department</TableHead>
+                    <TableHead>Quantity</TableHead>
+                    <TableHead>Value</TableHead>
+                    <TableHead>Supplier</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {transactions.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-8 text-gray-500">
+                        No transactions found
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    transactions.map(tx => (
+                      <TableRow key={tx.id}>
+                        <TableCell>{tx.transaction_date}</TableCell>
+                        <TableCell className="capitalize">{tx.transaction_type}</TableCell>
+                        <TableCell>{tx.transaction_number}</TableCell>
+                        <TableCell>{tx.department}</TableCell>
+                        <TableCell>{tx.total_quantity}</TableCell>
+                        <TableCell>${tx.total_value?.toFixed(2)}</TableCell>
+                        <TableCell>{tx.supplier_name || '-'}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="reconciliation">
+          {selectedPeriod ? (
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>{selectedPeriod.period_name} - Reconciliation</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <div className="text-sm text-gray-600">Opening Stock</div>
+                      <div className="text-xl font-bold">${selectedPeriod.opening_stock_value?.toFixed(2)}</div>
+                    </div>
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <div className="text-sm text-gray-600">Received</div>
+                      <div className="text-xl font-bold">${selectedPeriod.received_value?.toFixed(2)}</div>
+                    </div>
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <div className="text-sm text-gray-600">Expected</div>
+                      <div className="text-xl font-bold">${(selectedPeriod.opening_stock_value + selectedPeriod.received_value)?.toFixed(2)}</div>
+                    </div>
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <div className="text-sm text-gray-600">Variance</div>
+                      <div className={`text-xl font-bold ${selectedPeriod.variance_value && selectedPeriod.variance_value < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        ${selectedPeriod.variance_value?.toFixed(2) || '0.00'}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Department Breakdown</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid md:grid-cols-2 gap-6">
+                    <div>
+                      <h3 className="font-semibold mb-3">Kitchen</h3>
+                      <Table>
+                        <TableBody>
+                          <TableRow>
+                            <TableCell>Opening Qty</TableCell>
+                            <TableCell className="text-right">{selectedPeriod.opening_stock_value}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell>Received Qty</TableCell>
+                            <TableCell className="text-right">{selectedPeriod.received_value}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell>COGS</TableCell>
+                            <TableCell className="text-right">${selectedPeriod.kitchen_cogs?.toFixed(2)}</TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold mb-3">Cellar</h3>
+                      <Table>
+                        <TableBody>
+                          <TableRow>
+                            <TableCell>Opening Qty</TableCell>
+                            <TableCell className="text-right">{selectedPeriod.opening_stock_value}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell>Received Qty</TableCell>
+                            <TableCell className="text-right">{selectedPeriod.received_value}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell>COGS</TableCell>
+                            <TableCell className="text-right">${selectedPeriod.cellar_cogs?.toFixed(2)}</TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Button onClick={savePhysicalCounts} className="w-full">
+                Save Physical Counts
+              </Button>
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="py-8 text-center text-gray-500">
+                Select a period and click "Start Recon" to begin reconciliation.
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      <Dialog open={showNewPeriodDialog} onOpenChange={setShowNewPeriodDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Inventory Period</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Year</Label>
+                <Input 
+                  type="number" 
+                  value={newPeriod.periodYear}
+                  onChange={e => setNewPeriod({...newPeriod, periodYear: parseInt(e.target.value)})}
+                />
+              </div>
+              <div>
+                <Label>Month</Label>
+                <Input 
+                  type="number" 
+                  min={1}
+                  max={12}
+                  value={newPeriod.periodMonth}
+                  onChange={e => setNewPeriod({...newPeriod, periodMonth: parseInt(e.target.value)})}
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Start Date</Label>
+              <Input 
+                type="date" 
+                value={newPeriod.startDate}
+                onChange={e => setNewPeriod({...newPeriod, startDate: e.target.value})}
+              />
+            </div>
+            <div>
+              <Label>End Date</Label>
+              <Input 
+                type="date" 
+                value={newPeriod.endDate}
+                onChange={e => setNewPeriod({...newPeriod, endDate: e.target.value})}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox 
+                id="isInitial"
+                checked={newPeriod.isInitial}
+                onCheckedChange={checked => setNewPeriod({...newPeriod, isInitial: !!checked})}
+              />
+              <label htmlFor="isInitial" className="text-sm">
+                Initial Period (mirror existing stock as opening)
+              </label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNewPeriodDialog(false)}>Cancel</Button>
+            <Button onClick={createPeriod}>Create</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showBackfillDialog} onOpenChange={setShowBackfillDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Backfill Wizard</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Select products and enter quantities for historical backfill (skipped/delayed deliveries).
+            </p>
+            <div className="max-h-64 overflow-y-auto border rounded">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10"></TableHead>
+                    <TableHead>Product</TableHead>
+                    <TableHead>Department</TableHead>
+                    <TableHead>Quantity</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {products.map(product => (
+                    <TableRow key={product.id}>
+                      <TableCell>
+                        <Checkbox 
+                          checked={selectedProducts.has(product.id)}
+                          onCheckedChange={checked => {
+                            const newSelected = new Set(selectedProducts);
+                            if (checked) newSelected.add(product.id);
+                            else newSelected.delete(product.id);
+                            setSelectedProducts(newSelected);
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell>{product.name}</TableCell>
+                      <TableCell>{product.department}</TableCell>
+                      <TableCell>
+                        <Input 
+                          type="number"
+                          className="w-24"
+                          value={physicalCounts[product.id] || ''}
+                          onChange={e => setPhysicalCounts({...physicalCounts, [product.id]: e.target.value})}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBackfillDialog(false)}>Cancel</Button>
+            <Button onClick={addBackfill}>Add Backfill</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showCloseDialog} onOpenChange={setShowCloseDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Close Period</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Are you sure you want to close this period? This will finalize all reconciliation data and lock the period.
+            </p>
+            <div>
+              <Label>Closing Reason</Label>
+              <Input 
+                value={closeReason}
+                onChange={e => setCloseReason(e.target.value)}
+                placeholder="Enter reason for closing..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCloseDialog(false)}>Cancel</Button>
+            <Button onClick={closePeriod}>Close Period</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default InventoryReconciliation;

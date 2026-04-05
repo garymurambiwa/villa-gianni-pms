@@ -58,6 +58,10 @@ const accountingModule = (() => {
           window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'accounting-tax' } } as any));
           break;
         }
+        case 'inventory-recon': {
+          window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'inventory-recon' } } as any));
+          break;
+        }
         case 'vendors': {
           window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'vendor-management' } } as any));
           break;
@@ -117,6 +121,7 @@ const AccountingDom: React.FC = () => {
         <button type="button" data-action="reconciliation" className="acct-btn" aria-label="Reconciliation"><span className="mr-2">🤝</span>Reconciliation</button>
         <button type="button" data-action="gl" className="acct-btn" aria-label="GL Accounting"><span className="mr-2">📘</span>Accounting Utility (GL)</button>
         <button type="button" data-action="tax-config" className="acct-btn" aria-label="Tax Configuration"><span className="mr-2">🧮</span>Tax Configuration</button>
+        <button type="button" data-action="inventory-recon" className="acct-btn" aria-label="Inventory Reconciliation"><span className="mr-2">📦</span>Inventory Reconciliation</button>
       </div>
 
       {/* Daily Journal modal identical operation */}
