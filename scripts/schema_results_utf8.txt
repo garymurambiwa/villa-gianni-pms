@@ -1,0 +1,53 @@
+﻿
+--- TABLE: inventory_periods ---
+id: uuid (Default: gen_random_uuid(), Nullable: NO)
+name: text (Default: NONE, Nullable: NO)
+start_date: date (Default: NONE, Nullable: NO)
+end_date: date (Default: NONE, Nullable: NO)
+status: text (Default: 'open'::text, Nullable: NO)
+closed_at: timestamp with time zone (Default: NONE, Nullable: YES)
+closed_by: text (Default: NONE, Nullable: YES)
+created_at: timestamp with time zone (Default: now(), Nullable: YES)
+
+--- TABLE: inventory_transactions ---
+id: uuid (Default: gen_random_uuid(), Nullable: NO)
+period_id: uuid (Default: NONE, Nullable: YES)
+product_id: text (Default: NONE, Nullable: NO)
+type: text (Default: NONE, Nullable: NO)
+quantity: numeric (Default: NONE, Nullable: NO)
+unit_price: numeric (Default: NONE, Nullable: YES)
+total_price: numeric (Default: NONE, Nullable: YES)
+transaction_date: date (Default: NONE, Nullable: NO)
+is_audit_backfill: boolean (Default: false, Nullable: YES)
+created_at: timestamp with time zone (Default: now(), Nullable: YES)
+created_by: text (Default: NONE, Nullable: YES)
+
+--- TABLE: inventory_period_audit ---
+NOT FOUND
+
+--- TABLE: products ---
+id: character varying (Default: NONE, Nullable: NO)
+name: text (Default: NONE, Nullable: NO)
+category: text (Default: NONE, Nullable: YES)
+department: text (Default: 'Restaurant'::text, Nullable: YES)
+price: numeric (Default: 0, Nullable: YES)
+cost_price: numeric (Default: 0, Nullable: YES)
+stock_level: numeric (Default: 0, Nullable: YES)
+unit: text (Default: 'units'::text, Nullable: YES)
+active: boolean (Default: true, Nullable: YES)
+visibility: text (Default: NONE, Nullable: YES)
+is_stock_item: boolean (Default: true, Nullable: YES)
+inserted_at: timestamp with time zone (Default: now(), Nullable: NO)
+updated_at: timestamp with time zone (Default: now(), Nullable: YES)
+category_id: character varying (Default: NONE, Nullable: YES)
+sub_id: character varying (Default: NONE, Nullable: YES)
+parent_sub_id: character varying (Default: NONE, Nullable: YES)
+notes: text (Default: NONE, Nullable: YES)
+barcodes: jsonb (Default: '[]'::jsonb, Nullable: YES)
+cos_percent: numeric (Default: 0, Nullable: YES)
+gp_percent: numeric (Default: 0, Nullable: YES)
+gp_amount: numeric (Default: 0, Nullable: YES)
+qty_received: numeric (Default: 0, Nullable: YES)
+image_bg_color: character varying (Default: NONE, Nullable: YES)
+picture_data: text (Default: NONE, Nullable: YES)
+visibility_stations: ARRAY (Default: NONE, Nullable: YES)

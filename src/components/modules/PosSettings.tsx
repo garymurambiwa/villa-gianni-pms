@@ -61,6 +61,10 @@ const INITIAL_UNITS = [
   'glass', 'bottle 750ml', 'bottle 1 Litre'
 ];
 
+const getVisibleUnits = (blacklist: string[]) => {
+  return INITIAL_UNITS.filter(u => !blacklist.includes(u));
+};
+
 const Section: React.FC<{ title: string; id?: string; children: React.ReactNode }> = ({ title, id, children }) => (
   <div id={id} className="p-4 border rounded">
     <div className="font-semibold mb-2">{title}</div>
@@ -915,13 +919,39 @@ export const PosSettings: React.FC = () => {
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
+  const [blacklistedUnits, setBlacklistedUnits] = React.useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('corepms_blacklisted_units');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const [newUnitModalOpen, setNewUnitModalOpen] = React.useState(false);
   const [tempNewUnit, setTempNewUnit] = React.useState('');
 
   const handleAddCustomUnit = () => {
     const trimmed = tempNewUnit.trim();
     if (!trimmed) return;
-    if (INITIAL_UNITS.includes(trimmed) || customUnits.includes(trimmed)) {
+    
+    // If it's a standard unit and NOT hidden, just select it
+    if (INITIAL_UNITS.includes(trimmed) && !blacklistedUnits.includes(trimmed)) {
+      setUnitOfMeasure(trimmed);
+      setNewUnitModalOpen(false);
+      return;
+    }
+
+    // If it was hidden, show it again
+    if (blacklistedUnits.includes(trimmed)) {
+      const next = blacklistedUnits.filter(u => u !== trimmed);
+      setBlacklistedUnits(next);
+      localStorage.setItem('corepms_blacklisted_units', JSON.stringify(next));
+      setUnitOfMeasure(trimmed);
+      setNewUnitModalOpen(false);
+      setTempNewUnit('');
+      toast({ title: 'Unit restored', description: `Standard unit "${trimmed}" has been restored.` });
+      return;
+    }
+
+    if (customUnits.includes(trimmed)) {
       setUnitOfMeasure(trimmed);
       setNewUnitModalOpen(false);
       return;
@@ -1878,7 +1908,7 @@ export const PosSettings: React.FC = () => {
                     <SelectValue placeholder="Select unit" />
                   </SelectTrigger>
                   <SelectContent>
-                    {INITIAL_UNITS.map(u => (
+                    {getVisibleUnits(blacklistedUnits).map(u => (
                       <SelectItem key={u} value={u}>{u}</SelectItem>
                     ))}
                     {customUnits.map(u => (
@@ -2335,10 +2365,41 @@ export const PosSettings: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div>
               <h4 className="text-sm font-bold mb-2">Standard Units (Built-in)</h4>
-              <div className="flex flex-wrap gap-2 text-[11px]">
-                {INITIAL_UNITS.map(u => (
-                  <span key={u} className="px-3 py-1 bg-gray-100 rounded-full text-gray-700 border border-gray-200">{u}</span>
-                ))}
+              <div className="flex flex-wrap gap-2">
+                {INITIAL_UNITS.map(u => {
+                  const isHidden = blacklistedUnits.includes(u);
+                  return (
+                    <div key={u} className={`flex items-center gap-1 px-2 py-1 rounded-full border transition-all ${isHidden ? 'bg-gray-50 text-gray-400 border-gray-100 opacity-50' : 'bg-gray-100 text-gray-700 border-gray-200'}`}>
+                      <span className="text-[11px]">{u}</span>
+                      <button 
+                        className={`ml-1 hover:text-red-500 transition-colors ${isHidden ? 'hidden' : ''}`}
+                        title="Hide standard unit"
+                        onClick={() => {
+                          const next = [...blacklistedUnits, u];
+                          setBlacklistedUnits(next);
+                          localStorage.setItem('corepms_blacklisted_units', JSON.stringify(next));
+                          toast({ title: 'Unit hidden', description: `Standard unit "${u}" has been hidden.` });
+                        }}
+                      >
+                        <span className="text-[10px]">✕</span>
+                      </button>
+                      {isHidden && (
+                        <button 
+                          className="ml-1 text-blue-500 hover:text-blue-600 text-[10px] font-bold"
+                          title="Restore unit"
+                          onClick={() => {
+                            const next = blacklistedUnits.filter(x => x !== u);
+                            setBlacklistedUnits(next);
+                            localStorage.setItem('corepms_blacklisted_units', JSON.stringify(next));
+                            toast({ title: 'Unit restored', description: `"${u}" is now visible again.` });
+                          }}
+                        >
+                          ↺
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

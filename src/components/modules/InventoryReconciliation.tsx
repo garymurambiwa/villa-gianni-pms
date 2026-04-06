@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import db from '@/lib/db';
+import { offlineSync } from '@/lib/offlineSync';
+import { networkStatus } from '@/lib/networkStatus';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -114,6 +116,58 @@ export const InventoryReconciliation: React.FC = () => {
   const [physicalCounts, setPhysicalCounts] = useState<Record<string, number>>({});
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
   const [closeReason, setCloseReason] = useState('');
+  
+  const [syncStatus, setSyncStatus] = useState<{ pending: number; isOnline: boolean; isSyncing: boolean }>({
+    pending: 0,
+    isOnline: networkStatus.isOnline(),
+    isSyncing: false
+  });
+
+  // Monitor sync status
+  useEffect(() => {
+    const updateStatus = async () => {
+      const count = await offlineSync.getPendingCount();
+      setSyncStatus(prev => ({ ...prev, pending: count, isOnline: networkStatus.isOnline() }));
+    };
+
+    updateStatus();
+    const subNet = networkStatus.subscribe(() => updateStatus());
+    const subSync = offlineSync.subscribe((p) => {
+      updateStatus();
+      setSyncStatus(prev => ({ ...prev, isSyncing: p.status === 'syncing' }));
+    });
+
+    return () => {
+      subNet();
+      subSync();
+    };
+  }, []);
+
+  const handleForceSync = async () => {
+    setSyncStatus(prev => ({ ...prev, isSyncing: true }));
+    try {
+      const res = await offlineSync.triggerSync();
+      if (res.failed > 0) {
+        toast({ 
+          title: 'Sync completed with errors', 
+          description: `Synced ${res.success} items, but ${res.failed} failed. Check console for details.`,
+          variant: 'destructive'
+        });
+        // Reload anyway to show what was synced
+        loadData();
+      } else if (res.success > 0) {
+        toast({ title: 'Sync successful', description: `Successfully saved ${res.success} pending items.` });
+        loadData();
+      } else {
+        toast({ title: 'Sync completed', description: 'No pending items needed syncing.' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Sync failed', description: e.message, variant: 'destructive' });
+    } finally {
+      setSyncStatus(prev => ({ ...prev, isSyncing: false }));
+    }
+  };
+
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -121,6 +175,10 @@ export const InventoryReconciliation: React.FC = () => {
       const periodRes = await db.query(
         'SELECT * FROM inventory_periods ORDER BY period_year DESC, period_month DESC'
       );
+      
+      const count = await offlineSync.getPendingCount();
+      setSyncStatus(prev => ({ ...prev, pending: count }));
+
       if ('rows' in periodRes) {
         setPeriods(periodRes.rows as InventoryPeriod[]);
       }
@@ -199,16 +257,18 @@ export const InventoryReconciliation: React.FC = () => {
       const monthName = new Date(newPeriod.periodYear, newPeriod.periodMonth - 1).toLocaleString('default', { month: 'long' });
       const periodName = `${monthName} ${newPeriod.periodYear}`;
 
-      await db.query(
+      const insertRes = await db.query(
         `INSERT INTO inventory_periods (period_name, period_year, period_month, start_date, end_date, status, opening_stock_value, received_value, kitchen_cogs, cellar_cogs, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [periodName, newPeriod.periodYear, newPeriod.periodMonth, newPeriod.startDate, newPeriod.endDate, 'open', openingStockValue, 0, 0, 0, user?.name]
       );
 
+      const periodId = (insertRes as any).rows[0].id;
+
       await db.query(
         `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, is_historical_backfill)
-         VALUES (currval('inventory_periods_id_seq'), 'PERIOD_CREATED', ?, ?, false)`,
-        [user?.id, user?.name]
+         VALUES (?, 'PERIOD_CREATED', ?, ?, false)`,
+        [periodId, user?.id, user?.name]
       );
 
       toast({ title: 'Inventory period created successfully' });
@@ -386,14 +446,35 @@ export const InventoryReconciliation: React.FC = () => {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border">
         <div>
           <h1 className="text-2xl font-bold">Inventory Reconciliation</h1>
-          <p className="text-gray-600">Period-based stock reconciliation and audit trail</p>
+          <p className="text-sm text-gray-500">Period-based stock reconciliation and audit trail</p>
         </div>
-        <Button onClick={() => setShowNewPeriodDialog(true)}>
-          New Period
-        </Button>
+        <div className="flex items-center gap-4">
+          {syncStatus.pending > 0 && (
+            <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 border border-amber-200 rounded-lg">
+              <span className="text-xs font-bold text-amber-700">{syncStatus.pending} Pending Changes</span>
+              <Button 
+                size="sm" 
+                variant="outline" 
+                className="h-7 text-[10px] bg-white hover:bg-amber-100"
+                onClick={handleForceSync}
+                disabled={syncStatus.isSyncing}
+              >
+                {syncStatus.isSyncing ? 'Syncing...' : 'Force Sync Now'}
+              </Button>
+            </div>
+          )}
+          {!syncStatus.isOnline && (
+            <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+              OFFLINE MODE
+            </Badge>
+          )}
+          <Button onClick={() => setShowNewPeriodDialog(true)}>
+            New Period
+          </Button>
+        </div>
       </div>
 
       <Tabs defaultValue="periods">

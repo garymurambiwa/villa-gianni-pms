@@ -4,7 +4,7 @@ const client = new Client('postgresql://neondb_owner:npg_r1fvxIDGLNA8@ep-empty-s
 
 async function inspectColumns() {
   await client.connect();
-  const tables = ['products', 'inventory_transactions', 'accounting_periods'];
+  const tables = ['products', 'inventory_transactions', 'inventory_periods'];
   for (const table of tables) {
     console.log(`--- Table: ${table} ---`);
     try {
