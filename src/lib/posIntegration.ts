@@ -249,8 +249,12 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
               const isBarStation = ccLower.includes('bar');
               const isRestaurantStation = ccLower.includes('restaurant') || ccLower.includes('room service');
               
-              if (isBarStation && !r.bar_visibility) return null;
-              if (isRestaurantStation && !r.restaurant_visibility) return null;
+              // If visibility is null/undefined, default to true for backward compatibility
+              const barVis = r.bar_visibility !== false;
+              const restVis = r.restaurant_visibility !== false;
+
+              if (isBarStation && !barVis) return null;
+              if (isRestaurantStation && !restVis) return null;
             }
 
             let category_id = r.category_id ? String(r.category_id) : undefined;
