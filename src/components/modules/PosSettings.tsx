@@ -56,6 +56,11 @@ const contrastRatio = (bg: string, fg: string) => {
 };
 const isAccessible = (bg: string, fg: string) => contrastRatio(bg, fg) >= 4.5;
 
+const INITIAL_UNITS = [
+  'piece', 'each', 'kg', 'g', 'gram', 'lb', 'oz', 'ml', 'milliliter', 'L', 'liter', 'tot (tray)',
+  'glass', 'bottle 750ml', 'bottle 1 Litre'
+];
+
 const Section: React.FC<{ title: string; id?: string; children: React.ReactNode }> = ({ title, id, children }) => (
   <div id={id} className="p-4 border rounded">
     <div className="font-semibold mb-2">{title}</div>
@@ -819,6 +824,7 @@ export const PosSettings: React.FC = () => {
       { id: 'stock-level-monitoring', label: 'Stock Level Monitoring' },
       { id: 'printing-quick-updates', label: 'Print/Quick Updates' },
       { id: 'adjust-stock-quantities', label: 'Adjust Stock Quantities' },
+      { id: 'unit-management', label: 'Unit of Measure Management' },
     ],
     purchasing: [
       { id: 'purchasing-config', label: 'Purchasing Configuration' },
@@ -901,6 +907,32 @@ export const PosSettings: React.FC = () => {
   const [notes, setNotes] = React.useState('');
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [focusField, setFocusField] = React.useState<string | null>(null);
+
+  // Custom Units Management
+  const [customUnits, setCustomUnits] = React.useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('corepms_custom_units');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [newUnitModalOpen, setNewUnitModalOpen] = React.useState(false);
+  const [tempNewUnit, setTempNewUnit] = React.useState('');
+
+  const handleAddCustomUnit = () => {
+    const trimmed = tempNewUnit.trim();
+    if (!trimmed) return;
+    if (INITIAL_UNITS.includes(trimmed) || customUnits.includes(trimmed)) {
+      setUnitOfMeasure(trimmed);
+      setNewUnitModalOpen(false);
+      return;
+    }
+    const next = [...customUnits, trimmed];
+    setCustomUnits(next);
+    localStorage.setItem('corepms_custom_units', JSON.stringify(next));
+    setUnitOfMeasure(trimmed);
+    setNewUnitModalOpen(false);
+    setTempNewUnit('');
+  };
 
   React.useEffect(() => {
     if (stockOpen && focusField) {
@@ -1835,23 +1867,26 @@ export const PosSettings: React.FC = () => {
 
               <div>
                 <label className="text-xs">Unit of measure</label>
-                <Select value={unitOfMeasure || undefined} onValueChange={(v) => setUnitOfMeasure(v)}>
+                <Select value={unitOfMeasure || undefined} onValueChange={(v) => {
+                  if (v === 'ADD_CUSTOM') {
+                    setNewUnitModalOpen(true);
+                  } else {
+                    setUnitOfMeasure(v);
+                  }
+                }}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select unit" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="piece">piece</SelectItem>
-                    <SelectItem value="each">each</SelectItem>
-                    <SelectItem value="kg">kg</SelectItem>
-                    <SelectItem value="g">g</SelectItem>
-                    <SelectItem value="gram">gram</SelectItem>
-                    <SelectItem value="lb">lb</SelectItem>
-                    <SelectItem value="oz">oz</SelectItem>
-                    <SelectItem value="ml">ml</SelectItem>
-                    <SelectItem value="milliliter">milliliter</SelectItem>
-                    <SelectItem value="L">L</SelectItem>
-                    <SelectItem value="liter">liter</SelectItem>
-                    <SelectItem value="tot">tot (tray)</SelectItem>
+                    {INITIAL_UNITS.map(u => (
+                      <SelectItem key={u} value={u}>{u}</SelectItem>
+                    ))}
+                    {customUnits.map(u => (
+                      <SelectItem key={u} value={u}>{u}</SelectItem>
+                    ))}
+                    <div className="border-t mt-1 pt-1">
+                      <SelectItem value="ADD_CUSTOM" className="text-blue-600 font-bold">+ Add New Unit...</SelectItem>
+                    </div>
                   </SelectContent>
                 </Select>
                 {errors.unitOfMeasure && <div className="text-xs text-red-600 mt-1">{errors.unitOfMeasure}</div>}
@@ -1941,6 +1976,30 @@ export const PosSettings: React.FC = () => {
           <DialogFooter>
             <Button variant="outline" onClick={() => { setStockOpen(false); }}>Cancel</Button>
             <Button className="bg-indigo-600 text-white" onClick={saveStockItem}>Save Item</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* New Unit of Measure Dialog */}
+      <Dialog open={newUnitModalOpen} onOpenChange={setNewUnitModalOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add Custom Unit of Measure</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-xs">Unit Name</Label>
+              <Input 
+                value={tempNewUnit} 
+                onChange={(e) => setTempNewUnit(e.target.value)} 
+                placeholder="e.g. Keg, Case of 24" 
+                onKeyDown={(e) => e.key === 'Enter' && handleAddCustomUnit()}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setNewUnitModalOpen(false); setTempNewUnit(''); }}>Cancel</Button>
+            <Button className="bg-indigo-600 text-white" onClick={handleAddCustomUnit}>Add Unit</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2265,6 +2324,55 @@ export const PosSettings: React.FC = () => {
             <Textarea placeholder="Reason / Notes" />
           </div>
           <Button className="bg-indigo-600 text-white hover:bg-indigo-700" onClick={() => log('STOCK_ADJUST')}>Apply Adjustment</Button>
+        </Section>
+      )}
+
+      {/* Unit of Measure Management */}
+      {activeTab === 'stock' && activeSectionId === 'unit-management' && (
+        <Section id="unit-management" title="Unit of Measure Management">
+          <div className="text-xs text-gray-600 mb-4">Manage the units of measure available when setting up stock items.</div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div>
+              <h4 className="text-sm font-bold mb-2">Standard Units (Built-in)</h4>
+              <div className="flex flex-wrap gap-2 text-[11px]">
+                {INITIAL_UNITS.map(u => (
+                  <span key={u} className="px-3 py-1 bg-gray-100 rounded-full text-gray-700 border border-gray-200">{u}</span>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-bold">Custom Units</h4>
+                <Button variant="ghost" size="sm" className="text-blue-600 text-[10px] h-6" onClick={() => { setNewUnitModalOpen(true); setTempNewUnit(''); }}>+ Add New</Button>
+              </div>
+              {customUnits.length === 0 ? (
+                <div className="text-xs text-gray-500 italic p-4 border border-dashed rounded text-center">No custom units added yet. Use the button above or "Add New" in the stock item setup.</div>
+              ) : (
+                <div className="space-y-1">
+                  {customUnits.map(u => (
+                    <div key={u} className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded border border-slate-200 group hover:border-slate-300 transition-colors">
+                      <span className="text-xs font-semibold">{u}</span>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="h-6 w-6 p-0 text-red-500 hover:bg-red-50 hover:text-red-600 transition-opacity"
+                        onClick={() => {
+                          const next = customUnits.filter(x => x !== u);
+                          setCustomUnits(next);
+                          localStorage.setItem('corepms_custom_units', JSON.stringify(next));
+                          toast({ title: 'Unit removed', description: `"${u}" has been deleted.` });
+                        }}
+                      >
+                        ✕
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </Section>
       )}
 
