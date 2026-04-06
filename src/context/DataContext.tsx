@@ -202,22 +202,32 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const guestRes = await db.query('SELECT * FROM guests');
       if ('rows' in guestRes) {
         // Normalize guest data - map full_name to name for UI compatibility
-        // Also enrich with room info from checked-in reservations
+        // Also enrich with room info and dates from reservations
         const normalizedGuests = (guestRes.rows || []).map((g: any) => {
-          // Find if this guest has a checked-in reservation
+          // Find the most relevant reservation for this guest
+          // Priority 1: Currently checked-in
           const checkedInRes = normalizedReservations.find(
-            (r: any) => r.guest_id === g.id && r.status === 'checked-in'
+            (r: any) => r.guest_id === g.id && String(r.status || '').toLowerCase() === 'checked-in'
           );
 
+          // Priority 2: Latest reservation (any status) to ensure we always have dates from the "booking form"
+          const allGuestRes = normalizedReservations
+            .filter((r: any) => r.guest_id === g.id)
+            .sort((a: any, b: any) => new Date(b.check_in_date || b.checkIn).getTime() - new Date(a.check_in_date || a.checkIn).getTime());
+          
+          const latestRes = checkedInRes || allGuestRes[0] || null;
+
           // Calculate folio balance from actual folio charges
-          // Balance = sum of charges - sum of payments
-          const guestCharges = loadedFolioCharges.filter((c: any) => c.guestId === g.id);
+          // Balance = sum of charges - sum of payments (excluding voided)
+          const guestCharges = loadedFolioCharges.filter((c: any) => c.guestId === g.id && !c.is_voided);
           const totalCharges = guestCharges
             .filter((c: any) => c.type === 'charge' || !c.type) // Default to charge if type not specified
             .reduce((sum: number, c: any) => sum + Number(c.amount || 0), 0);
           const totalPayments = guestCharges
             .filter((c: any) => c.type === 'payment')
             .reduce((sum: number, c: any) => sum + Math.abs(Number(c.amount || 0)), 0);
+          
+          // Compute true accounting balance
           const computedBalance = Number((totalCharges - totalPayments).toFixed(2));
 
           return {
@@ -226,12 +236,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             full_name: g.full_name || g.name || '',
             // Add room info from checked-in reservation
             roomNumber: checkedInRes?.roomNumber || null,
-            reservationId: checkedInRes?.id || null,
-            // Use computed balance from actual charges, or daily rate as starting point for new check-ins
-            folioBalance: computedBalance > 0 ? computedBalance : (checkedInRes?.rate || 0),
-            checkInDate: checkedInRes?.checkIn || null,
-            checkOutDate: checkedInRes?.checkOut || null,
-            dailyRate: checkedInRes?.rate || 0
+            reservationId: latestRes?.id || null,
+            // Use compute balance if any transactions exist, otherwise use rate as starting point for new check-ins
+            folioBalance: (guestCharges.length > 0) ? computedBalance : (latestRes?.rate || 0),
+            // Standardize field names for statement compatibility
+            checkIn: latestRes?.checkIn || null,
+            checkOut: latestRes?.checkOut || null,
+            checkInDate: latestRes?.checkIn || null,
+            checkOutDate: latestRes?.checkOut || null,
+            dailyRate: latestRes?.rate || 0
           };
         });
         setGuests(normalizedGuests);
@@ -1116,6 +1129,83 @@ status = 'checked-in',
     }
   };
 
+  // FRONT OFFICE - Void folio charge
+  const voidFolioCharge = async (chargeId: string, reason: string, actor: string): Promise<boolean> => {
+    try {
+      const chargeIndex = folioCharges.findIndex((c: any) => c.id === chargeId);
+      if (chargeIndex === -1) return false;
+
+      const charge = folioCharges[chargeIndex] as any;
+      const now = new Date().toISOString();
+
+      const updatedCharge = {
+        ...charge,
+        is_voided: true,
+        voidedAt: now,
+        voidedBy: actor,
+        voidReason: reason
+      };
+
+      // Update local state
+      setFolioCharges((prev: any[]) => prev.map(c => c.id === chargeId ? updatedCharge : c));
+
+      // Sync to database
+      const { syncFolioChargeToDb } = await import('../lib/dbSync');
+      await syncFolioChargeToDb({
+        ...updatedCharge,
+        guest_id: charge.guestId || charge.guest_id,
+        charge_type: charge.type || charge.charge_type || 'charge',
+        is_voided: true,
+        voided_at: now,
+        voided_by: actor,
+        void_reason: reason,
+        total_amount: charge.amount
+      } as any);
+
+      return true;
+    } catch (e) {
+      console.error('Void folio charge error:', e);
+      return false;
+    }
+  };
+
+  // FRONT OFFICE - Transfer folio charge
+  const transferFolioCharge = async (chargeId: string, targetGuestId: string, actor: string): Promise<boolean> => {
+    try {
+      const chargeIndex = folioCharges.findIndex((c: any) => c.id === chargeId);
+      if (chargeIndex === -1) return false;
+
+      const charge = folioCharges[chargeIndex] as any;
+      const sourceGuestId = charge.guestId || charge.guest_id;
+
+      const updatedCharge = {
+        ...charge,
+        guestId: targetGuestId,
+        guest_id: targetGuestId,
+        transferredFrom: sourceGuestId,
+        transferredBy: actor,
+        transferredAt: new Date().toISOString()
+      };
+
+      // Update local state
+      setFolioCharges((prev: any[]) => prev.map(c => c.id === chargeId ? updatedCharge : c));
+
+      // Sync to database
+      const { syncFolioChargeToDb } = await import('../lib/dbSync');
+      await syncFolioChargeToDb({
+        ...updatedCharge,
+        guest_id: targetGuestId,
+        charge_type: charge.type || charge.charge_type || 'charge',
+        total_amount: charge.amount
+      } as any);
+
+      return true;
+    } catch (e) {
+      console.error('Transfer folio charge error:', e);
+      return false;
+    }
+  };
+
   // POS - Record folio payment (for settlement)
   const recordFolioPayment = async (paymentData: { guestId: string; amount: number; description: string; date: string; method?: string }): Promise<string | null> => {
     try {
@@ -1602,7 +1692,10 @@ status = 'checked-in',
   // CITY LEDGER - Add a new city ledger account
   const addCityLedgerAccount = async (accountData: any): Promise<boolean> => {
     try {
-      const accountId = `CL${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
+      // Get current count to generate a 4-digit ID (starting at 1001)
+      const countRes = await db.query('SELECT COUNT(*) as count FROM city_ledger_accounts');
+      const count = Number((countRes as any).rows?.[0]?.count || 0);
+      const accountId = String(1001 + count).padStart(4, '0');
 
       const sql = `INSERT INTO city_ledger_accounts(
       id, account_name, type, credit_limit, payment_terms, status, activated_on, contact_name,
@@ -1611,7 +1704,7 @@ status = 'checked-in',
 
       const params = [
         accountId,
-        accountData.name || '',  // Still use accountData.name but insert into account_name column
+        accountData.name || '',
         accountData.type,
         accountData.creditLimit,
         accountData.paymentTerms,
@@ -2690,6 +2783,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       addRoom, updateRoom, deleteRoom, createReservation, updateReservation, savePosOrder, closePosOrder, updateGuest, updateStock,
       checkInGuest, checkOutGuest, updateRoomStatus, addFolioCharge,
       recordFolioCharge, recordFolioPayment, removeFolioCharge,
+      voidFolioCharge, transferFolioCharge,
       bulkUpdateRoomStatus, bulkDeleteRooms, getRoomAudit, revertRoomChange,
       addCityLedgerAccount, updateCityLedgerAccount, addCityLedgerTransaction, addCityLedgerNote,
       addVendor, updateVendor, deleteVendor, addVendorExpense, updateVendorExpense, deleteVendorExpense, voidVendorExpense, payVendor, loadVendorPayments,

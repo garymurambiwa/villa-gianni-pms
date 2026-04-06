@@ -19,7 +19,10 @@ import taxSvc from "@/lib/taxService";
 import { errorTracker } from "@/lib/errorTracker";
 
 const FolioManagement: React.FC = () => {
-  const { guests, rooms, reservations, folioCharges, folios: foliosMetadata } = useData();
+  const { 
+    guests, rooms, reservations, folioCharges, 
+    folios: foliosMetadata, voidFolioCharge, transferFolioCharge 
+  } = useData();
   const { user } = useAuth();
   const { toast } = useToast();
   const [selectedFolio, setSelectedFolio] = useState<Folio | null>(null);
@@ -57,7 +60,7 @@ const FolioManagement: React.FC = () => {
         });
       
       // Calculate actual balance from transactions
-      // Balance = sum of charges - sum of payments (payments are typically negative or marked as payment type)
+      // Balance = sum of charges - sum of payments (excluding voided)
       const charges = guestTransactions
         .filter(t => t.type === 'charge' && !t.voidedBy)
         .reduce((sum, t) => sum + Math.abs(Number(t.amount || 0)), 0);
@@ -72,7 +75,8 @@ const FolioManagement: React.FC = () => {
         roomNumber: guest.roomNumber || "",
         createdAt: new Date(),
         updatedAt: new Date(),
-        balance: computedBalance > 0 ? computedBalance : (guest.folioBalance || 0),
+        // Prioritize actual transaction balance if any transactions exist, otherwise use rate fallback
+        balance: (guestTransactions.length > 0) ? computedBalance : (guest.folioBalance || 0),
         status: "open" as const,
         transactions: guestTransactions,
         paymentMethod: foliosMetadata.find((fm: any) => fm.guest_id === guest.id && fm.status === 'open')?.payment_method
@@ -121,70 +125,33 @@ const FolioManagement: React.FC = () => {
     setSelectedFolio(updatedFolio);
   };
 
-  const handleTransfer = (sourceId: string, targetId: string, txnIds: string[]) => {
-    setFolios(prev => {
-      const sourceIndex = prev.findIndex(f => f.id === sourceId);
-      if (sourceIndex === -1) return prev;
+  const handleTransfer = async (sourceId: string, targetId: string, txnIds: string[]) => {
+    try {
+      const actor = user?.username || 'system';
       
-      const sourceFolio = prev[sourceIndex];
-      const transactionsToTransfer = sourceFolio.transactions.filter(t => txnIds.includes(t.id));
+      // Perform persistent transfers via context
+      const results = await Promise.all(
+        txnIds.map(txnId => transferFolioCharge(txnId, targetId.startsWith('cl:') ? targetId : targetId.replace('folio-', ''), actor))
+      );
       
-      if (transactionsToTransfer.length === 0) return prev;
-
-      const totalAmount = transactionsToTransfer.reduce((sum, t) => sum + Number(t.amount || 0), 0);
-      const now = new Date();
-      const currentUser = user?.username || 'system';
-
-      const transferOutTx: Transaction = {
-        id: `tx-${Date.now()}-tr-out`,
-        folioId: sourceId,
-        amount: -totalAmount,
-        description: `Transfer to ${targetId.startsWith('cl:') ? 'City Ledger' : 'Folio'}`,
-        date: now,
-        type: 'transfer',
-        createdBy: currentUser,
-        authorizationLevel: 'staff'
-      };
-
-      const updatedSourceFolio = {
-        ...sourceFolio,
-        transactions: [...sourceFolio.transactions, transferOutTx],
-        balance: sourceFolio.balance - totalAmount,
-        updatedAt: now
-      };
-
-      const nextFolios = [...prev];
-      nextFolios[sourceIndex] = updatedSourceFolio;
-
-      if (!targetId.startsWith('cl:')) {
-        const targetIndex = nextFolios.findIndex(f => f.id === targetId);
-        if (targetIndex > -1) {
-          const targetFolio = nextFolios[targetIndex];
-          const transferredTxns = transactionsToTransfer.map(t => ({
-            ...t,
-            id: `tx-${Date.now()}-${t.id.substring(0,8)}`,
-            folioId: targetId,
-            description: `${t.description} (From Rm ${sourceFolio.roomNumber})`,
-            date: now
-          }));
-
-          nextFolios[targetIndex] = {
-            ...targetFolio,
-            transactions: [...targetFolio.transactions, ...transferredTxns],
-            balance: targetFolio.balance + totalAmount,
-            updatedAt: now
-          };
-        }
+      const successCount = results.filter(r => r).length;
+      
+      if (successCount > 0) {
+        toast({ 
+          title: "Transfer complete", 
+          description: `${successCount} items transferred successfully.` 
+        });
+      } else {
+        toast({ 
+          title: "Transfer failed", 
+          description: "Could not transfer the requested items.",
+          variant: "destructive"
+        });
       }
-
-      if (selectedFolio?.id === sourceId) {
-        setSelectedFolio(updatedSourceFolio);
-      }
-
-      return nextFolios;
-    });
-    
-    toast({ title: "Transfer complete", description: `${txnIds.length} items transferred.` });
+    } catch (error) {
+      console.error('Transfer error:', error);
+      toast({ title: "Error", description: "An error occurred during transfer.", variant: "destructive" });
+    }
   };
 
   return (
@@ -334,37 +301,19 @@ const FolioManagement: React.FC = () => {
                       const actor = res.user?.username || 'manager';
                       const transactionId = pendingVoid.transactionId;
                       const reason = pendingVoid.reason;
-                      setFolios(prev => {
-                        const f = prev.find(x => x.id === selectedFolio?.id);
-                        if (!f) return prev;
-                        const idx = f.transactions.findIndex(t => t.id === transactionId);
-                        if (idx === -1) return prev;
-                        const target = f.transactions[idx];
-                        if (target.voidedBy) return prev;
-                        const now = new Date();
-                        const updatedTx = { ...target, voidedBy: actor, voidedAt: now, voidReason: reason };
-                        const delta = target.type === 'charge' ? -target.amount : target.type === 'payment' ? target.amount : 0;
-                        const auditVoid = {
-                          id: `audit-${Date.now()}-void`,
-                          folioId: f.id,
-                          amount: 0,
-                          description: `Void ${target.type} ${target.id}: ${reason || 'No reason provided'}`,
-                          date: now,
-                          type: 'void' as const,
-                          createdBy: actor,
-                          authorizationLevel: role as any
-                        };
-                        const updatedFolio: Folio = {
-                          ...f,
-                          transactions: f.transactions.map(t => t.id === transactionId ? updatedTx : t).concat([auditVoid]),
-                          balance: Math.max(0, f.balance + delta),
-                          updatedAt: now
-                        };
-                        const next = prev.map(x => x.id === f.id ? updatedFolio : x);
+                      
+                      // Call persistent void method
+                      const ok_void = await voidFolioCharge(transactionId, reason, actor);
+                      
+                      if (ok_void) {
+                        setOverrideOpen(false);
+                        setOverrideUsername("");
+                        setOverridePassword("");
+                        setPendingVoid(null);
                         toast({ title: 'Transaction voided', description: `Voided by ${actor}`, duration: 1800 });
-                        setSelectedFolio(updatedFolio);
-                        return next;
-                      });
+                      } else {
+                        toast({ title: 'Void failed', description: 'Could not persist void status to database.', variant: 'destructive' });
+                      }
                       setOverrideOpen(false);
                       setOverrideUsername("");
                       setOverridePassword("");
