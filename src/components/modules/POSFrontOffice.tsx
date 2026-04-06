@@ -12,6 +12,7 @@ import { getMenuItems } from '@/lib/posIntegration';
 import { useInactivityTimeout } from '@/hooks/useInactivityTimeout';
 import { PINModal } from '@/components/pos/PINModal';
 import { generateReceiptHTML } from '@/lib/posIntegration';
+import AuthPortal from '@/components/modules/AuthPortal';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -570,13 +571,16 @@ export const POSFrontOffice: React.FC = () => {
     <div className="min-h-screen bg-gray-50">
       <Header />
 
-      {/* When no cost centre selected, show transition message; AuthPortal handles station selection */}
+      {/* When no cost centre selected, show transition message and AuthPortal to handle station selection */}
       {!costCentre && (
-        <div className="flex items-center justify-center py-20">
-          <div className="text-center">
+        <div className="flex flex-col items-center justify-center py-20">
+          <div className="text-center mb-8">
             <div className="text-6xl mb-4">🍽️</div>
             <h2 className="text-2xl font-bold text-gray-800 mb-2">Switching Station</h2>
             <p className="text-gray-500">Please select your new cost centre below.</p>
+          </div>
+          <div className="w-full">
+            <AuthPortal />
           </div>
         </div>
       )}
