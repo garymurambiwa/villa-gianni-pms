@@ -17,18 +17,21 @@ export const HistoricalEntryForm: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
 
-    // Form state
+    // Batch state
     const [selectedPeriod, setSelectedPeriod] = useState<string>('');
-    const [selectedProduct, setSelectedProduct] = useState<string>('');
-    const [qty, setQty] = useState<string>('');
-    const [price, setPrice] = useState<string>('');
-    const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
+    const [lookupQuery, setLookupQuery] = useState('');
+    const [batchEntries, setBatchEntries] = useState<Record<string, { qty: string; price: string; date: string }>>({});
+    const [bulkDate, setBulkDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
     const fetchData = async () => {
         setLoading(true);
         try {
             const pRes = await db.query("SELECT id, name FROM inventory_periods WHERE status != 'closed' ORDER BY end_date DESC");
-            setPeriods(pRes.rows || []);
+            const periodList = pRes.rows || [];
+            setPeriods(periodList);
+            if (periodList.length > 0 && !selectedPeriod) {
+                setSelectedPeriod(periodList[0].id);
+            }
             
             const prodRes = await db.query("SELECT id, name FROM products WHERE is_stock_item = true ORDER BY name ASC");
             setProducts(prodRes.rows || []);
@@ -53,162 +56,238 @@ export const HistoricalEntryForm: React.FC = () => {
         fetchData();
     }, []);
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!selectedPeriod || !selectedProduct || !qty || !date) {
-            toast.error('Please fill all required fields');
+    const updateEntry = (productId: string, field: 'qty' | 'price' | 'date', value: string) => {
+        setBatchEntries(prev => ({
+            ...prev,
+            [productId]: {
+                ...(prev[productId] || { qty: '', price: '', date: bulkDate }),
+                [field]: value
+            }
+        }));
+    };
+
+    const handleBatchSubmit = async () => {
+        if (!selectedPeriod) {
+            toast.error('Please select a target period');
+            return;
+        }
+
+        const entriesToSave = Object.entries(batchEntries).filter(([_, data]) => {
+            return parseFloat(data.qty) > 0;
+        });
+
+        if (entriesToSave.length === 0) {
+            toast.error('No valid entries to save (Qty must be > 0)');
             return;
         }
 
         setSubmitting(true);
         try {
-            const id = uuidv4();
-            const total = parseFloat(qty) * (parseFloat(price) || 0);
-            
-            await db.query(`
-                INSERT INTO inventory_transactions 
-                (id, period_id, product_id, type, quantity, unit_price, total_price, transaction_date, is_audit_backfill, created_by)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            `, [id, selectedPeriod, selectedProduct, 'purchase', parseFloat(qty), parseFloat(price) || 0, total, date, true, user?.id || 'system']);
+            for (const [productId, data] of entriesToSave) {
+                const id = uuidv4();
+                const qtyVal = parseFloat(data.qty);
+                const priceVal = parseFloat(data.price) || 0;
+                const total = qtyVal * priceVal;
+                
+                await db.query(`
+                    INSERT INTO inventory_transactions 
+                    (id, period_id, product_id, type, quantity, unit_price, total_price, transaction_date, is_audit_backfill, created_by)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                `, [id, selectedPeriod, productId, 'purchase', qtyVal, priceVal, total, data.date || bulkDate, true, user?.id || 'system']);
+            }
 
-            toast.success('Historical entry recorded');
-            setQty('');
-            setPrice('');
+            toast.success(`Successfully logged ${entriesToSave.length} entries`);
+            setBatchEntries({});
             fetchData();
         } catch (err: any) {
-            toast.error(err.message || 'Failed to save entry');
+            toast.error(err.message || 'Failed to save entries');
         } finally {
             setSubmitting(false);
         }
     };
 
+    const applyBulkDate = () => {
+        const newEntries = { ...batchEntries };
+        products.forEach(p => {
+            if (newEntries[p.id]) {
+                newEntries[p.id].date = bulkDate;
+            }
+        });
+        setBatchEntries(newEntries);
+        toast.info('Transaction dates updated for active rows');
+    };
+
+    const filteredProducts = products.filter(p => 
+        p.name.toLowerCase().includes(lookupQuery.toLowerCase())
+    );
+
     if (loading) return <div className="flex justify-center py-10"><Loader2 className="h-10 w-10 animate-spin text-blue-500" /></div>;
 
     return (
-        <div className="p-8 max-w-6xl mx-auto space-y-8 animate-in slide-in-from-bottom duration-500">
-            <div className="flex justify-between items-center bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+        <div className="p-8 max-w-[1400px] mx-auto space-y-8 animate-in slide-in-from-bottom duration-500">
+            <div className="flex justify-between items-start bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
                 <div className="flex items-center gap-6">
                     <div className="h-12 w-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
                         <Plus className="text-white h-6 w-6" />
                     </div>
                     <div className="space-y-1">
-                        <h2 className="text-3xl font-black text-slate-800 tracking-tight">Historical Transaction Entry</h2>
-                        <p className="text-slate-400 font-medium">Log purchases for past inventory periods.</p>
+                        <h2 className="text-3xl font-black text-slate-800 tracking-tight">Batch Backfill Entry</h2>
+                        <p className="text-slate-400 font-medium">Log multiple purchases simultaneously across past periods.</p>
                     </div>
                 </div>
-                <Button variant="outline" onClick={() => window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'inventory' } }))} className="rounded-2xl h-12 font-bold bg-slate-50 border-0 hover:bg-slate-100 px-6">
-                    Back to Dashboard
-                </Button>
+                <div className="flex gap-3">
+                    <Button variant="outline" onClick={() => window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'inventory' } }))} className="rounded-2xl h-12 font-bold bg-slate-50 border-0 hover:bg-slate-100 px-6">
+                        Dashboard
+                    </Button>
+                </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <Card className="lg:col-span-1 rounded-[2.5rem] shadow-xl border-t-8 border-t-blue-600">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                {/* Configuration Sidebar */}
+                <Card className="lg:col-span-1 rounded-[2.5rem] shadow-xl border-t-8 border-t-blue-600 h-fit">
                     <CardHeader className="pb-0 pt-8 px-8">
-                        <CardTitle className="text-xl font-black text-slate-800">Add Entry</CardTitle>
+                        <CardTitle className="text-xl font-black text-slate-800">Batch Controls</CardTitle>
                     </CardHeader>
-                    <CardContent className="p-8 pt-6">
-                        <form onSubmit={handleSubmit} className="space-y-6">
-                            <div className="space-y-2">
-                                <label className="text-xs font-black uppercase text-slate-400 flex items-center gap-2">
-                                    <Calendar className="h-3 w-3" /> Target Period
-                                </label>
-                                <Select onValueChange={setSelectedPeriod} value={selectedPeriod}>
-                                    <SelectTrigger className="h-12 rounded-2xl border-2 border-slate-100 focus:border-blue-500 bg-slate-50 font-black">
-                                        <SelectValue placeholder="Select Period..." />
-                                    </SelectTrigger>
-                                    <SelectContent className="rounded-2xl border-2">
-                                        {periods.map(p => <SelectItem key={p.id} value={p.id} className="font-bold py-3">{p.name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                    <CardContent className="p-8 pt-6 space-y-6">
+                        <div className="space-y-2">
+                            <label className="text-xs font-black uppercase text-slate-400 flex items-center gap-2">
+                                <Calendar className="h-3 w-3" /> Target Period
+                            </label>
+                            <Select onValueChange={setSelectedPeriod} value={selectedPeriod}>
+                                <SelectTrigger className="h-12 rounded-2xl border-2 border-slate-100 focus:border-blue-500 bg-slate-50 font-black">
+                                    <SelectValue placeholder="Select Period..." />
+                                </SelectTrigger>
+                                <SelectContent className="rounded-2xl border-2">
+                                    {periods.map(p => <SelectItem key={p.id} value={p.id} className="font-bold py-3">{p.name}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                            <p className="text-[10px] text-slate-400 font-bold px-1 italic">All entries will be assigned to this period.</p>
+                        </div>
 
-                            <div className="space-y-2">
-                                <label className="text-xs font-black uppercase text-slate-400 flex items-center gap-2">
-                                    <Package className="h-3 w-3" /> Product / Item
-                                </label>
-                                <Select onValueChange={setSelectedProduct} value={selectedProduct}>
-                                    <SelectTrigger className="h-12 rounded-2xl border-2 border-slate-100 focus:border-blue-500 bg-slate-50 font-black">
-                                        <SelectValue placeholder="Search Product..." />
-                                    </SelectTrigger>
-                                    <SelectContent className="rounded-2xl border-2">
-                                        {products.map(p => <SelectItem key={p.id} value={p.id} className="font-bold py-3">{p.name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                    <label className="text-xs font-black uppercase text-slate-400">Qty Received</label>
-                                    <Input 
-                                        type="number" 
-                                        value={qty} 
-                                        onChange={(e) => setQty(e.target.value)} 
-                                        placeholder="0.00"
-                                        className="h-12 rounded-2xl border-2 border-slate-100 font-black text-center"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-xs font-black uppercase text-slate-400">Unit Cost</label>
-                                    <Input 
-                                        type="number" 
-                                        value={price} 
-                                        onChange={(e) => setPrice(e.target.value)} 
-                                        placeholder="0.00"
-                                        className="h-12 rounded-2xl border-2 border-slate-100 font-black text-center"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="space-y-2">
-                                <label className="text-xs font-black uppercase text-slate-400">Transaction Date</label>
+                        <div className="space-y-2">
+                            <label className="text-xs font-black uppercase text-slate-400 flex items-center gap-2">
+                                <Calendar className="h-3 w-3" /> Default Transaction Date
+                            </label>
+                            <div className="flex gap-2">
                                 <Input 
                                     type="date" 
-                                    value={date} 
-                                    onChange={(e) => setDate(e.target.value)} 
+                                    value={bulkDate} 
+                                    onChange={(e) => setBulkDate(e.target.value)} 
                                     className="h-12 rounded-2xl border-2 border-slate-100 font-black"
                                 />
+                                <Button onClick={applyBulkDate} variant="outline" className="h-12 w-12 rounded-2xl border-2" title="Apply to active rows">
+                                    <Edit3 className="h-4 w-4" />
+                                </Button>
                             </div>
+                        </div>
 
-                            <Button disabled={submitting} className="w-full h-14 rounded-2xl font-black text-lg bg-blue-600 hover:bg-blue-700 shadow-lg mt-4 uppercase tracking-wider">
-                                {submitting ? <Loader2 className="animate-spin h-5 w-5 mr-2" /> : 'Log Entry'}
+                        <div className="pt-4 border-t border-slate-100">
+                            <Button 
+                                disabled={submitting} 
+                                onClick={handleBatchSubmit}
+                                className="w-full h-14 rounded-2xl font-black text-lg bg-blue-600 hover:bg-blue-700 shadow-lg uppercase tracking-wider"
+                            >
+                                {submitting ? <Loader2 className="animate-spin h-5 w-5 mr-2" /> : 'Save All Entries'}
                             </Button>
-                        </form>
+                            <p className="text-[10px] text-center mt-3 font-bold text-slate-400 uppercase tracking-widest">
+                                {Object.values(batchEntries).filter(e => parseFloat(e.qty) > 0).length} Ready to Save
+                            </p>
+                        </div>
                     </CardContent>
                 </Card>
 
-                <div className="lg:col-span-2 space-y-6">
-                    <Card className="rounded-[2.5rem] shadow-xl overflow-hidden min-h-[500px]">
-                        <CardHeader className="bg-slate-50 border-b border-white p-8">
-                            <CardTitle className="text-xl font-black text-slate-800">Recent Audit Entries</CardTitle>
+                {/* Main Product Table */}
+                <div className="lg:col-span-3 space-y-6">
+                    <Card className="rounded-[2.5rem] shadow-xl overflow-hidden min-h-[600px] border-none">
+                        <CardHeader className="bg-slate-50 border-b border-white p-6 flex flex-row items-center justify-between">
+                            <CardTitle className="text-xl font-black text-slate-800">Product List</CardTitle>
+                            <div className="relative w-64">
+                                <Package className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                                <Input 
+                                    placeholder="Search products..." 
+                                    value={lookupQuery}
+                                    onChange={(e) => setLookupQuery(e.target.value)}
+                                    className="pl-10 h-10 rounded-xl border-slate-200 bg-white font-bold"
+                                />
+                            </div>
                         </CardHeader>
                         <CardContent className="p-0">
-                            <div className="divide-y divide-slate-100">
-                                {transactions.map(t => (
-                                    <div key={t.id} className="p-6 hover:bg-slate-50 transition-colors flex justify-between items-center group">
-                                        <div className="flex gap-4">
-                                            <div className="h-12 w-12 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-slate-100 group-hover:border-blue-200 transition-colors">
-                                                <DollarSign className="text-blue-500 h-5 w-5" />
-                                            </div>
-                                            <div className="space-y-1">
-                                                <div className="text-lg font-black text-slate-800">{t.product_name}</div>
-                                                <div className="flex gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                                                    <span>{t.period_name}</span>
-                                                    <span>•</span>
-                                                    <span className="text-blue-500">{t.quantity} Units</span>
-                                                    <span>•</span>
-                                                    <span>{new Date(t.transaction_date).toLocaleDateString()}</span>
-                                                </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left">
+                                    <thead className="bg-slate-100/50 text-[10px] uppercase font-black tracking-widest text-slate-400 border-b">
+                                        <tr>
+                                            <th className="px-6 py-4">Product Name</th>
+                                            <th className="px-6 py-4 w-32 text-center">Qty Received</th>
+                                            <th className="px-6 py-4 w-32 text-center">Unit Cost</th>
+                                            <th className="px-6 py-4 w-44 text-center">Transaction Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {filteredProducts.map(p => {
+                                            const data = batchEntries[p.id] || { qty: '', price: '', date: bulkDate };
+                                            return (
+                                                <tr key={p.id} className={`hover:bg-blue-50/30 transition-colors ${parseFloat(data.qty) > 0 ? 'bg-blue-50/50' : ''}`}>
+                                                    <td className="px-6 py-4 font-black text-slate-700">{p.name}</td>
+                                                    <td className="px-6 py-4">
+                                                        <Input 
+                                                            type="number" 
+                                                            placeholder="0"
+                                                            value={data.qty}
+                                                            onChange={(e) => updateEntry(p.id, 'qty', e.target.value)}
+                                                            className="h-10 text-center font-black rounded-lg border-slate-200 focus:border-blue-500"
+                                                        />
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <Input 
+                                                            type="number" 
+                                                            placeholder="0.00"
+                                                            value={data.price}
+                                                            onChange={(e) => updateEntry(p.id, 'price', e.target.value)}
+                                                            className="h-10 text-center font-black rounded-lg border-slate-200 focus:border-blue-500"
+                                                        />
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <Input 
+                                                            type="date" 
+                                                            value={data.date || bulkDate}
+                                                            onChange={(e) => updateEntry(p.id, 'date', e.target.value)}
+                                                            className="h-10 text-sm font-bold rounded-lg border-slate-200 focus:border-blue-500"
+                                                        />
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                        {filteredProducts.length === 0 && (
+                                            <tr>
+                                                <td colSpan={4} className="py-20 text-center text-slate-300 font-bold uppercase tracking-widest text-xs">
+                                                    No products found matching "{lookupQuery}"
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* History Section (Optional/Recent) */}
+                    <Card className="rounded-[2.5rem] shadow-lg overflow-hidden border-none bg-slate-50/50">
+                        <CardHeader className="p-8 pb-4">
+                            <CardTitle className="text-lg font-black text-slate-800">Recent Audit History</CardTitle>
+                        </CardHeader>
+                        <CardContent className="px-8 pb-8">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {transactions.slice(0, 6).map(t => (
+                                    <div key={t.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex justify-between items-center">
+                                        <div className="space-y-0.5">
+                                            <div className="text-sm font-black text-slate-800">{t.product_name}</div>
+                                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                                                {t.quantity} Units • ${Number(t.total_price).toFixed(2)} • {new Date(t.transaction_date).toLocaleDateString()}
                                             </div>
                                         </div>
-                                        <div className="text-right">
-                                            <div className="text-lg font-black text-slate-900">${Number(t.total_price).toFixed(2)}</div>
-                                            <div className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-black uppercase tracking-widest inline-block">AUDIT_BACKFILL</div>
-                                        </div>
+                                        <Badge variant="outline" className="text-[9px] h-5 bg-blue-100/50 text-blue-600 border-none font-black">LOGGED</Badge>
                                     </div>
                                 ))}
-                                {transactions.length === 0 && (
-                                    <div className="py-20 text-center text-slate-300 font-bold uppercase tracking-widest">No backfilled entries found.</div>
-                                )}
                             </div>
                         </CardContent>
                     </Card>
