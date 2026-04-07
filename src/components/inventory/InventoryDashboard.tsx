@@ -5,14 +5,17 @@ import { Badge } from '@/components/ui/badge';
 import { InventoryService, InventoryPeriod } from '@/lib/InventoryService';
 import { db } from '@/lib/db';
 import { toast } from 'sonner';
-import { Loader2, Plus, History, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Loader2, Plus, History, CheckCircle2, AlertCircle, Lock } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useAuth } from '@/context/AuthContext';
 
 export const InventoryDashboard: React.FC = () => {
+  const { user } = useAuth();
   const [periods, setPeriods] = useState<InventoryPeriod[]>([]);
   const [loading, setLoading] = useState(true);
+  const [closingPeriodId, setClosingPeriodId] = useState<string | null>(null);
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newPeriodName, setNewPeriodName] = useState('');
@@ -136,6 +139,33 @@ export const InventoryDashboard: React.FC = () => {
                   >
                     🔍 {period.status === 'closed' ? 'Review Reconciliation' : 'Reconcile Period'}
                   </Button>
+                  {period.status !== 'closed' && (
+                    <Button 
+                      variant="destructive" 
+                      className="w-full justify-start font-bold h-11"
+                      disabled={closingPeriodId === period.id}
+                      onClick={async () => {
+                        if (!confirm(`Are you sure you want to close period "${period.name}"? This action will finalize stock levels and cannot be undone.`)) return;
+                        setClosingPeriodId(period.id);
+                        try {
+                          const res = await InventoryService.closePeriod(period.id, user?.id || 'system');
+                          if (res.success) {
+                            toast.success(`Period "${period.name}" closed successfully`);
+                            fetchPeriods();
+                          } else {
+                            toast.error(res.error || 'Failed to close period');
+                          }
+                        } catch (err: any) {
+                          toast.error(err.message || 'Error closing period');
+                        } finally {
+                          setClosingPeriodId(null);
+                        }
+                      }}
+                    >
+                      {closingPeriodId === period.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Lock className="mr-2 h-4 w-4" />}
+                      Close Period
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
