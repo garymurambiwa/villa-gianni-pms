@@ -1847,6 +1847,74 @@ status = 'checked-in',
     }
   };
 
+  // CITY LEDGER - Delete a transaction
+  const deleteCityLedgerTransaction = async (accountId: string, transactionId: string | number): Promise<boolean> => {
+    try {
+      // If it's an ID from the table (TX...), use DELETE
+      if (typeof transactionId === 'string' && transactionId.startsWith('TX')) {
+        await db.query('DELETE FROM city_ledger_transactions WHERE id = ?', [transactionId]);
+      } else {
+        // Fallback or handle differently if needed
+        console.warn('Delete transaction: expected transaction ID starting with TX');
+      }
+      await loadCityLedger();
+      return true;
+    } catch (e) {
+      console.error('Delete city ledger txn error:', e);
+      return false;
+    }
+  };
+
+  // CITY LEDGER - Void a transaction (keep record but zero amounts)
+  const voidCityLedgerTransaction = async (accountId: string, transactionId: string | number): Promise<boolean> => {
+    try {
+      if (typeof transactionId === 'string' && transactionId.startsWith('TX')) {
+        await db.query(`
+          UPDATE city_ledger_transactions 
+          SET debit = 0, credit = 0, description = description || ' (VOIDED)', transaction_type = 'voided'
+          WHERE id = ?
+        `, [transactionId]);
+      }
+      await loadCityLedger();
+      return true;
+    } catch (e) {
+      console.error('Void city ledger txn error:', e);
+      return false;
+    }
+  };
+
+  // CITY LEDGER - Transfer a transaction to a guest folio
+  const transferCityLedgerToGuest = async (accountId: string, transactionId: string, guestId: string): Promise<boolean> => {
+    try {
+      // 1. Fetch the transaction details
+      const txnRes = await db.query('SELECT * FROM city_ledger_transactions WHERE id = ?', [transactionId]);
+      if (!('rows' in txnRes) || txnRes.rows.length === 0) return false;
+      const txn = txnRes.rows[0];
+
+      // 2. Create the folio charge
+      const amount = Number(txn.debit || txn.credit || 0);
+      const description = `Transfer from AR: ${txn.description} (${txn.reference || ''})`;
+      
+      // We use recordFolioCharge if it exists.
+      if (typeof recordFolioCharge === 'function') {
+        await recordFolioCharge(guestId, {
+          amount,
+          description,
+          code: 'TRANS-AR',
+          date: new Date().toISOString()
+        });
+      }
+
+      // 3. Void the City Ledger transaction
+      await voidCityLedgerTransaction(accountId, transactionId);
+      
+      return true;
+    } catch (e) {
+      console.error('Transfer City Ledger to Guest error:', e);
+      return false;
+    }
+  };
+
   // CHECK - Ensure POS tables exist
   const ensurePosTables = async () => {
     try {
@@ -2785,7 +2853,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       recordFolioCharge, recordFolioPayment, removeFolioCharge,
       voidFolioCharge, transferFolioCharge,
       bulkUpdateRoomStatus, bulkDeleteRooms, getRoomAudit, revertRoomChange,
-      addCityLedgerAccount, updateCityLedgerAccount, addCityLedgerTransaction, addCityLedgerNote,
+      addCityLedgerAccount, updateCityLedgerAccount, addCityLedgerTransaction, addCityLedgerNote, deleteCityLedgerTransaction, voidCityLedgerTransaction, transferCityLedgerToGuest,
       addVendor, updateVendor, deleteVendor, addVendorExpense, updateVendorExpense, deleteVendorExpense, voidVendorExpense, payVendor, loadVendorPayments,
       addUser, // Add user management function
       users, loadUsers,

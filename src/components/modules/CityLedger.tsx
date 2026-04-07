@@ -6,7 +6,11 @@ import { useAuth } from '../../context/AuthContext';
 import { printDocument, generateCityLedgerReceiptHTML } from '../../lib/posIntegration';
 
 export const CityLedger: React.FC = () => {
-  const { cityLedger, addCityLedgerAccount, updateCityLedgerAccount, addCityLedgerTransaction, addCityLedgerNote } = useData();
+  const { 
+    cityLedger, guests, reservations, addCityLedgerAccount, updateCityLedgerAccount, 
+    addCityLedgerTransaction, addCityLedgerNote, deleteCityLedgerTransaction, voidCityLedgerTransaction,
+    transferCityLedgerToGuest 
+  } = useData();
   const { user } = useAuth();
   const canExport = !!user && (user.role === 'admin' || user.role === 'auditor');
   const [showNewForm, setShowNewForm] = useState(false);
@@ -40,6 +44,10 @@ export const CityLedger: React.FC = () => {
     paymentTerms: '',
     creditLimit: ''
   });
+  // Transfer State
+  const [transferTxn, setTransferTxn] = useState<{accountId: string, txnId: string} | null>(null);
+  const [targetGuestId, setTargetGuestId] = useState<string>('');
+  
   const resetTxnForm = () => setTxnForm({ date: new Date().toISOString().slice(0, 10), reference: '', description: '', amount: '' });
   const computeAging = (account: any) => {
     if (!account) return { current: 0, d30: 0, d60: 0, d90: 0, total: 0 };
@@ -504,18 +512,73 @@ export const CityLedger: React.FC = () => {
                       <th className="px-2 py-2 text-left">Description</th>
                       <th className="px-2 py-2 text-right">Debit</th>
                       <th className="px-2 py-2 text-right">Credit</th>
+                      <th className="px-2 py-2 text-center">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {(account.transactions || []).map((t, idx) => (
-                      <tr key={idx}>
-                        <td className="px-2 py-2">{typeof t.date === 'object' && t.date instanceof Date ? t.date.toISOString().split('T')[0] : t.date}</td>
-                        <td className="px-2 py-2">{t.reference || '-'}</td>
-                        <td className="px-2 py-2">{t.description}</td>
-                        <td className="px-2 py-2 text-right">{t.debit != null && t.debit !== '' ? `$${Number(t.debit).toFixed(2)}` : '-'}</td>
-                        <td className="px-2 py-2 text-right">{t.credit != null && t.credit !== '' ? `$${Number(t.credit).toFixed(2)}` : '-'}</td>
-                      </tr>
-                    ))}
+                    {(account.transactions || []).map((t, idx) => {
+                      // Shorten reference and resolve names
+                      const rawRef = String(t.reference || '-');
+                      const displayRef = rawRef.length > 4 ? `...${rawRef.slice(-4)}` : rawRef;
+                      
+                      let resolvedName = '';
+                      if (rawRef.toLowerCase().includes('folio-')) {
+                        const gid = rawRef.split('folio-')[1];
+                        const g = guests.find((x: any) => x.id === gid);
+                        if (g) resolvedName = ` (${g.name || g.full_name})`;
+                      }
+
+                      return (
+                        <tr key={idx} className={t.is_voided ? 'opacity-50 line-through bg-gray-50' : ''}>
+                          <td className="px-2 py-2 whitespace-nowrap">{typeof t.date === 'object' && t.date instanceof Date ? t.date.toISOString().split('T')[0] : t.date}</td>
+                          <td className="px-2 py-2 font-mono text-xs" title={rawRef}>
+                            {displayRef}{resolvedName}
+                          </td>
+                          <td className="px-2 py-2">{t.description}</td>
+                          <td className="px-2 py-2 text-right">{t.debit != null && t.debit !== '' ? `$${Number(t.debit).toFixed(2)}` : '-'}</td>
+                          <td className="px-2 py-2 text-right">{t.credit != null && t.credit !== '' ? `$${Number(t.credit).toFixed(2)}` : '-'}</td>
+                          <td className="px-2 py-2 text-center">
+                            <div className="flex justify-center gap-1">
+                              {!t.is_voided && (
+                                <button 
+                                  className="text-amber-600 hover:text-amber-800 p-1" 
+                                  title="Void Transaction"
+                                  onClick={() => {
+                                    if (confirm('Void this transaction? It will be zeroed out but remain in history.')) {
+                                      voidCityLedgerTransaction?.(account.id, t.id || idx);
+                                    }
+                                  }}
+                                >
+                                  Void
+                                </button>
+                              )}
+                              {!t.is_voided && (
+                                <button 
+                                  className="text-blue-600 hover:text-blue-800 p-1" 
+                                  title="Transfer to Guest Folio"
+                                  onClick={() => {
+                                    setTransferTxn({ accountId: account.id, txnId: t.id });
+                                  }}
+                                >
+                                  Transfer
+                                </button>
+                              )}
+                              <button 
+                                className="text-red-600 hover:text-red-800 p-1" 
+                                title="Delete Permanently"
+                                onClick={() => {
+                                  if (confirm('Permanently delete this transaction log? This cannot be undone.')) {
+                                    deleteCityLedgerTransaction?.(account.id, t.id || idx);
+                                  }
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -559,6 +622,62 @@ export const CityLedger: React.FC = () => {
         ))}
       </div>
 
+      {/* Transfer to Guest Modal */}
+      {transferTxn && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-bold mb-4">Transfer to Guest Folio</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Select an in-house guest to transfer this charge to.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Select Guest</label>
+                <select 
+                  className="w-full px-3 py-2 border rounded"
+                  value={targetGuestId}
+                  title="Select Guest"
+                  onChange={(e) => setTargetGuestId(e.target.value)}
+                >
+                  <option value="">-- Select Guest --</option>
+                  {reservations
+                    .filter((r: any) => r.status === 'in_house' || r.status === 'Checked In')
+                    .map((r: any) => (
+                      <option key={r.id} value={r.guest_id || r.id}>
+                        {r.roomNumber || r.room_id} - {r.guestName}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div className="flex gap-2 justify-end mt-6">
+                <button 
+                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded" 
+                  onClick={() => { setTransferTxn(null); setTargetGuestId(''); }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                  disabled={!targetGuestId}
+                  onClick={async () => {
+                    if (!targetGuestId || !transferTxn) return;
+                    const success = await transferCityLedgerToGuest?.(transferTxn.accountId, transferTxn.txnId, targetGuestId);
+                    if (success) {
+                      setTransferTxn(null);
+                      setTargetGuestId('');
+                    } else {
+                      alert('Transfer failed. Please check if the guest exists.');
+                    }
+                  }}
+                >
+                  Confirm Transfer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl shadow-lg p-6">
         <h3 className="text-xl font-bold text-gray-800 mb-4">AR Aging Report</h3>
         <table className="w-full">
@@ -577,7 +696,7 @@ export const CityLedger: React.FC = () => {
               const aging = computeAging(account);
               return (
                 <tr key={account.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm text-gray-800">{account.name}</td>
+                  <td className="px-4 py-3 text-sm text-gray-800">{account.account_name || account.name || account.id}</td>
                   <td className="px-4 py-3 text-sm text-right text-gray-600">${Number(aging.current).toFixed(2)}</td>
                   <td className="px-4 py-3 text-sm text-right text-gray-600">${Number(aging.d30).toFixed(2)}</td>
                   <td className="px-4 py-3 text-sm text-right text-gray-600">${Number(aging.d60).toFixed(2)}</td>

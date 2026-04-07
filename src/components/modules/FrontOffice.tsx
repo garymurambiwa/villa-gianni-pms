@@ -79,8 +79,12 @@ export const FrontOffice: React.FC = () => {
 
   // Assign Room State (for in-house guests with no room)
   const [assignRoomDialogOpen, setAssignRoomDialogOpen] = useState(false);
-  const [assignRoomResId, setAssignRoomResId] = useState<string | null>(null);
   const [assignRoomSelected, setAssignRoomSelected] = useState<string | null>(null);
+  
+  // Extend Stay State
+  const [extendStayResId, setExtendStayResId] = useState<string | null>(null);
+  const [extendStayDate, setExtendStayDate] = useState<string>('');
+  const [extendStayDialogOpen, setExtendStayDialogOpen] = useState(false);
 
   // Check-in state
   const [rateOverride, setRateOverride] = useState<string>('');
@@ -1261,6 +1265,19 @@ export const FrontOffice: React.FC = () => {
                               <Button variant="outline" size="sm" title="Transfer Room" onClick={() => handleTransferClick(res.id, res.room_id)}>
                                 <ArrowRightLeft className="h-4 w-4" />
                               </Button>
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="text-emerald-600 border-emerald-300 hover:bg-emerald-50"
+                                title="Extend Stay" 
+                                onClick={() => {
+                                  setExtendStayResId(res.id);
+                                  setExtendStayDate(res.checkOut);
+                                  setExtendStayDialogOpen(true);
+                                }}
+                              >
+                                Extend
+                              </Button>
                               <Button variant="destructive" size="sm" onClick={() => handleCheckOut(res.id)}>
                                 <UserX className="mr-2 h-4 w-4" />
                                 Check Out
@@ -1384,6 +1401,108 @@ export const FrontOffice: React.FC = () => {
           <FolioManagement />
         </TabsContent>
       </Tabs>
+
+      <Dialog open={extendStayDialogOpen} onOpenChange={setExtendStayDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Extend Guest Stay</DialogTitle>
+            <DialogDescription>
+              Select the new departure date for this guest.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="new-checkout" className="text-right">
+                New Check-out
+              </Label>
+              <Input
+                id="new-checkout"
+                type="date"
+                className="col-span-3"
+                value={extendStayDate}
+                min={format(addDays(new Date(), 1), 'yyyy-MM-dd')}
+                onChange={(e) => setExtendStayDate(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExtendStayDialogOpen(false)}>Cancel</Button>
+            <Button 
+              onClick={async () => {
+                if (!extendStayResId || !extendStayDate) return;
+                const res = reservations.find(r => r.id === extendStayResId);
+                if (!res) return;
+                
+                try {
+                  const success = await ctx.updateReservation(extendStayResId, {
+                    ...res,
+                    checkOut: extendStayDate
+                  });
+                  if (success) {
+                    toast.success('Stay extended successfully');
+                    setExtendStayDialogOpen(false);
+                  }
+                } catch (err) {
+                  toast.error('Failed to extend stay');
+                }
+              }}
+            >
+              Update Departure
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={extendStayDialogOpen} onOpenChange={setExtendStayDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Extend Guest Stay</DialogTitle>
+            <DialogDescription>
+              Select the new departure date for this guest.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="new-checkout" className="text-right">
+                New Check-out
+              </Label>
+              <Input
+                id="new-checkout"
+                type="date"
+                className="col-span-3"
+                value={extendStayDate}
+                min={format(addDays(new Date(), 1), 'yyyy-MM-dd')}
+                onChange={(e) => setExtendStayDate(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExtendStayDialogOpen(false)}>Cancel</Button>
+            <Button 
+              onClick={async () => {
+                if (!extendStayResId || !extendStayDate) return;
+                const res = reservations.find(r => r.id === extendStayResId);
+                if (!res) return;
+                
+                try {
+                  const success = await ctx.updateReservation(extendStayResId, {
+                    ...res,
+                    checkOut: extendStayDate
+                  });
+                  if (success) {
+                    toast.success('Stay extended successfully');
+                    setExtendStayDialogOpen(false);
+                  }
+                } catch (err) {
+                  toast.error('Failed to extend stay');
+                }
+              }}
+            >
+              Update Departure
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={roomStatusDialogOpen} onOpenChange={setRoomStatusDialogOpen}>
         <DialogContent className="sm:max-w-[600px]">
