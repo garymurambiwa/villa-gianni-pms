@@ -6,10 +6,19 @@ import { InventoryService, InventoryPeriod } from '@/lib/InventoryService';
 import { db } from '@/lib/db';
 import { toast } from 'sonner';
 import { Loader2, Plus, History, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 export const InventoryDashboard: React.FC = () => {
   const [periods, setPeriods] = useState<InventoryPeriod[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [newPeriodName, setNewPeriodName] = useState('');
+  const [newPeriodStart, setNewPeriodStart] = useState(new Date().toISOString().split('T')[0]);
+  const [newPeriodEnd, setNewPeriodEnd] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
 
   const fetchPeriods = async () => {
     setLoading(true);
@@ -30,18 +39,27 @@ export const InventoryDashboard: React.FC = () => {
   }, []);
 
   const handleStartPeriod = async () => {
-    const name = prompt('Period Name (e.g. Jan 2025):');
-    const startStr = prompt('Start Date (YYYY-MM-DD):');
-    const endStr = prompt('End Date (YYYY-MM-DD):');
+    if (!newPeriodName.trim() || !newPeriodStart || !newPeriodEnd) {
+      toast.error('Please fill in all fields (Name, Start Date, End Date)');
+      return;
+    }
     
-    if (!name || !startStr || !endStr) return;
-
-    const res = await InventoryService.startPeriod(name, startStr, endStr);
-    if (res.success) {
-      toast.success('Period started successfully');
-      fetchPeriods();
-    } else {
-      toast.error(res.error || 'Failed to start period');
+    setIsCreating(true);
+    try {
+      const res = await InventoryService.startPeriod(newPeriodName.trim(), newPeriodStart, newPeriodEnd);
+      if (res.success) {
+        toast.success('Period started successfully');
+        setShowCreateDialog(false);
+        setNewPeriodName('');
+        setNewPeriodEnd('');
+        fetchPeriods();
+      } else {
+        toast.error(res.error || 'Failed to start period');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Error creating period');
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -66,7 +84,7 @@ export const InventoryDashboard: React.FC = () => {
             <History className="mr-2 h-5 w-5" />
             Refresh
           </Button>
-          <Button onClick={handleStartPeriod} className="h-12 px-6 shadow-xl bg-blue-600 hover:bg-blue-700 font-bold">
+          <Button onClick={() => setShowCreateDialog(true)} className="h-12 px-6 shadow-xl bg-blue-600 hover:bg-blue-700 font-bold">
             <Plus className="mr-2 h-5 w-5" />
             New Period
           </Button>
@@ -127,13 +145,64 @@ export const InventoryDashboard: React.FC = () => {
               <div className="text-6xl grayscale opacity-50">📦</div>
               <h3 className="text-xl font-bold text-slate-600">No inventory periods found</h3>
               <p className="text-slate-400">Start by creating your first accounting period above.</p>
-              <Button onClick={handleStartPeriod} variant="outline" className="mt-4 border-2 font-bold px-8">
+              <Button onClick={() => setShowCreateDialog(true)} variant="outline" className="mt-4 border-2 font-bold px-8">
                 Initialize Module
               </Button>
             </div>
           )}
         </div>
       )}
+
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+        <DialogContent className="sm:max-w-[425px] rounded-3xl">
+          <DialogHeader>
+            <DialogTitle>Create New Period</DialogTitle>
+            <DialogDescription>
+              Start a new inventory reconciliation period. Ensure your dates do not overlap with existing open periods.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="period-name">Period Name</Label>
+              <Input 
+                id="period-name" 
+                placeholder="e.g. Jan 2026" 
+                value={newPeriodName}
+                onChange={(e) => setNewPeriodName(e.target.value)}
+                className="font-bold border-slate-200 focus-visible:ring-blue-600"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="start-date">Start Date</Label>
+                <Input 
+                  id="start-date" 
+                  type="date"
+                  value={newPeriodStart}
+                  onChange={(e) => setNewPeriodStart(e.target.value)}
+                  className="font-bold border-slate-200 focus-visible:ring-blue-600"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="end-date">End Date</Label>
+                <Input 
+                  id="end-date" 
+                  type="date"
+                  value={newPeriodEnd}
+                  onChange={(e) => setNewPeriodEnd(e.target.value)}
+                  className="font-bold border-slate-200 focus-visible:ring-blue-600"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateDialog(false)} className="rounded-xl font-bold">Cancel</Button>
+            <Button onClick={handleStartPeriod} disabled={isCreating} className="rounded-xl bg-blue-600 hover:bg-blue-700 font-bold min-w-[100px]">
+              {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Create'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

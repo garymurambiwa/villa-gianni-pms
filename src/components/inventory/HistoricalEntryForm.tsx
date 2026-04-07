@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { db } from '@/lib/db';
 import { v4 as uuidv4 } from 'uuid';
 import { toast } from 'sonner';
-import { Loader2, Plus, Calendar, Package, DollarSign, Edit3, Trash2 } from 'lucide-react';
+import { Loader2, Plus, Calendar, Package, DollarSign, Edit3, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -20,6 +20,9 @@ export const HistoricalEntryForm: React.FC = () => {
     // Batch state
     const [selectedPeriod, setSelectedPeriod] = useState<string>('');
     const [lookupQuery, setLookupQuery] = useState('');
+    const [departmentFilter, setDepartmentFilter] = useState('All');
+    const [currentPage, setCurrentPage] = useState(1);
+    const [itemsPerPage, setItemsPerPage] = useState<string>('20');
     const [batchEntries, setBatchEntries] = useState<Record<string, { qty: string; price: string; date: string }>>({});
     const [bulkDate, setBulkDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
@@ -33,7 +36,7 @@ export const HistoricalEntryForm: React.FC = () => {
                 setSelectedPeriod(periodList[0].id);
             }
             
-            const prodRes = await db.query("SELECT id, name FROM products WHERE is_stock_item = true ORDER BY name ASC");
+            const prodRes = await db.query("SELECT id, name, bar_visibility, restaurant_visibility FROM products WHERE is_stock_item = true ORDER BY name ASC");
             setProducts(prodRes.rows || []);
 
             const transRes = await db.query(`
@@ -108,18 +111,39 @@ export const HistoricalEntryForm: React.FC = () => {
 
     const applyBulkDate = () => {
         const newEntries = { ...batchEntries };
-        products.forEach(p => {
+        paginatedProducts.forEach(p => {
             if (newEntries[p.id]) {
                 newEntries[p.id].date = bulkDate;
             }
         });
         setBatchEntries(newEntries);
-        toast.info('Transaction dates updated for active rows');
+        toast.info('Transaction dates updated for current page');
     };
 
-    const filteredProducts = products.filter(p => 
+    // Filter Logic
+    let filteredProducts = products.filter(p => 
         p.name.toLowerCase().includes(lookupQuery.toLowerCase())
     );
+
+    if (departmentFilter === 'Bar') {
+        filteredProducts = filteredProducts.filter(p => p.bar_visibility);
+    } else if (departmentFilter === 'Restaurant') {
+        filteredProducts = filteredProducts.filter(p => p.restaurant_visibility);
+    }
+
+    // Pagination Logic
+    const parsedItemsPerPage = itemsPerPage === 'All' ? filteredProducts.length : parseInt(itemsPerPage, 10) || 20;
+    const totalPages = Math.max(1, Math.ceil(filteredProducts.length / parsedItemsPerPage));
+    const safeCurrentPage = Math.min(currentPage, totalPages);
+    
+    // Reset page if filters change
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [lookupQuery, departmentFilter, itemsPerPage]);
+
+    const paginatedProducts = itemsPerPage === 'All' 
+        ? filteredProducts 
+        : filteredProducts.slice((safeCurrentPage - 1) * parsedItemsPerPage, safeCurrentPage * parsedItemsPerPage);
 
     if (loading) return <div className="flex justify-center py-10"><Loader2 className="h-10 w-10 animate-spin text-blue-500" /></div>;
 
@@ -199,20 +223,32 @@ export const HistoricalEntryForm: React.FC = () => {
                 {/* Main Product Table */}
                 <div className="lg:col-span-3 space-y-6">
                     <Card className="rounded-[2.5rem] shadow-xl overflow-hidden min-h-[600px] border-none">
-                        <CardHeader className="bg-slate-50 border-b border-white p-6 flex flex-row items-center justify-between">
+                        <CardHeader className="bg-slate-50 border-b border-white p-6 flex flex-col lg:flex-row items-center justify-between gap-4">
                             <CardTitle className="text-xl font-black text-slate-800">Product List</CardTitle>
-                            <div className="relative w-64">
-                                <Package className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                                <Input 
-                                    placeholder="Search products..." 
-                                    value={lookupQuery}
-                                    onChange={(e) => setLookupQuery(e.target.value)}
-                                    className="pl-10 h-10 rounded-xl border-slate-200 bg-white font-bold"
-                                />
+                            <div className="flex gap-3 w-full lg:w-auto">
+                                <Select onValueChange={setDepartmentFilter} value={departmentFilter}>
+                                    <SelectTrigger className="w-[160px] h-10 rounded-xl border-slate-200 bg-white font-bold">
+                                        <SelectValue placeholder="Location" />
+                                    </SelectTrigger>
+                                    <SelectContent className="rounded-xl font-bold">
+                                        <SelectItem value="All">All Locations</SelectItem>
+                                        <SelectItem value="Bar">Bar Only</SelectItem>
+                                        <SelectItem value="Restaurant">Restaurant Only</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <div className="relative flex-1 lg:w-64">
+                                    <Package className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                                    <Input 
+                                        placeholder="Search products..." 
+                                        value={lookupQuery}
+                                        onChange={(e) => setLookupQuery(e.target.value)}
+                                        className="pl-10 h-10 rounded-xl border-slate-200 bg-white font-bold w-full"
+                                    />
+                                </div>
                             </div>
                         </CardHeader>
                         <CardContent className="p-0">
-                            <div className="overflow-x-auto">
+                            <div className="overflow-x-auto min-h-[400px]">
                                 <table className="w-full text-left">
                                     <thead className="bg-slate-100/50 text-[10px] uppercase font-black tracking-widest text-slate-400 border-b">
                                         <tr>
@@ -223,7 +259,7 @@ export const HistoricalEntryForm: React.FC = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-50">
-                                        {filteredProducts.map(p => {
+                                        {paginatedProducts.map(p => {
                                             const data = batchEntries[p.id] || { qty: '', price: '', date: bulkDate };
                                             return (
                                                 <tr key={p.id} className={`hover:bg-blue-50/30 transition-colors ${parseFloat(data.qty) > 0 ? 'bg-blue-50/50' : ''}`}>
@@ -257,15 +293,59 @@ export const HistoricalEntryForm: React.FC = () => {
                                                 </tr>
                                             );
                                         })}
-                                        {filteredProducts.length === 0 && (
+                                        {paginatedProducts.length === 0 && (
                                             <tr>
                                                 <td colSpan={4} className="py-20 text-center text-slate-300 font-bold uppercase tracking-widest text-xs">
-                                                    No products found matching "{lookupQuery}"
+                                                    No products found matching filters.
                                                 </td>
                                             </tr>
                                         )}
                                     </tbody>
                                 </table>
+                            </div>
+                            
+                            {/* Pagination Controls */}
+                            <div className="flex items-center justify-between p-4 border-t border-slate-100 bg-slate-50/30">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs font-bold text-slate-400">Rows per page:</span>
+                                    <Select onValueChange={setItemsPerPage} value={itemsPerPage}>
+                                        <SelectTrigger className="h-8 w-[70px] rounded-lg border-slate-200 font-bold text-xs">
+                                            <SelectValue placeholder="20" />
+                                        </SelectTrigger>
+                                        <SelectContent className="rounded-lg">
+                                            <SelectItem value="15">15</SelectItem>
+                                            <SelectItem value="20">20</SelectItem>
+                                            <SelectItem value="50">50</SelectItem>
+                                            <SelectItem value="All">All</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                
+                                <div className="flex items-center gap-4">
+                                    <span className="text-xs font-bold text-slate-400">
+                                        Page {safeCurrentPage} of {totalPages} ({filteredProducts.length} items)
+                                    </span>
+                                    <div className="flex gap-1">
+                                        <Button 
+                                            variant="outline" 
+                                            size="icon" 
+                                            className="h-8 w-8 rounded-lg"
+                                            disabled={safeCurrentPage === 1}
+                                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                        >
+                                            <ChevronLeft className="h-4 w-4" />
+                                        </Button>
+                                        <Button 
+                                            variant="outline" 
+                                            size="icon" 
+                                            className="h-8 w-8 rounded-lg"
+                                            disabled={safeCurrentPage === totalPages}
+                                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                        >
+                                            <ChevronRight className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                </div>
                             </div>
                         </CardContent>
                     </Card>
