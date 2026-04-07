@@ -1225,8 +1225,10 @@ export const PosSettings: React.FC = () => {
 
     // FIX: Auto-assign Bar visibility when costCenter is 'bar'
     // This ensures items assigned to Bar menu automatically show as Bar:Yes
-    const effectiveBarVisible = costCenter === 'bar' ? true : barVisible;
-    const effectiveRestaurantVisible = costCenter === 'restaurant' ? true : restaurantVisible;
+    // For food items (costCenter !== 'bar'), default to Bar: No, Restaurant: Yes
+    const isBarItem = costCenter === 'bar';
+    const effectiveBarVisible = isBarItem ? true : false;
+    const effectiveRestaurantVisible = isBarItem ? false : true;
 
     const base = {
       name: itemName.trim(),
@@ -1241,6 +1243,8 @@ export const PosSettings: React.FC = () => {
       inventoryCategory: inventoryCategory || undefined,
       // FIX: Use effective visibility with auto-assignment
       visibility: { bar: effectiveBarVisible, restaurant: effectiveRestaurantVisible },
+      bar_visibility: effectiveBarVisible,
+      restaurant_visibility: effectiveRestaurantVisible,
       cosPercent: computedCOS,
       gpAmount,
       gpPercent,

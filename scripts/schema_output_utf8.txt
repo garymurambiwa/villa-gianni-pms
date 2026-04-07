@@ -1,0 +1,152 @@
+﻿PRODUCTS SCHEMA: [
+  {
+    "column_name": "id",
+    "data_type": "character varying",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "column_name": "name",
+    "data_type": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "column_name": "category",
+    "data_type": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "department",
+    "data_type": "text",
+    "column_default": "'Restaurant'::text",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "price",
+    "data_type": "numeric",
+    "column_default": "0",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "cost_price",
+    "data_type": "numeric",
+    "column_default": "0",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "stock_level",
+    "data_type": "numeric",
+    "column_default": "0",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "unit",
+    "data_type": "text",
+    "column_default": "'units'::text",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "active",
+    "data_type": "boolean",
+    "column_default": "true",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "visibility",
+    "data_type": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "is_stock_item",
+    "data_type": "boolean",
+    "column_default": "true",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "inserted_at",
+    "data_type": "timestamp with time zone",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  },
+  {
+    "column_name": "updated_at",
+    "data_type": "timestamp with time zone",
+    "column_default": "now()",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "category_id",
+    "data_type": "character varying",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "sub_id",
+    "data_type": "character varying",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "parent_sub_id",
+    "data_type": "character varying",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "notes",
+    "data_type": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "barcodes",
+    "data_type": "jsonb",
+    "column_default": "'[]'::jsonb",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "cos_percent",
+    "data_type": "numeric",
+    "column_default": "0",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "gp_percent",
+    "data_type": "numeric",
+    "column_default": "0",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "gp_amount",
+    "data_type": "numeric",
+    "column_default": "0",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "qty_received",
+    "data_type": "numeric",
+    "column_default": "0",
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "image_bg_color",
+    "data_type": "character varying",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "picture_data",
+    "data_type": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "visibility_stations",
+    "data_type": "ARRAY",
+    "column_default": null,
+    "is_nullable": "YES"
+  }
+]

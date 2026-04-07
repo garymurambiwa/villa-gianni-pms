@@ -111,6 +111,11 @@ export const FrontOffice: React.FC = () => {
     return 'inclusive';
   });
   const [taxError, setTaxError] = useState<string | null>(null);
+  const [editingGuestId, setEditingGuestId] = useState<string | null>(null);
+  const [editGuestName, setEditGuestName] = useState('');
+  const [editGuestEmail, setEditGuestEmail] = useState('');
+  const [editGuestPhone, setEditGuestPhone] = useState('');
+  const [showEditGuestDialog, setShowEditGuestDialog] = useState(false);
 
   // Guard against missing bridge/data
   React.useEffect(() => {
@@ -1056,6 +1061,7 @@ export const FrontOffice: React.FC = () => {
           <TabsTrigger value="in_house">In House ({inHouse.length})</TabsTrigger>
           <TabsTrigger value="arrivals">Arrivals ({arrivals.length})</TabsTrigger>
           <TabsTrigger value="departures">Departed ({checkedOutToday.length})</TabsTrigger>
+          <TabsTrigger value="guests">Guests ({guests.length})</TabsTrigger>
           <TabsTrigger value="charges">Charges</TabsTrigger>
           <TabsTrigger value="folio">Folio</TabsTrigger>
         </TabsList>
@@ -1109,6 +1115,72 @@ export const FrontOffice: React.FC = () => {
                             <UserCheck className="mr-2 h-4 w-4" />
                             Check In
                           </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="guests" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Guest Registry</CardTitle>
+              <CardDescription>View and manage all guest profiles in the system</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Guest Name</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {guests.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                        No guest profiles found
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    guests.sort((a,b) => (a.full_name || a.name || '').localeCompare(b.full_name || b.name || '')).map((g) => (
+                      <TableRow key={g.id}>
+                        <TableCell className="font-medium">{g.full_name || g.name}</TableCell>
+                        <TableCell>{g.email || '-'}</TableCell>
+                        <TableCell>{g.phone || '-'}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button size="sm" variant="ghost" onClick={() => {
+                              setEditingGuestId(g.id);
+                              setEditGuestName(g.full_name || g.name || '');
+                              setEditGuestEmail(g.email || '');
+                              setEditGuestPhone(g.phone || '');
+                              setShowEditGuestDialog(true);
+                            }}>Edit</Button>
+                            <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={async () => {
+                              if (confirm('Are you sure you want to delete this guest profile?')) {
+                                try {
+                                  // Update context/lib logic needs to be integrated with DataContext. 
+                                  // For now we use the dbSync helper added earlier.
+                                  const { deleteGuestFromDb } = await import('@/lib/dbSync');
+                                  const res = await deleteGuestFromDb(g.id);
+                                  if (res.success) {
+                                    toast.success('Guest profile deleted');
+                                    ctx.refreshData?.();
+                                  } else {
+                                    toast.error('Failed to delete guest: ' + res.error);
+                                  }
+                                } catch (err) {
+                                  toast.error('Failed to delete guest');
+                                }
+                              }
+                            }}>Delete</Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -2231,6 +2303,68 @@ export const FrontOffice: React.FC = () => {
           </div>
         </DialogContent>
       </Dialog>
-    </div >
+      {/* Edit Guest Dialog */}
+      <Dialog open={showEditGuestDialog} onOpenChange={setShowEditGuestDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Edit Guest Profile</DialogTitle>
+            <DialogDescription>Update guest contact information.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="guestName">Full Name</Label>
+              <Input 
+                id="guestName" 
+                value={editGuestName} 
+                onChange={(e) => setEditGuestName(e.target.value)} 
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="guestEmail">Email Address</Label>
+              <Input 
+                id="guestEmail" 
+                type="email" 
+                value={editGuestEmail} 
+                onChange={(e) => setEditGuestEmail(e.target.value)} 
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="guestPhone">Phone Number</Label>
+              <Input 
+                id="guestPhone" 
+                value={editGuestPhone} 
+                onChange={(e) => setEditGuestPhone(e.target.value)} 
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditGuestDialog(false)}>Cancel</Button>
+            <Button onClick={async () => {
+              if (!editGuestName.trim()) {
+                toast.error('Name is required');
+                return;
+              }
+              try {
+                const { updateGuestInDb } = await import('@/lib/dbSync');
+                const res = await updateGuestInDb(editingGuestId!, {
+                  name: editGuestName,
+                  email: editGuestEmail,
+                  phone: editGuestPhone
+                });
+                if (res.success) {
+                  toast.success('Guest updated successfully');
+                  setShowEditGuestDialog(false);
+                  ctx.refreshData?.();
+                } else {
+                  toast.error('Failed to update guest: ' + res.error);
+                }
+              } catch (err) {
+                toast.error('Failed to update guest');
+              }
+            }}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 };

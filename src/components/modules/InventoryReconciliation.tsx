@@ -101,9 +101,9 @@ export const InventoryReconciliation: React.FC = () => {
   const [selectedPeriod, setSelectedPeriod] = useState<InventoryPeriod | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showNewPeriodDialog, setShowNewPeriodDialog] = useState(false);
-  const [showBackfillDialog, setShowBackfillDialog] = useState(false);
   const [showCloseDialog, setShowCloseDialog] = useState(false);
+  const [showBatchReconDialog, setShowBatchReconDialog] = useState(false);
+  const [batchData, setBatchData] = useState<Record<string, { physicalQty: number; costPrice: number }>>({});
   
   const [newPeriod, setNewPeriod] = useState({
     periodYear: new Date().getFullYear(),
@@ -471,6 +471,12 @@ export const InventoryReconciliation: React.FC = () => {
               OFFLINE MODE
             </Badge>
           )}
+          <Button variant="outline" onClick={() => {
+            loadProducts('all'); 
+            setShowBatchReconDialog(true);
+          }}>
+            Batch Stock Take
+          </Button>
           <Button onClick={() => setShowNewPeriodDialog(true)}>
             New Period
           </Button>
@@ -841,6 +847,101 @@ export const InventoryReconciliation: React.FC = () => {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCloseDialog(false)}>Cancel</Button>
             <Button onClick={closePeriod}>Close Period</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Batch Reconciliation Dialog */}
+      <Dialog open={showBatchReconDialog} onOpenChange={setShowBatchReconDialog}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Batch Inventory Reconciliation</DialogTitle>
+            <p className="text-sm text-gray-500">Update physical quantities and unit costs for all items simultaneously.</p>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto py-4">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Item Name</TableHead>
+                  <TableHead>Department</TableHead>
+                  <TableHead className="text-right">Current Stock</TableHead>
+                  <TableHead className="text-right w-32">Physical Qty</TableHead>
+                  <TableHead className="text-right w-32">Unit Cost ($)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {products.map(p => (
+                  <TableRow key={p.id}>
+                    <TableCell className="font-medium">{p.name}</TableCell>
+                    <TableCell>{p.department}</TableCell>
+                    <TableCell className="text-right">{p.stock_level}</TableCell>
+                    <TableCell>
+                      <Input
+                        type="number"
+                        className="text-right h-8"
+                        placeholder="0"
+                        value={batchData[p.id]?.physicalQty ?? ''}
+                        onChange={(e) => setBatchData(prev => ({
+                          ...prev,
+                          [p.id]: { ...prev[p.id], physicalQty: parseFloat(e.target.value) || 0, costPrice: prev[p.id]?.costPrice ?? p.cost_price }
+                        }))}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        type="number"
+                        className="text-right h-8"
+                        placeholder="0.00"
+                        value={batchData[p.id]?.costPrice ?? p.cost_price}
+                        onChange={(e) => setBatchData(prev => ({
+                          ...prev,
+                          [p.id]: { ...prev[p.id], costPrice: parseFloat(e.target.value) || 0, physicalQty: prev[p.id]?.physicalQty ?? 0 }
+                        }))}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBatchReconDialog(false)}>Cancel</Button>
+            <Button onClick={async () => {
+              try {
+                const entries = Object.entries(batchData);
+                if (entries.length === 0) {
+                  toast({ title: 'No changes entered', variant: 'destructive' });
+                  return;
+                }
+
+                for (const [id, data] of entries) {
+                  // Update product stock and cost
+                  await db.query(
+                    `UPDATE products SET stock_level = ?, cost_price = ?, updated_at = NOW() WHERE id = ?`,
+                    [data.physicalQty, data.costPrice, id]
+                  );
+
+                  // Log transaction
+                  const product = products.find(p => p.id === id);
+                  await db.query(
+                    `INSERT INTO inventory_transactions 
+                     (transaction_type, transaction_number, transaction_date, department, total_quantity, total_value, created_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    ['adjustment', `BATCH-${Date.now()}`, new Date().toISOString().split('T')[0], 
+                     product?.department || 'Kitchen', data.physicalQty, data.physicalQty * data.costPrice, user?.name]
+                  );
+                }
+
+                toast({ title: 'Batch reconciliation saved successfully' });
+                setShowBatchReconDialog(false);
+                setBatchData({});
+                loadData();
+              } catch (err: any) {
+                console.error('Batch Recon Error:', err);
+                toast({ title: 'Failed to save batch', description: err.message, variant: 'destructive' });
+              }
+            }}>
+              Save All Changes
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

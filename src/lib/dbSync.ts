@@ -27,7 +27,9 @@ export interface ProductRecord {
   stock_level: number;
   unit: string;
   active: boolean;
-  visibility?: string; // stored as string in DB, might come as object from frontend
+  visibility?: string; // stored as JSON string in visibility column
+  bar_visibility?: boolean;
+  restaurant_visibility?: boolean;
   is_stock_item: boolean;
   updated_at?: string;
 
@@ -156,8 +158,9 @@ export async function syncProductToDb(item: ProductRecord): Promise<SyncResult> 
     const sql = `
       INSERT INTO products (
         id, name, category, department, price, cost_price, stock_level, unit, active, visibility, is_stock_item,
-        category_id, sub_id, parent_sub_id, notes, barcodes, cos_percent, gp_percent, gp_amount, qty_received, image_bg_color, picture_data, updated_at, inserted_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW(), NOW())
+        category_id, sub_id, parent_sub_id, notes, barcodes, cos_percent, gp_percent, gp_amount, qty_received, 
+        image_bg_color, picture_data, bar_visibility, restaurant_visibility, updated_at, inserted_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW())
       ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
         department = EXCLUDED.department,
@@ -180,6 +183,8 @@ export async function syncProductToDb(item: ProductRecord): Promise<SyncResult> 
         qty_received = EXCLUDED.qty_received,
         image_bg_color = EXCLUDED.image_bg_color,
         picture_data = EXCLUDED.picture_data,
+        bar_visibility = EXCLUDED.bar_visibility,
+        restaurant_visibility = EXCLUDED.restaurant_visibility,
         updated_at = NOW()
     `;
 
@@ -205,7 +210,9 @@ export async function syncProductToDb(item: ProductRecord): Promise<SyncResult> 
       item.gp_amount || 0,
       item.qty_received || 0,
       item.image_bg_color || null,
-      item.picture_data || null
+      item.picture_data || null,
+      item.bar_visibility ?? false,
+      item.restaurant_visibility ?? true
     ];
 
     const result = await db.query(sql, params);
@@ -612,6 +619,8 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
       unit: item.unit || 'units',
       active: item.available !== false,
       visibility: JSON.stringify(item.visibility || {}),
+      bar_visibility: !!item.visibility?.bar,
+      restaurant_visibility: !!item.visibility?.restaurant,
       is_stock_item: true, // Default to true for POS items unless service
 
       // Extended fields
@@ -1583,6 +1592,102 @@ export async function recordNightAuditRun(runData: {
   } catch (err: any) {
     console.error('[dbSync] Night audit run record error:', err?.message || err);
     return { success: false, error: err?.message || String(err) };
+  }
+}
+
+// ============================================================================
+// GUEST SYNC
+// ============================================================================
+
+/**
+ * Sync a single guest to the database
+ */
+export async function syncGuestToDb(guest: any): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+
+    const sql = `
+      INSERT INTO guests (id, full_name, email, phone, inserted_at)
+      VALUES ($1, $2, $3, $4, NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        full_name = EXCLUDED.full_name,
+        email = EXCLUDED.email,
+        phone = EXCLUDED.phone
+    `;
+
+    const params = [
+      guest.id,
+      guest.name || guest.full_name,
+      guest.email || null,
+      guest.phone || null
+    ];
+
+    const result = await db.query(sql, params);
+    if ('error' in result) return { success: false, error: (result as any).error };
+
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    console.error('[dbSync] Guest sync error:', err?.message || err);
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Update guest in database
+ */
+export async function updateGuestInDb(id: string, data: { name?: string; email?: string; phone?: string }): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+
+    const fields: string[] = [];
+    const params: any[] = [id];
+
+    if (data.name) {
+      params.push(data.name);
+      fields.push(`full_name = $${params.length}`);
+    }
+    if (data.email) {
+      params.push(data.email);
+      fields.push(`email = $${params.length}`);
+    }
+    if (data.phone) {
+      params.push(data.phone);
+      fields.push(`phone = $${params.length}`);
+    }
+
+    if (fields.length === 0) return { success: true, synced: 0 };
+
+    const sql = `UPDATE guests SET ${fields.join(', ')} WHERE id = $1`;
+    const result = await db.query(sql, params);
+    if ('error' in result) return { success: false, error: (result as any).error };
+
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    console.error('[dbSync] Guest update error:', err);
+    return { success: false, error: String(err) };
+  }
+}
+
+/**
+ * Delete guest from database
+ */
+export async function deleteGuestFromDb(id: string): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+
+    // Note: This might fail if there are foreign key constraints (e.g. reservations, folios)
+    // In a real system we might use soft delete or check for dependencies.
+    const sql = `DELETE FROM guests WHERE id = $1`;
+    const result = await db.query(sql, [id]);
+    if ('error' in result) return { success: false, error: (result as any).error };
+
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    console.error('[dbSync] Guest delete error:', err);
+    return { success: false, error: String(err) };
   }
 }
 

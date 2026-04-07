@@ -1,0 +1,32 @@
+﻿GUESTS SCHEMA: [
+  {
+    "column_name": "id",
+    "data_type": "character varying",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "column_name": "full_name",
+    "data_type": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "column_name": "email",
+    "data_type": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "phone",
+    "data_type": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "column_name": "inserted_at",
+    "data_type": "timestamp with time zone",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  }
+]
