@@ -174,7 +174,7 @@ const removeChannel = (ch: any) => {
 };
 
 // Create local client
-const localClient = { from, rpc, auth, channel, removeChannel };
+const localClient = { from, rpc, auth, channel, removeChannel, isMock: true };
 
 console.log('Using local authentication client for LAN operation.');
 

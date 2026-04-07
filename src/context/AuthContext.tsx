@@ -15,6 +15,8 @@ export interface AuthError {
   username?: string;
 }
 
+const isSupabaseEnabled = !!supabase && !(supabase as any).isMock;
+
 interface AuthContextType {
   user: User | null;
   costCentre: string | null;
@@ -58,7 +60,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     let sessionCheckInterval: NodeJS.Timeout | null = null;
     const checkSessionExpiry = () => {
-      if (!supabase && user) {
+      if (!isSupabaseEnabled && user) {
         const session = auth.getSession();
         if (!session || (session.expiresAt && new Date() > new Date(session.expiresAt))) {
           logger.logAuth('session_expired', {
@@ -70,13 +72,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       }
     };
-    if (!supabase) {
+    if (!isSupabaseEnabled) {
       sessionCheckInterval = setInterval(checkSessionExpiry, 30000);
     }
     return () => {
       if (sessionCheckInterval) clearInterval(sessionCheckInterval);
     };
-  }, [user, supabase]);
+  }, [user, isSupabaseEnabled]);
 
   useEffect(() => {
     let unsub: any;
@@ -92,7 +94,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       } catch { }
 
-      if (supabase) {
+      if (isSupabaseEnabled) {
         try {
           const { data } = await supabase.auth.getSession();
           const sUser = data?.session?.user;
@@ -190,7 +192,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
     setup();
     return () => {
-      if (supabase) unsub?.subscription?.unsubscribe();
+      if (isSupabaseEnabled) unsub?.subscription?.unsubscribe();
       else if (onActivity) {
         window.removeEventListener('mousemove', onActivity);
         window.removeEventListener('keydown', onActivity);
@@ -224,7 +226,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       }
     } catch { }
-    if (supabase) {
+    if (isSupabaseEnabled) {
       const { data, error } = await supabase.auth.signInWithPassword({ email: username, password });
       if (error) return { success: false, error: createAuthError('INVALID_CREDENTIALS', error.message, username) };
       if (!data.user) return { success: false, error: createAuthError('INVALID_CREDENTIALS', 'User not found', username) };
@@ -243,7 +245,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const register = async (payload: { username: string; email: string; password: string; name?: string; phone?: string }) => {
-    if (supabase) {
+    if (isSupabaseEnabled) {
       const { data, error } = await supabase.auth.signUp({ email: payload.email || payload.username, password: payload.password, options: { data: { username: payload.username, name: payload.name, phone: payload.phone, role: 'manager' } } });
       if (error) return { ok: false, error: error.message };
       if (data?.user) setUser({ id: data.user.id, username: payload.username || payload.email, name: payload.name || payload.email, role: 'manager' as any, propertyId: 'P001', active: true });
@@ -253,7 +255,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const requestPasswordReset = (usernameOrEmail: string) => {
-    if (supabase) {
+    if (isSupabaseEnabled) {
       supabase.auth.resetPasswordForEmail(usernameOrEmail).catch(() => { });
       return { ok: true };
     }
@@ -261,12 +263,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const resetPassword = async (token: string, newPassword: string) => {
-    if (supabase) return { ok: false, error: 'Use the link sent to your email.' };
+    if (isSupabaseEnabled) return { ok: false, error: 'Use the link sent to your email.' };
     return auth.resetPassword(token, newPassword);
   };
 
   const logout = () => {
-    if (supabase) supabase.auth.signOut().catch(() => { });
+    if (isSupabaseEnabled) supabase.auth.signOut().catch(() => { });
     else auth.logout();
     setUser(null);
     setCostCentre(null);
@@ -275,7 +277,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const updateProfile = async (patch: Partial<{ name?: string; phone?: string }>) => {
     if (!user) return { ok: false, error: 'Not logged in' };
-    if (supabase) {
+    if (isSupabaseEnabled) {
       const { data, error } = await supabase.auth.updateUser({ data: { name: patch.name, phone: patch.phone } });
       if (error) return { ok: false, error: error.message };
       if (data?.user) {
@@ -292,7 +294,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const changePassword = async (currentPassword: string, newPassword: string) => {
     if (!user) return { ok: false, error: 'Not logged in' };
-    if (supabase) {
+    if (isSupabaseEnabled) {
       const { error } = await supabase.auth.updateUser({ password: newPassword });
       if (error) return { ok: false, error: error.message };
       return { ok: true };
