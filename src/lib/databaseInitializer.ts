@@ -132,10 +132,50 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
           updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
           inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
         );
+        CREATE TABLE IF NOT EXISTS inventory_periods (
+          id VARCHAR(36) PRIMARY KEY,
+          name TEXT NOT NULL,
+          start_date DATE NOT NULL,
+          end_date DATE NOT NULL,
+          status VARCHAR(20) NOT NULL DEFAULT 'open',
+          closed_at TIMESTAMP,
+          closed_by VARCHAR(36),
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS inventory_transactions (
+          id VARCHAR(36) PRIMARY KEY,
+          period_id VARCHAR(36) NOT NULL,
+          product_id VARCHAR(36) NOT NULL,
+          type VARCHAR(50) NOT NULL DEFAULT 'purchase',
+          quantity NUMERIC(12,2) NOT NULL DEFAULT 0,
+          unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+          total_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+          transaction_date DATE,
+          is_audit_backfill BOOLEAN DEFAULT false,
+          created_by VARCHAR(36),
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS inventory_snapshots (
+          period_id VARCHAR(36) NOT NULL,
+          product_id VARCHAR(36) NOT NULL,
+          physical_qty NUMERIC(12,2),
+          variance NUMERIC(12,2),
+          opening_qty NUMERIC(12,2) DEFAULT 0,
+          received_qty NUMERIC(12,2) DEFAULT 0,
+          system_usage_qty NUMERIC(12,2) DEFAULT 0,
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (period_id, product_id)
+        );
       `)
     } catch (e) { 
       console.log('Table creation note:', e)
     }
+
+    // Ensure inventory-related columns on products
+    try { await db.exec(`ALTER TABLE products ADD COLUMN IF NOT EXISTS bar_visibility BOOLEAN DEFAULT false`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE products ADD COLUMN IF NOT EXISTS restaurant_visibility BOOLEAN DEFAULT false`); } catch (e) { }
 
     // Patch existing tables to add missing columns (safe for existing deployments)
     try { await db.exec(`ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true`); } catch (e) { console.log('rooms.is_active column note:', e); }
