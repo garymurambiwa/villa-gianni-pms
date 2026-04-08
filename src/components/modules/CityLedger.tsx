@@ -363,7 +363,7 @@ export const CityLedger: React.FC = () => {
           <div key={account.id} className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-blue-500">
             <div className="flex justify-between items-start mb-4">
               <div>
-                <h3 className="text-xl font-bold text-gray-800">{account.name}</h3>
+                <h3 className="text-xl font-bold text-gray-800">{account.account_name || account.name}</h3>
                 <p className="text-sm text-gray-600">{account.type}</p>
                 <p className="text-xs text-gray-500 mt-1">Payment Terms: {account.paymentTerms}</p>
               </div>
@@ -538,10 +538,10 @@ export const CityLedger: React.FC = () => {
                           <td className="px-2 py-2 text-right">{t.debit != null && t.debit !== '' ? `$${Number(t.debit).toFixed(2)}` : '-'}</td>
                           <td className="px-2 py-2 text-right">{t.credit != null && t.credit !== '' ? `$${Number(t.credit).toFixed(2)}` : '-'}</td>
                           <td className="px-2 py-2 text-center">
-                            <div className="flex justify-center gap-1">
+                            <div className="flex justify-center gap-2 flex-wrap">
                               {!t.is_voided && (
                                 <button 
-                                  className="text-amber-600 hover:text-amber-800 p-1" 
+                                  className="text-amber-600 hover:text-amber-800 hover:bg-amber-50 px-2 py-1 rounded whitespace-nowrap text-xs font-medium" 
                                   title="Void Transaction"
                                   onClick={() => {
                                     if (confirm('Void this transaction? It will be zeroed out but remain in history.')) {
@@ -554,7 +554,7 @@ export const CityLedger: React.FC = () => {
                               )}
                               {!t.is_voided && (
                                 <button 
-                                  className="text-blue-600 hover:text-blue-800 p-1" 
+                                  className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded whitespace-nowrap text-xs font-medium" 
                                   title="Transfer to Guest Folio"
                                   onClick={() => {
                                     setTransferTxn({ accountId: account.id, txnId: t.id });
@@ -564,7 +564,7 @@ export const CityLedger: React.FC = () => {
                                 </button>
                               )}
                               <button 
-                                className="text-red-600 hover:text-red-800 p-1" 
+                                className="text-red-600 hover:text-red-800 hover:bg-red-50 px-2 py-1 rounded whitespace-nowrap text-xs font-medium" 
                                 title="Delete Permanently"
                                 onClick={() => {
                                   if (confirm('Permanently delete this transaction log? This cannot be undone.')) {

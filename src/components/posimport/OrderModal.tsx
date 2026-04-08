@@ -92,8 +92,10 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
     setEditingItem(item);
     setEditItemPrice(String(item.price));
     setEditItemCategory(item.category_id || '');
-    setEditItemCost('');
-    setEditItemUnit('');
+    setEditItemCost(String((item as any).costPrice || (item as any).cost_price || ''));
+    setEditItemUnit(String((item as any).unitOfMeasure || (item as any).unit || ''));
+    setEditItemDesc(String(item.description || ''));
+    setEditItemVis(String((item as any).visibility || 'POS Only'));
     setShowItemEdit(true);
     setContextMenu(null);
   };
@@ -102,12 +104,27 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const saveItemEdit = async () => {
     if (!editingItem) return;
     try {
+      const costPrice = Number(editItemCost || 0);
+      const sellingPrice = Number(editItemPrice);
+      const gp = sellingPrice > 0 ? ((sellingPrice - costPrice) / sellingPrice * 100) : 0;
+      
       // Update in localStorage
       const raw = localStorage.getItem('corepms_pos_items');
       const list = raw ? JSON.parse(raw) : [];
       const updatedList = list.map((it: any) =>
         it.id === editingItem.id
-          ? { ...it, price: Number(editItemPrice), category_id: editItemCategory || it.category_id }
+          ? { 
+              ...it, 
+              price: Number(editItemPrice), 
+              costPrice: costPrice,
+              cost_price: costPrice,
+              category_id: editItemCategory || it.category_id,
+              unitOfMeasure: editItemUnit,
+              unit: editItemUnit,
+              description: editItemDesc,
+              visibility: editItemVis,
+              gpPercent: Number(gp.toFixed(2))
+            }
           : it
       );
       localStorage.setItem('corepms_pos_items', JSON.stringify(updatedList));
@@ -115,15 +132,15 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
       // Update local state
       setDynamicMenu(prev => prev.map(it =>
         it.id === editingItem.id
-          ? { ...it, price: Number(editItemPrice), category_id: editItemCategory || it.category_id }
+          ? { ...it, price: Number(editItemPrice), category_id: editItemCategory || it.category_id, description: editItemDesc }
           : it
       ));
 
       // Sync to database
       const { db } = await import('@/lib/db');
       await db.query(
-        `UPDATE products SET price = ?, category_id = ?, updated_at = NOW() WHERE id = ?`,
-        [Number(editItemPrice), editItemCategory || null, editingItem.id]
+        `UPDATE products SET price = ?, cost_price = ?, category_id = ?, unit = ?, description = ?, visibility = ?, updated_at = NOW() WHERE id = ?`,
+        [Number(editItemPrice), costPrice, editItemCategory || null, editItemUnit || null, editItemDesc || null, editItemVis || 'POS Only', editingItem.id]
       );
 
       toast({ title: 'Item Updated', description: `${editingItem.name} has been updated.` });
@@ -204,6 +221,8 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [editItemCategory, setEditItemCategory] = useState<string>('');
   const [editItemCost, setEditItemCost] = useState('');
   const [editItemUnit, setEditItemUnit] = useState<string>('');
+  const [editItemDesc, setEditItemDesc] = useState<string>('');
+  const [editItemVis, setEditItemVis] = useState<string>('POS Only');
 
   // Sync dynamicMenu with menuItems prop when it changes (asynchronously via FrontOffice API)
   useEffect(() => {
@@ -869,37 +888,96 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
 
       {/* Edit Item Dialog */}
       <Dialog open={showItemEdit} onOpenChange={setShowItemEdit}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Menu Item</DialogTitle>
           </DialogHeader>
           {editingItem && (
             <div className="space-y-4">
-              <div>
-                <Label>Item Name</Label>
-                <Input value={editingItem.name} disabled />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label>Item Name</Label>
+                  <Input value={editingItem.name} disabled className="bg-gray-100" />
+                </div>
+                <div>
+                  <Label>Category</Label>
+                  <Select value={editItemCategory} onValueChange={setEditItemCategory}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {menuCats.listCategories(editingItem.category === 'bar' ? 'Bar' : 'Restaurant').map((cat: any) => (
+                        <SelectItem key={cat.category_id} value={cat.category_id}>{cat.category_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <Label>Selling Price</Label>
+                  <Input
+                    type="number"
+                    value={editItemPrice}
+                    onChange={(e) => setEditItemPrice(e.target.value)}
+                    step="0.01"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <Label>Cost Price</Label>
+                  <Input
+                    type="number"
+                    value={editItemCost}
+                    onChange={(e) => setEditItemCost(e.target.value)}
+                    step="0.01"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <Label>GP%</Label>
+                  <Input
+                    type="number"
+                    value={editItemPrice && editItemCost ? Number(((Number(editItemPrice) - Number(editItemCost)) / Number(editItemPrice) * 100).toFixed(2)) : 0}
+                    disabled
+                    className="bg-gray-100"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label>Unit of Measure</Label>
+                  <Input
+                    value={editItemUnit}
+                    onChange={(e) => setEditItemUnit(e.target.value)}
+                    placeholder="e.g., pcs, kg, L"
+                  />
+                </div>
+                <div>
+                  <Label>Visibility</Label>
+                  <Select value={editItemVis} onValueChange={setEditItemVis}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select visibility" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="POS Only">POS Only</SelectItem>
+                      <SelectItem value="Menu">Menu</SelectItem>
+                      <SelectItem value="Both">Both</SelectItem>
+                      <SelectItem value="Hidden">Hidden</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
               <div>
-                <Label>Price</Label>
+                <Label>Description / Notes</Label>
                 <Input
-                  type="number"
-                  value={editItemPrice}
-                  onChange={(e) => setEditItemPrice(e.target.value)}
-                  step="0.01"
+                  value={editItemDesc}
+                  onChange={(e) => setEditItemDesc(e.target.value)}
+                  placeholder="e.g., Special ingredients, preparation notes"
                 />
-              </div>
-              <div>
-                <Label>Category</Label>
-                <Select value={editItemCategory} onValueChange={setEditItemCategory}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {menuCats.listCategories(editingItem.category === 'bar' ? 'Bar' : 'Restaurant').map((cat: any) => (
-                      <SelectItem key={cat.category_id} value={cat.category_id}>{cat.category_name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               </div>
             </div>
           )}
