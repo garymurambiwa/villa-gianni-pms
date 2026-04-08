@@ -121,7 +121,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
               category_id: editItemCategory || it.category_id,
               unitOfMeasure: editItemUnit,
               unit: editItemUnit,
-              description: editItemDesc,
+              notes: editItemDesc,
               visibility: editItemVis,
               gpPercent: Number(gp.toFixed(2))
             }
@@ -139,7 +139,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
       // Sync to database
       const { db } = await import('@/lib/db');
       const dbResult = await db.query(
-        `UPDATE products SET price = ?, cost_price = ?, category_id = ?, unit = ?, description = ?, visibility = ?, updated_at = NOW() WHERE id = ?`,
+        `UPDATE products SET price = ?, cost_price = ?, category_id = ?, unit = ?, notes = ?, visibility = ?, updated_at = NOW() WHERE id = ?`,
         [Number(editItemPrice), costPrice, editItemCategory || null, editItemUnit || null, editItemDesc || null, editItemVis || 'POS Only', editingItem.id]
       );
 
@@ -977,7 +977,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
               </div>
 
               <div>
-                <Label>Description / Notes</Label>
+                <Label>Notes</Label>
                 <Input
                   value={editItemDesc}
                   onChange={(e) => setEditItemDesc(e.target.value)}
