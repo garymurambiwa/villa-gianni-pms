@@ -138,17 +138,22 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
 
       // Sync to database
       const { db } = await import('@/lib/db');
-      await db.query(
+      const dbResult = await db.query(
         `UPDATE products SET price = ?, cost_price = ?, category_id = ?, unit = ?, description = ?, visibility = ?, updated_at = NOW() WHERE id = ?`,
         [Number(editItemPrice), costPrice, editItemCategory || null, editItemUnit || null, editItemDesc || null, editItemVis || 'POS Only', editingItem.id]
       );
+
+      if ('error' in dbResult) {
+        throw new Error(`Database update failed: ${dbResult.error}`);
+      }
 
       toast({ title: 'Item Updated', description: `${editingItem.name} has been updated.` });
       setShowItemEdit(false);
       setEditingItem(null);
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
       console.error('Failed to update item:', err);
-      toast({ title: 'Update Failed', description: 'Could not update item in database.', variant: 'destructive' });
+      toast({ title: 'Update Failed', description: errorMessage, variant: 'destructive' });
     }
   };
 
