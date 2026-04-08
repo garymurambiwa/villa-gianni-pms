@@ -65,6 +65,12 @@ const getVisibleUnits = (blacklist: string[]) => {
   return INITIAL_UNITS.filter(u => !blacklist.includes(u));
 };
 
+// Map cost centers to departments (Bar or Restaurant)
+const getCostCenterDepartment = (costCenter: string): 'Bar' | 'Restaurant' => {
+  const barCenters = ['bar', 'flamehouse_bar', 'conference_bar', 'beverage_cellar'];
+  return barCenters.includes(String(costCenter || '').toLowerCase()) ? 'Bar' : 'Restaurant';
+};
+
 const Section: React.FC<{ title: string; id?: string; children: React.ReactNode }> = ({ title, id, children }) => (
   <div id={id} className="p-4 border rounded">
     <div className="font-semibold mb-2">{title}</div>
@@ -1223,10 +1229,11 @@ export const PosSettings: React.FC = () => {
   const saveStockItem = () => {
     if (!validate()) return;
 
-    // FIX: Auto-assign Bar visibility when costCenter is 'bar'
-    // This ensures items assigned to Bar menu automatically show as Bar:Yes
-    // For food items (costCenter !== 'bar'), default to Bar: No, Restaurant: Yes
-    const isBarItem = costCenter === 'bar';
+    // FIX: Auto-assign Bar visibility based on cost center
+    // Items in bar-related cost centers show as Bar:Yes, Restaurant:No
+    // Items in restaurant-related cost centers show as Bar:No, Restaurant:Yes
+    const department = getCostCenterDepartment(costCenter);
+    const isBarItem = department === 'Bar';
     const effectiveBarVisible = isBarItem ? true : false;
     const effectiveRestaurantVisible = isBarItem ? false : true;
 
@@ -1239,7 +1246,7 @@ export const PosSettings: React.FC = () => {
       sellingPrice: Number(sellingPrice.toFixed(2)),
       costCenter,
       // FIX: Include type field for proper department handling in sync
-      type: costCenter === 'bar' ? 'Bar' : (costCenter === 'restaurant' ? 'Restaurant' : ''),
+      type: department,
       inventoryCategory: inventoryCategory || undefined,
       // FIX: Use effective visibility with auto-assignment
       visibility: { bar: effectiveBarVisible, restaurant: effectiveRestaurantVisible },
@@ -1312,7 +1319,7 @@ export const PosSettings: React.FC = () => {
     setCostCenter(it.costCenter || '');
     setCategoryId(String(it.category_id || ''));
     setSubId(String(it.sub_id || 'none'));
-    setInventoryCategory((it.inventoryCategory as any) || (it.costCenter === 'bar' ? 'cellar' : it.costCenter === 'restaurant' ? 'kitchen' : undefined));
+    setInventoryCategory((it.inventoryCategory as any) || (getCostCenterDepartment(it.costCenter) === 'Bar' ? 'cellar' : 'kitchen'));
 
     setBarVisible(!!it.visibility?.bar);
     setRestaurantVisible(!!it.visibility?.restaurant);
@@ -1550,13 +1557,13 @@ export const PosSettings: React.FC = () => {
 
           if (catIdVal) {
             // Validate that the category_id exists
-            const dept = costCenter === 'bar' ? 'Bar' : 'Restaurant';
-            const existingCat = menuCats.listCategories(dept as any).find(c => c.category_id === catIdVal);
+            const dept = getCostCenterDepartment(costCenter);
+            const existingCat = menuCats.listCategories(dept).find(c => c.category_id === catIdVal);
             if (existingCat) {
               category_id = catIdVal;
             } else {
               // Category ID doesn't exist - mark for pending review
-              category_id = costCenter === 'bar' ? defaultBarCategory : defaultRestCategory;
+              category_id = dept === 'Bar' ? defaultBarCategory : defaultRestCategory;
               pendingCategoryReview = true;
               // Store pending category mapping for later review
               const pendingQueue = JSON.parse(localStorage.getItem('corepms_pending_category_queue') || '[]');
@@ -1572,13 +1579,13 @@ export const PosSettings: React.FC = () => {
             }
           } else if (catNameVal) {
             // Try to match by category name
-            const dept = costCenter === 'bar' ? 'Bar' : 'Restaurant';
-            const found = menuCats.listCategories(dept as any).find(c => c.category_name.toLowerCase() === catNameVal.toLowerCase());
+            const dept = getCostCenterDepartment(costCenter);
+            const found = menuCats.listCategories(dept).find(c => c.category_name.toLowerCase() === catNameVal.toLowerCase());
             if (found) {
               category_id = found.category_id;
             } else {
               // Category name doesn't exist - try fuzzy matching
-              const allCats = menuCats.listCategories(dept as any);
+              const allCats = menuCats.listCategories(dept);
               const fuzzyMatch = allCats.find(c =>
                 c.category_name.toLowerCase().includes(catNameVal.toLowerCase()) ||
                 catNameVal.toLowerCase().includes(c.category_name.toLowerCase())
@@ -1587,7 +1594,7 @@ export const PosSettings: React.FC = () => {
                 category_id = fuzzyMatch.category_id;
               } else {
                 // Assign to default category and mark for review
-                category_id = costCenter === 'bar' ? defaultBarCategory : defaultRestCategory;
+                category_id = dept === 'Bar' ? defaultBarCategory : defaultRestCategory;
                 pendingCategoryReview = true;
                 // Store pending category mapping for later review
                 const pendingQueue = JSON.parse(localStorage.getItem('corepms_pending_category_queue') || '[]');
@@ -1604,14 +1611,15 @@ export const PosSettings: React.FC = () => {
             }
           } else {
             // No category specified - assign default based on cost center
-            category_id = costCenter === 'bar' ? defaultBarCategory : defaultRestCategory;
+            const dept = getCostCenterDepartment(costCenter);
+            category_id = dept === 'Bar' ? defaultBarCategory : defaultRestCategory;
           }
           // InventoryCategory parsing
           let inventoryCategory: 'kitchen' | 'cellar' | undefined = undefined;
           const invRaw = invcatIdx >= 0 ? (cols[invcatIdx] || '').trim().toLowerCase() : '';
           if (invRaw === 'kitchen') inventoryCategory = 'kitchen';
           else if (invRaw === 'cellar') inventoryCategory = 'cellar';
-          else inventoryCategory = costCenter === 'bar' ? 'cellar' : costCenter === 'restaurant' ? 'kitchen' : undefined;
+          else inventoryCategory = getCostCenterDepartment(costCenter) === 'Bar' ? 'cellar' : 'kitchen';
 
           parsed.push({ id, name, costCenter, inventoryCategory, sellingPrice, costPrice, qtyInStock, qtyReceived, visibility: { bar: barVisible, restaurant: restaurantVisible }, cosPercent, gpAmount, gpPercent, notes, category_id });
         }
@@ -1850,6 +1858,17 @@ export const PosSettings: React.FC = () => {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="bar">Bar</SelectItem>
+                    <SelectItem value="flamehouse_bar">Flamehouse Bar</SelectItem>
+                    <SelectItem value="flamehouse_kitchen">Flamehouse Kitchen</SelectItem>
+                    <SelectItem value="conference_bar">Conference Bar</SelectItem>
+                    <SelectItem value="conference_kitchen">Conference Kitchen</SelectItem>
+                    <SelectItem value="beverage_cellar">Beverage Cellar</SelectItem>
+                    <SelectItem value="dry_goods">Dry Goods Store</SelectItem>
+                    <SelectItem value="freezer_perishable">Freezer and Perishable</SelectItem>
+                    <SelectItem value="general_stores">General Stores</SelectItem>
+                    <SelectItem value="maintenance_stores">Maintenance Stores</SelectItem>
+                    <SelectItem value="fb_service_stocks">F&B Service Stocks</SelectItem>
+                    <SelectItem value="kitchen_utensils">Kitchen Utensils</SelectItem>
                     <SelectItem value="restaurant">Restaurant</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1863,7 +1882,7 @@ export const PosSettings: React.FC = () => {
                     <SelectValue placeholder={costCenter ? 'Select category' : 'Select cost center first'} />
                   </SelectTrigger>
                   <SelectContent>
-                    {menuCats.listCategories(costCenter === 'bar' ? 'Bar' : 'Restaurant').map(c => (
+                    {menuCats.listCategories(costCenter ? getCostCenterDepartment(costCenter) : 'Bar').map(c => (
                       <SelectItem key={c.category_id} value={c.category_id}>{c.category_name}</SelectItem>
                     ))}
                   </SelectContent>
@@ -2102,7 +2121,7 @@ export const PosSettings: React.FC = () => {
                     return menuCats.addCategory({ category_name: name, department: dept, sort_order: 99 });
                   };
                   const next = list.map((it: any) => {
-                    const dept: 'Bar' | 'Restaurant' | null = it.costCenter === 'bar' ? 'Bar' : (it.costCenter === 'restaurant' ? 'Restaurant' : null);
+                    const dept: 'Bar' | 'Restaurant' | null = getCostCenterDepartment(it.costCenter);
                     const sub = String(it.subCategory || '').trim();
                     if (!dept || !sub) return it;
                     const cat = ensureCategory(sub, dept);
@@ -2713,8 +2732,8 @@ export const PosSettings: React.FC = () => {
                           : quickFilter === 'low'
                             ? Number(it.qtyInStock || 0) <= lowStockThreshold
                             : quickFilter === 'bar'
-                              ? it.costCenter === 'bar'
-                              : it.costCenter === 'restaurant';
+                              ? getCostCenterDepartment(it.costCenter) === 'Bar'
+                              : getCostCenterDepartment(it.costCenter) === 'Restaurant';
                         return nameOk && centerOk && barOk && restOk && attentionOk && severityOk && quickOk;
                       });
                     const count = filtered.length;
