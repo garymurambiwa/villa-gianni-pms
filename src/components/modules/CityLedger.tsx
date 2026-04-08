@@ -47,6 +47,8 @@ export const CityLedger: React.FC = () => {
   // Transfer State
   const [transferTxn, setTransferTxn] = useState<{accountId: string, txnId: string} | null>(null);
   const [targetGuestId, setTargetGuestId] = useState<string>('');
+  const [targetType, setTargetType] = useState<'guest' | 'account'>('guest');
+  const [closeAccountAfterTransfer, setCloseAccountAfterTransfer] = useState(false);
   
   const resetTxnForm = () => setTxnForm({ date: new Date().toISOString().slice(0, 10), reference: '', description: '', amount: '' });
   const computeAging = (account: any) => {
@@ -359,30 +361,44 @@ export const CityLedger: React.FC = () => {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {(cityLedger || []).map(account => (
-          <div key={account.id} className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-blue-500">
+        {(cityLedger || []).map(account => {
+          const isClosed = account.status === 'Closed';
+          const accountStatus = account.status || 'Active';
+          const statusColor = isClosed ? 'bg-gray-100 border-l-gray-400' : accountStatus === 'On Hold' ? 'bg-white border-l-yellow-500' : 'bg-white border-l-blue-500';
+          
+          return (
+          <div key={account.id} className={`${statusColor} rounded-xl shadow-lg p-6 border-l-4 ${isClosed ? 'opacity-75' : ''}`}>
             <div className="flex justify-between items-start mb-4">
               <div>
                 <h3 className="text-xl font-bold text-gray-800">{account.account_name || account.name}</h3>
                 <p className="text-sm text-gray-600">{account.type}</p>
                 <p className="text-xs text-gray-500 mt-1">Payment Terms: {account.paymentTerms}</p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-col">
+                <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                  isClosed 
+                    ? 'bg-gray-300 text-gray-700' 
+                    : accountStatus === 'On Hold' 
+                    ? 'bg-yellow-100 text-yellow-700' 
+                    : 'bg-green-100 text-green-700'
+                }`}>
+                  {accountStatus}
+                </span>
                 <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">
                   {account.id}
                 </span>
                 {canExport && (
-                  <>
-                    <button className="px-3 py-1 bg-gray-100 text-gray-700 rounded text-xs hover:bg-gray-200" onClick={() => exportAccountCSV(account)}>
-                      Export CSV
+                  <div className="flex gap-1 mt-2">
+                    <button className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs hover:bg-gray-200" onClick={() => exportAccountCSV(account)}>
+                      CSV
                     </button>
-                    <button className="px-3 py-1 bg-gray-100 text-gray-700 rounded text-xs hover:bg-gray-200" onClick={() => printAccount(account)}>
-                      Print Statement
+                    <button className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs hover:bg-gray-200" onClick={() => printAccount(account)}>
+                      Print
                     </button>
-                    <button className="px-3 py-1 bg-gray-100 text-gray-700 rounded text-xs hover:bg-gray-200" onClick={() => printAccountReceipt(account)}>
-                      Print Receipt
+                    <button className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs hover:bg-gray-200" onClick={() => printAccountReceipt(account)}>
+                      Receipt
                     </button>
-                  </>
+                  </div>
                 )}
               </div>
             </div>
@@ -619,40 +635,92 @@ export const CityLedger: React.FC = () => {
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
-      {/* Transfer to Guest Modal */}
+      {/* Transfer to Guest/Account Modal */}
       {transferTxn && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md">
-            <h3 className="text-lg font-bold mb-4">Transfer to Guest Folio</h3>
+            <h3 className="text-lg font-bold mb-4">Transfer Charge</h3>
             <p className="text-sm text-gray-600 mb-4">
-              Select an in-house guest to transfer this charge to.
+              Select an in-house guest or active AR account to transfer this charge to.
             </p>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Select Guest</label>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Transfer Type</label>
+                <select 
+                  className="w-full px-3 py-2 border rounded"
+                  value={targetType}
+                  onChange={(e) => {
+                    setTargetType(e.target.value as 'guest' | 'account');
+                    setTargetGuestId('');
+                    setCloseAccountAfterTransfer(false);
+                  }}
+                >
+                  <option value="guest">In-House Guest</option>
+                  <option value="account">Active AR Account</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">
+                  {targetType === 'guest' ? 'Select Guest' : 'Select AR Account'}
+                </label>
                 <select 
                   className="w-full px-3 py-2 border rounded"
                   value={targetGuestId}
-                  title="Select Guest"
+                  title={targetType === 'guest' ? 'Select Guest' : 'Select AR Account'}
                   onChange={(e) => setTargetGuestId(e.target.value)}
                 >
-                  <option value="">-- Select Guest --</option>
-                  {reservations
-                    .filter((r: any) => r.status === 'in_house' || r.status === 'Checked In')
-                    .map((r: any) => (
-                      <option key={r.id} value={r.guest_id || r.id}>
-                        {r.roomNumber || r.room_id} - {r.guestName}
-                      </option>
-                    ))}
+                  <option value="">-- Select {targetType === 'guest' ? 'Guest' : 'Account'} --</option>
+                  {targetType === 'guest' ? (
+                    // Show in-house guests
+                    reservations
+                      .filter((r: any) => r.status === 'in_house' || r.status === 'Checked In')
+                      .map((r: any) => (
+                        <option key={r.id} value={r.guest_id || r.id}>
+                          {r.roomNumber || r.room_id} - {r.guestName}
+                        </option>
+                      ))
+                  ) : (
+                    // Show active AR accounts
+                    (cityLedger || [])
+                      .filter((a: any) => a.status === 'Active' || !a.status)
+                      .map((a: any) => (
+                        <option key={a.id} value={a.id}>
+                          {a.account_name || a.name} ({a.type || 'Account'})
+                        </option>
+                      ))
+                  )}
                 </select>
               </div>
+
+              {targetType === 'account' && (
+                <div className="flex items-center gap-2 bg-amber-50 p-3 rounded border border-amber-200">
+                  <input
+                    type="checkbox"
+                    id="closeAccount"
+                    checked={closeAccountAfterTransfer}
+                    onChange={(e) => setCloseAccountAfterTransfer(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300"
+                  />
+                  <label htmlFor="closeAccount" className="text-sm text-gray-700">
+                    Close AR account after transfer (mark as settled)
+                  </label>
+                </div>
+              )}
+
               <div className="flex gap-2 justify-end mt-6">
                 <button 
                   className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded" 
-                  onClick={() => { setTransferTxn(null); setTargetGuestId(''); }}
+                  onClick={() => { 
+                    setTransferTxn(null); 
+                    setTargetGuestId('');
+                    setTargetType('guest');
+                    setCloseAccountAfterTransfer(false);
+                  }}
                 >
                   Cancel
                 </button>
@@ -661,12 +729,22 @@ export const CityLedger: React.FC = () => {
                   disabled={!targetGuestId}
                   onClick={async () => {
                     if (!targetGuestId || !transferTxn) return;
-                    const success = await transferCityLedgerToGuest?.(transferTxn.accountId, transferTxn.txnId, targetGuestId);
-                    if (success) {
-                      setTransferTxn(null);
-                      setTargetGuestId('');
-                    } else {
-                      alert('Transfer failed. Please check if the guest exists.');
+                    try {
+                      const success = await transferCityLedgerToGuest?.(transferTxn.accountId, transferTxn.txnId, targetGuestId);
+                      if (success) {
+                        // If closing AR account, update its status
+                        if (targetType === 'account' && closeAccountAfterTransfer) {
+                          await updateCityLedgerAccount(transferTxn.accountId, { status: 'Closed' });
+                        }
+                        setTransferTxn(null);
+                        setTargetGuestId('');
+                        setTargetType('guest');
+                        setCloseAccountAfterTransfer(false);
+                      } else {
+                        alert('Transfer failed. Please check if the target exists.');
+                      }
+                    } catch (error) {
+                      alert(`Transfer failed: ${error}`);
                     }
                   }}
                 >
