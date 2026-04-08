@@ -21,7 +21,8 @@ import { errorTracker } from "@/lib/errorTracker";
 const FolioManagement: React.FC = () => {
   const { 
     guests, rooms, reservations, folioCharges, 
-    folios: foliosMetadata, voidFolioCharge, transferFolioCharge 
+    folios: foliosMetadata, voidFolioCharge, transferFolioCharge,
+    checkInGuest, updateReservation
   } = useData();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -154,6 +155,48 @@ const FolioManagement: React.FC = () => {
     }
   };
 
+  const handleRoomTransfer = async (guestId: string, newRoomId: string) => {
+    try {
+      const reservation = reservations.find(r => r.guest_id === guestId && r.status !== 'checked-out');
+      if (!reservation) {
+        throw new Error('No active reservation found for this guest');
+      }
+      
+      const success = await checkInGuest(reservation.id, newRoomId);
+      if (success) {
+        toast({ 
+          title: "Success", 
+          description: "Guest has been transferred to the new room." 
+        });
+      } else {
+        throw new Error('Failed to transfer guest to new room');
+      }
+    } catch (error) {
+      console.error('Room transfer error:', error);
+      throw error;
+    }
+  };
+
+  const handleExtendStay = async (reservationId: string, newCheckoutDate: Date) => {
+    try {
+      const result = await updateReservation(reservationId, { 
+        checkOut: newCheckoutDate.toISOString().split('T')[0]
+      });
+      
+      if (result.success) {
+        toast({ 
+          title: "Success", 
+          description: "Guest stay has been extended." 
+        });
+      } else {
+        throw new Error(result.error || 'Failed to extend stay');
+      }
+    } catch (error) {
+      console.error('Extend stay error:', error);
+      throw error;
+    }
+  };
+
   return (
     <div className="container mx-auto p-4">
       <div className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b shadow-sm px-6 -mx-6 py-3 mb-6">
@@ -210,6 +253,10 @@ const FolioManagement: React.FC = () => {
                       onVoid={handleVoid}
                       onTransfer={handleTransfer}
                       onPaymentPosted={handlePaymentPosted}
+                      onRoomTransfer={handleRoomTransfer}
+                      onExtendStay={handleExtendStay}
+                      rooms={rooms}
+                      reservations={reservations}
                       availableFolios={folios.filter(f => f.id !== selectedFolio.id && f.status === "open")}
                     />
                   </TabsContent>

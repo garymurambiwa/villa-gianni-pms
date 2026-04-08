@@ -18,10 +18,14 @@ interface FolioDetailsProps {
   onVoid?: (transactionId: string, reason: string) => void;
   onTransfer?: (sourceId: string, targetId: string, txnIds: string[]) => void;
   onPaymentPosted?: (updatedFolio: Folio) => void;
+  onRoomTransfer?: (guestId: string, newRoomId: string) => Promise<void>;
+  onExtendStay?: (reservationId: string, newCheckoutDate: Date) => Promise<void>;
   availableFolios?: Folio[];
+  rooms?: Array<{ id: string; number: string; status: string }>;
+  reservations?: Array<{ id: string; guest_id: string; check_out_date: string; room_id: string }>;
 }
 
-const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTransfer, onPaymentPosted, availableFolios = [] }) => {
+const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTransfer, onPaymentPosted, availableFolios = [], onRoomTransfer, onExtendStay, rooms = [], reservations = [] }) => {
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [voidReason, setVoidReason] = useState("");
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
@@ -37,6 +41,14 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
   // Transfer State
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [targetFolioId, setTargetFolioId] = useState("");
+
+  // Transfer Room State
+  const [transferRoomOpen, setTransferRoomOpen] = useState(false);
+  const [selectedNewRoom, setSelectedNewRoom] = useState("");
+
+  // Extend Stay State
+  const [extendStayOpen, setExtendStayOpen] = useState(false);
+  const [newCheckoutDate, setNewCheckoutDate] = useState("");
 
   // Post Payment State
   const [postPaymentOpen, setPostPaymentOpen] = useState(false);
@@ -105,6 +117,43 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
     setTargetFolioId("");
   };
 
+  const handleTransferRoom = async () => {
+    if (!selectedNewRoom || !folio.guestId) return;
+    try {
+      await onRoomTransfer?.(folio.guestId, selectedNewRoom);
+      toast({ title: "Success", description: "Guest has been transferred to the new room." });
+      setTransferRoomOpen(false);
+      setSelectedNewRoom("");
+    } catch (error) {
+      toast({ 
+        title: "Error", 
+        description: error instanceof Error ? error.message : "Failed to transfer room", 
+        variant: "destructive" 
+      });
+    }
+  };
+
+  const handleExtendStay = async () => {
+    if (!newCheckoutDate) return;
+    const reservation = reservations.find(r => r.guest_id === folio.guestId);
+    if (!reservation) {
+      toast({ title: "Error", description: "No reservation found for this guest", variant: "destructive" });
+      return;
+    }
+    try {
+      await onExtendStay?.(reservation.id, new Date(newCheckoutDate));
+      toast({ title: "Success", description: "Guest stay has been extended." });
+      setExtendStayOpen(false);
+      setNewCheckoutDate("");
+    } catch (error) {
+      toast({ 
+        title: "Error", 
+        description: error instanceof Error ? error.message : "Failed to extend stay", 
+        variant: "destructive" 
+      });
+    }
+  };
+
   // Calculate totals from transactions
   const balanceSummary = React.useMemo(() => {
     const txns = folio.transactions || [];
@@ -159,7 +208,7 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
               className="max-w-[250px]"
             />
           </div>
-           <div className="flex gap-2 w-full md:w-auto justify-end">
+           <div className="flex gap-2 w-full md:w-auto justify-end flex-wrap">
              <Button 
                variant="outline" 
                size="sm" 
@@ -176,6 +225,24 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
                onClick={() => setTransferDialogOpen(true)}
              >
                Transfer Selected ({selectedIds.length})
+             </Button>
+             <Button 
+               variant="outline" 
+               size="sm"
+               onClick={() => setTransferRoomOpen(true)}
+               className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
+               aria-label="Transfer guest to a different room"
+             >
+               Transfer Room
+             </Button>
+             <Button 
+               variant="outline" 
+               size="sm"
+               onClick={() => setExtendStayOpen(true)}
+               className="bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
+               aria-label="Extend guest stay checkout date"
+             >
+               Extend Stay
              </Button>
           </div>
         </div>
@@ -347,6 +414,66 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
         currentBalance={balanceSummary.balance}
         onPaymentPosted={onPaymentPosted}
       />
+
+      <Dialog open={transferRoomOpen} onOpenChange={setTransferRoomOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Transfer Guest to Different Room</DialogTitle>
+            <DialogDescription>
+              Select a new room to transfer {guest?.name || "the guest"} from room {folio.roomNumber}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Select New Room</Label>
+              <Select value={selectedNewRoom} onValueChange={setSelectedNewRoom}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose a room..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {rooms
+                    .filter(r => r.id !== folio.roomNumber && r.status === 'vacant')
+                    .map(r => (
+                      <SelectItem key={r.id} value={r.id}>
+                        Room {r.number} (Status: {r.status})
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTransferRoomOpen(false)}>Cancel</Button>
+            <Button onClick={handleTransferRoom} disabled={!selectedNewRoom}>Transfer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={extendStayOpen} onOpenChange={setExtendStayOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Extend Guest Stay</DialogTitle>
+            <DialogDescription>
+              Extend the checkout date for {guest?.name || "the guest"}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="new-checkout-date">New Checkout Date</Label>
+              <Input
+                id="new-checkout-date"
+                type="date"
+                value={newCheckoutDate}
+                onChange={(e) => setNewCheckoutDate(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExtendStayOpen(false)}>Cancel</Button>
+            <Button onClick={handleExtendStay} disabled={!newCheckoutDate}>Extend Stay</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
