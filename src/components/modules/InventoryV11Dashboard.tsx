@@ -19,6 +19,10 @@ export const InventoryV11Dashboard: React.FC = () => {
   });
   const [loading, setLoading] = useState(true);
 
+  const navigateTo = (module: string) => {
+    window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } }));
+  };
+
   useEffect(() => {
     fetchStats();
   }, []);
@@ -106,7 +110,7 @@ export const InventoryV11Dashboard: React.FC = () => {
         <CardHeader>
           <div className="flex justify-between items-center">
             <CardTitle className="text-base">Recent Goods Received Notes</CardTitle>
-            <Button size="sm" variant="outline">View All</Button>
+            <Button size="sm" variant="outline" onClick={() => navigateTo('inventory-v11-grn')}>View All</Button>
           </div>
         </CardHeader>
         <CardContent>
@@ -127,19 +131,35 @@ export const InventoryV11Dashboard: React.FC = () => {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Button variant="outline" className="w-full h-16 flex flex-col items-center justify-center gap-1">
+            <Button 
+              variant="outline" 
+              className="w-full h-16 flex flex-col items-center justify-center gap-1 hover:bg-gray-100 transition-colors"
+              onClick={() => navigateTo('inventory-v11-grn')}
+            >
               <span className="text-2xl">📄</span>
               <span className="text-xs">New GRN</span>
             </Button>
-            <Button variant="outline" className="w-full h-16 flex flex-col items-center justify-center gap-1">
+            <Button 
+              variant="outline" 
+              className="w-full h-16 flex flex-col items-center justify-center gap-1 hover:bg-gray-100 transition-colors"
+              onClick={() => navigateTo('inventory-v11-transfer')}
+            >
               <span className="text-2xl">↔️</span>
               <span className="text-xs">Transfer Stock</span>
             </Button>
-            <Button variant="outline" className="w-full h-16 flex flex-col items-center justify-center gap-1">
+            <Button 
+              variant="outline" 
+              className="w-full h-16 flex flex-col items-center justify-center gap-1 hover:bg-gray-100 transition-colors"
+              onClick={() => navigateTo('inventory-v11-recipes')}
+            >
               <span className="text-2xl">🍽️</span>
               <span className="text-xs">Recipe Builder</span>
             </Button>
-            <Button variant="outline" className="w-full h-16 flex flex-col items-center justify-center gap-1">
+            <Button 
+              variant="outline" 
+              className="w-full h-16 flex flex-col items-center justify-center gap-1 hover:bg-gray-100 transition-colors"
+              onClick={() => navigateTo('inventory-v11-variance')}
+            >
               <span className="text-2xl">📊</span>
               <span className="text-xs">Variance Report</span>
             </Button>

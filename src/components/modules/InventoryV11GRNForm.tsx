@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Trash2, Check } from 'lucide-react';
+import { Plus, Trash2, Check, ChevronLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface GRNLineItem {
@@ -32,6 +32,10 @@ export const InventoryV11GRNForm: React.FC = () => {
   const [destinationLocation, setDestinationLocation] = useState('loc_main_cellar');
   const [lines, setLines] = useState<GRNLineItem[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const navigateTo = (module: string) => {
+    window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } }));
+  };
 
   const locations = [
     { id: 'loc_main_cellar', name: 'Main Cellar' },
@@ -87,6 +91,18 @@ export const InventoryV11GRNForm: React.FC = () => {
       return;
     }
 
+    // Validate all lines have required data
+    for (const line of lines) {
+      if (!line.item_id || line.qty_received <= 0 || line.unit_cost < 0) {
+        toast({
+          title: 'Invalid Line Item',
+          description: `All line items must have: Item name, Quantity > 0, and Unit Cost ≥ 0`,
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const response = await fetch('/api/v1/inventory/grn', {
@@ -110,14 +126,16 @@ export const InventoryV11GRNForm: React.FC = () => {
 
         // Reset form
         setSupplierName('');
+        setDestinationLocation('loc_main_cellar');
         setLines([]);
       } else {
-        throw new Error(result.error);
+        throw new Error(result.error || 'Failed to create GRN');
       }
     } catch (error: any) {
+      console.error('GRN submission error:', error);
       toast({
         title: 'Error',
-        description: error.message,
+        description: error.message || 'Failed to create GRN. Please try again.',
         variant: 'destructive',
       });
     } finally {
@@ -127,6 +145,18 @@ export const InventoryV11GRNForm: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Button 
+          variant="ghost" 
+          size="sm"
+          onClick={() => navigateTo('inventory-v11')}
+          className="gap-2"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          Back to Inventory
+        </Button>
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle>Create Goods Received Note</CardTitle>
@@ -174,7 +204,7 @@ export const InventoryV11GRNForm: React.FC = () => {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b">
                   <tr>
-                    <th className="px-4 py-2 text-left font-medium">Item ID</th>
+                    <th className="px-4 py-2 text-left font-medium">Item Name</th>
                     <th className="px-4 py-2 text-left font-medium">Qty Received</th>
                     <th className="px-4 py-2 text-left font-medium">UOM</th>
                     <th className="px-4 py-2 text-left font-medium">Unit Cost</th>
@@ -187,7 +217,7 @@ export const InventoryV11GRNForm: React.FC = () => {
                     <tr key={line.id} className="border-b hover:bg-gray-50">
                       <td className="px-4 py-2">
                         <Input
-                          placeholder="Item ID"
+                          placeholder="e.g., Tomatoes"
                           value={line.item_id}
                           onChange={(e) => updateLine(line.id, 'item_id', e.target.value)}
                           className="text-xs"

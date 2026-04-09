@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Trash2, Save } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface RecipeLine {
@@ -34,6 +34,10 @@ export const InventoryV11RecipeBuilder: React.FC = () => {
   const [lines, setLines] = useState<RecipeLine[]>([]);
   const [totalCost, setTotalCost] = useState(0);
   const [loading, setLoading] = useState(false);
+
+  const navigateTo = (module: string) => {
+    window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } }));
+  };
 
   const uoms = [
     { id: 'uom_gram', code: 'GRAM' },
@@ -131,6 +135,18 @@ export const InventoryV11RecipeBuilder: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Button 
+          variant="ghost" 
+          size="sm"
+          onClick={() => navigateTo('inventory-v11')}
+          className="gap-2"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          Back to Inventory
+        </Button>
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle>Recipe Builder</CardTitle>

@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { CheckCircle, AlertCircle, AlertTriangle, Download } from 'lucide-react';
+import { CheckCircle, AlertCircle, AlertTriangle, Download, ChevronLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface VarianceLine {
@@ -49,6 +49,10 @@ export const InventoryV11VarianceReport: React.FC = () => {
   const [location, setLocation] = useState('loc_main_cellar');
   const [report, setReport] = useState<VarianceReport | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const navigateTo = (module: string) => {
+    window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } }));
+  };
 
   const locations = [
     { id: 'loc_main_cellar', name: 'Main Cellar' },
@@ -135,6 +139,18 @@ export const InventoryV11VarianceReport: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Button 
+          variant="ghost" 
+          size="sm"
+          onClick={() => navigateTo('inventory-v11')}
+          className="gap-2"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          Back to Inventory
+        </Button>
+      </div>
+
       {/* Report Generator */}
       <Card>
         <CardHeader>
@@ -200,7 +216,7 @@ export const InventoryV11VarianceReport: React.FC = () => {
               <CardContent className="pt-6">
                 <div className="text-center">
                   <div className="text-3xl font-bold text-green-600">{report.ok_count}</div>
-                  <p className="text-xs text-gray-500 mt-1">OK (< 2%)</p>
+                  <p className="text-xs text-gray-500 mt-1">{'OK (< 2%)'}</p>
                 </div>
               </CardContent>
             </Card>
@@ -218,7 +234,7 @@ export const InventoryV11VarianceReport: React.FC = () => {
               <CardContent className="pt-6">
                 <div className="text-center">
                   <div className="text-3xl font-bold text-red-600">{report.critical_count}</div>
-                  <p className="text-xs text-gray-500 mt-1">Critical (> 5%)</p>
+                  <p className="text-xs text-gray-500 mt-1">{'Critical (> 5%)'}</p>
                 </div>
               </CardContent>
             </Card>

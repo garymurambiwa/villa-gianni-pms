@@ -8,6 +8,7 @@
 const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
+const { randomUUID } = require('crypto');
 
 // Load environment
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
@@ -34,16 +35,22 @@ router.post('/grn', async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // Get next GRN number
+    const grnCountRes = await client.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(grn_number FROM 10) AS INTEGER)), 0) + 1 as next_num
+       FROM public.inv_grn_headers 
+       WHERE grn_number LIKE 'GRN-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-%'`
+    );
+    const nextNum = grnCountRes.rows[0].next_num;
+    const grnNumber = 'GRN-' + new Date().getFullYear() + '-' + String(nextNum).padStart(4, '0');
+
     // Create GRN header
     const grnRes = await client.query(
       `INSERT INTO public.inv_grn_headers 
       (id, grn_number, supplier_name, destination_location_id, created_by, status, inserted_at)
-      VALUES (gen_random_uuid()::text, 
-              'GRN-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-' || 
-              LPAD((COUNT(*) OVER () + 1)::text, 4, '0'),
-              $1, $2, $3, 'draft', NOW())
+      VALUES ($1, $2, $3, $4, $5, 'draft', $6)
       RETURNING *`,
-      [supplier_name, destination_location_id, created_by]
+      [randomUUID(), grnNumber, supplier_name, destination_location_id, created_by, new Date()]
     );
 
     const grn = grnRes.rows[0];
@@ -57,11 +64,30 @@ router.post('/grn', async (req, res) => {
         const lineTotal = line.qty_received * line.unit_cost;
         totalValue += lineTotal;
 
+        // Ensure item exists, create if necessary
+        let itemId = line.item_id;
+        const itemCheckRes = await client.query(
+          `SELECT id FROM public.inv_items WHERE id = $1 LIMIT 1`,
+          [itemId]
+        );
+        
+        if (itemCheckRes.rows.length === 0) {
+          // Create item if it doesn't exist - use provided name as ID for consistency
+          const newItemId = itemId || `item-${Date.now()}-${i}`;
+          await client.query(
+            `INSERT INTO public.inv_items (id, name, category, base_uom_id, inserted_at)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (id) DO NOTHING`,
+            [newItemId, itemId || 'Item', 'Food', 'uom_case', new Date()]
+          );
+          itemId = newItemId;
+        }
+
         await client.query(
           `INSERT INTO public.inv_grn_lines 
           (id, grn_header_id, item_id, qty_received, received_uom_id, unit_cost, line_total, line_number, inserted_at)
-          VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, NOW())`,
-          [grn.id, line.item_id, line.qty_received, line.received_uom_id, line.unit_cost, lineTotal, i + 1]
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [randomUUID(), grn.id, itemId, line.qty_received, line.received_uom_id, line.unit_cost, lineTotal, i + 1, new Date()]
         );
       }
 
@@ -69,8 +95,12 @@ router.post('/grn', async (req, res) => {
       await client.query(`UPDATE public.inv_grn_headers SET total_value = $1 WHERE id = $2`, [totalValue, grn.id]);
     }
 
+    // Fetch updated GRN with final total
+    const finalGrnRes = await client.query(`SELECT * FROM public.inv_grn_headers WHERE id = $1`, [grn.id]);
+    const finalGrn = finalGrnRes.rows[0];
+
     await client.query('COMMIT');
-    return res.json({ ok: true, data: grn });
+    return res.json({ ok: true, data: finalGrn });
   } catch (error) {
     await client.query('ROLLBACK');
     res.status(500).json({ ok: false, error: error.message });
@@ -144,16 +174,16 @@ router.post('/grn/:id/post', async (req, res) => {
       await client.query(
         `INSERT INTO public.inv_stock_ledger 
         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, cost_per_unit, total_cost, posted_by, gl_account_code, inserted_at)
-        VALUES (gen_random_uuid()::text, $1, $2, 'GRN', $3, $4, $5, $6, $7, $8, 'INVENTORY_ASSET', NOW())`,
-        [line.item_id, grn.destination_location_id, grn.grn_number, line.qty_received, baseUomId, line.unit_cost, line.line_total, posted_by]
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [randomUUID(), line.item_id, grn.destination_location_id, 'GRN', grn.grn_number, line.qty_received, baseUomId, line.unit_cost, line.line_total, posted_by, 'INVENTORY_ASSET', new Date()]
       );
     }
 
     // Update GRN status
-    await client.query(
-      `UPDATE public.inv_grn_headers SET status = 'posted', posted_by = $1, posted_at = NOW() WHERE id = $2`,
-      [posted_by, id]
-    );
+      await client.query(
+        `UPDATE public.inv_grn_headers SET status = $1, posted_by = $2, posted_at = $3 WHERE id = $4`,
+        ['posted', posted_by, new Date(), id]
+      );
 
     await client.query('COMMIT');
     res.json({ ok: true, message: `GRN ${grn.grn_number} posted successfully` });
@@ -184,16 +214,22 @@ router.post('/transfer', async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // Get next transfer number
+    const transCountRes = await client.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(transfer_number FROM 12) AS INTEGER)), 0) + 1 as next_num
+       FROM public.inv_transfer_headers 
+       WHERE transfer_number LIKE 'TRANS-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-%'`
+    );
+    const nextNum = transCountRes.rows[0].next_num;
+    const transferNumber = 'TRANS-' + new Date().getFullYear() + '-' + String(nextNum).padStart(4, '0');
+
     // Create transfer header
     const transRes = await client.query(
       `INSERT INTO public.inv_transfer_headers 
       (id, transfer_number, source_location_id, destination_location_id, created_by, reference_text, status, inserted_at)
-      VALUES (gen_random_uuid()::text, 
-              'TRANS-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-' || 
-              LPAD((COUNT(*) OVER () + 1)::text, 4, '0'),
-              $1, $2, $3, $4, 'draft', NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, 'draft', $7)
       RETURNING *`,
-      [source_location_id, destination_location_id, created_by, reference_text]
+      [randomUUID(), transferNumber, source_location_id, destination_location_id, created_by, reference_text, new Date()]
     );
 
     const transfer = transRes.rows[0];
@@ -216,8 +252,8 @@ router.post('/transfer', async (req, res) => {
         await client.query(
           `INSERT INTO public.inv_transfer_lines 
           (id, transfer_header_id, item_id, qty_requested, source_uom_id, breakdown_flag, destination_uom_id, current_source_balance, line_number, inserted_at)
-          VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
-          [transfer.id, line.item_id, line.qty_requested, line.source_uom_id, line.breakdown_flag || false, line.destination_uom_id, currentBalance, i + 1]
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [randomUUID(), transfer.id, line.item_id, line.qty_requested, line.source_uom_id, line.breakdown_flag || false, line.destination_uom_id, currentBalance, i + 1, new Date()]
         );
       }
     }
@@ -277,8 +313,8 @@ router.post('/transfer/:id/approve', async (req, res) => {
       await client.query(
         `INSERT INTO public.inv_stock_ledger 
         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
-        VALUES (gen_random_uuid()::text, $1, $2, 'TRANSFER_OUT', $3, $4, $5, $6, NOW())`,
-        [line.item_id, transfer.source_location_id, transfer.transfer_number, -line.qty_requested, line.source_uom_id, approved_by]
+        VALUES ($1, $2, $3, 'TRANSFER_OUT', $4, $5, $6, $7, $8)`,
+        [randomUUID(), line.item_id, transfer.source_location_id, transfer.transfer_number, -line.qty_requested, line.source_uom_id, approved_by, new Date()]
       );
 
       // Create TRANSFER_IN entry (with breakdown conversion if needed)
@@ -288,15 +324,15 @@ router.post('/transfer/:id/approve', async (req, res) => {
       await client.query(
         `INSERT INTO public.inv_stock_ledger 
         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
-        VALUES (gen_random_uuid()::text, $1, $2, 'TRANSFER_IN', $3, $4, $5, $6, NOW())`,
-        [line.item_id, transfer.destination_location_id, transfer.transfer_number, destQty, destUomId, approved_by]
+        VALUES ($1, $2, $3, 'TRANSFER_IN', $4, $5, $6, $7, $8)`,
+        [randomUUID(), line.item_id, transfer.destination_location_id, transfer.transfer_number, destQty, destUomId, approved_by, new Date()]
       );
     }
 
     // Update transfer status
     await client.query(
-      `UPDATE public.inv_transfer_headers SET status = 'approved', approved_by = $1, approved_at = NOW() WHERE id = $2`,
-      [approved_by, id]
+      `UPDATE public.inv_transfer_headers SET status = 'approved', approved_by = $1, approved_at = $2 WHERE id = $3`,
+      [approved_by, new Date(), id]
     );
 
     await client.query('COMMIT');
@@ -430,9 +466,9 @@ router.post('/recipe', async (req, res) => {
     // Create new recipe
     const recipeRes = await client.query(
       `INSERT INTO public.inv_recipes (id, menu_item_id, is_current, created_by, inserted_at)
-      VALUES (gen_random_uuid()::text, $1, true, $2, NOW())
+      VALUES ($1, $2, true, $3, $4)
       RETURNING *`,
-      [menu_item_id, created_by]
+      [randomUUID(), menu_item_id, created_by, new Date()]
     );
 
     const recipe = recipeRes.rows[0];
@@ -444,8 +480,8 @@ router.post('/recipe', async (req, res) => {
         await client.query(
           `INSERT INTO public.inv_recipe_lines 
           (id, recipe_id, item_id, qty_required, prep_uom_id, wastage_pct, line_number, inserted_at)
-          VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, NOW())`,
-          [recipe.id, line.item_id, line.qty_required, line.prep_uom_id, line.wastage_pct || 0, i + 1]
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [randomUUID(), recipe.id, line.item_id, line.qty_required, line.prep_uom_id, line.wastage_pct || 0, i + 1, new Date()]
         );
       }
     }
@@ -479,16 +515,22 @@ router.post('/variance/generate', async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // Get next variance report number
+    const varCountRes = await client.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(report_number FROM 9) AS INTEGER)), 0) + 1 as next_num
+       FROM public.inv_variance_reports 
+       WHERE report_number LIKE 'VAR-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-%'`
+    );
+    const nextNum = varCountRes.rows[0].next_num;
+    const reportNumber = 'VAR-' + new Date().getFullYear() + '-' + String(nextNum).padStart(4, '0');
+
     // Create report header
     const reportRes = await client.query(
       `INSERT INTO public.inv_variance_reports 
       (id, report_number, location_id, period_start, period_end, generated_by, inserted_at)
-      VALUES (gen_random_uuid()::text, 
-              'VAR-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-' || 
-              LPAD((COUNT(*) OVER () + 1)::text, 4, '0'),
-              $1, $2, $3, $4, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *`,
-      [location_id, period_start, period_end, generated_by]
+      [randomUUID(), reportNumber, location_id, period_start, period_end, generated_by, new Date()]
     );
 
     const report = reportRes.rows[0];
@@ -529,8 +571,8 @@ router.post('/variance/generate', async (req, res) => {
       await client.query(
         `INSERT INTO public.inv_variance_lines 
         (id, variance_report_id, item_id, pos_theoretical_qty, physical_count_qty, variance_qty, variance_pct, variance_value, alert_level, base_uom_id, inserted_at)
-        VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
-        [report.id, item_id, theoreticalQty, physicalQty, varianceQty, variancePct, Math.abs(varianceQty), alertLevel, 'uom_unit']
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [randomUUID(), report.id, item_id, theoreticalQty, physicalQty, varianceQty, variancePct, Math.abs(varianceQty), alertLevel, 'uom_unit', new Date()]
       );
     }
 

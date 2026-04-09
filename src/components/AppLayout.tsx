@@ -68,6 +68,11 @@ import VendorManagement from './modules/VendorManagement';
 import BreakfastManager from './modules/BreakfastManager';
 import OfflineIndicator from './OfflineIndicator';
 import { InventoryReconciliation } from './modules/InventoryReconciliation';
+import InventoryV11Dashboard from './modules/InventoryV11Dashboard';
+import InventoryV11GRNForm from './modules/InventoryV11GRNForm';
+import InventoryV11Transfer from './modules/InventoryV11Transfer';
+import InventoryV11RecipeBuilder from './modules/InventoryV11RecipeBuilder';
+import InventoryV11VarianceReport from './modules/InventoryV11VarianceReport';
 
 const AppLayout: React.FC = () => {
   const { user } = useAuth();
@@ -367,6 +372,51 @@ const AppLayout: React.FC = () => {
         return canAccessInventoryManagement(user?.role)
           ? <Inventory />
           : renderAccessDenied('You do not have permission to access Inventory.', 'dashboard', 'Back to Dashboard');
+      }
+      case 'inventory-v11': {
+        return canAccessInventoryManagement(user?.role)
+          ? (
+            <ErrorBoundary fallbackTitle="Inventory v11 Dashboard Error" fallbackMessage="Please reload or contact support.">
+              <InventoryV11Dashboard />
+            </ErrorBoundary>
+          )
+          : renderAccessDenied('You do not have permission to access Inventory v11.', 'dashboard', 'Back to Dashboard');
+      }
+      case 'inventory-v11-grn': {
+        return canAccessInventoryManagement(user?.role)
+          ? (
+            <ErrorBoundary fallbackTitle="GRN Form Error" fallbackMessage="Please reload or contact support.">
+              <InventoryV11GRNForm />
+            </ErrorBoundary>
+          )
+          : renderAccessDenied('You do not have permission to access GRN.', 'inventory-v11', 'Back to Inventory');
+      }
+      case 'inventory-v11-transfer': {
+        return canAccessInventoryManagement(user?.role)
+          ? (
+            <ErrorBoundary fallbackTitle="Transfer Form Error" fallbackMessage="Please reload or contact support.">
+              <InventoryV11Transfer />
+            </ErrorBoundary>
+          )
+          : renderAccessDenied('You do not have permission to access Transfer.', 'inventory-v11', 'Back to Inventory');
+      }
+      case 'inventory-v11-recipes': {
+        return canAccessInventoryManagement(user?.role)
+          ? (
+            <ErrorBoundary fallbackTitle="Recipe Builder Error" fallbackMessage="Please reload or contact support.">
+              <InventoryV11RecipeBuilder />
+            </ErrorBoundary>
+          )
+          : renderAccessDenied('You do not have permission to access Recipes.', 'inventory-v11', 'Back to Inventory');
+      }
+      case 'inventory-v11-variance': {
+        return canAccessInventoryManagement(user?.role)
+          ? (
+            <ErrorBoundary fallbackTitle="Variance Report Error" fallbackMessage="Please reload or contact support.">
+              <InventoryV11VarianceReport />
+            </ErrorBoundary>
+          )
+          : renderAccessDenied('You do not have permission to access Variance Reports.', 'inventory-v11', 'Back to Inventory');
       }
       case 'ap': {
         return isManager(user?.role)

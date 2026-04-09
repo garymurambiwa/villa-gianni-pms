@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Trash2, CheckCircle } from 'lucide-react';
+import { Plus, Trash2, CheckCircle, ChevronLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface TransferLine {
@@ -32,10 +32,14 @@ interface TransferLine {
 export const InventoryV11Transfer: React.FC = () => {
   const { toast } = useToast();
   const [sourceLocation, setSourceLocation] = useState('loc_main_cellar');
-  const [destLocation, setDestLocation] = useState('loc_bar1');
+  const [destinationLocation, setDestinationLocation] = useState('loc_bar1');
   const [referenceText, setReferenceText] = useState('');
   const [lines, setLines] = useState<TransferLine[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const navigateTo = (module: string) => {
+    window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } }));
+  };
 
   const locations = [
     { id: 'loc_main_cellar', name: 'Main Cellar', type: 'Storage' },
@@ -133,6 +137,18 @@ export const InventoryV11Transfer: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Button 
+          variant="ghost" 
+          size="sm"
+          onClick={() => navigateTo('inventory-v11')}
+          className="gap-2"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          Back to Inventory
+        </Button>
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle>Stock Transfer</CardTitle>
