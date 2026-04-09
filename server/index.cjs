@@ -253,6 +253,12 @@ app.post('/api/inventory/close', async (req, res) => {
     }
 });
 
+// ============================================================================
+// COREPMS v11 - Advanced Inventory Module Routes
+// ============================================================================
+const inventoryV11Routes = require('./routes/inventory-v11.cjs');
+app.use('/api/v1/inventory', inventoryV11Routes);
+
 // 2. Serve Static Assets (Frontend)
 // Serve dist folder
 const distPath = path.join(__dirname, '..', 'dist');
