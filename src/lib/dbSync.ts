@@ -637,7 +637,49 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
       picture_data: item.pictureData || null
     };
 
-    return syncProductToDb(product);
+    // Sync to products table
+    const productResult = await syncProductToDb(product);
+
+    // ALSO sync to inventory_items table (since POS now reads from inventory_items)
+    // This ensures both tables stay in sync
+    try {
+      const sql = `
+        INSERT INTO inventory_items (
+          id, name, category, cost, price, stock_level, unit, visibility, inserted_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE((SELECT inserted_at FROM inventory_items WHERE id = $1), NOW()))
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          category = EXCLUDED.category,
+          cost = EXCLUDED.cost,
+          price = EXCLUDED.price,
+          stock_level = EXCLUDED.stock_level,
+          unit = EXCLUDED.unit,
+          visibility = EXCLUDED.visibility
+      `;
+
+      const params = [
+        product.id,
+        product.name,
+        product.category,
+        product.cost_price || 0,
+        product.price || 0,  // selling_price mapped to price field in inventory_items
+        product.stock_level || 0,
+        product.unit || 'units',
+        product.visibility
+      ];
+
+      const invResult = await db.query(sql, params);
+      if ('error' in invResult) {
+        console.warn('[dbSync] Failed to sync to inventory_items:', (invResult as any).error);
+      } else {
+        console.log('[dbSync] Synced to inventory_items:', product.id, product.name);
+      }
+    } catch (err) {
+      console.warn('[dbSync] Error syncing to inventory_items:', err);
+      // Don't fail the entire sync if inventory_items update fails
+    }
+
+    return productResult;
   } catch (err: any) {
     const msg = err?.message || String(err);
     console.error('[dbSync] POS item sync CRITICAL FAILURE:', msg, item);
