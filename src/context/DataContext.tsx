@@ -334,7 +334,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return {
             ...p,
             // Map unified fields to legacy frontend expected fields
-            selling_price: Number(p.price || 0),
+            // Use SELLING_PRICE, not cost_price - POS should display customer-facing prices
+            selling_price: Number(p.price || 0), // This is the selling price from DB
             sellingPrice: Number(p.price || 0), // camelCase for PosSettings
             costPrice: Number(p.cost_price || 0),
             qtyInStock: Number(p.stock_level || 0),

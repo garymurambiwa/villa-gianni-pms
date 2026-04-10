@@ -228,34 +228,37 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
   try {
     const isConfigured = await db.isConfigured();
     if (isConfigured) {
-      // Use products table as source of truth
+      // Use inventory_items table with selling_price field (has both selling_price and cost)
+      // This ensures POS displays selling prices, not cost prices
       const res = await db.query(
-        `SELECT id, name, price, department, category, active, category_id, sub_id, unit, cost_price, bar_visibility, restaurant_visibility FROM products WHERE active = true`
+        `SELECT 
+          id, 
+          name, 
+          category, 
+          COALESCE(selling_price, price, 0) as selling_price,
+          COALESCE(cost, 0) as cost_price,
+          stock_level, 
+          unit,
+          category_id,
+          sub_id
+        FROM inventory_items 
+        WHERE (selling_price > 0 OR price > 0) 
+          AND (visibility IS NULL OR visibility = '' OR visibility::text ILIKE '%restaurant%' OR visibility::text ILIKE '%all%')
+        ORDER BY name ASC`
       );
       if ('rows' in res && Array.isArray(res.rows)) {
         return res.rows
           .map((r: any) => {
-            const rawCat = String(r.department || r.category || '').toLowerCase();
-            const isBarItem = rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('drink') || !!r.bar_visibility;
+            const rawCat = String(r.category || '').toLowerCase();
+            const isBarItem = rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('drink') || rawCat.includes('alcohol') || rawCat.includes('cocktail');
             
             const category: 'food' | 'bar' = isBarItem ? 'bar' : 'food';
-            const price = Number(r.price || 0);
+            const price = Number(r.selling_price || 0);
 
             if (price <= 0) return null;
 
-            // Filter by cost centre if specified
-            if (costCentre) {
-              const ccLower = costCentre.toLowerCase();
-              const isBarStation = ccLower.includes('bar');
-              const isRestaurantStation = ccLower.includes('restaurant') || ccLower.includes('room service');
-              
-              // If visibility is null/undefined, default to true for backward compatibility
-              const barVis = r.bar_visibility !== false;
-              const restVis = r.restaurant_visibility !== false;
-
-              if (isBarStation && !barVis) return null;
-              if (isRestaurantStation && !restVis) return null;
-            }
+            // No need to filter by cost centre here since visibility is already filtered in SQL
+            // The inventory_items.visibility field determines availability
 
             let category_id = r.category_id ? String(r.category_id) : undefined;
             if (!category_id || category_id === '') {
@@ -268,7 +271,7 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
               price,
               category,
               description: '',
-              subCategory: String(r.category || r.department || ''),
+              subCategory: String(r.category || ''),
               category_id,
               unitOfMeasure: r.unit ? String(r.unit) : undefined,
               costPrice: r.cost_price ? Number(r.cost_price) : undefined
