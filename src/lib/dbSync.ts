@@ -643,10 +643,11 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
     // ALSO sync to inventory_items table (since POS now reads from inventory_items)
     // This ensures both tables stay in sync
     try {
+      // Use a simpler query that works even if selling_price column doesn't exist
       const sql = `
         INSERT INTO inventory_items (
-          id, name, category, cost, price, stock_level, unit, visibility, inserted_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE((SELECT inserted_at FROM inventory_items WHERE id = $1), NOW()))
+          id, name, category, cost, price, stock_level, unit, visibility
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
           category = EXCLUDED.category,
@@ -662,7 +663,7 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
         product.name,
         product.category,
         product.cost_price || 0,
-        product.price || 0,  // selling_price mapped to price field in inventory_items
+        product.price || 0,  // selling price goes to price field
         product.stock_level || 0,
         product.unit || 'units',
         product.visibility
