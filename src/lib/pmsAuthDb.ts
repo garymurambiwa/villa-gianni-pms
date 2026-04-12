@@ -41,7 +41,7 @@ export type AccessLog = {
   detail: any | null;
 }
 
-const STRONG_PASSWORD = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^\da-zA-Z]).{8,}$/
+const STRONG_PASSWORD = /^.{4,}$/
 
 export const pmsAuthDb = {
   async init(): Promise<void> {
@@ -569,13 +569,13 @@ export const pmsAuthDb = {
     return { ok: true, user, mustChange };
   },
 
-  validateStrongPassword(pw: string): boolean {
+  validatePassword(pw: string): boolean {
     return STRONG_PASSWORD.test(pw);
   },
 
   async updatePasswordForUser(username: string, newPassword: string): Promise<{ ok: boolean; error?: string }> {
-    if (!this.validateStrongPassword(newPassword)) {
-      return { ok: false, error: 'Password not strong enough' };
+    if (!this.validatePassword(newPassword)) {
+      return { ok: false, error: 'Password must be at least 4 characters' };
     }
     const hash = await bcrypt.hash(newPassword, 12);
     // Update without referencing optional columns for schema compatibility
@@ -605,7 +605,7 @@ export const pmsAuthDb = {
 
     if (!username || !password || !name) return { ok: false, error: 'Missing fields' };
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: 'Invalid email' };
-    if (!this.validateStrongPassword(password)) return { ok: false, error: 'Weak password' };
+    if (!this.validatePassword(password)) return { ok: false, error: 'Password must be at least 4 characters' };
 
     // Check for duplicate username and email separately to provide specific feedback
     const usernameCheck = await db.query<{ id: string }>(`SELECT id FROM app_users WHERE LOWER(username::text) = LOWER(?::text)`, [username]);
