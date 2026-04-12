@@ -7,6 +7,9 @@ import { useShift } from '@/contexts/ShiftContext';
 import { getOutletReceiptSettings } from '@/components/modules/ReceiptSettingsModal';
 import { useAuth } from '@/context/AuthContext';
 import menuCats from '@/lib/menuCategories';
+import { ShiftClosureModal } from '@/components/pos/ShiftClosureModal';
+import { ShiftReportModal } from '@/components/posimport/ShiftReportModal';
+import { ShiftReading } from '@/types';
 
 interface MenuItem {
   id: string;
@@ -38,7 +41,7 @@ interface InventoryItem {
 export const POS: React.FC = () => {
   const { user } = useAuth();
   const { guests, recordFolioCharge, removeFolioCharge, inventory } = useData();
-  const { activeShift, startShift, endShift, getTotals, addTransaction } = useShift();
+  const { activeShift, startShift, endShift, getTotals, addTransaction, generateXReading } = useShift();
 
   // Transform inventory to POS Menu Items
   const menuItems: MenuItem[] = useMemo(() => {
@@ -85,6 +88,9 @@ export const POS: React.FC = () => {
   const [roomNumber, setRoomNumber] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [isClosureModalOpen, setIsClosureModalOpen] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [currentReading, setCurrentReading] = useState<ShiftReading | null>(null);
   const txContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Persistence for Cart
@@ -279,9 +285,49 @@ export const POS: React.FC = () => {
     { id: 'clear', label: 'Clear', color: 'outline' as const, onClick: () => setCart([]), disabled: cart.length === 0 }
   ];
 
+  const handleXReading = async () => {
+    try {
+      const reading = generateXReading();
+      setCurrentReading(reading);
+      setIsReportModalOpen(true);
+    } catch (error) {
+      console.error('Failed to generate X-Reading:', error);
+    }
+  };
+
+  const handleEndShift = () => {
+    setIsClosureModalOpen(true);
+  };
+
+  const handleShiftClosed = (zReading: ShiftReading) => {
+    setCurrentReading(zReading);
+    setIsReportModalOpen(true);
+    setIsClosureModalOpen(false);
+  };
+
+  const totals = getTotals();
+
   return (
     <div className="p-6">
-      <h2 className="text-3xl font-bold text-gray-800 mb-6">POS System</h2>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-3xl font-bold text-gray-800">POS System</h2>
+        {activeShift && (
+          <div className="flex gap-2">
+            <button
+              onClick={handleXReading}
+              className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg font-medium transition-colors"
+            >
+              X Reading
+            </button>
+            <button
+              onClick={handleEndShift}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+            >
+              End Shift
+            </button>
+          </div>
+        )}
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white rounded-xl shadow-lg p-6">
           <div className="flex gap-4 mb-6">
@@ -549,6 +595,18 @@ export const POS: React.FC = () => {
         onPaymentComplete={handlePaymentComplete}
         currentUser={{ name: user?.name || 'Server', id: user?.id || 'server-1' }}
         receiptSettings={receiptSettings}
+      />
+
+      <ShiftClosureModal
+        open={isClosureModalOpen}
+        onClose={() => setIsClosureModalOpen(false)}
+        onSuccess={handleShiftClosed}
+      />
+
+      <ShiftReportModal
+        open={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        reading={currentReading}
       />
     </div>
   );
