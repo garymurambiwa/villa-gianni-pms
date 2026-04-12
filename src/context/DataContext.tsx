@@ -331,38 +331,61 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
 
-          return {
-            ...p,
-            // Map unified fields to legacy frontend expected fields
-            // Use SELLING_PRICE, not cost_price - POS should display customer-facing prices
-            selling_price: Number(p.price || 0), // This is the selling price from DB
-            sellingPrice: Number(p.price || 0), // camelCase for PosSettings
-            costPrice: Number(p.cost_price || 0),
-            qtyInStock: Number(p.stock_level || 0),
-            // 'type' is used for filtering (bar/restaurant/etc)
-            type: p.department || p.category || 'restaurant',
-            costCenter: isBar ? 'bar' : 'restaurant', // Normalized cost center
-            // CRITICAL: category must match OrderModal's activeCategory type: 'food' | 'bar'
-            // OrderModal sets activeCategory='food' for Restaurant tab, 'bar' for Bar tab
-            // Then filters: m.category === activeCategory
-            category: isBar ? 'bar' : 'food',
-            subCategory: p.category || p.department || '', // For Order Modal filtering
-            active: p.active !== false,
-            visibility: vis,
-            isStockItem: p.is_stock_item,
-            // Map new extended fields (snake_case from DB -> camelCase for frontend)
-            category_id: derivedCategoryId,
-            sub_id: p.sub_id,
-            parent_sub_id: p.parent_sub_id,
-            notes: p.notes,
-            barcodes: p.barcodes ? (typeof p.barcodes === 'string' ? JSON.parse(p.barcodes) : p.barcodes) : [],
-            cosPercent: Number(p.cos_percent || 0),
-            gpPercent: Number(p.gp_percent || 0),
-            gpAmount: Number(p.gp_amount || 0),
-            qtyReceived: Number(p.qty_received || 0),
-            imageBgColor: p.image_bg_color,
-            pictureData: p.picture_data
-          };
+            // Ensure selling price is never less than cost price
+            const rawPrice = Number(p.price || 0);
+            const rawCostPrice = Number(p.cost_price || 0);
+            
+            // Log price inversion detection for data corruption identification
+            if (rawCostPrice > rawPrice && rawPrice > 0) {
+              console.warn(`[DataContext] PRICE INVERSION DETECTED for item ${p.id}: selling=${rawPrice}, cost=${rawCostPrice}. This indicates data corruption.`);
+            }
+            
+            // Detect potential data corruption: cost price higher than selling price
+            if (rawCostPrice > rawPrice) {
+              console.warn('[DataContext] Price inversion detected:', {
+                productId: p.id,
+                productName: p.name,
+                sellingPrice: rawPrice,
+                costPrice: rawCostPrice,
+                message: 'Cost price is higher than selling price - swapping values'
+              });
+            }
+           
+           const sellingPriceValue = Math.max(rawPrice, rawCostPrice);
+           const costPriceValue = Math.min(rawPrice, rawCostPrice);
+           
+           return {
+             ...p,
+             // Map unified fields to legacy frontend expected fields
+             // Use SELLING_PRICE, not cost_price - POS should display customer-facing prices
+             selling_price: sellingPriceValue, // This is the selling price from DB (ensured >= costPrice)
+             sellingPrice: sellingPriceValue, // camelCase for PosSettings
+             costPrice: costPriceValue,
+             qtyInStock: Number(p.stock_level || 0),
+             // 'type' is used for filtering (bar/restaurant/etc)
+             type: p.department || p.category || 'restaurant',
+             costCenter: isBar ? 'bar' : 'restaurant', // Normalized cost center
+             // CRITICAL: category must match OrderModal's activeCategory type: 'food' | 'bar'
+             // OrderModal sets activeCategory='food' for Restaurant tab, 'bar' for Bar tab
+             // Then filters: m.category === activeCategory
+             category: isBar ? 'bar' : 'food',
+             subCategory: p.category || p.department || '', // For Order Modal filtering
+             active: p.active !== false,
+             visibility: vis,
+             isStockItem: p.is_stock_item,
+             // Map new extended fields (snake_case from DB -> camelCase for frontend)
+             category_id: derivedCategoryId,
+             sub_id: p.sub_id,
+             parent_sub_id: p.parent_sub_id,
+             notes: p.notes,
+             barcodes: p.barcodes ? (typeof p.barcodes === 'string' ? JSON.parse(p.barcodes) : p.barcodes) : [],
+             cosPercent: Number(p.cos_percent || 0),
+             gpPercent: Number(p.gp_percent || 0),
+             gpAmount: Number(p.gp_amount || 0),
+             qtyReceived: Number(p.qty_received || 0),
+             imageBgColor: p.image_bg_color,
+             pictureData: p.picture_data
+           };
         });
 
         console.log(`[DataContext] Loaded ${mergedInventory.length} products`);

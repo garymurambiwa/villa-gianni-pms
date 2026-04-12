@@ -228,23 +228,22 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
   try {
     const isConfigured = await db.isConfigured();
     if (isConfigured) {
-      // Use inventory_items table - query both tables and prefer products
-      // If inventory_items doesn't have selling_price column, fall back to products
+      // Read ONLY from inventory_items - it has the correct data
+      // Don't join with products which has incomplete/stale data
       const res = await db.query(
-        `SELECT 
-          i.id, 
-          i.name, 
-          i.category, 
-          COALESCE(p.price, i.price, 0) as selling_price,
-          COALESCE(i.cost, 0) as cost_price,
-          COALESCE(i.stock_level, 0) as stock_level, 
-          COALESCE(i.unit, 'units') as unit,
-          p.category_id,
-          p.sub_id
-        FROM inventory_items i
-        LEFT JOIN products p ON i.id = p.id
-        WHERE COALESCE(p.price, i.price, 0) > 0
-        ORDER BY i.name ASC`
+        `SELECT
+          id,
+          name,
+          category,
+          COALESCE(selling_price, price, 0) as selling_price,
+          COALESCE(cost, 0) as cost_price,
+          stock_level,
+          unit,
+          category_id,
+          sub_id
+        FROM inventory_items
+        WHERE (selling_price > 0 OR price > 0)
+        ORDER BY name ASC`
       );
       if ('rows' in res && Array.isArray(res.rows)) {
         return res.rows
@@ -257,9 +256,11 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
 
             if (price <= 0) return null;
 
-            let category_id = r.category_id ? String(r.category_id) : undefined;
-            if (!category_id || category_id === '') {
-              category_id = isBarItem ? 'CAT_BAR_GEN' : 'CAT_REST_GEN';
+            let category_id: string | undefined;
+            if (isBarItem) {
+              category_id = 'CAT_BAR_GEN';
+            } else {
+              category_id = 'CAT_REST_GEN';
             }
 
             return {
@@ -271,7 +272,7 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
               subCategory: String(r.category || ''),
               category_id,
               unitOfMeasure: r.unit ? String(r.unit) : undefined,
-              costPrice: r.cost_price ? Number(r.cost_price) : undefined
+              costPrice: Number(r.cost_price || 0)
             };
           })
           .filter((item): item is NonNullable<typeof item> => item !== null);

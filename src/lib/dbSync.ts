@@ -607,14 +607,25 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
     const rawDeptPos = String(item.type || item.department || item.costCenter || '').toLowerCase();
     const deptPos = rawDeptPos.includes('bar') ? 'Bar' : 'Restaurant';
 
+    // Extract and validate prices
+    let price = Number(item.sellingPrice || 0);
+    const costPrice = Number(item.costPrice || 0);
+    
+    // Validate that sellingPrice is not less than costPrice
+    if (price < costPrice) {
+      console.warn(`[dbSync] Invalid price detected for item ${item.name || item.id}: sellingPrice (${price}) < costPrice (${costPrice}). Auto-correcting to maintain 10% margin.`);
+      // Auto-correct by setting sellingPrice to at least costPrice * 1.1 (10% margin)
+      price = costPrice * 1.1;
+    }
+
     const product: ProductRecord = {
       id: String(item.id),
       name: String(item.name || ''),
       // Use explicit category if available, or fallback to costCenter/inventoryCategory
       category: String(item.costCenter || 'restaurant'),
       department: deptPos,
-      price: Number(item.sellingPrice || 0),
-      cost_price: Number(item.costPrice || 0),
+      price: price,
+      cost_price: costPrice,
       stock_level: Number(item.qtyInStock || 0),
       unit: item.unit || 'units',
       active: item.available !== false,

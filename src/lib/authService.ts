@@ -246,6 +246,7 @@ export const createSession = (user: UserRecord, minutes: number = 240): Session 
   const token = `SESS_${Math.random().toString(36).slice(2)}`;
   const now = new Date();
   const expires = new Date(now.getTime() + minutes * 60 * 1000);
+  console.log('Creating session for user', user.username, 'expiresAt =', expires.toISOString(), 'minutes =', minutes);
   const sess: Session = { token, userId: user.id, role: user.role, permissions: user.permissions || [], expiresAt: expires.toISOString(), lastActiveAt: now.toISOString() };
   writeJSON(K_SESSION, sess);
   return sess;
@@ -254,7 +255,11 @@ export const createSession = (user: UserRecord, minutes: number = 240): Session 
 export const getSession = (): Session | null => {
   const sess = readJSON<Session | null>(K_SESSION, null);
   if (!sess) return null;
-  if (new Date() > new Date(sess.expiresAt)) { logout(); return null; }
+  if (new Date() > new Date(sess.expiresAt)) {
+    console.log('Session expired, logging out. expiresAt =', sess.expiresAt, 'now =', new Date().toISOString());
+    logout();
+    return null;
+  }
   return sess;
 };
 

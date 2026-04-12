@@ -62,6 +62,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const checkSessionExpiry = () => {
       if (!isSupabaseEnabled && user) {
         const session = auth.getSession();
+        console.log('Session check: session =', session, 'now =', new Date().toISOString(), 'expiresAt =', session?.expiresAt, 'expired =', session && new Date() > new Date(session.expiresAt));
         if (!session || (session.expiresAt && new Date() > new Date(session.expiresAt))) {
           logger.logAuth('session_expired', {
             userId: user.id,
