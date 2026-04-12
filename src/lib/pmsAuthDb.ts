@@ -828,9 +828,10 @@ export const pmsAuthDb = {
   async startShift(userId: string, stationId: string, openingBalance: number): Promise<{ ok: boolean; id?: string; error?: string }> {
     try {
       const id = makeUuid();
+      const businessDate = new Date().toISOString().slice(0, 10);
       const res = await db.query(
-        `INSERT INTO pos_shifts (id, user_id, station_id, start_balance, status) VALUES (?, ?, ?, ?, 'open')`,
-        [id, userId, stationId, openingBalance]
+        `INSERT INTO pos_shifts (id, user_id, station_id, start_balance, status, business_date) VALUES (?, ?, ?, ?, 'open', ?)`,
+        [id, userId, stationId, openingBalance, businessDate]
       );
       if ('error' in res) return { ok: false, error: res.error };
       return { ok: true, id };
