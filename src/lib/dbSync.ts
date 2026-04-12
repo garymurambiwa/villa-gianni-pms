@@ -1638,6 +1638,96 @@ export async function recordNightAuditRun(runData: {
   }
 }
 
+/**
+ * Load historical night audit runs from the database for a date range
+ */
+export async function loadNightAuditRunsFromDb(startDate: string, endDate: string): Promise<{ success: boolean; runs: any[]; error?: string }> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) {
+      return { success: true, runs: [] };
+    }
+
+    const result = await db.query(
+      `SELECT * FROM night_audit_runs WHERE business_date >= $1 AND business_date <= $2 ORDER BY business_date DESC`,
+      [startDate, endDate]
+    );
+
+    if ('error' in result) {
+      return { success: false, runs: [], error: (result as any).error };
+    }
+
+    const runs = (result.rows || []).map((row: any) => ({
+      businessDate: row.business_date,
+      nextBusinessDate: row.next_business_date,
+      roomsPosted: row.rooms_posted,
+      roomRevenue: Number(row.room_revenue || 0),
+      taxRevenue: Number(row.tax_revenue || 0),
+      totalRevenue: Number(row.total_revenue || 0),
+      cityLedgerTransfers: row.city_ledger_transfers,
+      cityLedgerAmount: Number(row.city_ledger_amount || 0),
+      occupiedRooms: row.occupied_rooms,
+      availableRooms: row.available_rooms,
+      occupancy: Number(row.occupancy_percent || 0),
+      avgDailyRate: Number(row.adr || 0),
+      revPAR: Number(row.revpar || 0),
+      reportsSnapshot: row.reports_snapshot
+    }));
+
+    console.log(`[dbSync] Loaded ${runs.length} night audit runs from DB for ${startDate} to ${endDate}`);
+    return { success: true, runs };
+  } catch (err: any) {
+    console.error('[dbSync] Load night audit runs error:', err);
+    return { success: false, runs: [], error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Sync a single night audit run from database to localStorage
+ * This populates localStorage cache for the reporting module
+ */
+export async function syncNightAuditRunToLocalStorage(businessDate: string): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) {
+      return { success: true, synced: 0 };
+    }
+
+    const result = await db.query(
+      `SELECT * FROM night_audit_runs WHERE business_date = $1`,
+      [businessDate]
+    );
+
+    if ('error' in result || !result.rows || result.rows.length === 0) {
+      return { success: false, error: 'No night audit run found for date' };
+    }
+
+    const row = result.rows[0];
+    const bundle = {
+      date: row.business_date,
+      roomRevenue: Number(row.room_revenue || 0),
+      fbRevenue: Number(row.total_revenue || 0) - Number(row.room_revenue || 0),
+      totalRevenue: Number(row.total_revenue || 0),
+      occupancy: Number(row.occupancy_percent || 0),
+      avgDailyRate: Number(row.adr || 0),
+      revPAR: Number(row.revpar || 0)
+    };
+
+    // Store in localStorage
+    const writeJSON = (key: string, value: any) => {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+    };
+    
+    writeJSON(`corepms_nightAudit_reports_${businessDate}`, bundle);
+    writeJSON('corepms_nightAudit_lastReports', bundle);
+
+    console.log('[dbSync] Synced night audit run to localStorage:', businessDate);
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
 // ============================================================================
 // GUEST SYNC
 // ============================================================================

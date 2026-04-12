@@ -52,7 +52,10 @@ export const TransferRoomModal: React.FC<TransferRoomModalProps> = ({
     }, [isOpen]);
 
     const handleTransfer = async () => {
-        if (!reservationId) return;
+        // Allow transfer even without reservation (for quick check-in guests)
+        // Pass currentRoomId as fallback for looking up by room
+        const resIdForTransfer = reservationId || currentRoomId;
+        
         if (!targetRoomId) {
             setError('Please select a target room');
             return;
@@ -67,7 +70,7 @@ export const TransferRoomModal: React.FC<TransferRoomModalProps> = ({
 
         try {
             const result = await transferService.transferGuest(
-                reservationId,
+                resIdForTransfer,
                 targetRoomId,
                 reason,
                 markOldAsOOO

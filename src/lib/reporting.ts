@@ -2,6 +2,7 @@ import gl from '@/lib/glAccounting';
 import { readReceiptBranding } from './printSettings';
 import roomSvc from '@/lib/roomService';
 import expenseSvc from '@/lib/expenseService';
+import { syncNightAuditRunToLocalStorage } from './dbSync';
 
 export type ReportType = 'flash' | 'pos-recon' | 'purchase-log' | 'pl' | 'aged-ar' | 'inventory-cogs' | 'housekeeping' | 'daily-tax' | 'cash-bank' | 'trial-balance' | 'dept-summary' | 'arrivals-departures' | 'high-balance' | 'proc-variance' | 'fa-recon' | 'open-bills' | 'aged-payables' | 'po-history' | 'payment-history' | 'vendor-payment-summary' | 'expenses-by-dept' | 'expense-summary-daily' | 'expense-summary-monthly' | 'line-item-export';
 
@@ -25,6 +26,23 @@ export const getHistoricalNightAuditBundle = (date: string) => {
   } catch {
     return null;
   }
+};
+
+// Async version that can load from database if not in localStorage
+export const loadHistoricalNightAuditData = async (date: string) => {
+  const existingData = getHistoricalNightAuditBundle(date);
+  if (existingData) return existingData;
+
+  // Try to load from database
+  try {
+    const result = await syncNightAuditRunToLocalStorage(date);
+    if (result.success) {
+      return getHistoricalNightAuditBundle(date);
+    }
+  } catch (err) {
+    console.warn('Failed to load historical night audit data:', err);
+  }
+  return null;
 };
 
 // Helper function to calculate same date last year

@@ -254,6 +254,143 @@ app.post('/api/inventory/close', async (req, res) => {
 });
 
 // ============================================================================
+// REPORTS API ENDPOINTS
+// ============================================================================
+
+// GET /api/reports/flash - Flash report for a specific date
+app.get('/api/reports/flash', async (req, res) => {
+    const { date } = req.query;
+    try {
+        const result = await db.query(
+            `SELECT * FROM night_audit_runs WHERE business_date = $1`,
+            [date]
+        );
+        if (result.rows && result.rows.length > 0) {
+            res.json({ 
+                ok: true, 
+                data: result.rows[0].reports_snapshot,
+                business_date: result.rows[0].business_date,
+                room_revenue: result.rows[0].room_revenue,
+                total_revenue: result.rows[0].total_revenue,
+                occupancy_percent: result.rows[0].occupancy_percent,
+                adr: result.rows[0].adr,
+                revpar: result.rows[0].revpar
+            });
+        } else {
+            res.json({ ok: false, error: 'No data for specified date' });
+        }
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/reports/pos-recon - POS reconciliation for a date
+app.get('/api/reports/pos-recon', async (req, res) => {
+    const { date } = req.query;
+    try {
+        const result = await db.query(
+            `SELECT * FROM pos_shifts WHERE business_date = $1 AND status = 'closed'`,
+            [date]
+        );
+        res.json({ ok: true, rows: result.rows || [] });
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/reports/pl - Monthly P&L
+app.get('/api/reports/pl', async (req, res) => {
+    const { month } = req.query;
+    try {
+        const [year, monthNum] = month.split('-');
+        const startDate = `${year}-${monthNum}-01`;
+        const endDate = new Date(year, parseInt(monthNum), 0).toISOString().slice(0, 10);
+        
+        const result = await db.query(
+            `SELECT 
+                SUM(room_revenue) as room_revenue,
+                SUM(total_revenue) as total_revenue,
+                SUM(occupancy_percent) as occupancy,
+                AVG(adr) as adr,
+                AVG(revpar) as revpar
+            FROM night_audit_runs 
+            WHERE business_date >= $1 AND business_date <= $2`,
+            [startDate, endDate]
+        );
+        res.json({ ok: true, data: result.rows[0] });
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/reports/aged-ar - Aged AR report
+app.get('/api/reports/aged-ar', async (req, res) => {
+    const { date } = req.query;
+    try {
+        const result = await db.query(
+            `SELECT * FROM city_ledger_transactions WHERE transaction_date <= $1`,
+            [date]
+        );
+        res.json({ ok: true, rows: result.rows || [] });
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/reports/inventory-cogs - Monthly inventory COGS
+app.get('/api/reports/inventory-cogs', async (req, res) => {
+    const { month } = req.query;
+    res.json({ ok: true, rows: [] }); // Placeholder - integrate with inventory module
+});
+
+// GET /api/reports/night-audit-runs - Get all night audit runs for date range
+app.get('/api/reports/night-audit-runs', async (req, res) => {
+    const { start_date, end_date } = req.query;
+    try {
+        const result = await db.query(
+            `SELECT * FROM night_audit_runs WHERE business_date >= $1 AND business_date <= $2 ORDER BY business_date DESC`,
+            [start_date, end_date]
+        );
+        res.json({ ok: true, rows: result.rows || [] });
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/reports/load-historical - Load historical night audit data into localStorage
+app.post('/api/reports/load-historical', async (req, res) => {
+    const { days_back } = req.body;
+    try {
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - (days_back || 30));
+        
+        const result = await db.query(
+            `SELECT * FROM night_audit_runs WHERE business_date >= $1 ORDER BY business_date DESC`,
+            [startDate.toISOString().slice(0, 10)]
+        );
+        
+        const reports = {};
+        for (const row of result.rows || []) {
+            const date = row.business_date;
+            reports[`corepms_nightAudit_reports_${date}`] = row.reports_snapshot;
+            reports[`corepms_nightAudit_reports_${date}`] = {
+                date,
+                roomRevenue: row.room_revenue,
+                fbRevenue: row.total_revenue - row.room_revenue,
+                totalRevenue: row.total_revenue,
+                occupancy: row.occupancy_percent,
+                avgDailyRate: row.adr,
+                revPAR: row.revpar
+            };
+        }
+        
+        res.json({ ok: true, loaded_dates: Object.keys(reports), count: result.rows?.length || 0 });
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// ============================================================================
 // COREPMS v11 - Advanced Inventory Module Routes
 // ============================================================================
 const inventoryV11Routes = require('./routes/inventory-v11.cjs');
