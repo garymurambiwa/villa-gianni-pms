@@ -1,4 +1,5 @@
 
+import { Suspense, lazy } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -6,21 +7,20 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createHashRouter, RouterProvider } from "react-router-dom";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { ThemeProvider } from "@/components/theme-provider";
-import Index from "./pages/Index";
-import LoginPage from "./pages/LoginPage";
-import Register from "./pages/Register";
-import VerifyEmail from "./pages/VerifyEmail";
-import ApprovalLink from "./pages/ApprovalLink";
-import NotFound from "./pages/NotFound";
 import { AppProvider } from "@/contexts/AppContext";
-import { useAuth } from "@/context/AuthContext";
-import ModuleAlias from "./pages/ModuleAlias";
-import PasswordChangePage from "./pages/PasswordChange";
-import { useEffect } from "react";
-import { toast } from "@/hooks/use-toast";
+import { SettingsProvider } from "@/hooks/useSettings";
 import VersionDisplay from "@/components/ui/VersionDisplay";
 import { VirtualKeyboard } from "@/components/ui/VirtualKeyboard";
-import { SettingsProvider } from "@/hooks/useSettings";
+
+// Lazy load pages for better performance
+const Index = lazy(() => import("./pages/Index"));
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const Register = lazy(() => import("./pages/Register"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
+const ApprovalLink = lazy(() => import("./pages/ApprovalLink"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const ModuleAlias = lazy(() => import("./pages/ModuleAlias"));
+const PasswordChangePage = lazy(() => import("./pages/PasswordChange"));
 
 import { DEFAULT_ROOMS } from "@/data/defaultRooms";
 import { resetToDefaultRooms } from "@/lib/roomService";
@@ -48,6 +48,16 @@ const router = createHashRouter([
   { path: "*", element: <NotFound /> },
 ])
 
+// Loading fallback for lazy-loaded components
+const LoadingFallback = () => (
+  <div className="min-h-screen flex items-center justify-center">
+    <div className="flex flex-col items-center gap-3">
+      <div className="w-10 h-10 border-4 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+      <p className="text-gray-400 text-sm font-medium">Loading...</p>
+    </div>
+  </div>
+);
+
 const App = () => (
   <ThemeProvider defaultTheme="light">
     <QueryClientProvider client={queryClient}>
@@ -57,7 +67,9 @@ const App = () => (
         <SettingsProvider>
           <AppProvider>
             <ErrorBoundary>
-              <RouterProvider router={router} future={{ v7_startTransition: true }} />
+              <Suspense fallback={<LoadingFallback />}>
+                <RouterProvider router={router} future={{ v7_startTransition: true }} />
+              </Suspense>
               <div
                 className="fixed bottom-3 right-3 z-50"
                 role="contentinfo"

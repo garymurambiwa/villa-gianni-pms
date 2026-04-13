@@ -102,7 +102,9 @@ const AppLayout: React.FC = () => {
   const hasRedirectedRef = React.useRef(false);
   useEffect(() => {
     (async () => {
-      try { await initializeDatabase() } catch { }
+      try { await initializeDatabase() } catch (error) {
+        console.error('Failed to initialize database:', error);
+      }
     })()
     try {
       const url = new URL(window.location.href);
@@ -126,7 +128,7 @@ const AppLayout: React.FC = () => {
   React.useEffect(() => {
     const circuit: Record<string, number> = {}
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { key?: string; payload?: any }
+      const detail = (e as CustomEvent).detail as { key?: string; payload?: Record<string, unknown> }
       const k = String(detail?.key || 'unknown')
       const now = Date.now()
       const last = circuit[k] || 0
@@ -143,14 +145,18 @@ const AppLayout: React.FC = () => {
     if (user && user.passwordChangeRequired) {
       try {
         navigate('/password-change');
-      } catch { }
+      } catch (error) {
+        console.error('Error during module initialization:', error);
+      }
     }
   }, [user?.passwordChangeRequired]);
 
   useEffect(() => {
     // Enforce login-first: do not auto-load modules until user is authenticated
     if (!user) {
-      try { localStorage.removeItem('corepms_active_module'); } catch { }
+      try { localStorage.removeItem('corepms_active_module'); } catch (error) {
+        console.warn('Failed to remove active module from localStorage:', error);
+      }
       setActiveModule('dashboard');
       return;
     }
@@ -165,7 +171,9 @@ const AppLayout: React.FC = () => {
       const resolved = initial === 'folios' ? 'frontoffice' : initial;
       if (resolved) {
         setActiveModule(resolved);
-        try { localStorage.setItem('corepms_active_module', resolved); } catch { }
+        try { localStorage.setItem('corepms_active_module', resolved); } catch (error) {
+          console.warn('Failed to set active module in localStorage:', error);
+        }
       }
       // If the URL requested the deprecated folios module, update it for clarity
       if (fromUrl === 'folios') {
@@ -185,7 +193,9 @@ const AppLayout: React.FC = () => {
       const target = detail?.module === 'folios' ? 'frontoffice' : detail?.module;
       if (user && target) {
         setActiveModule(target);
-        try { localStorage.setItem('corepms_active_module', target); } catch { }
+        try { localStorage.setItem('corepms_active_module', target); } catch (error) {
+          console.warn('Failed to set target module in localStorage:', error);
+        }
       }
     };
     window.addEventListener('navigateToModule', handler as EventListener);
@@ -193,13 +203,17 @@ const AppLayout: React.FC = () => {
   }, [user]);
 
   React.useEffect(() => {
-    if (!(import.meta as any).env?.DEV) return;
+    if (!import.meta.env.DEV) return;
     const onWheel = (e: WheelEvent) => {
-      try { console.log('[ScrollDiag] wheel', { dy: e.deltaY, mode: e.deltaMode, ctrl: e.ctrlKey }); } catch { }
+      try { console.log('[ScrollDiag] wheel', { dy: e.deltaY, mode: e.deltaMode, ctrl: e.ctrlKey }); } catch (error) {
+        console.warn('Scroll diagnostics error:', error);
+      }
     };
     const onPointer = (e: PointerEvent) => {
       if (e.pointerType === 'touch') {
-        try { console.log('[ScrollDiag] touch pointer', { type: e.type }); } catch { }
+        try { console.log('[ScrollDiag] touch pointer', { type: e.type }); } catch (error) {
+          console.warn('Touch diagnostics error:', error);
+        }
       }
     };
     window.addEventListener('wheel', onWheel, { passive: true });
@@ -338,7 +352,7 @@ const AppLayout: React.FC = () => {
         if (deny) {
           const roleNow = normalizeRole(user?.role);
           const rolePrev = normalizeRole(prevPriv?.role);
-          const map: Record<string, { msg: string; back: string; label: string; event: string; ctx?: any }> = {
+          const map: Record<string, { msg: string; back: string; label: string; event: string; ctx?: Record<string, unknown> }> = {
             session_invalid: { msg: 'Your session is invalid or expired. Please log in again to access POS Settings.', back: 'dashboard', label: 'Back to Dashboard', event: 'pos_settings_session_invalid' },
             privilege_reduced: { msg: 'Your privileges have been reduced. Re-authenticate with Manager/Admin credentials to access POS Settings.', back: 'dashboard', label: 'Back to Dashboard', event: 'pos_settings_privilege_reduced', ctx: { from: rolePrev, to: roleNow } },
             desktop_denied: { msg: 'Desktop access requires Manager/Admin privileges for POS Settings.', back: 'pos', label: 'Back to POS', event: 'pos_settings_desktop_denied', ctx: { role: roleNow } },

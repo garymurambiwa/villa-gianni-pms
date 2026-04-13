@@ -235,14 +235,12 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
           id,
           name,
           category,
-          COALESCE(selling_price, price, 0) as selling_price,
-          COALESCE(cost, 0) as cost_price,
+          COALESCE(selling_price, price, 0) as price,
+          COALESCE(cost, 0) as cost,
           stock_level,
-          unit,
-          category_id,
-          sub_id
+          unit
         FROM inventory_items
-        WHERE (selling_price > 0 OR price > 0)
+        WHERE COALESCE(selling_price, price, 0) > 0
         ORDER BY name ASC`
       );
       if ('rows' in res && Array.isArray(res.rows)) {
@@ -252,7 +250,7 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
             const isBarItem = rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('drink') || rawCat.includes('alcohol') || rawCat.includes('cocktail');
             
             const category: 'food' | 'bar' = isBarItem ? 'bar' : 'food';
-            const price = Number(r.selling_price || 0);
+            const price = Number(r.price || 0);
 
             if (price <= 0) return null;
 
@@ -272,7 +270,7 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
               subCategory: String(r.category || ''),
               category_id,
               unitOfMeasure: r.unit ? String(r.unit) : undefined,
-              costPrice: Number(r.cost_price || 0)
+              costPrice: Number(r.cost || 0)
             };
           })
           .filter((item): item is NonNullable<typeof item> => item !== null);

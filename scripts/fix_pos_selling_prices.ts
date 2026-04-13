@@ -90,12 +90,18 @@ async function main() {
     }
     console.log('✅ Column check complete\n');
 
-    // Step 3: Check inventory_items table for selling prices
-    console.log('Step 3: Checking inventory_items for selling price data...');
+    // Step 3: Add selling_price column if it doesn't exist
+    console.log('Step 3: Ensuring selling_price column exists...');
+    await client.query(`
+      ALTER TABLE inventory_items
+      ADD COLUMN IF NOT EXISTS selling_price NUMERIC(12,2) DEFAULT 0
+    `);
+    console.log('✅ selling_price column added\n');
+
+    // Step 4: Check inventory_items table for selling prices
+    console.log('Step 4: Checking inventory_items for selling price data...');
     const invCheckRes = await client.query(`
-      SELECT 
-        EXISTS (SELECT 1 FROM information_schema.columns 
-          WHERE table_name='inventory_items' AND column_name='selling_price') as has_selling_price,
+      SELECT
         COUNT(*) as total_items,
         SUM(CASE WHEN price > 0 THEN 1 ELSE 0 END) as items_with_price,
         SUM(CASE WHEN selling_price > 0 THEN 1 ELSE 0 END) as items_with_selling_price,
@@ -107,36 +113,25 @@ async function main() {
     console.log(`  - Total inventory items: ${invStats.total_items}`);
     console.log(`  - Items with 'price' field > 0: ${invStats.items_with_price}`);
     console.log(`  - Items with 'selling_price' field > 0: ${invStats.items_with_selling_price}`);
-    console.log(`  - Items with 'cost' field > 0: ${invStats.items_with_cost}`);
-    console.log(`  - Has 'selling_price' column: ${invStats.has_selling_price ? 'YES' : 'NO'}\n`);
+    console.log(`  - Items with 'cost' field > 0: ${invStats.items_with_cost}\n`);
 
-    if (!invStats.has_selling_price) {
-      console.log('Step 3b: Adding selling_price column to inventory_items...');
-      await client.query(`
-        ALTER TABLE inventory_items
-        ADD COLUMN IF NOT EXISTS selling_price NUMERIC(12,2) DEFAULT 0
-      `);
-      console.log('✅ selling_price column added\n');
-    }
-
-    // Step 4: Populate selling_price in inventory_items if empty
-    console.log('Step 4: Ensuring inventory_items has selling prices...');
+    // Step 5: Populate selling_price in inventory_items if empty
+    console.log('Step 5: Ensuring inventory_items has selling prices...');
     const updateInventoryRes = await client.query(`
-      UPDATE inventory_items 
-      SET selling_price = price 
-      WHERE (selling_price = 0 OR selling_price IS NULL) 
+      UPDATE inventory_items
+      SET selling_price = price
+      WHERE (selling_price = 0 OR selling_price IS NULL)
         AND price > 0
-      RETURNING COUNT(*) as updated
     `);
     const inventoryUpdated = updateInventoryRes.rowCount || 0;
     console.log(`✅ Updated ${inventoryUpdated} inventory items with selling prices\n`);
 
-    // Step 5: Sync selling prices from inventory_items to products
-    console.log('Step 5: Syncing selling prices to products table...');
-    
+    // Step 6: Sync selling prices from inventory_items to products
+    console.log('Step 6: Syncing selling prices to products table...');
+
     // First, delete from products any items that no longer exist in inventory_items
     const deleteRes = await client.query(`
-      DELETE FROM products 
+      DELETE FROM products
       WHERE id NOT IN (SELECT id FROM inventory_items)
     `);
     console.log(`✅ Removed ${deleteRes.rowCount} orphaned products\n`);
@@ -144,36 +139,32 @@ async function main() {
     // Then sync from inventory_items to products using selling_price
     const syncRes = await client.query(`
       INSERT INTO products (
-        id, name, category, department, price, cost_price, 
-        stock_level, unit, active, visibility, is_stock_item, category_id, sub_id
+        id, name, category, department, price, cost_price,
+        stock_level, unit, active, visibility, is_stock_item
       )
-      SELECT 
-        id, name, category, category, 
+      SELECT
+        id, name, category, category,
         COALESCE(selling_price, price, 0) as price,
         COALESCE(cost, 0) as cost_price,
-        COALESCE(stock_level, quantity, 0) as stock_level,
+        COALESCE(stock_level, 0) as stock_level,
         COALESCE(unit, 'units') as unit,
         true as active,
-        visibility,
-        true as is_stock_item,
-        category_id,
-        sub_id
+        null as visibility,
+        true as is_stock_item
       FROM inventory_items
-      ON CONFLICT (id) DO UPDATE SET 
+      ON CONFLICT (id) DO UPDATE SET
         price = EXCLUDED.price,
         cost_price = EXCLUDED.cost_price,
         stock_level = EXCLUDED.stock_level,
         name = EXCLUDED.name,
         category = EXCLUDED.category,
-        unit = EXCLUDED.unit,
-        visibility = EXCLUDED.visibility
-      RETURNING COUNT(*) as synced
+        unit = EXCLUDED.unit
     `);
-    
+
     console.log(`✅ Synced products from inventory_items\n`);
 
-    // Step 6: Verify the fix
-    console.log('Step 6: Verifying fix...');
+    // Step 7: Verify the fix
+    console.log('Step 7: Verifying fix...');
     const verifyRes = await client.query(`
       SELECT 
         COUNT(*) as total_products,
@@ -193,8 +184,8 @@ async function main() {
     console.log(`  - Products with price > 0: ${verifyStats.products_with_non_zero_price}`);
     console.log(`  - Average selling price: ${verifyStats.avg_price}\n`);
 
-    // Step 7: Sample data check
-    console.log('Step 7: Sample data verification...');
+    // Step 8: Sample data check
+    console.log('Step 8: Sample data verification...');
     const sampleRes = await client.query(`
       SELECT id, name, price as selling_price, cost_price, 
              ROUND(((price - cost_price) / NULLIF(cost_price, 0) * 100)::numeric, 1) as margin_percent

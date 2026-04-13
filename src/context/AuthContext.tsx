@@ -6,6 +6,7 @@ import { mergeUserWithProfile } from '@/lib/profile';
 import { db } from '@/lib/db';
 import pmsAuthDb from '@/lib/pmsAuthDb';
 import { logger } from '@/lib/logger';
+import { toast } from '@/hooks/use-toast';
 
 export interface AuthError {
   code: 'INVALID_CREDENTIALS' | 'USER_LOCKED' | 'RATE_LIMITED' | 'USER_INACTIVE' | 'SESSION_EXPIRED' | 'JWT_INVALID' | 'CSRF_MISMATCH' | 'NETWORK_ERROR' | 'UNKNOWN_ERROR';
@@ -210,6 +211,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const adminUser: any = { id: 'admin-hardcoded', username: 'admin', name: 'System Admin (Override)', role: 'admin', propertyId: 'P001', active: true, authProvider: 'local', permissions: [] };
       setUser(adminUser);
       auth.createSession({ id: adminUser.id, username: adminUser.username, name: adminUser.name, email: 'admin@system.local', role: 'admin', active: true, permissions: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      toast({
+        title: "Login successful",
+        description: `Welcome back, ${adminUser.name}!`,
+      });
       return { success: true };
     }
     try {
@@ -218,6 +223,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (resDb.ok && resDb.user) {
           auth.createSession({ id: resDb.user.id, username: resDb.user.username, name: resDb.user.name, email: '', role: resDb.user.role as any, profile: { name: resDb.user.name }, active: resDb.user.active, createdAt: resDb.user.created_at, updatedAt: resDb.user.created_at, password: { salt: '', hash: '', iterations: 0, derivedLen: 0 }, permissions: resDb.user.permissions || [] });
           setUser(enforceAdminRole({ id: resDb.user.id, username: resDb.user.username, name: resDb.user.name, role: (String(resDb.user.username || '').toLowerCase() === 'admin' ? 'admin' : (resDb.user.role as any)), propertyId: 'P001', active: resDb.user.active, passwordChangeRequired: !!resDb.mustChange, authProvider: 'db', permissions: resDb.user.permissions || [] } as User));
+          toast({
+            title: "Login successful",
+            description: `Welcome back, ${resDb.user.name}!`,
+          });
           return { success: true };
         }
         if (!resDb.ok && !resDb.error?.includes('not found')) {
@@ -234,14 +243,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const baseUser = { id: data.user.id, username: (data.user.user_metadata?.username as string) || data.user.email || data.user.id, name: (data.user.user_metadata?.name as string) || data.user.email || 'User', role: ((data.user.user_metadata?.role as string) || 'manager') as any, propertyId: 'P001', active: true, authProvider: 'supabase' } as User;
       const merged = await mergeUserWithProfile(baseUser);
       setUser(enforceAdminRole(merged));
+      toast({
+        title: "Login successful",
+        description: `Welcome back, ${merged.name}!`,
+      });
       return { success: true };
     }
     await initAuth();
     const resLocal = await auth.login(username, password);
     if (resLocal.ok && resLocal.user) {
       setUser(enforceAdminRole({ id: resLocal.user.id, username: resLocal.user.username, name: resLocal.user.profile?.name || resLocal.user.username, role: resLocal.user.role, propertyId: 'P001', active: resLocal.user.active, authProvider: 'local' } as User));
+      toast({
+        title: "Login successful",
+        description: `Welcome back, ${resLocal.user.profile?.name || resLocal.user.username}!`,
+      });
       return { success: true };
     }
+    toast({
+      title: "Login failed",
+      description: "Invalid username or password. Please try again.",
+      variant: "destructive",
+    });
     return { success: false, error: createAuthError('INVALID_CREDENTIALS', 'Invalid credentials', username) };
   };
 
