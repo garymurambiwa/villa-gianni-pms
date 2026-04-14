@@ -20,7 +20,9 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { readReceiptBranding } from '@/lib/printSettings';
 import { db } from '@/lib/db';
-import { offlineCache, offlineSync, networkStatus, NetworkInfo } from '@/lib/offlineSync';
+import { offlineCache } from '@/lib/offlineCache';
+import { offlineSync } from '@/lib/offlineSync';
+import { networkStatus, NetworkInfo } from '@/lib/networkStatus';
 import { toast } from '@/hooks/use-toast';
 
 export const POSFrontOffice: React.FC = () => {

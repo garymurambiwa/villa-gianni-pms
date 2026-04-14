@@ -193,14 +193,15 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
       const category: 'food' | 'bar' = isBar ? 'bar' : 'food';
       const price = Number(it.sellingPrice ?? it.price ?? 0);
       const visibility = it.visibility as { bar?: boolean; restaurant?: boolean } | null | undefined;
-      const available = category === 'bar' ? !!visibility?.bar : !!visibility?.restaurant;
+      // Always set available to true - all inventory items should appear in POS
+      const available = true;
       return {
         id: String(it.id ?? it.name ?? `item_${Math.random().toString(36).slice(2)}`),
         name: String(it.name ?? 'Item'),
         price: Number.isFinite(price) ? price : 0,
         category,
         description: String(it.notes || ''),
-        available: typeof it.visibility === 'object' ? available : true,
+        available: true,
         // New fields for two-tier categorization
         category_id: it.category_id ? String(it.category_id) : undefined,
         subCategory: it.subCategory ? String(it.subCategory) : (it.category ? String(it.category) : undefined),
@@ -208,7 +209,7 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
         imageBgColor: it.imageBgColor ? String(it.imageBgColor) : undefined,
         image: it.pictureData ? String(it.pictureData) : undefined,
       };
-    }).filter(m => m.available);
+    });
   } catch (err) {
     console.error('Failed to read menu items from POS store', err);
     return [];
@@ -231,7 +232,6 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
           stock_level,
           unit
         FROM inventory_items
-        WHERE COALESCE(selling_price, price, 0) > 0
         ORDER BY name ASC`
       );
       if ('rows' in res && Array.isArray(res.rows)) {
@@ -242,7 +242,8 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
             const category: 'food' | 'bar' = isBarItem ? 'bar' : 'food';
             const price = Number(r.price || 0);
 
-            if (price <= 0) return null;
+            // Don't filter out items based on price - show all inventory items
+            // Price of 0 or less will still be displayed as is
 
             let category_id: string | undefined;
             if (isBarItem) {
