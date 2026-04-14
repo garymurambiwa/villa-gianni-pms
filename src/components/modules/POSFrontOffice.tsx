@@ -153,7 +153,12 @@ export const POSFrontOffice: React.FC = () => {
         
         console.log("[POS Items Debug - Retrieved]", safeList.length, "items for cost centre:", costCentre);
         if (safeList.length > 0) {
-          console.log("[POS Items Debug - Example]", safeList[0]);
+          // Log example item but exclude image data to prevent AI model errors
+          const exampleItem = { ...safeList[0] };
+          if (exampleItem.image) {
+            exampleItem.image = `[IMAGE DATA TRUNCATED - ${typeof exampleItem.image}]`;
+          }
+          console.log("[POS Items Debug - Example]", exampleItem);
           const barItems = safeList.filter((i: any) => i.category === 'bar');
           console.log("[POS Items Debug - Bar Count]", barItems.length);
           console.log("[POS Items Debug - Sample Bar Items]", barItems.slice(0, 5));
@@ -163,12 +168,15 @@ export const POSFrontOffice: React.FC = () => {
       } else {
         // Use cached data when offline
         console.log("[POS Items] Using cached menu items (offline mode)");
-        setMenuItems(offlineMenuItems.map((item: any) => ({ ...item, image: item.image || '' })));
+        // Map items but exclude image data from logging to prevent AI model errors
+        const mappedItems = offlineMenuItems.map((item: any) => ({ ...item, image: item.image || '' }));
+        setMenuItems(mappedItems);
       }
     } catch (err) {
       console.error('Menu refresh failed', err);
       // Fallback to cached data on error
       if (offlineMenuItems.length > 0) {
+        // Log fallback without image data to prevent AI model errors
         console.log("[POS Items] Falling back to cached data due to error");
         setMenuItems(offlineMenuItems.map((item: any) => ({ ...item, image: item.image || '' })));
       } else {
