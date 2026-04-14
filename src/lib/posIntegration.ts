@@ -187,17 +187,8 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
     return list.map((it: Record<string, unknown>) => {
       const costCenter = String(it.costCenter || it.type || '').toLowerCase();
       const rawCat = String(it.department || it.category || '').toLowerCase();
-      const isBar = costCenter.includes('bar') ||
-        rawCat.includes('bar') ||
-        rawCat.includes('beverage') ||
-        rawCat.includes('cocktail') ||
-        rawCat.includes('beer') ||
-        rawCat.includes('wine') ||
-        rawCat.includes('cider') ||
-        rawCat.includes('liquor') ||
-        rawCat.includes('spirit') ||
-        rawCat.includes('drink') ||
-        rawCat.includes('alcohol');
+            const isBar = costCenter === 'bar' || 
+        rawCat === 'bar';
 
       const category: 'food' | 'bar' = isBar ? 'bar' : 'food';
       const price = Number(it.sellingPrice ?? it.price ?? 0);
@@ -246,9 +237,8 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
       if ('rows' in res && Array.isArray(res.rows)) {
         return res.rows
           .map((r: any) => {
-            const rawCat = String(r.category || '').toLowerCase();
-            const isBarItem = rawCat.includes('bar') || rawCat.includes('beverage') || rawCat.includes('drink') || rawCat.includes('alcohol') || rawCat.includes('cocktail');
-            
+            const rawCat = String(r.category || '').toLowerCase().trim();
+            const isBarItem = rawCat === 'bar';
             const category: 'food' | 'bar' = isBarItem ? 'bar' : 'food';
             const price = Number(r.price || 0);
 
