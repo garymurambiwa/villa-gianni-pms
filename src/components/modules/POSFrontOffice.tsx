@@ -20,6 +20,8 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { readReceiptBranding } from '@/lib/printSettings';
 import { db } from '@/lib/db';
+import { offlineCache, offlineSync, networkStatus, NetworkInfo } from '@/lib/offlineSync';
+import { toast } from '@/hooks/use-toast';
 
 export const POSFrontOffice: React.FC = () => {
   const { guests, recordFolioCharge, removeFolioCharge, loading, posOrders, savePosOrder, closePosOrder } = useData();
@@ -48,6 +50,173 @@ export const POSFrontOffice: React.FC = () => {
   const [destTableId, setDestTableId] = useState<string>('');
   const [voidReason, setVoidReason] = useState<string>('');
   const [managerId, setManagerId] = useState<string>('');
+  const [offlineMenuItems, setOfflineMenuItems] = useState<Array<any>>([]);
+  const [isOffline, setIsOffline] = useState<boolean>(false);
+  const [syncStatus, setSyncStatus] = useState<{ pending: number; syncing: boolean }>({ pending: 0, syncing: false });
+  const [networkStatusDetail, setNetworkStatusDetail] = useState<NetworkInfo>({
+    status: 'online',
+    isOnline: true,
+    lastChecked: Date.now(),
+    latency: null,
+    connectionType: null
+  });
+
+  // Initialize offline capabilities
+  useEffect(() => {
+    const initializeOffline = async () => {
+      try {
+        await offlineCache.init();
+        
+        // Load cached menu items if available
+        const cachedItems = localStorage.getItem('corepms_offline_menu');
+        if (cachedItems) {
+          setOfflineMenuItems(JSON.parse(cachedItems));
+        }
+        
+        // Start network monitoring
+        networkStatus.startMonitoring();
+        
+        // Subscribe to network status changes
+        const unsubscribe = networkStatus.subscribe((status) => {
+          setIsOffline(status === 'offline' || status === 'unstable');
+          if (status === 'online') {
+            // Attempt to sync when coming online
+            syncPendingOperations();
+          }
+          
+          // Update detailed network status
+          networkStatus.checkConnection().then((info) => {
+            setNetworkStatusDetail(info);
+          });
+        });
+        
+        // Initial sync check
+        syncPendingOperations();
+        
+        // Also set up periodic network status updates
+        const networkStatusInterval = setInterval(() => {
+          networkStatus.checkConnection().then((info) => {
+            setNetworkStatusDetail(info);
+          }).catch((error) => {
+            console.error('Failed to check network status:', error);
+            // Update status to indicate checking failed
+            setNetworkStatusDetail(prev => ({
+              ...prev,
+              status: 'offline',
+              isOnline: false,
+              lastChecked: Date.now()
+            }));
+          });
+        }, 10000); // Update every 10 seconds
+        
+        return unsubscribe;
+      } catch (error) {
+        console.error('Failed to initialize offline capabilities:', error);
+      }
+    };
+    
+    const unsubscribe = initializeOffline();
+    
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+      networkStatus.stopMonitoring();
+      // Clear the network status interval would be handled by stopping monitoring
+    };
+  }, []);
+  
+  // Sync pending operations periodically
+  useEffect(() => {
+    if (!isOffline) {
+      const interval = setInterval(() => {
+        syncPendingOperations();
+      }, 30000); // Sync every 30 seconds when online
+      
+      return () => clearInterval(interval);
+    }
+  }, [isOffline]);
+  
+  // Load menu items with offline fallback
+  const loadMenuItems = useCallback(async () => {
+    try {
+      if (!isOffline) {
+        // Try to get fresh data from database
+        const list = await getMenuItems(costCentre || undefined);
+        const safeList = Array.isArray(list) ? list : [];
+        
+        // Cache the results for offline use
+        localStorage.setItem('corepms_offline_menu', JSON.stringify(safeList));
+        setOfflineMenuItems(safeList);
+        
+        console.log("[POS Items Debug - Retrieved]", safeList.length, "items for cost centre:", costCentre);
+        if (safeList.length > 0) {
+          console.log("[POS Items Debug - Example]", safeList[0]);
+          const barItems = safeList.filter((i: any) => i.category === 'bar');
+          console.log("[POS Items Debug - Bar Count]", barItems.length);
+          console.log("[POS Items Debug - Sample Bar Items]", barItems.slice(0, 5));
+        }
+        
+        setMenuItems(safeList.map((item: any) => ({ ...item, image: item.image || '' })));
+      } else {
+        // Use cached data when offline
+        console.log("[POS Items] Using cached menu items (offline mode)");
+        setMenuItems(offlineMenuItems.map((item: any) => ({ ...item, image: item.image || '' })));
+      }
+    } catch (err) {
+      console.error('Menu refresh failed', err);
+      // Fallback to cached data on error
+      if (offlineMenuItems.length > 0) {
+        console.log("[POS Items] Falling back to cached data due to error");
+        setMenuItems(offlineMenuItems.map((item: any) => ({ ...item, image: item.image || '' })));
+      } else {
+        // If no cache available, keep existing items or show empty
+        console.log("[POS Items] No cache available, keeping current items");
+      }
+    }
+  }, [costCentre, isOffline, offlineMenuItems]);
+  
+  // Sync pending operations when coming online
+  const syncPendingOperations = useCallback(async () => {
+    try {
+      setSyncStatus(prev => ({ ...prev, syncing: true }));
+      
+      // Get pending count from offline cache
+      const pendingCount = await offlineCache.getOperationCount();
+      setSyncStatus(prev => ({ ...prev, pending: pendingCount }));
+      
+      if (pendingCount > 0) {
+        console.log(`[POS Sync] Starting sync of ${pendingCount} pending operations`);
+        const result = await offlineSync.triggerSync();
+        console.log(`[POS Sync] Sync completed: ${result.success} success, ${result.failed} failed`);
+        
+        if (result.failed > 0) {
+          toast({
+            title: 'Sync Completed with Errors',
+            description: `${result.success} operations synced, ${result.failed} failed`,
+            variant: 'destructive'
+          });
+        } else if (result.success > 0) {
+          toast({
+            title: 'Sync Successful',
+            description: `${result.success} operations synchronized`,
+            variant: 'default'
+          });
+        }
+      } else {
+        setSyncStatus(prev => ({ ...prev, pending: 0, syncing: false }));
+      }
+    } catch (error) {
+      console.error('Error during sync operation:', error);
+      toast({
+        title: 'Sync Failed',
+        description: 'Failed to synchronize pending operations',
+        variant: 'destructive'
+      });
+    } finally {
+      setSyncStatus(prev => ({ ...prev, syncing: false }));
+    }
+  }, []);
   const [pendingVoid, setPendingVoid] = useState<{ reason: string; managerId: string } | null>(null);
 
   // Table management controls
@@ -69,28 +238,29 @@ export const POSFrontOffice: React.FC = () => {
   };
 
   const [menuItems, setMenuItems] = useState<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; image?: string }>>([]);
+  // Load menu items on mount and periodically refresh
   useEffect(() => {
-    const refresh = async () => {
-      try {
-        const list = await getMenuItems(costCentre || undefined);
-        const safeList = Array.isArray(list) ? list : [];
-        console.log("[POS Items Debug - Retrieved]", safeList.length, "items for cost centre:", costCentre);
-        if (safeList.length > 0) {
-          console.log("[POS Items Debug - Example]", safeList[0]);
-          const barItems = safeList.filter((i: any) => i.category === 'bar');
-          console.log("[POS Items Debug - Bar Count]", barItems.length);
-          console.log("[POS Items Debug - Sample Bar Items]", barItems.slice(0, 5));
-        }
-        const listWithImages = safeList.map((item: any) => ({ ...item, image: item.image || '' }));
-        setMenuItems(listWithImages);
-      } catch (err) { console.error('Menu refresh failed', err); }
+    // Initial load
+    loadMenuItems();
+    
+    // Set up periodic refresh (every 60 seconds)
+    const interval = setInterval(() => {
+      loadMenuItems();
+    }, 60_000);
+    
+    // Listen for localStorage changes from other tabs/windows
+    const onStorage = (e: StorageEvent) => { 
+      if (e.key === 'corepms_offline_menu' || e.key === 'corepms_pos_items') {
+        loadMenuItems();
+      }
     };
-    refresh();
-    const iv = setInterval(refresh, 60_000);
-    const onStorage = (e: StorageEvent) => { if (e.key === 'corepms_pos_items') refresh(); };
     window.addEventListener('storage', onStorage);
-    return () => { clearInterval(iv); window.removeEventListener('storage', onStorage); };
-  }, [costCentre]);
+    
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [loadMenuItems]);
 
   useEffect(() => {
     // Clear potentially stale localStorage on mount to ensure clean slate if needed
@@ -596,9 +766,11 @@ export const POSFrontOffice: React.FC = () => {
 
       {costCentre && (
       <div className="p-6">
-        {(isLoading || mountLoading) && (
-          <div className="bg-white rounded-xl shadow p-6 text-center text-gray-600">Loading...</div>
-        )}
+{(isLoading || mountLoading) && (
+           <div className="bg-white rounded-xl shadow p-6 text-center">
+             <LoadingSpinner label="Loading…" size="lg" />
+           </div>
+         )}
         {!!connError && (
           <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 rounded p-3 text-sm mb-4">{connError}</div>
         )}
