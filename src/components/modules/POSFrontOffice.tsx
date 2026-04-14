@@ -24,6 +24,7 @@ import { offlineCache } from '@/lib/offlineCache';
 import { offlineSync } from '@/lib/offlineSync';
 import { networkStatus, NetworkInfo } from '@/lib/networkStatus';
 import { toast } from '@/hooks/use-toast';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
 export const POSFrontOffice: React.FC = () => {
   const { guests, recordFolioCharge, removeFolioCharge, loading, posOrders, savePosOrder, closePosOrder } = useData();
