@@ -9,6 +9,7 @@ import { Reservations } from './modules/Reservations';
 import { Rooms } from './modules/Rooms';
 import { CityLedger } from './modules/CityLedger';
 import { Inventory } from './modules/Inventory';
+import { PriceManagement } from './modules/PriceManagement';
 import { Reports } from './modules/Reports';
 import { Users } from './modules/Users';
 import VersionControl from './modules/VersionControl';
@@ -431,6 +432,15 @@ const AppLayout: React.FC = () => {
             </ErrorBoundary>
           )
           : renderAccessDenied('You do not have permission to access Variance Reports.', 'inventory-v11', 'Back to Inventory');
+      }
+      case 'price-management': {
+        return canAccessInventoryManagement(user?.role)
+          ? (
+            <ErrorBoundary fallbackTitle="Price Management Error" fallbackMessage="Please reload or contact support.">
+              <PriceManagement />
+            </ErrorBoundary>
+          )
+          : renderAccessDenied('You do not have permission to access Price Management.', 'dashboard', 'Back to Dashboard');
       }
       case 'ap': {
         return isManager(user?.role)

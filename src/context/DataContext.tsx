@@ -32,6 +32,105 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isRealTimeSyncActive, setIsRealTimeSyncActive] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const [lastUpdateTs, setLastUpdateTs] = useState<number | null>(null);
+  const [priceSyncWs, setPriceSyncWs] = useState<WebSocket | null>(null);
+
+  // Initialize WebSocket connection for real-time price sync
+  const initializePriceSync = React.useCallback(() => {
+    try {
+      const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/v1/prices/sync`;
+      const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('[PriceSync] Connected to real-time price sync');
+        setPriceSyncWs(ws);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+
+          if (message.type === 'PRICE_UPDATE') {
+            const update = message.data;
+            console.log('[PriceSync] Received price update:', update);
+
+            // Update inventory in state
+            setInventory(prev => prev.map(item =>
+              item.id === update.itemId
+                ? {
+                    ...item,
+                    selling_price: update.newPrice,
+                    sellingPrice: update.newPrice,
+                    costPrice: update.newCostPrice,
+                    price: update.newPrice,
+                    cost_price: update.newCostPrice
+                  }
+                : item
+            ));
+
+            // Update localStorage cache
+            const cached = localStorage.getItem('corepms_pos_items');
+            if (cached) {
+              try {
+                const items = JSON.parse(cached);
+                const updatedItems = items.map((item: any) =>
+                  item.id === update.itemId
+                    ? {
+                        ...item,
+                        selling_price: update.newPrice,
+                        sellingPrice: update.newPrice,
+                        costPrice: update.newCostPrice,
+                        price: update.newPrice,
+                        cost_price: update.newCostPrice
+                      }
+                    : item
+                );
+                localStorage.setItem('corepms_pos_items', JSON.stringify(updatedItems));
+                window.dispatchEvent(new Event('storage'));
+              } catch (e) {
+                console.warn('[PriceSync] Failed to update localStorage cache:', e);
+              }
+            }
+
+            // Show notification
+            toast({
+              title: "Price Updated",
+              description: `${update.itemName} price changed to €${update.newPrice.toFixed(2)}`,
+            });
+
+          } else if (message.type === 'CACHE_INVALIDATE') {
+            console.log('[PriceSync] Cache invalidation requested, reloading data');
+            // Reload all data to ensure consistency
+            loadAllData();
+          }
+        } catch (error) {
+          console.error('[PriceSync] Failed to process message:', error);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log('[PriceSync] Disconnected from real-time price sync');
+        setPriceSyncWs(null);
+        // Attempt to reconnect after 5 seconds
+        setTimeout(() => initializePriceSync(), 5000);
+      };
+
+      ws.onerror = (error) => {
+        console.error('[PriceSync] WebSocket error:', error);
+      };
+
+    } catch (error) {
+      console.error('[PriceSync] Failed to initialize:', error);
+    }
+  }, []);
+
+  // Cleanup WebSocket on unmount
+  useEffect(() => {
+    return () => {
+      if (priceSyncWs) {
+        priceSyncWs.close();
+      }
+    };
+  }, [priceSyncWs]);
 
   const loadAllData = React.useCallback(async () => {
     setLoading(true);
@@ -416,6 +515,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setLastUpdateTs(Date.now());
       setDataError(null);
+
+      // Initialize real-time price sync for POS
+      initializePriceSync();
 
     } catch (error: any) {
       console.error("Failed to load data from MySQL:", error);

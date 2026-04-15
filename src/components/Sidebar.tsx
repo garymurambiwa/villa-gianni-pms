@@ -129,6 +129,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
     { id: 'pos-settings', name: 'POS Settings', icon: '⚙️', roles: ['admin', 'manager', 'supervisor', 'posmanager'], section: 'POS' },
     { id: 'inventory', name: 'Inventory', icon: '📦', roles: ['admin', 'posmanager', 'manager', 'supervisor', 'barman'], section: 'POS' },
     { id: 'inventory-v11', name: 'Inventory v11 (NEW)', icon: '📦✨', roles: ['admin', 'posmanager', 'manager', 'supervisor', 'barman'], section: 'POS' },
+    { id: 'price-management', name: 'Price Management', icon: '💰', roles: ['admin', 'posmanager', 'manager', 'supervisor'], section: 'POS' },
 
     { id: 'accounting', name: 'Accounting', icon: '📒', roles: ['admin', 'manager', 'auditor', 'supervisor'], section: 'Back Office' },
     { id: 'night-audit', name: 'Night Audit', icon: '🌙', roles: ['admin', 'manager', 'auditor', 'supervisor'], section: 'Back Office' },

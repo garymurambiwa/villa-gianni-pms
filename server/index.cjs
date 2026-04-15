@@ -3,11 +3,13 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
 const db = require('./db-web.cjs');
+const expressWs = require('express-ws');
 
 // Load environment variables
 try { require('dotenv').config({ path: path.join(__dirname, '..', '.env') }) } catch { }
 
 const app = express();
+expressWs(app);
 const PORT = process.env.PORT || 3000;
 
 // Middleware
@@ -395,6 +397,12 @@ app.post('/api/reports/load-historical', async (req, res) => {
 // ============================================================================
 const inventoryV11Routes = require('./routes/inventory-v11.cjs');
 app.use('/api/v1/inventory', inventoryV11Routes);
+
+// ============================================================================
+// Price Management Routes
+// ============================================================================
+const priceRoutes = require('./routes/prices.cjs');
+app.use('/api/v1/prices', priceRoutes);
 
 // 2. Serve Static Assets (Frontend)
 // Serve dist folder

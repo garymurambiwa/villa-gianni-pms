@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useData } from '@/context/DataContext';
 import { useAuth } from '@/context/AuthContext';
 import { useShift } from '@/contexts/ShiftContext';
@@ -248,30 +249,36 @@ export const POSFrontOffice: React.FC = () => {
     } catch { }
   };
 
-  const [menuItems, setMenuItems] = useState<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; image?: string }>>([]);
-  // Load menu items on mount and periodically refresh
-  useEffect(() => {
-    // Initial load
-    loadMenuItems();
-    
-    // Set up periodic refresh (every 60 seconds)
-    const interval = setInterval(() => {
-      loadMenuItems();
-    }, 60_000);
-    
-    // Listen for localStorage changes from other tabs/windows
-    const onStorage = (e: StorageEvent) => { 
-      if (e.key === 'corepms_offline_menu' || e.key === 'corepms_pos_items') {
-        loadMenuItems();
-      }
-    };
-    window.addEventListener('storage', onStorage);
-    
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('storage', onStorage);
-    };
-  }, [loadMenuItems]);
+   // Fetch menu items using TanStack Query for automatic cross-browser consistency
+   const { data: menuItemsFromQuery, isLoading, isError, refetch } = useQuery({
+     queryKey: ['menuItems', costCentre],
+     queryFn: async () => {
+       if (isOffline) {
+         // When offline, return cached data
+         return offlineMenuItems;
+       }
+       // When online, fetch from database
+       const list = await getMenuItems(costCentre || undefined);
+       return Array.isArray(list) ? list : [];
+     },
+     // Consider data fresh for 30 seconds, then background refetch
+     staleTime: 30_000,
+     // Refetch every 60 seconds in background
+     refetchInterval: 60_000,
+     // Don't refetch when window refocuses (we have interval)
+     refetchOnWindowFocus: false,
+     // Retry failed requests
+     retry: 2,
+   });
+   
+   // Process the data for UI consumption
+   const menuItems = React.useMemo(() => {
+     if (!menuItemsFromQuery) return [];
+     return menuItemsFromQuery.map((item: any) => ({ 
+       ...item, 
+       image: item.image || '' 
+     }));
+   }, [menuItemsFromQuery]);
 
   useEffect(() => {
     // Clear potentially stale localStorage on mount to ensure clean slate if needed
@@ -381,7 +388,7 @@ export const POSFrontOffice: React.FC = () => {
     // If majority are bar items, it's a Bar POS transaction
     return barCount > foodCount ? 'Bar POS' : 'Restaurant POS';
   };
-  const isLoading = loading || !Array.isArray(posOrders);
+  const posIsLoading = loading || !Array.isArray(posOrders);
   const [connError, setConnError] = useState<string | null>(null);
   const debouncedTimerRef = useRef<any>(null);
   const pendingBillRef = useRef<any>(null);
@@ -777,7 +784,7 @@ export const POSFrontOffice: React.FC = () => {
 
       {costCentre && (
       <div className="p-6">
-{(isLoading || mountLoading) && (
+{(posIsLoading || mountLoading) && (
            <div className="bg-white rounded-xl shadow p-6 text-center">
              <LoadingSpinner label="Loading…" size="lg" />
            </div>
