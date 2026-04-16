@@ -21,9 +21,16 @@ export const StartShiftModal: React.FC<StartShiftModalProps> = ({ open, onClose 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Check if user is authenticated
+    if (!user || !user.id) {
+      alert('Please log in to start a shift.');
+      return;
+    }
+
     setLoading(true);
     try {
-      await startShift(parseFloat(openingCash), notes, user?.id, costCentre || undefined);
+      await startShift(parseFloat(openingCash), notes, user.id, costCentre || undefined);
       onClose();
       setOpeningCash('0');
       setNotes('');
