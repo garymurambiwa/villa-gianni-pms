@@ -829,9 +829,17 @@ export const pmsAuthDb = {
     try {
       const id = makeUuid();
       const businessDate = new Date().toISOString().slice(0, 10);
+
+      // Get next shift number for the outlet
+      const shiftNumRes = await db.query(
+        `SELECT COALESCE(MAX(shift_number), 0) + 1 as max_num FROM pos_shifts WHERE outlet = ?`,
+        [stationId]
+      );
+      const shiftNumber = shiftNumRes.rows?.[0]?.max_num || 1;
+
       const res = await db.query(
-        `INSERT INTO pos_shifts (id, user_id, station_id, start_balance, status, business_date) VALUES (?, ?, ?, ?, 'open', ?)`,
-        [id, userId, stationId, openingBalance, businessDate]
+        `INSERT INTO pos_shifts (id, outlet, shift_number, business_date, opened_by, opening_cash, status) VALUES (?, ?, ?, ?, ?, ?, 'open')`,
+        [id, stationId, shiftNumber, businessDate, userId, openingBalance]
       );
       if ('error' in res) return { ok: false, error: res.error };
       return { ok: true, id };
@@ -843,7 +851,7 @@ export const pmsAuthDb = {
   async endShift(shiftId: string, closingBalance: number): Promise<{ ok: boolean; error?: string }> {
     try {
       const res = await db.query(
-        `UPDATE pos_shifts SET end_time = NOW(), end_balance = ?, status = 'closed' WHERE id = ?`,
+        `UPDATE pos_shifts SET closed_at = NOW(), closing_cash = ?, status = 'closed' WHERE id = ?`,
         [closingBalance, shiftId]
       );
       if ('error' in res) return { ok: false, error: res.error };
@@ -853,10 +861,10 @@ export const pmsAuthDb = {
     }
   },
 
-  async getActiveShift(stationId: string): Promise<{ id: string; user_id: string; start_time: string; start_balance: number } | null> {
+  async getActiveShift(stationId: string): Promise<{ id: string; opened_by: string; opened_at: string; opening_cash: number } | null> {
     try {
-      const res = await db.query<{ id: string; user_id: string; start_time: string; start_balance: number }>(
-        `SELECT id, user_id, start_time, start_balance FROM pos_shifts WHERE station_id = ? AND status = 'open' ORDER BY start_time DESC LIMIT 1`,
+      const res = await db.query<{ id: string; opened_by: string; opened_at: string; opening_cash: number }>(
+        `SELECT id, opened_by, opened_at, opening_cash FROM pos_shifts WHERE outlet = ? AND status = 'open' ORDER BY opened_at DESC LIMIT 1`,
         [stationId]
       );
       if ('error' in res || !res.rows || res.rows.length === 0) return null;
@@ -869,14 +877,14 @@ export const pmsAuthDb = {
   async listShifts(stationId?: string): Promise<Shift[]> {
     try {
       let sql = `
-        SELECT s.*, u.name as user_name, c.name as station_name 
-        FROM pos_shifts s 
-        JOIN app_users u ON s.user_id = u.id
-        LEFT JOIN cost_centres c ON s.station_id = c.id
+        SELECT s.*, u.name as user_name, c.name as station_name
+        FROM pos_shifts s
+        JOIN app_users u ON s.opened_by = u.id
+        LEFT JOIN cost_centres c ON s.outlet = c.id
       `;
       const params = [];
       if (stationId) {
-        sql += ` WHERE s.station_id = ?`;
+        sql += ' WHERE s.outlet = ?';
         params.push(stationId);
       }
       sql += ` ORDER BY s.start_time DESC LIMIT 50`;
