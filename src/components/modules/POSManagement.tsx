@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '@/lib/db';
 import { useAuth } from '@/context/AuthContext';
+import { useData } from '@/context/DataContext';
 import { TableCard } from '@/components/posimport/TableCard';
 import { formatCurrency } from '@/lib/posIntegration';
 import { useToast } from '@/hooks/use-toast';
@@ -18,6 +19,7 @@ interface TableStatus {
 
 export const POSManagement: React.FC = () => {
   const { user } = useAuth();
+  const { closePosOrder } = useData();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [allTables, setAllTables] = useState<TableStatus[]>([]);
@@ -67,6 +69,23 @@ export const POSManagement: React.FC = () => {
   }, []);
 
   const centres = useMemo(() => ['all', ...Array.from(new Set(allTables.map(t => t.cost_center)))], [allTables]);
+
+  const clearBill = async (tableId: string, costCenter: string) => {
+    try {
+      // Allow clearing even if there's no active bill
+      const success = await closePosOrder(tableId, costCenter || undefined);
+      if (success) {
+        toast({ title: 'Bill Cleared', description: `Table ${tableId} has been cleared.` });
+        // Refresh the data
+        await fetchAllStatus();
+      } else {
+        toast({ title: 'Clear Failed', description: 'Unable to clear the table bill.', variant: 'destructive' });
+      }
+    } catch (error) {
+      console.error('Clear bill error:', error);
+      toast({ title: 'Clear Failed', description: 'An error occurred while clearing the bill.', variant: 'destructive' });
+    }
+  };
 
   const filtered = useMemo(() => {
     return allTables.filter(t => 
@@ -131,7 +150,7 @@ export const POSManagement: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-6">
           {filtered.map(table => (
-            <TableCard 
+            <TableCard
               key={`${table.cost_center}-${table.table_id}`}
               table={{
                 id: table.table_id,
@@ -143,6 +162,7 @@ export const POSManagement: React.FC = () => {
               onClick={() => {
                 toast({ title: `Table ${table.number} - ${table.cost_center}`, description: table.currentBill ? `Active Bill: ${formatCurrency(table.currentBill.total)}` : 'Available' });
               }}
+              onClearBill={() => clearBill(table.table_id, table.cost_center)}
             />
           ))}
           {filtered.length === 0 && (

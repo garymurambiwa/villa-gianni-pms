@@ -318,7 +318,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     const discountedTotal = Math.max(0, bill.total - (discountValue>0 ? discountAmt : 0));
     if (discountMode === 'percent' && discountValue > 15 && !approvedBy) { alert('Manager approval required for discounts above 15%.'); setIsProcessing(false); return; }
 
-    if (!validatePaymentAmount(discountedTotal)) { alert('Invalid payment amount.'); setIsProcessing(false); return; }
+    // Allow zero payment amounts for clearing bills (POS Management)
+    if (!validatePaymentAmount(discountedTotal) && discountedTotal !== 0) { alert('Invalid payment amount.'); setIsProcessing(false); return; }
 
     const paymentData = {
       billId: bill.id,
