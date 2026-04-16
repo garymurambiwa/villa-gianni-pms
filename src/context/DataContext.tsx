@@ -10,6 +10,116 @@ import { refreshConfig as refreshRateConfig } from '@/lib/ratePlanService';
 import { useAuth } from './AuthContext';
 import gl from '@/lib/glAccounting';
 
+// Hardcoded prices for Baradzanwa instance only
+const baradzanwaPrices: Record<string, { sellingPrice: number; costPrice?: number }> = {
+  "1/4 Chicken": { sellingPrice: 4.00, costPrice: 1.52 },
+  "1/4 Chicken & Chips": { sellingPrice: 6.00, costPrice: 2.30 },
+  "Absolate Vodka": { sellingPrice: 3.00, costPrice: 1.19 },
+  "Amarula": { sellingPrice: 2.00, costPrice: 0.89 },
+  "Amstel Lager": { sellingPrice: 2.00, costPrice: 1.12 },
+  "Barcardi Dark Rum": { sellingPrice: 2.00, costPrice: 0.80 },
+  "Barcardi Gold Rum": { sellingPrice: 2.00, costPrice: 0.80 },
+  "Beef Burger": { sellingPrice: 8.00, costPrice: 2.50 },
+  "Belgravia Dry lemon": { sellingPrice: 2.50, costPrice: 1.15 },
+  "Belgravia Dry Lemon": { sellingPrice: 2.50, costPrice: 0.89 },
+  "Black Label Bottle": { sellingPrice: 2.00, costPrice: 1.00 },
+  "Bon Courage Cabernet Savignon": { sellingPrice: 25.00, costPrice: 8.95 },
+  "Braai ( Pork Chop & Tbone)": { sellingPrice: 5.00, costPrice: 2.41 },
+  "Braai (Chicken & Pork Chops)": { sellingPrice: 5.00, costPrice: 2.41 },
+  "Braai (Tbone and Sausage)": { sellingPrice: 5.00, costPrice: 2.41 },
+  "Bream Cutlets": { sellingPrice: 6.00, costPrice: 2.53 },
+  "Brutal Fruit Can": { sellingPrice: 2.50, costPrice: 0.97 },
+  "Captain Morgan Spiced Rum": { sellingPrice: 2.00, costPrice: 0.80 },
+  "Castle Lager": { sellingPrice: 2.00, costPrice: 1.00 },
+  "Castle Lite Can": { sellingPrice: 2.00, costPrice: 0.65 },
+  "Castle Pint": { sellingPrice: 2.00, costPrice: 0.56 },
+  "Coke": { sellingPrice: 1.00, costPrice: 0.43 },
+  "Coke Can": { sellingPrice: 1.00, costPrice: 0.46 },
+  "Coke Zero": { sellingPrice: 1.00, costPrice: 0.46 },
+  "Corona Extra": { sellingPrice: 3.00, costPrice: 1.12 },
+  "Creamsoda Can": { sellingPrice: 1.00, costPrice: 0.43 },
+  "Diemersfontein Shiraz": { sellingPrice: 30.00, costPrice: 9.47 },
+  "Fanta": { sellingPrice: 1.00, costPrice: 0.43 },
+  "Fanta can": { sellingPrice: 1.00, costPrice: 0.43 },
+  "Fanta Grape Can": { sellingPrice: 1.00, costPrice: 0.46 },
+  "Flyfish": { sellingPrice: 2.00, costPrice: 1.30 },
+  "Four Cousins Natuarl Sweet Rose": { sellingPrice: 20.00, costPrice: 5.60 },
+  "Four Cousins Rose": { sellingPrice: 20.00, costPrice: 5.60 },
+  "Four Cousins Sweet Red": { sellingPrice: 20.00, costPrice: 5.60 },
+  "Gango": { sellingPrice: 6.00, costPrice: 2.10 },
+  "Ginger Ale": { sellingPrice: 1.00, costPrice: 0.49 },
+  "Glen Carlou Pinot Noir": { sellingPrice: 40.00, costPrice: 14.24 },
+  "Glenfidich 12 yrs": { sellingPrice: 5.00, costPrice: 1.90 },
+  "Goat Meat": { sellingPrice: 6.00, costPrice: 2.38 },
+  "Golden Pilsner": { sellingPrice: 2.00, costPrice: 0.65 },
+  "Gordons Gin": { sellingPrice: 2.00, costPrice: 0.33 },
+  "Grants Whiskey": { sellingPrice: 2.00, costPrice: 0.52 },
+  "Hake Fillet": { sellingPrice: 10.00, costPrice: 3.00 },
+  "Hansa Pilsner": { sellingPrice: 2.00, costPrice: 1.30 },
+  "Heinken Origional": { sellingPrice: 3.00, costPrice: 1.15 },
+  "Heinken Silver": { sellingPrice: 3.00, costPrice: 1.35 },
+  "Hunters Dry": { sellingPrice: 2.00, costPrice: 0.90 },
+  "Hunters Gold": { sellingPrice: 2.00, costPrice: 0.90 },
+  "Inkara Merlot": { sellingPrice: 40.00, costPrice: 16.06 },
+  "Jagermeister": { sellingPrice: 2.00, costPrice: 0.95 },
+  "Jameson Irish Whiskey": { sellingPrice: 3.00, costPrice: 0.87 },
+  "JC Le Roux Le Domain": { sellingPrice: 25.00, costPrice: 5.42 },
+  "John Walker Black": { sellingPrice: 3.00, costPrice: 1.32 },
+  "John Walker Red": { sellingPrice: 2.00, costPrice: 0.64 },
+  "Juices": { sellingPrice: 5.00, costPrice: 1.96 },
+  "Klipdrft": { sellingPrice: 2.00, costPrice: 0.36 },
+  "Lemonade": { sellingPrice: 1.00, costPrice: 0.49 },
+  "Maguru NeMatumbu": { sellingPrice: 6.00, costPrice: 2.30 },
+  "Mapfunde (Sadza)": { sellingPrice: 3.00, costPrice: 0.30 },
+  "Mapfura Wine": { sellingPrice: 10.00, costPrice: 5.00 },
+  "Mazondo": { sellingPrice: 6.00, costPrice: 2.30 },
+  "Mhunga (Sadza)": { sellingPrice: 3.00, costPrice: 0.30 },
+  "Mineral Water  Bonaqua": { sellingPrice: 1.00, costPrice: 0.17 },
+  "Mineral Water Aquaclear": { sellingPrice: 1.00, costPrice: 0.13 },
+  "Minute Maid": { sellingPrice: 2.00, costPrice: 0.73 },
+  "Moet & Chandon Brut": { sellingPrice: 200.00, costPrice: 62.34 },
+  "Mupunga Une Dovi": { sellingPrice: 3.00, costPrice: 0.50 },
+  "Musoro Wemombe": { sellingPrice: 5.00, costPrice: 1.96 },
+  "Nederburg Cabernet Sauvignon": { sellingPrice: 25.00, costPrice: 5.46 },
+  "Nederburg Chadonnay": { sellingPrice: 20.00, costPrice: 5.92 },
+  "Nederburg Rose": { sellingPrice: 20.00, costPrice: 3.40 },
+  "Oxtail": { sellingPrice: 6.00, costPrice: 2.78 },
+  "Pinut Can": { sellingPrice: 1.00, costPrice: 0.46 },
+  "Plain Chips": { sellingPrice: 3.00, costPrice: 0.30 },
+  "Plain Rice": { sellingPrice: 1.00, costPrice: 0.20 },
+  "Pork Head": { sellingPrice: 5.00, costPrice: 1.20 },
+  "Potato Crispies Small": { sellingPrice: 1.00, costPrice: 0.43 },
+  "Roadrunner": { sellingPrice: 7.00, costPrice: 2.20 },
+  "Roasted Nuts - Tub 50g": { sellingPrice: 1.00, costPrice: 0.15 },
+  "Robertson Sweet Red": { sellingPrice: 20.00, costPrice: 5.50 },
+  "Sadza Plain White": { sellingPrice: 1.00, costPrice: 0.20 },
+  "Savanna Angry Lemon": { sellingPrice: 2.50, costPrice: 1.50 },
+  "Savanna Dry": { sellingPrice: 2.50, costPrice: 0.94 },
+  "Simonsig Pinotage": { sellingPrice: 30.00, costPrice: 10.28 },
+  "Sminorff Vodka": { sellingPrice: 2.00, costPrice: 0.26 },
+  "Soda Water": { sellingPrice: 1.00, costPrice: 0.57 },
+  "Southern Comfort Original": { sellingPrice: 2.00, costPrice: 0.58 },
+  "Sprite": { sellingPrice: 1.00, costPrice: 0.30 },
+  "Sprite Can": { sellingPrice: 1.00, costPrice: 0.46 },
+  "Stoney Ginger Beer": { sellingPrice: 1.00, costPrice: 0.46 },
+  "Strawbery Lips": { sellingPrice: 2.00, costPrice: 0.58 },
+  "Tanqueray Gin": { sellingPrice: 3.00, costPrice: 0.73 },
+  "The Game Reserve Melort": { sellingPrice: 50.00, costPrice: 7.13 },
+  "Tonic Water": { sellingPrice: 1.00, costPrice: 0.49 },
+  "Trotters": { sellingPrice: 6.00, costPrice: 2.21 },
+  "Tsuro": { sellingPrice: 6.00, costPrice: 2.10 },
+  "Veuve Clicquot": { sellingPrice: 200.00, costPrice: 69.00 },
+  "Viceroy": { sellingPrice: 2.00, costPrice: 0.30 },
+  "Wellington Brandy": { sellingPrice: 1.00, costPrice: 0.30 },
+  "Whitestone Gin": { sellingPrice: 2.00, costPrice: 1.24 },
+  "Whole Bream": { sellingPrice: 8.00, costPrice: 2.53 },
+  "Windhoek Draught": { sellingPrice: 3.00, costPrice: 1.56 },
+  "Windhoek Lager": { sellingPrice: 3.00, costPrice: 1.34 },
+  "Zambezi Can": { sellingPrice: 2.00, costPrice: 0.65 },
+  "Zinyenze": { sellingPrice: 6.00, costPrice: 2.25 },
+  "Zviyo (Sadza)": { sellingPrice: 3.00, costPrice: 0.30 }
+};
+
 const DataContext = createContext<any>(null);
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -430,9 +540,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
 
-            // Use only selling price
-            const sellingPriceValue = Number(p.price || 0);
-            const costPriceValue = undefined;
+            // Check if this is Baradzanwa instance and override prices if needed
+            const isBaradzanwa = typeof window !== 'undefined' ? window.location.hostname.includes('baradzanwa') : false;
+            let sellingPriceValue = Number(p.price || 0);
+            let costPriceValue = undefined;
+
+            if (isBaradzanwa && baradzanwaPrices[p.name]) {
+              sellingPriceValue = baradzanwaPrices[p.name].sellingPrice;
+              costPriceValue = baradzanwaPrices[p.name].costPrice;
+            }
            
             return {
               ...p,
