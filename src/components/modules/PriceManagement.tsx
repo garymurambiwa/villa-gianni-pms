@@ -17,7 +17,6 @@ interface ProductItem {
   id: string;
   name: string;
   price: number;
-  cost_price: number;
   category: string;
   department: string;
   stock_level: number;
@@ -37,7 +36,7 @@ export const PriceManagement: React.FC = () => {
   // Edit dialog state
   const [editingItem, setEditingItem] = useState<ProductItem | null>(null);
   const [newPrice, setNewPrice] = useState('');
-  const [newCostPrice, setNewCostPrice] = useState('');
+
   const [saving, setSaving] = useState(false);
 
   // Load items from database
@@ -46,7 +45,7 @@ export const PriceManagement: React.FC = () => {
       setLoading(true);
       const result = await db.query(`
         SELECT
-          id, name, price, cost_price, category, department,
+          id, name, price, category, department,
           stock_level, visibility
         FROM products
         WHERE active = true
@@ -56,7 +55,7 @@ export const PriceManagement: React.FC = () => {
       if ('rows' in result && Array.isArray(result.rows)) {
         const products = result.rows.map((row: any) => ({
           ...row,
-          gpPercent: row.cost_price > 0 ? ((row.price - row.cost_price) / row.price) * 100 : 0
+          gpPercent: 0
         }));
         setItems(products);
         setFilteredItems(products);
@@ -86,7 +85,7 @@ export const PriceManagement: React.FC = () => {
   }, [items, searchTerm, categoryFilter, departmentFilter]);
 
   // Update price via API for real-time sync across all POS stations
-  const updatePrice = async (item: ProductItem, newSellingPrice: number, newCostPrice: number) => {
+  const updatePrice = async (item: ProductItem, newSellingPrice: number) => {
     try {
       setSaving(true);
 
@@ -98,7 +97,6 @@ export const PriceManagement: React.FC = () => {
         },
         body: JSON.stringify({
           selling_price: newSellingPrice,
-          cost_price: newCostPrice,
           updated_by: user?.email || 'Unknown'
         })
       });
@@ -115,8 +113,7 @@ export const PriceManagement: React.FC = () => {
           ? {
               ...i,
               price: newSellingPrice,
-              cost_price: newCostPrice,
-              gpPercent: newCostPrice > 0 ? ((newSellingPrice - newCostPrice) / newSellingPrice) * 100 : 0
+              gpPercent: 0
             }
           : i
       ));
@@ -130,7 +127,6 @@ export const PriceManagement: React.FC = () => {
       setSaving(false);
       setEditingItem(null);
       setNewPrice('');
-      setNewCostPrice('');
     }
   };
 
@@ -138,7 +134,6 @@ export const PriceManagement: React.FC = () => {
   const openEditDialog = (item: ProductItem) => {
     setEditingItem(item);
     setNewPrice(item.price.toString());
-    setNewCostPrice(item.cost_price.toString());
   };
 
   // Handle save
@@ -146,24 +141,13 @@ export const PriceManagement: React.FC = () => {
     if (!editingItem) return;
 
     const sellingPrice = parseFloat(newPrice);
-    const costPrice = parseFloat(newCostPrice);
 
     if (isNaN(sellingPrice) || sellingPrice < 0) {
       toast.error('Invalid selling price');
       return;
     }
 
-    if (isNaN(costPrice) || costPrice < 0) {
-      toast.error('Invalid cost price');
-      return;
-    }
-
-    if (costPrice >= sellingPrice) {
-      toast.error('Cost price must be less than selling price');
-      return;
-    }
-
-    updatePrice(editingItem, sellingPrice, costPrice);
+    updatePrice(editingItem, sellingPrice);
   };
 
   useEffect(() => {
@@ -263,9 +247,8 @@ export const PriceManagement: React.FC = () => {
                   <TableHead>Name</TableHead>
                   <TableHead>Category</TableHead>
                   <TableHead>Department</TableHead>
-                  <TableHead>Selling Price</TableHead>
-                  <TableHead>Cost Price</TableHead>
-                  <TableHead>Gross Profit</TableHead>
+                   <TableHead>Selling Price</TableHead>
+                   <TableHead>Gross Profit</TableHead>
                   <TableHead>Stock</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -280,12 +263,9 @@ export const PriceManagement: React.FC = () => {
                     <TableCell>
                       <Badge variant="secondary">{item.department}</Badge>
                     </TableCell>
-                    <TableCell className="font-mono">
-                      {formatCurrency(item.price)}
-                    </TableCell>
-                    <TableCell className="font-mono">
-                      {formatCurrency(item.cost_price)}
-                    </TableCell>
+                     <TableCell className="font-mono">
+                       {formatCurrency(item.price)}
+                     </TableCell>
                     <TableCell>
                       <span className={`font-medium ${
                         (item.gpPercent || 0) < 20 ? 'text-red-600' :
@@ -337,35 +317,10 @@ export const PriceManagement: React.FC = () => {
                   placeholder="0.00"
                 />
               </div>
-              <div>
-                <Label htmlFor="cost-price">Cost Price (€)</Label>
-                <Input
-                  id="cost-price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={newCostPrice}
-                  onChange={(e) => setNewCostPrice(e.target.value)}
-                  placeholder="0.00"
-                />
-              </div>
+
             </div>
 
-            {newPrice && newCostPrice && !isNaN(parseFloat(newPrice)) && !isNaN(parseFloat(newCostPrice)) && (
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="text-sm text-gray-600">
-                  <div>New Gross Profit: {(((parseFloat(newPrice) - parseFloat(newCostPrice)) / parseFloat(newPrice)) * 100).toFixed(1)}%</div>
-                  <div className="text-xs mt-1">
-                    {parseFloat(newCostPrice) >= parseFloat(newPrice) && (
-                      <span className="text-red-600 flex items-center">
-                        <AlertTriangle className="h-3 w-3 mr-1" />
-                        Cost price should be less than selling price
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
+
           </div>
 
           <DialogFooter>

@@ -103,7 +103,7 @@ export const InventoryReconciliation: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const [showBatchReconDialog, setShowBatchReconDialog] = useState(false);
-  const [batchData, setBatchData] = useState<Record<string, { physicalQty: number; costPrice: number }>>({});
+  const [batchData, setBatchData] = useState<Record<string, { physicalQty: number }>>({});
   
   const [newPeriod, setNewPeriod] = useState({
     periodYear: new Date().getFullYear(),
@@ -865,7 +865,6 @@ export const InventoryReconciliation: React.FC = () => {
                   <TableHead>Department</TableHead>
                   <TableHead className="text-right">Current Stock</TableHead>
                   <TableHead className="text-right w-32">Physical Qty</TableHead>
-                  <TableHead className="text-right w-32">Unit Cost ($)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -882,19 +881,7 @@ export const InventoryReconciliation: React.FC = () => {
                         value={batchData[p.id]?.physicalQty ?? ''}
                         onChange={(e) => setBatchData(prev => ({
                           ...prev,
-                          [p.id]: { ...prev[p.id], physicalQty: parseFloat(e.target.value) || 0, costPrice: prev[p.id]?.costPrice ?? p.cost_price }
-                        }))}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Input
-                        type="number"
-                        className="text-right h-8"
-                        placeholder="0.00"
-                        value={batchData[p.id]?.costPrice ?? p.cost_price}
-                        onChange={(e) => setBatchData(prev => ({
-                          ...prev,
-                          [p.id]: { ...prev[p.id], costPrice: parseFloat(e.target.value) || 0, physicalQty: prev[p.id]?.physicalQty ?? 0 }
+                          [p.id]: { ...prev[p.id], physicalQty: parseFloat(e.target.value) || 0 }
                         }))}
                       />
                     </TableCell>
@@ -916,8 +903,8 @@ export const InventoryReconciliation: React.FC = () => {
                 for (const [id, data] of entries) {
                   // Update product stock and cost
                   await db.query(
-                    `UPDATE products SET stock_level = ?, cost_price = ?, updated_at = NOW() WHERE id = ?`,
-                    [data.physicalQty, data.costPrice, id]
+                    `UPDATE products SET stock_level = ?, updated_at = NOW() WHERE id = ?`,
+                    [data.physicalQty, id]
                   );
 
                   // Log transaction
@@ -926,8 +913,8 @@ export const InventoryReconciliation: React.FC = () => {
                     `INSERT INTO inventory_transactions 
                      (transaction_type, transaction_number, transaction_date, department, total_quantity, total_value, created_by)
                      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                    ['adjustment', `BATCH-${Date.now()}`, new Date().toISOString().split('T')[0], 
-                     product?.department || 'Kitchen', data.physicalQty, data.physicalQty * data.costPrice, user?.name]
+                    ['adjustment', `BATCH-${Date.now()}`, new Date().toISOString().split('T')[0],
+                     product?.department || 'Kitchen', data.physicalQty, 0, user?.name]
                   );
                 }
 

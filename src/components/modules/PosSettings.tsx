@@ -901,7 +901,7 @@ export const PosSettings: React.FC = () => {
   const [qtyInStock, setQtyInStock] = React.useState<number>(0);
   const [unitOfMeasure, setUnitOfMeasure] = React.useState<string>('');
   const [inventoryCategory, setInventoryCategory] = React.useState<'kitchen' | 'cellar' | ''>('');
-  const [costPrice, setCostPrice] = React.useState<number>(0);
+
   const [sellingPrice, setSellingPrice] = React.useState<number>(0);
   const [costCenter, setCostCenter] = React.useState<'bar' | 'restaurant' | ''>('');
   const [categoryId, setCategoryId] = React.useState<string>('');
@@ -979,13 +979,9 @@ export const PosSettings: React.FC = () => {
     }
   }, [stockOpen, focusField]);
 
-  const gpAmount = React.useMemo(() => Number((sellingPrice - costPrice).toFixed(2)), [sellingPrice, costPrice]);
-  const gpPercent = React.useMemo(() => sellingPrice > 0 ? Number(((gpAmount / sellingPrice) * 100).toFixed(2)) : 0, [gpAmount, sellingPrice]);
-  const computedCOS = React.useMemo(() => {
-    if (sellingPrice <= 0) return 0;
-    const val = (costPrice / sellingPrice) * 100;
-    return Number.isFinite(val) ? Number(val.toFixed(2)) : 0;
-  }, [costPrice, sellingPrice]);
+  const gpAmount = React.useMemo(() => 0, []);
+  const gpPercent = React.useMemo(() => 0, []);
+  const computedCOS = React.useMemo(() => 0, []);
 
   React.useEffect(() => {
     try {
@@ -1045,9 +1041,7 @@ export const PosSettings: React.FC = () => {
     const issues: string[] = [];
     if (!String(it.name || '').trim()) issues.push('Missing name');
     if (!it.costCenter) issues.push('No center');
-    if (Number(it.costPrice || 0) <= 0) issues.push('Cost ≤ 0');
     if (Number(it.sellingPrice || 0) <= 0) issues.push('Price ≤ 0');
-    if (Number(it.cosPercent || 0) < 0 || Number(it.cosPercent || 0) > 100) issues.push('COS out of range');
     return issues;
   }, []);
 
@@ -1055,9 +1049,7 @@ export const PosSettings: React.FC = () => {
   const getItemSeverity = React.useCallback((it: any): 'critical' | 'minor' | 'none' => {
     if (!String(it.name || '').trim()) return 'critical';
     if (!it.costCenter) return 'critical';
-    if (Number(it.costPrice || 0) <= 0) return 'critical';
     if (Number(it.sellingPrice || 0) <= 0) return 'critical';
-    if (Number(it.cosPercent || 0) < 0 || Number(it.cosPercent || 0) > 100) return 'minor';
     return 'none';
   }, []);
 
@@ -1163,9 +1155,7 @@ export const PosSettings: React.FC = () => {
     if (!itemName.trim()) e.itemName = 'Item name is required';
     if (qtyReceived < 0) e.qtyReceived = 'Quantity received cannot be negative';
     if (qtyInStock < 0) e.qtyInStock = 'Quantity in stock cannot be negative';
-    if (costPrice <= 0) e.costPrice = 'Cost price must be greater than 0';
     if (sellingPrice <= 0) e.sellingPrice = 'Selling price must be greater than 0';
-    if (sellingPrice <= costPrice) e.sellingPrice = 'Selling price must be greater than cost price';
     if (!costCenter) e.costCenter = 'Select a cost center';
     if (!categoryId) e.categoryId = 'Select a category';
     if (!unitOfMeasure) e.unitOfMeasure = 'Select unit of measure';
@@ -1242,7 +1232,6 @@ export const PosSettings: React.FC = () => {
       qtyReceived,
       qtyInStock,
       unitOfMeasure,
-      costPrice: Number(costPrice.toFixed(2)),
       sellingPrice: Number(sellingPrice.toFixed(2)),
       costCenter,
       // FIX: Include type field for proper department handling in sync
@@ -1314,7 +1303,6 @@ export const PosSettings: React.FC = () => {
     setItemName(it.name);
     setQtyReceived(Number(it.qtyReceived) || 0);
     setQtyInStock(Number(it.qtyInStock) || 0);
-    setCostPrice(Number(it.costPrice) || 0);
     setSellingPrice(Number(it.sellingPrice) || 0);
     setCostCenter(it.costCenter || '');
     setCategoryId(String(it.category_id || ''));
@@ -1336,7 +1324,6 @@ export const PosSettings: React.FC = () => {
     let field: string | null = null;
     if (issues.includes('Missing name')) field = 'itemName';
     else if (issues.includes('No center')) field = 'costCenterTrigger';
-    else if (issues.includes('Cost ≤ 0')) field = 'costPrice';
     else if (issues.includes('Price ≤ 0')) field = 'sellingPrice';
     else if (issues.includes('COS out of range')) field = 'cosPercent';
     setFocusField(field);
@@ -1392,14 +1379,11 @@ export const PosSettings: React.FC = () => {
   const exportCSV = () => {
     try {
       const data = getFilteredSortedItems();
-      const headers = ['ID', 'Name', 'Center', 'CategoryId', 'CategoryName', 'SellingPrice', 'CostPrice', 'QtyInStock', 'QtyReceived', 'BarVisible', 'RestaurantVisible', 'COSPercent', 'GPAmount', 'GPPercent', 'Notes', 'TotalValue', 'TotalCost', 'Margin'];
+      const headers = ['ID', 'Name', 'Center', 'CategoryId', 'CategoryName', 'SellingPrice', 'QtyInStock', 'QtyReceived', 'BarVisible', 'RestaurantVisible', 'COSPercent', 'GPAmount', 'GPPercent', 'Notes', 'TotalValue'];
       const rows = data.map((it: any) => {
         const selling = Number(it.sellingPrice || 0);
-        const cost = Number(it.costPrice || 0);
         const qty = Number(it.qtyInStock || 0);
         const totalValue = selling * qty;
-        const totalCost = cost * qty;
-        const margin = totalValue - totalCost;
         const cat = it.category_id ? menuCats.getCategoryById(String(it.category_id)) : undefined;
         const values = [
           it.id,
@@ -1408,18 +1392,15 @@ export const PosSettings: React.FC = () => {
           String(it.category_id || ''),
           cat?.category_name || '',
           selling.toFixed(2),
-          cost.toFixed(2),
           qty,
           Number(it.qtyReceived || 0),
           it.visibility?.bar ? 'Yes' : 'No',
           it.visibility?.restaurant ? 'Yes' : 'No',
           Number(it.cosPercent || 0).toFixed(2),
-          Number(it.gpAmount ?? (selling - cost)).toFixed(2),
+          Number(it.gpAmount || 0).toFixed(2),
           Number(it.gpPercent || 0).toFixed(2),
           it.notes ? String(it.notes).replace(/\r?\n/g, ' ') : '',
-          totalValue.toFixed(2),
-          totalCost.toFixed(2),
-          margin.toFixed(2)
+          totalValue.toFixed(2)
         ];
         return values.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
       });
@@ -1530,7 +1511,6 @@ export const PosSettings: React.FC = () => {
           const costCenter = centerRaw === 'bar' || centerRaw === 'restaurant' ? (centerRaw as any) : null;
           if (!costCenter) { errors.push(`Row ${i + 1}: invalid Center '${cols[centerIdx]}'`); continue; }
           const sellingPrice = Number(cols[sellIdx] || 0);
-          const costPrice = Number(cols[costIdx] || 0);
           const qtyInStock = Number(cols[stockIdx] || 0);
           const qtyReceived = Number(cols[recvIdx] || 0);
           const parseBool = (val: string) => {
@@ -1540,9 +1520,9 @@ export const PosSettings: React.FC = () => {
 
           const barVisible = parseBool(cols[barIdx]);
           const restaurantVisible = parseBool(cols[restIdx]);
-          const cosPercent = Number(cols[cosIdx] || 0);
-          const gpAmount = cols[gpAmtIdx] ? Number(cols[gpAmtIdx]) : sellingPrice - costPrice;
-          const gpPercent = cols[gpPctIdx] ? Number(cols[gpPctIdx]) : (sellingPrice ? (gpAmount / sellingPrice) * 100 : 0);
+          const cosPercent = 0;
+          const gpAmount = 0;
+          const gpPercent = 0;
           const notes = cols[notesIdx] || '';
           const id = cols[idIdx] || `ITEM_${Date.now()}_${i}`;
           // Resolve category with intelligent mapping and pending queue support
@@ -1621,7 +1601,7 @@ export const PosSettings: React.FC = () => {
           else if (invRaw === 'cellar') inventoryCategory = 'cellar';
           else inventoryCategory = getCostCenterDepartment(costCenter) === 'Bar' ? 'cellar' : 'kitchen';
 
-          parsed.push({ id, name, costCenter, inventoryCategory, sellingPrice, costPrice, qtyInStock, qtyReceived, visibility: { bar: barVisible, restaurant: restaurantVisible }, cosPercent, gpAmount, gpPercent, notes, category_id });
+          parsed.push({ id, name, costCenter, inventoryCategory, sellingPrice, qtyInStock, qtyReceived, visibility: { bar: barVisible, restaurant: restaurantVisible }, cosPercent, gpAmount, gpPercent, notes, category_id });
         }
         const raw = localStorage.getItem('corepms_pos_items');
         const list = raw ? JSON.parse(raw) : [];
@@ -1959,11 +1939,7 @@ export const PosSettings: React.FC = () => {
                 {errors.inventoryCategory && <div className="text-xs text-red-600 mt-1">{errors.inventoryCategory}</div>}
               </div>
 
-              <div>
-                <label className="text-xs">Cost price</label>
-                <Input id="costPrice" type="number" min={0} step="0.01" value={costPrice} onChange={(e) => setCostPrice(Number(e.target.value))} />
-                {errors.costPrice && <div className="text-xs text-red-600 mt-1">{errors.costPrice}</div>}
-              </div>
+
               <div>
                 <label className="text-xs">Selling price</label>
                 <Input id="sellingPrice" type="number" min={0} step="0.01" value={sellingPrice} onChange={(e) => setSellingPrice(Number(e.target.value))} />
@@ -2743,10 +2719,7 @@ export const PosSettings: React.FC = () => {
                     const minPrice = count ? Math.min(...prices) : 0;
                     const maxPrice = count ? Math.max(...prices) : 0;
                     const totalValue = filtered.reduce((acc, it) => acc + Number(it.sellingPrice || 0) * Number(it.qtyInStock || 0), 0);
-                    const totalCost = filtered.reduce((acc, it) => acc + Number(it.costPrice || 0) * Number(it.qtyInStock || 0), 0);
-                    const margin = totalValue - totalCost;
-                    const marginPct = totalValue > 0 ? (margin / totalValue) * 100 : 0;
-                    return `Items: ${count} • Avg GP: ${avgGp.toFixed(2)}% • Min: ${formatCurrency(minPrice)} • Max: ${formatCurrency(maxPrice)} • Total Value: ${formatCurrency(totalValue)} • Total Cost: ${formatCurrency(totalCost)} • Margin: ${formatCurrency(margin)} (${marginPct.toFixed(2)}%)`;
+                    return `Items: ${count} • Avg GP: ${avgGp.toFixed(2)}% • Min: ${formatCurrency(minPrice)} • Max: ${formatCurrency(maxPrice)} • Total Value: ${formatCurrency(totalValue)}`;
                   })()}
                 </div>
                 <table className="w-full text-sm">
@@ -2837,8 +2810,8 @@ export const PosSettings: React.FC = () => {
                     try {
                       const raw = localStorage.getItem('corepms_pos_items');
                       const items = raw ? JSON.parse(raw) : [];
-                      const rows = items.map((it: any) => `<tr><td>${it.name}</td><td>${Number(it.qtyInStock || 0)}</td><td>${Number(it.costPrice || 0).toFixed(2)}</td><td>${Number(it.sellingPrice || 0).toFixed(2)}</td></tr>`).join('');
-                      const html = `<!doctype html><html><head><title>Stock Sheet</title></head><body><h2>Stock Sheet</h2><table border="1" cellspacing="0" cellpadding="4"><thead><tr><th>Name</th><th>Qty</th><th>Cost</th><th>Price</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+                      const rows = items.map((it: any) => `<tr><td>${it.name}</td><td>${Number(it.qtyInStock || 0)}</td><td>${Number(it.sellingPrice || 0).toFixed(2)}</td></tr>`).join('');
+                      const html = `<!doctype html><html><head><title>Stock Sheet</title></head><body><h2>Stock Sheet</h2><table border="1" cellspacing="0" cellpadding="4"><thead><tr><th>Name</th><th>Qty</th><th>Price</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
                       const blob = new Blob([html], { type: 'text/html' });
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement('a');

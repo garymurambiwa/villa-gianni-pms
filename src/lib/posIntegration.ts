@@ -216,7 +216,7 @@ export const getMenuItemsFromPOSStore = (): Array<{ id: string; name: string; pr
   }
 };
 
-export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; description?: string; category_id?: string; subCategory?: string; unitOfMeasure?: string; costPrice?: number; }>> => {
+export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: string; name: string; price: number; category: 'food' | 'bar'; description?: string; category_id?: string; subCategory?: string; unitOfMeasure?: string; }>> => {
   try {
     const isConfigured = await db.isConfigured();
     if (isConfigured) {
@@ -260,8 +260,7 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
               description: '',
               subCategory: String(r.category || ''),
               category_id,
-              unitOfMeasure: r.unit ? String(r.unit) : undefined,
-              costPrice: Number(r.cost || 0)
+              unitOfMeasure: r.unit ? String(r.unit) : undefined
             };
           })
           .filter((item): item is NonNullable<typeof item> => item !== null);

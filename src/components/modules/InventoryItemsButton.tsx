@@ -31,12 +31,9 @@ const SummaryBar: React.FC<{ items: any[]; searchTerm: string; centerFilter: 'al
   const minPrice = count ? Math.min(...prices) : 0;
   const maxPrice = count ? Math.max(...prices) : 0;
   const totalValue = filtered.reduce((acc, it) => acc + Number(it.sellingPrice || 0) * Number(it.qtyInStock || 0), 0);
-  const totalCost = filtered.reduce((acc, it) => acc + Number(it.costPrice || 0) * Number(it.qtyInStock || 0), 0);
-  const margin = totalValue - totalCost;
-  const marginPct = totalValue > 0 ? (margin / totalValue) * 100 : 0;
   return (
     <div className="text-xs text-gray-600 mb-2">
-      {`Items: ${count} • Avg GP: ${avgGp.toFixed(2)}% • Min: ${formatCurrency(minPrice)} • Max: ${formatCurrency(maxPrice)} • Total Value: ${formatCurrency(totalValue)} • Total Cost: ${formatCurrency(totalCost)} • Margin: ${formatCurrency(margin)} (${marginPct.toFixed(2)}%)`}
+      {`Items: ${count} • Avg GP: ${avgGp.toFixed(2)}% • Min: ${formatCurrency(minPrice)} • Max: ${formatCurrency(maxPrice)} • Total Value: ${formatCurrency(totalValue)}`}
     </div>
   );
 };
@@ -67,18 +64,14 @@ const InventoryItemsButton: React.FC = () => {
     const issues: string[] = [];
     if (!String(it.name || '').trim()) issues.push('Missing name');
     if (!it.costCenter) issues.push('No center');
-    if (Number(it.costPrice || 0) <= 0) issues.push('Cost ≤ 0');
     if (Number(it.sellingPrice || 0) <= 0) issues.push('Price ≤ 0');
-    if (Number(it.cosPercent || 0) < 0 || Number(it.cosPercent || 0) > 100) issues.push('COS out of range');
     return issues;
   }, []);
 
   const getItemSeverity = React.useCallback((it: any): 'critical' | 'minor' | 'none' => {
     if (!String(it.name || '').trim()) return 'critical';
     if (!it.costCenter) return 'critical';
-    if (Number(it.costPrice || 0) <= 0) return 'critical';
     if (Number(it.sellingPrice || 0) <= 0) return 'critical';
-    if (Number(it.cosPercent || 0) < 0 || Number(it.cosPercent || 0) > 100) return 'minor';
     return 'none';
   }, []);
 
