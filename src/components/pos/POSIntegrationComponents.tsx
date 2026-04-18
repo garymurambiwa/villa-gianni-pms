@@ -788,21 +788,27 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             </div>
           )}
 
-          {/* Bill Summary */}
-          <div className="border-t pt-4">
-            <div className="text-sm space-y-1">
-              {bill.items.map((item, index) => (
-                <div key={index} className="flex justify-between">
-                  <span>{item.name} x{item.quantity}</span>
-                  <span>{formatCurrency(item.subtotal)}</span>
-                </div>
-              ))}
-              <div className="border-t pt-2 font-semibold flex justify-between">
-                <span>Total:</span>
-                <span>{formatCurrency(discountMode==='percent' ? Math.max(0, bill.total - (bill.total*(discountValue/100))) : Math.max(0, bill.total - discountValue))}</span>
-              </div>
-            </div>
-          </div>
+           {/* Bill Summary */}
+           <div className="border-t pt-4">
+             <div className="text-sm space-y-1">
+               {bill.items.map((item, index) => (
+                 <div key={index} className="flex justify-between">
+                   <span>{item.name} x{item.quantity}</span>
+                   <span>
+                     {formatCurrency(Number.isNaN(Number(item.subtotal)) ? 0 : Number(item.subtotal))}
+                     <br />
+                     <span className="text-xs text-gray-500">
+                       @ {formatCurrency(Number.isNaN(Number(item.price)) ? 0 : Number(item.price))}
+                     </span>
+                   </span>
+                 </div>
+               ))}
+               <div className="border-t pt-2 font-semibold flex justify-between">
+                 <span>Total:</span>
+                 <span>{formatCurrency(Number.isNaN(Number(discountMode==='percent' ? Math.max(0, bill.total - (bill.total*(discountValue/100))) : Math.max(0, bill.total - discountValue))) ? 0 : Number(discountMode==='percent' ? Math.max(0, bill.total - (bill.total*(discountValue/100))) : Math.max(0, bill.total - discountValue))}</span>
+               </div>
+             </div>
+           </div>
 
           {/* Action Buttons */}
           <div className="flex gap-2 pt-4">
@@ -832,12 +838,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 </DialogDescription>
               </DialogHeader>
               <div className="text-sm">
-                {voidMode==='item' && selectedVoidIndex>=0 && (
-                  <div className="flex justify-between p-2 rounded bg-red-50 border border-red-200">
-                    <span>{bill.items[selectedVoidIndex].name} x{bill.items[selectedVoidIndex].quantity}</span>
-                    <span>{formatCurrency(bill.items[selectedVoidIndex].subtotal)}</span>
-                  </div>
-                )}
+                 {voidMode==='item' && selectedVoidIndex>=0 && (
+                   <div className="flex justify-between p-2 rounded bg-red-50 border border-red-200">
+                     <span>{bill.items[selectedVoidIndex].name} x{bill.items[selectedVoidIndex].quantity}</span>
+                     <span>{formatCurrency(Number.isNaN(Number(bill.items[selectedVoidIndex].subtotal)) ? 0 : Number(bill.items[selectedVoidIndex].subtotal))}</span>
+                   </div>
+                 )}
                 {voidMode==='bill' && (
                   <div className="mt-2 text-xs text-gray-700">Bill: {bill.id} • Items: {(bill.items||[]).length} • Total: {formatCurrency(bill.total)}</div>
                 )}
@@ -1189,21 +1195,21 @@ export const BillSummary: React.FC<BillSummaryProps> = ({
           </div>
         )}
 
-        {/* Totals */}
-        <div className="space-y-2 pt-4 border-t">
-          <div className="flex justify-between">
-            <span>Subtotal:</span>
-            <span>{formatCurrency(bill.subtotal)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Tax:</span>
-            <span>{formatCurrency(bill.tax)}</span>
-          </div>
-          <div className="flex justify-between font-semibold text-lg">
-            <span>Total:</span>
-            <span>{formatCurrency(bill.total)}</span>
-          </div>
-        </div>
+         {/* Totals */}
+         <div className="space-y-2 pt-4 border-t">
+           <div className="flex justify-between">
+             <span>Subtotal:</span>
+             <span>{formatCurrency(Number.isNaN(Number(bill.subtotal)) ? 0 : Number(bill.subtotal))}</span>
+           </div>
+           <div className="flex justify-between">
+             <span>Tax:</span>
+             <span>{formatCurrency(Number.isNaN(Number(bill.tax)) ? 0 : Number(bill.tax))}</span>
+           </div>
+           <div className="flex justify-between font-semibold text-lg">
+             <span>Total:</span>
+             <span>{formatCurrency(Number.isNaN(Number(bill.total)) ? 0 : Number(bill.total))}</span>
+           </div>
+         </div>
       </CardContent>
     </Card>
   );
