@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-import { Plus, Trash2, ChevronLeft } from 'lucide-react';
+import { Plus, Trash2, ChevronLeft, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface InventoryItem {
