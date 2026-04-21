@@ -1,20 +1,27 @@
 const express = require('express');
 const cors = require('cors');
-const bodyParser = require('body-parser');
-const path = require('path');
-const db = require('./db-web.cjs');
-const expressWs = require('express-ws');
 
 // Load environment variables
-try { require('dotenv').config({ path: path.join(__dirname, '..', '.env') }) } catch { }
+try { require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }) } catch { }
 
 const app = express();
-// expressWs(app); // Disabled for now
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
-// Middleware
+// Minimal middleware
 app.use(cors());
-app.use(bodyParser.json({ limit: '50mb' })); // Large limit for potential data syncs
+app.use(express.json());
+
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`📨 ${req.method} ${req.url}`);
+  next();
+});
+
+// Basic test route
+app.get('/api/test', (req, res) => {
+  console.log('🧪 Test route called');
+  res.json({ ok: true, message: 'Server is working', timestamp: new Date().toISOString() });
+});
 
 // 1. Database API Endpoints (Strictly mirrors Electron IPC "db:..." handlers)
 
@@ -392,35 +399,26 @@ app.post('/api/reports/load-historical', async (req, res) => {
     }
 });
 
-// ============================================================================
-// COREPMS v11 - Advanced Inventory Module Routes
-// ============================================================================
-const inventoryV11Routes = require('./routes/inventory-v11.cjs');
-app.use('/api/v1/inventory', inventoryV11Routes);
-
-// ============================================================================
-// Price Management Routes
-// ============================================================================
-const priceRoutes = require('./routes/prices.cjs');
-app.use('/api/v1/prices', priceRoutes);
-
-// WebSocket route for price sync (disabled for now)
-// app.ws('/api/v1/prices/sync', (ws, req) => {
-//   priceRoutes.addWebSocketClient(ws);
-// });
-
-// 2. Serve Static Assets (Frontend)
-// Serve dist folder
-const distPath = path.join(__dirname, '..', 'dist');
-app.use(express.static(distPath));
-
-// Handle Client-Side Routing: Return index.html for all other routes
-app.get(/.* /, (req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-});
+// Temporary: Add the inventory routes
+try {
+  const inventoryV11Routes = require('./routes/inventory-v11.cjs');
+  console.log('📦 Registering inventory routes at /api/v1/inventory');
+  app.use('/api/v1/inventory', inventoryV11Routes);
+} catch (error) {
+  console.error('❌ Failed to load inventory routes:', error.message);
+}
 
 // Start Server
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Database URL: ${process.env.DATABASE_URL ? 'Configured' : 'Missing (Check .env)'}`);
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT} (listening on all interfaces)`);
+    console.log(`📊 Database URL: ${process.env.DATABASE_URL ? 'Configured' : 'Missing (Check .env)'}`);
+    console.log(`🌐 Server ready at http://localhost:${PORT}`);
+});
+
+server.on('error', (error) => {
+    console.error('❌ Server error:', error);
+});
+
+server.on('connection', (socket) => {
+    console.log('📡 New connection established');
 });

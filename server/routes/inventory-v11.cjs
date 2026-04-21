@@ -641,6 +641,7 @@ router.get('/variance/:report_id', async (req, res) => {
  * Get inventory items with optional filtering and search
  */
 router.get('/items', async (req, res) => {
+  console.log('📦 Inventory items API called');
   try {
     const { category, search, limit = 50 } = req.query;
 
