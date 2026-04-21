@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { Button } from '@/components/ui/button';
 import { networkStatus, NetworkStatus } from '../lib/networkStatus';
 import { offlineSync } from '../lib/offlineSync';
 
 interface OfflineIndicatorProps {
     className?: string;
+    variant?: 'default' | 'sidebar';
 }
 
-export const OfflineIndicator: React.FC<OfflineIndicatorProps> = ({ className = '' }) => {
+export const OfflineIndicator: React.FC<OfflineIndicatorProps> = ({ className = '', variant = 'default' }) => {
     const [networkStatusState, setNetworkStatusState] = useState<NetworkStatus>('online');
     const [pendingCount, setPendingCount] = useState(0);
     const [syncProgress, setSyncProgress] = useState<{ completed: number; total: number } | null>(null);
@@ -100,9 +102,36 @@ export const OfflineIndicator: React.FC<OfflineIndicatorProps> = ({ className = 
         }
     };
 
-    // Don't show indicator if online and no pending operations
-    if (networkStatusState === 'online' && pendingCount === 0 && !syncProgress) {
+    // Don't show indicator if online and no pending operations (for sidebar variant, always show)
+    if (variant === 'default' && networkStatusState === 'online' && pendingCount === 0 && !syncProgress) {
         return null;
+    }
+
+    if (variant === 'sidebar') {
+        return (
+            <Button
+                size="sm"
+                className="min-w-[4.75rem] transition-colors"
+                style={{
+                    backgroundColor: networkStatusState === 'online' ? '#10b981' :
+                        networkStatusState === 'offline' ? '#ef4444' : '#f59e0b',
+                    color: 'white',
+                    border: '1px solid var(--hotel-sidebar-border)'
+                }}
+                onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
+                onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                onClick={() => setShowDetails(!showDetails)}
+                title={`Connection Status: ${getStatusText()}${pendingCount > 0 ? ` (${pendingCount} pending)` : ''}`}
+                aria-label={`Connection Status: ${getStatusText()}`}
+            >
+                <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-white/80"></div>
+                    {pendingCount > 0 && (
+                        <span className="text-xs font-medium">{pendingCount}</span>
+                    )}
+                </div>
+            </Button>
+        );
     }
 
     return (

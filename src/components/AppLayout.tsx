@@ -567,9 +567,6 @@ const AppLayout: React.FC = () => {
 
           {/* Module content */}
           {renderModule()}
-
-          {/* Offline indicator for network status */}
-          <OfflineIndicator />
         </div>
       </div>
     </HotkeysProvider>

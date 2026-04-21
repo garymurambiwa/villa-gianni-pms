@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { canManagePOS } from '@/lib/permissions';
 import HotkeysSettings from '@/components/modules/HotkeysSettings';
 import BrandHeader from '@/components/ui/BrandHeader';
-import VersionDisplay from '@/components/ui/VersionDisplay';
+import OfflineIndicator from './OfflineIndicator';
 
 interface SidebarProps {
   activeModule: string;
@@ -383,9 +383,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
             >
               ⚡ Hotkeys
             </Button>
-          </div>
-          <div className="mt-3 flex justify-center text-xs opacity-60 transition-opacity hover:opacity-100" style={{ color: 'var(--hotel-sidebar-text)' }}>
-            <VersionDisplay />
+
+            {/* Connection Status Button */}
+            <OfflineIndicator variant="sidebar" />
           </div>
         </div>
         <HotkeysSettings open={hotkeysOpen} onOpenChange={setHotkeysOpen} />
