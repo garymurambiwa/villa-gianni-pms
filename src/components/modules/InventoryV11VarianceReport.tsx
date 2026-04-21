@@ -108,10 +108,10 @@ export const InventoryV11VarianceReport: React.FC = () => {
       } else {
         throw new Error(result.error);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: 'Error',
-        description: error.message,
+        description: error instanceof Error ? error.message : 'Unknown error',
         variant: 'destructive',
       });
     } finally {

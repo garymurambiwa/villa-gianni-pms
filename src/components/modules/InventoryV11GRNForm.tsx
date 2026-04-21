@@ -207,7 +207,7 @@ export const InventoryV11GRNForm: React.FC = () => {
     setLines(lines.filter(line => line.id !== id));
   };
 
-  const updateLine = (id: string, field: string, value: any) => {
+  const updateLine = (id: string, field: keyof GRNLineItem, value: GRNLineItem[keyof GRNLineItem]) => {
     setLines(
       lines.map(line =>
         line.id === id ? { ...line, [field]: value } : line
@@ -269,7 +269,7 @@ export const InventoryV11GRNForm: React.FC = () => {
       } else {
         throw new Error(result.error || 'Failed to create GRN');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('GRN submission error:', error);
       toast({
         title: 'Error',

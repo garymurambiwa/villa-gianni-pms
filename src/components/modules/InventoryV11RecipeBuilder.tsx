@@ -63,7 +63,7 @@ export const InventoryV11RecipeBuilder: React.FC = () => {
     setLines(lines.filter(line => line.id !== id));
   };
 
-  const updateLine = (id: string, field: string, value: any) => {
+  const updateLine = (id: string, field: keyof RecipeLine, value: RecipeLine[keyof RecipeLine]) => {
     setLines(
       lines.map(line =>
         line.id === id ? { ...line, [field]: value } : line
@@ -122,7 +122,7 @@ export const InventoryV11RecipeBuilder: React.FC = () => {
       } else {
         throw new Error(result.error);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: 'Error',
         description: error.message,
