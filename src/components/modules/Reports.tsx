@@ -13,6 +13,10 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import JournalPostingModal from '@/components/modules/JournalPostingModal';
 import ReportingDashboard from '@/components/modules/ReportingDashboard';
 import BackToAccountingButton from '@/components/modules/common/BackToAccountingButton';
+import { StockSheetReport } from '@/components/modules/StockSheetReport';
+import { CostMarginReport } from '@/components/modules/CostMarginReport';
+import { PilferageAnalysisReport } from '@/components/modules/PilferageAnalysisReport';
+import { MonthEndClosingReport } from '@/components/modules/MonthEndClosingReport';
 // Map named export GLAccounting to default for React.lazy to avoid default import collisions
 const GLAccountingLazy = React.lazy(() =>
   import('./GLAccounting').then((m) => ({ default: m.GLAccounting }))
@@ -360,6 +364,7 @@ export const Reports: React.FC = () => {
               { key: 'daily', name: 'Daily Report' },
               { key: 'night-audit', name: 'Night Audit' },
               { key: 'revenue', name: 'Revenue Analysis' },
+              { key: 'inventory', name: 'Inventory Reports' },
               { key: 'gl', name: 'GL Accounting' },
               { key: 'pos', name: 'POS Reports (Managers)' },
               { key: 'all', name: 'All Reports' }
@@ -783,6 +788,68 @@ export const Reports: React.FC = () => {
             </tbody>
           </table>
           )}
+        </div>
+      )}
+
+      {reportType === 'inventory' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl shadow-lg p-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Inventory Reports</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+              <div className="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                   onClick={() => setReportType('inventory-stock-sheet')}>
+                <h4 className="font-semibold text-lg mb-2">📦 Stock Sheet Report</h4>
+                <p className="text-gray-600 text-sm">Physical inventory count sheets by location</p>
+              </div>
+              <div className="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                   onClick={() => setReportType('inventory-cost-margin')}>
+                <h4 className="font-semibold text-lg mb-2">💰 Cost Margin Analysis</h4>
+                <p className="text-gray-600 text-sm">Profit margins by item and category</p>
+              </div>
+              <div className="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                   onClick={() => setReportType('inventory-pilferage')}>
+                <h4 className="font-semibold text-lg mb-2">🛡️ Pilferage Analysis</h4>
+                <p className="text-gray-600 text-sm">Shrinkage and potential theft detection</p>
+              </div>
+              <div className="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                   onClick={() => setReportType('inventory-month-end')}>
+                <h4 className="font-semibold text-lg mb-2">📊 Month-End Closing</h4>
+                <p className="text-gray-600 text-sm">Period-end inventory reconciliation</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reportType === 'inventory-stock-sheet' && (
+        <div className="ds-card">
+          <ErrorBoundary fallbackTitle="Stock Sheet Error" fallbackMessage="Please reload or contact support.">
+            <StockSheetReport />
+          </ErrorBoundary>
+        </div>
+      )}
+
+      {reportType === 'inventory-cost-margin' && (
+        <div className="ds-card">
+          <ErrorBoundary fallbackTitle="Cost Margin Error" fallbackMessage="Please reload or contact support.">
+            <CostMarginReport />
+          </ErrorBoundary>
+        </div>
+      )}
+
+      {reportType === 'inventory-pilferage' && (
+        <div className="ds-card">
+          <ErrorBoundary fallbackTitle="Pilferage Analysis Error" fallbackMessage="Please reload or contact support.">
+            <PilferageAnalysisReport />
+          </ErrorBoundary>
+        </div>
+      )}
+
+      {reportType === 'inventory-month-end' && (
+        <div className="ds-card">
+          <ErrorBoundary fallbackTitle="Month-End Closing Error" fallbackMessage="Please reload or contact support.">
+            <MonthEndClosingReport />
+          </ErrorBoundary>
         </div>
       )}
     </div>
