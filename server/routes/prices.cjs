@@ -14,10 +14,11 @@ const router = express.Router();
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 // WebSocket connections for real-time updates
+// Note: WebSocket routes are handled at the app level in server/index.cjs
 const connectedClients = new Set();
 
-// Middleware to track connected clients
-router.ws('/sync', (ws, req) => {
+// Function to add WebSocket client (called from main server)
+function addWebSocketClient(ws) {
   connectedClients.add(ws);
   console.log(`[PriceSync] Client connected. Total clients: ${connectedClients.size}`);
 
@@ -30,7 +31,7 @@ router.ws('/sync', (ws, req) => {
     console.error('[PriceSync] WebSocket error:', error);
     connectedClients.delete(ws);
   });
-});
+}
 
 // Broadcast price update to all connected clients
 function broadcastPriceUpdate(updateData) {
@@ -234,3 +235,4 @@ router.post('/sync', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.addWebSocketClient = addWebSocketClient;

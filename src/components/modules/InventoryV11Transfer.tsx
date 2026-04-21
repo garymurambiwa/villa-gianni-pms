@@ -87,7 +87,7 @@ export const InventoryV11Transfer: React.FC = () => {
   };
 
   const handleSubmit = async () => {
-    if (!sourceLocation || !destLocation || lines.length === 0) {
+    if (!sourceLocation || !destinationLocation || lines.length === 0) {
       toast({
         title: 'Validation Error',
         description: 'Please fill all required fields and add at least one line item',
@@ -103,7 +103,7 @@ export const InventoryV11Transfer: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           source_location_id: sourceLocation,
-          destination_location_id: destLocation,
+          destination_location_id: destinationLocation,
           created_by: 'current-user',
           reference_text: referenceText,
           lines: lines,
@@ -176,7 +176,7 @@ export const InventoryV11Transfer: React.FC = () => {
 
             <div>
               <Label htmlFor="dest">Destination Location *</Label>
-              <Select value={destLocation} onValueChange={setDestLocation}>
+              <Select value={destinationLocation} onValueChange={setDestinationLocation}>
                 <SelectTrigger className="mt-1.5">
                   <SelectValue />
                 </SelectTrigger>

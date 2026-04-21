@@ -517,8 +517,8 @@ router.post('/variance/generate', async (req, res) => {
 
     // Get next variance report number
     const varCountRes = await client.query(
-      `SELECT COALESCE(MAX(CAST(SUBSTRING(report_number FROM 9) AS INTEGER)), 0) + 1 as next_num
-       FROM public.inv_variance_reports 
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(report_number FROM 10) AS INTEGER)), 0) + 1 as next_num
+       FROM public.inv_variance_reports
        WHERE report_number LIKE 'VAR-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-%'`
     );
     const nextNum = varCountRes.rows[0].next_num;
@@ -620,9 +620,77 @@ router.get('/variance/:report_id', async (req, res) => {
       [report_id]
     );
 
-    res.json({ ok: true, data: { report, lines: linesRes.rows } });
+    // Calculate total variance value
+    const totalVarianceValue = linesRes.rows.reduce((sum, line) => sum + parseFloat(line.variance_value || 0), 0);
+
+    res.json({
+      ok: true,
+      data: {
+        ...report,
+        total_variance_value: totalVarianceValue,
+        lines: linesRes.rows
+      }
+    });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/v1/inventory/items
+ * Get inventory items with optional filtering and search
+ */
+router.get('/items', async (req, res) => {
+  try {
+    const { category, search, limit = 50 } = req.query;
+
+    let query = `
+      SELECT
+        i.id,
+        i.name,
+        i.category,
+        '' as sku,
+        '' as barcode,
+        u.code as base_uom_symbol,
+        i.weighted_avg_cost
+      FROM public.inv_items i
+      LEFT JOIN public.inv_uom_definitions u ON i.base_uom_id = u.id
+      WHERE i.is_active = true
+    `;
+
+    const params = [];
+    const conditions = [];
+
+    if (category && category !== 'all') {
+      conditions.push(`i.category = $${params.length + 1}`);
+      params.push(category);
+    }
+
+    if (search) {
+      conditions.push(`i.name ILIKE $${params.length + 1}`);
+      params.push(`%${search}%`);
+    }
+
+    if (conditions.length > 0) {
+      query += ' AND ' + conditions.join(' AND ');
+    }
+
+    query += ` ORDER BY i.name LIMIT $${params.length + 1}`;
+    params.push(limit);
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      ok: true,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error('Items fetch error:', error);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to fetch items',
+      message: error.message
+    });
   }
 });
 

@@ -9,7 +9,7 @@ const expressWs = require('express-ws');
 try { require('dotenv').config({ path: path.join(__dirname, '..', '.env') }) } catch { }
 
 const app = express();
-expressWs(app);
+// expressWs(app); // Disabled for now
 const PORT = process.env.PORT || 3000;
 
 // Middleware
@@ -403,6 +403,11 @@ app.use('/api/v1/inventory', inventoryV11Routes);
 // ============================================================================
 const priceRoutes = require('./routes/prices.cjs');
 app.use('/api/v1/prices', priceRoutes);
+
+// WebSocket route for price sync (disabled for now)
+// app.ws('/api/v1/prices/sync', (ws, req) => {
+//   priceRoutes.addWebSocketClient(ws);
+// });
 
 // 2. Serve Static Assets (Frontend)
 // Serve dist folder

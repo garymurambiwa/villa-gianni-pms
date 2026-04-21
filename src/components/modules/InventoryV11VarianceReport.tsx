@@ -21,11 +21,11 @@ import { useToast } from '@/hooks/use-toast';
 
 interface VarianceLine {
   item_id: string;
-  item_name: string;
-  pos_theoretical_qty: number;
-  physical_count_qty: number;
+  name: string;
+  theoretical_qty: number;
+  physical_qty: number;
   variance_qty: number;
-  variance_pct: number;
+  variance_percentage: number;
   variance_value: number;
   alert_level: 'OK' | 'WARNING' | 'CRITICAL';
 }
@@ -33,12 +33,14 @@ interface VarianceLine {
 interface VarianceReport {
   id: string;
   report_number: string;
+  location_id: string;
   period_start: string;
   period_end: string;
+  total_items: number;
   ok_count: number;
   warning_count: number;
   critical_count: number;
-  total_variance_value: number;
+  total_variance_value?: number;
   lines: VarianceLine[];
 }
 
@@ -91,7 +93,13 @@ export const InventoryV11VarianceReport: React.FC = () => {
         const detailData = await detailRes.json();
 
         if (detailData.ok) {
-          setReport(detailData.data);
+          const reportData = detailData.data;
+          // Calculate total variance value from lines
+          const totalVarianceValue = reportData.lines.reduce((sum, line) => sum + parseFloat(line.variance_value || 0), 0);
+          setReport({
+            ...reportData,
+            total_variance_value: totalVarianceValue
+          });
           toast({
             title: 'Success',
             description: `Variance report generated: ${result.data.report_number}`,
@@ -243,7 +251,7 @@ export const InventoryV11VarianceReport: React.FC = () => {
               <CardContent className="pt-6">
                 <div className="text-center">
                   <div className="text-3xl font-bold" style={{ color: '#1D9E75' }}>
-                    ${report.total_variance_value.toFixed(2)}
+                    ${report.total_variance_value?.toFixed(2) || '0.00'}
                   </div>
                   <p className="text-xs text-gray-500 mt-1">Total Value</p>
                 </div>
@@ -275,22 +283,22 @@ export const InventoryV11VarianceReport: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {report.lines.map((line, idx) => (
-                      <tr key={idx} className={`border-b ${getAlertColor(line.alert_level)}`}>
-                        <td className="px-4 py-2">
-                          <div>
-                            <div className="font-medium">{line.item_name}</div>
-                            <div className="text-xs text-gray-500">{line.item_id}</div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-2 text-right">{line.pos_theoretical_qty.toFixed(2)}</td>
-                        <td className="px-4 py-2 text-right">{line.physical_count_qty.toFixed(2)}</td>
-                        <td className="px-4 py-2 text-right font-medium">{line.variance_qty.toFixed(2)}</td>
-                        <td className="px-4 py-2 text-right font-medium">{line.variance_pct.toFixed(2)}%</td>
-                        <td className="px-4 py-2 text-right font-medium">${line.variance_value.toFixed(2)}</td>
-                        <td className="px-4 py-2 text-center">{getAlertIcon(line.alert_level)}</td>
-                      </tr>
-                    ))}
+                     {report.lines.map((line, idx) => (
+                       <tr key={idx} className={`border-b ${getAlertColor(line.alert_level)}`}>
+                         <td className="px-4 py-2">
+                           <div>
+                             <div className="font-medium">{line.name}</div>
+                             <div className="text-xs text-gray-500">{line.item_id}</div>
+                           </div>
+                         </td>
+                         <td className="px-4 py-2 text-right">{line.theoretical_qty?.toFixed(2) || '0.00'}</td>
+                         <td className="px-4 py-2 text-right">{line.physical_qty?.toFixed(2) || '0.00'}</td>
+                         <td className="px-4 py-2 text-right font-medium">{line.variance_qty?.toFixed(2) || '0.00'}</td>
+                         <td className="px-4 py-2 text-right font-medium">{line.variance_percentage?.toFixed(2) || '0.00'}%</td>
+                         <td className="px-4 py-2 text-right font-medium">${line.variance_value?.toFixed(2) || '0.00'}</td>
+                         <td className="px-4 py-2 text-center">{getAlertIcon(line.alert_level)}</td>
+                       </tr>
+                     ))}
                   </tbody>
                 </table>
               </div>

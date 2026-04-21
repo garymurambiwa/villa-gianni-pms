@@ -3,7 +3,7 @@
  * Location: src/components/modules/InventoryV11GRNForm.tsx
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,16 +15,100 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Trash2, Check, ChevronLeft } from 'lucide-react';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+} from '@/components/ui/command';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { Plus, Trash2, Check, ChevronLeft, ChevronsUpDown } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+
+interface InventoryItem {
+  id: string;
+  name: string;
+  category: string;
+  sku: string;
+  barcode: string;
+  base_uom_symbol: string;
+  weighted_avg_cost: number;
+}
 
 interface GRNLineItem {
   id: string;
   item_id: string;
+  item_name: string;
   qty_received: number;
   received_uom_id: string;
   unit_cost: number;
 }
+
+// Item selector combobox component
+interface ItemSelectorProps {
+  value: string;
+  onSelect: (item: InventoryItem) => void;
+  items: InventoryItem[];
+  placeholder?: string;
+}
+
+const ItemSelector: React.FC<ItemSelectorProps> = ({ value, onSelect, items, placeholder = "Select item..." }) => {
+  const [open, setOpen] = useState(false);
+
+  console.log('🎯 ItemSelector rendered with', items.length, 'items, value:', value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between text-xs h-8"
+        >
+          {value || placeholder}
+          <ChevronsUpDown className="ml-2 h-3 w-3 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[300px] p-0">
+        <Command>
+          <CommandInput placeholder="Search items..." className="text-xs" />
+          <CommandEmpty>No items found.</CommandEmpty>
+          <CommandGroup className="max-h-64 overflow-auto">
+            {items.map((item) => (
+              <CommandItem
+                key={item.id}
+                value={item.name}
+                onSelect={() => {
+                  onSelect(item);
+                  setOpen(false);
+                }}
+                className="text-xs"
+              >
+                <Check
+                  className={`mr-2 h-3 w-3 ${
+                    value === item.name ? "opacity-100" : "opacity-0"
+                  }`}
+                />
+                <div className="flex flex-col">
+                  <span className="font-medium">{item.name}</span>
+                  <span className="text-xs text-gray-500">
+                    {item.sku && `SKU: ${item.sku}`} • {item.category} • {item.base_uom_symbol}
+                  </span>
+                </div>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+};
 
 export const InventoryV11GRNForm: React.FC = () => {
   const { toast } = useToast();
@@ -32,9 +116,44 @@ export const InventoryV11GRNForm: React.FC = () => {
   const [destinationLocation, setDestinationLocation] = useState('loc_main_cellar');
   const [lines, setLines] = useState<GRNLineItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [itemsLoading, setItemsLoading] = useState(false);
 
   const navigateTo = (module: string) => {
     window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } }));
+  };
+
+  // Fetch inventory items on component mount
+  useEffect(() => {
+    fetchInventoryItems();
+  }, []);
+
+  const fetchInventoryItems = async () => {
+    setItemsLoading(true);
+    try {
+      console.log('🔍 Fetching inventory items from /api/v1/inventory/items?limit=1000');
+      const response = await fetch('/api/v1/inventory/items?limit=1000');
+      console.log('📡 Response status:', response.status);
+
+      if (!response.ok) {
+        console.error('❌ Response not OK:', response.status, response.statusText);
+        return;
+      }
+
+      const result = await response.json();
+      console.log('📦 API result:', result);
+
+      if (result.ok && result.data) {
+        console.log('✅ Setting', result.data.length, 'inventory items');
+        setInventoryItems(result.data);
+      } else {
+        console.error('❌ API returned error:', result.error);
+      }
+    } catch (error) {
+      console.error('💥 Error fetching inventory items:', error);
+    } finally {
+      setItemsLoading(false);
+    }
   };
 
   const locations = [
@@ -58,11 +177,30 @@ export const InventoryV11GRNForm: React.FC = () => {
       {
         id: Math.random().toString(),
         item_id: '',
+        item_name: '',
         qty_received: 0,
         received_uom_id: 'uom_case',
         unit_cost: 0,
       },
     ]);
+  };
+
+  const selectItem = (lineId: string, item: InventoryItem) => {
+    updateLine(lineId, 'item_id', item.id);
+    updateLine(lineId, 'item_name', item.name);
+    // Auto-set UOM to item's base UOM if available
+    if (item.base_uom_symbol) {
+      const uomMapping: { [key: string]: string } = {
+        'CASE': 'uom_case',
+        'BOTTLE': 'uom_bottle',
+        'ML': 'uom_ml',
+        'GRAM': 'uom_gram',
+        'KG': 'uom_kg',
+        'UNIT': 'uom_unit',
+      };
+      const uomId = uomMapping[item.base_uom_symbol] || 'uom_case';
+      updateLine(lineId, 'received_uom_id', uomId);
+    }
   };
 
   const removeLine = (id: string) => {
@@ -93,7 +231,7 @@ export const InventoryV11GRNForm: React.FC = () => {
 
     // Validate all lines have required data
     for (const line of lines) {
-      if (!line.item_id || line.qty_received <= 0 || line.unit_cost < 0) {
+      if (!line.item_id || !line.item_name || line.qty_received <= 0 || line.unit_cost < 0) {
         toast({
           title: 'Invalid Line Item',
           description: `All line items must have: Item name, Quantity > 0, and Unit Cost ≥ 0`,
@@ -146,8 +284,8 @@ export const InventoryV11GRNForm: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 mb-4">
-        <Button 
-          variant="ghost" 
+        <Button
+          variant="ghost"
           size="sm"
           onClick={() => navigateTo('inventory-v11')}
           className="gap-2"
@@ -155,6 +293,9 @@ export const InventoryV11GRNForm: React.FC = () => {
           <ChevronLeft className="w-4 h-4" />
           Back to Inventory
         </Button>
+        <span className="text-xs text-gray-500">
+          {itemsLoading ? 'Loading items...' : `${inventoryItems.length} items available`}
+        </span>
       </div>
 
       <Card>
@@ -216,11 +357,11 @@ export const InventoryV11GRNForm: React.FC = () => {
                   {lines.map((line, idx) => (
                     <tr key={line.id} className="border-b hover:bg-gray-50">
                       <td className="px-4 py-2">
-                        <Input
-                          placeholder="e.g., Tomatoes"
-                          value={line.item_id}
-                          onChange={(e) => updateLine(line.id, 'item_id', e.target.value)}
-                          className="text-xs"
+                        <ItemSelector
+                          value={line.item_name}
+                          onSelect={(item) => selectItem(line.id, item)}
+                          items={inventoryItems}
+                          placeholder="Select item..."
                         />
                       </td>
                       <td className="px-4 py-2">

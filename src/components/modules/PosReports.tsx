@@ -183,13 +183,13 @@ const GoodsReceivedReportView: React.FC<{ rangeText: string; inRange: (ts: strin
       </div>
       <div className="grid grid-cols-2 gap-4 mb-3">
         <div className="border rounded p-2">Total Qty: {grvTotals.qty}</div>
-        <div className="border rounded p-2">Total Cost: {formatCurrency(grvTotals.cost)}</div>
+        <div className="border rounded p-2">Total Cost: {formatCurrency(Number.isNaN(Number(grvTotals.cost)) ? 0 : Number(grvTotals.cost))}</div>
       </div>
       <div className="overflow-x-auto">
         <table className="ds-table">
           <thead><tr><th className="p-2 text-left">Voucher</th><th className="p-2">Date</th><th className="p-2 text-right">Qty</th><th className="p-2 text-right">Cost</th></tr></thead>
           <tbody>
-            {grvRows.map((r, i) => (<tr key={i}><td className="p-2">{r.id}</td><td className="p-2">{r.date}</td><td className="p-2 text-right">{r.qty}</td><td className="p-2 text-right">{formatCurrency(r.totalCost)}</td></tr>))}
+             {grvRows.map((r, i) => (<tr key={i}><td className="p-2">{r.id}</td><td className="p-2">{r.date}</td><td className="p-2 text-right">{r.qty}</td><td className="p-2 text-right">{formatCurrency(Number.isNaN(Number(r.totalCost)) ? 0 : Number(r.totalCost))}</td></tr>))}
           </tbody>
         </table>
       </div>
@@ -237,42 +237,54 @@ export const PosReports: React.FC = () => {
     return map;
   }, [items]);
 
-  const categorySummary = React.useMemo(() => {
-    const map = new Map<string, { itemsSold: number; grossSales: number; discounts: number; netSales: number }>();
-    depletionEntries.forEach((e: any) => {
-      let details = e.details;
-      if (typeof details === 'string') { try { details = JSON.parse(details); } catch { details = []; } }
-      (Array.isArray(details) ? details : []).forEach((d: any) => {
-        const it = itemIndexByName.get(String(d.name || '').toLowerCase());
-        const catName = it ? (menuCats.getCategoryById(it.category_id)?.category_name || 'Uncategorized') : 'Uncategorized';
-        const qty = Number(d.quantity || 0);
-        const price = Number(it?.sellingPrice || 0);
-        const row = map.get(catName) || { itemsSold: 0, grossSales: 0, discounts: 0, netSales: 0 };
-        row.itemsSold += qty; row.grossSales += qty * price; row.netSales = row.grossSales - row.discounts;
-        map.set(catName, row);
-      });
-    });
-    const totalGross = Array.from(map.values()).reduce((s, r) => s + r.grossSales, 0);
-    return { rows: Array.from(map.entries()).map(([name, r]) => ({ name, ...r, percent: totalGross ? (r.grossSales / totalGross) * 100 : 0 })), totalGross };
-  }, [depletionEntries, itemIndexByName]);
+       const categorySummary = React.useMemo(() => {
+        const map = new Map<string, { itemsSold: number; grossSales: number; discounts: number; netSales: number }>();
+        depletionEntries.forEach((e: any) => {
+          let details = e.details;
+          if (typeof details === 'string') { try { details = JSON.parse(details); } catch { details = []; } }
+          (Array.isArray(details) ? details : []).forEach((d: any) => {
+            const it = itemIndexByName.get(String(d.name || '').toLowerCase());
+            // Handle missing items gracefully
+            const catName = it ? (menuCats.getCategoryById(it.category_id)?.category_name || 'Uncategorized') : 'Uncategorized';
+            const qty = Number(d.quantity || 0);
+            // Use 0 for missing items to avoid NaN, but log for debugging
+            const price = it ? Number(it?.sellingPrice || 0) : 0;
+            if (!it) {
+              console.warn(`PosReports: Item not found in index: "${String(d.name || '').toLowerCase()}"`);
+            }
+            const row = map.get(catName) || { itemsSold: 0, grossSales: 0, discounts: 0, netSales: 0 };
+            row.itemsSold += qty; 
+            row.grossSales += qty * price; 
+            row.netSales = row.grossSales - row.discounts;
+            map.set(catName, row);
+          });
+        });
+        const totalGross = Array.from(map.values()).reduce((s, r) => s + r.grossSales, 0);
+        return { rows: Array.from(map.entries()).map(([name, r]) => ({ name, ...r, percent: totalGross ? (r.grossSales / totalGross) * 100 : 0 })), totalGross };
+      }, [depletionEntries, itemIndexByName]);
 
-  const detailedRowsByCategory = React.useMemo(() => {
-    const groups = new Map<string, any[]>();
-    depletionEntries.forEach((e: any) => {
-      let details = e.details;
-      if (typeof details === 'string') { try { details = JSON.parse(details); } catch { details = []; } }
-      (Array.isArray(details) ? details : []).forEach((d: any) => {
-        const it = itemIndexByName.get(String(d.name || '').toLowerCase());
-        const catName = it ? (menuCats.getCategoryById(it.category_id)?.category_name || 'Uncategorized') : 'Uncategorized';
-        const qty = Number(d.quantity || 0);
-        const unit = Number(it?.sellingPrice || 0);
-        const arr = groups.get(catName) || [];
-        arr.push({ ts: e.timestamp, sku: it?.id || '', desc: it?.name || d.name, qty, unit, total: qty * unit });
-        groups.set(catName, arr);
-      });
-    });
-    return groups;
-  }, [depletionEntries, itemIndexByName]);
+       const detailedRowsByCategory = React.useMemo(() => {
+        const groups = new Map<string, any[]>();
+        depletionEntries.forEach((e: any) => {
+          let details = e.details;
+          if (typeof details === 'string') { try { details = JSON.parse(details); } catch { details = []; } }
+          (Array.isArray(details) ? details : []).forEach((d: any) => {
+            const it = itemIndexByName.get(String(d.name || '').toLowerCase());
+            // Handle missing items gracefully
+            const catName = it ? (menuCats.getCategoryById(it.category_id)?.category_name || 'Uncategorized') : 'Uncategorized';
+            const qty = Number(d.quantity || 0);
+            // Use 0 for missing items to avoid NaN, but log for debugging
+            const unit = it ? Number(it?.sellingPrice || 0) : 0;
+            if (!it) {
+              console.warn(`PosReports: Item not found in index for detailed view: "${String(d.name || '').toLowerCase()}"`);
+            }
+            const arr = groups.get(catName) || [];
+            arr.push({ ts: e.timestamp, sku: it?.id || '', desc: it?.name || d.name, qty, unit, total: qty * unit });
+            groups.set(catName, arr);
+          });
+        });
+        return groups;
+      }, [depletionEntries, itemIndexByName]);
 
   React.useEffect(() => {
     const fetchUsage = async () => {

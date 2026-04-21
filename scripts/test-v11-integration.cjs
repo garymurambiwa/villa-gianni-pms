@@ -53,6 +53,26 @@ async function runTests() {
   let failedTests = 0;
   const testResults = [];
 
+  // Clean up all test data before starting
+  log('Cleaning up previous test data...');
+  const cleanupClient = await pool.connect();
+  try {
+    await cleanupClient.query('DELETE FROM public.inv_variance_lines');
+    await cleanupClient.query('DELETE FROM public.inv_variance_reports');
+    await cleanupClient.query('DELETE FROM public.inv_recipe_lines');
+    await cleanupClient.query('DELETE FROM public.inv_recipes');
+    await cleanupClient.query('DELETE FROM public.inv_stock_ledger');
+    await cleanupClient.query('DELETE FROM public.inv_transfer_lines');
+    await cleanupClient.query('DELETE FROM public.inv_transfer_headers');
+    await cleanupClient.query('DELETE FROM public.inv_grn_lines');
+    await cleanupClient.query('DELETE FROM public.inv_grn_headers');
+    await cleanupClient.query('DELETE FROM public.inv_items WHERE id LIKE \'item_%\'');
+    await cleanupClient.query('DELETE FROM public.menu_items WHERE id LIKE \'menu_%\'');
+    log('✅ Cleanup complete');
+  } finally {
+    cleanupClient.release();
+  }
+
   // ============================================================================
   // TEST 1: Full GRN Flow
   // ============================================================================
@@ -71,17 +91,17 @@ async function runTests() {
     if (!itemCheckRes.rows.length) {
       // Create test item if not exists
       await client.query(
-        `INSERT INTO public.inv_items (id, name, category, base_uom_id, weighted_avg_cost)
-        SELECT 'item_jameson_1', 'Jameson Whiskey', 'Beverage', 'uom_case', 180
-        WHERE NOT EXISTS (SELECT 1 FROM public.inv_items WHERE id = 'item_jameson_1')`
+        `INSERT INTO public.inv_items (id, name, category, base_uom_id, weighted_avg_cost, default_wastage_pct, reorder_level, is_active)
+        VALUES ('item_jameson_1', 'Jameson Whiskey', 'Beverage', 'uom_case', 180.00, 0.00, 10.00, true)
+        ON CONFLICT (id) DO NOTHING`
       );
     }
 
     // Step 2: Create GRN
     const grnRes = await client.query(
-      `INSERT INTO public.inv_grn_headers 
+      `INSERT INTO public.inv_grn_headers
       (id, grn_number, supplier_name, destination_location_id, created_by, total_value, status)
-      VALUES (gen_random_uuid()::text, 'GRN-TEST-001', 'Test Supplier', 'loc_main_cellar', 'test_user', 1800.00, 'draft')
+      VALUES (gen_random_uuid()::text, 'GRN-' || TO_CHAR(CURRENT_DATE, 'YYYY-MM-DD') || '-' || LPAD(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::text, 10, '0'), 'Test Supplier', 'loc_main_cellar', 'test_user', 1800.00, 'draft')
       RETURNING *`
     );
 
@@ -116,11 +136,12 @@ async function runTests() {
       [itemId]
     );
 
-    if (ledgerRes.rows.length > 0 && ledgerRes.rows[0].quantity_change === '10') {
+    if (ledgerRes.rows.length > 0 && parseFloat(ledgerRes.rows[0].quantity_change) === 10.0) {
       success('Test 1 PASSED: GRN flow complete - Ledger entry created with +10 qty');
       passedTests++;
       testResults.push({ test: 'Full GRN Flow', status: 'PASS' });
     } else {
+      console.log('Ledger rows:', ledgerRes.rows);
       throw new Error('Ledger entry not created correctly');
     }
 
@@ -142,9 +163,9 @@ async function runTests() {
 
     // Create transfer
     const transRes = await client.query(
-      `INSERT INTO public.inv_transfer_headers 
+      `INSERT INTO public.inv_transfer_headers
       (id, transfer_number, source_location_id, destination_location_id, created_by, status)
-      VALUES (gen_random_uuid()::text, 'TRANS-TEST-001', 'loc_main_cellar', 'loc_bar1', 'test_user', 'draft')
+      VALUES (gen_random_uuid()::text, 'TRANS-' || TO_CHAR(CURRENT_DATE, 'YYYY-MM-DD') || '-' || LPAD(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::text, 10, '0'), 'loc_main_cellar', 'loc_bar1', 'test_user', 'draft')
       RETURNING *`
     );
 
@@ -188,12 +209,15 @@ async function runTests() {
       WHERE item_id = 'item_jameson_1' AND location_id = 'loc_bar1'`
     );
 
-    if (outRes.rows[0].balance === '8' && inRes.rows[0].balance === '60') {
+    const mainBalance = parseFloat(outRes.rows[0].balance);
+    const barBalance = parseFloat(inRes.rows[0].balance);
+
+    if (mainBalance === 8.0 && barBalance === 60.0) {
       success('Test 2 PASSED: Transfer with breakdown - Main Cellar -2 Bottles, Bar +60 Tots');
       passedTests++;
       testResults.push({ test: 'Transfer + Breakdown', status: 'PASS' });
     } else {
-      throw new Error(`Balances incorrect: Main=${outRes.rows[0].balance}, Bar=${inRes.rows[0].balance}`);
+      throw new Error(`Balances incorrect: Main=${mainBalance}, Bar=${barBalance}`);
     }
 
     client.release();
@@ -212,9 +236,23 @@ async function runTests() {
   try {
     const client = await pool.connect();
 
+    // Create test menu item if it doesn't exist
+    await client.query(
+      `INSERT INTO public.menu_items (id, name, category, price, active)
+      VALUES ('menu_quarter_chicken', 'Quarter Chicken', 'Food', 25.00, true)
+      ON CONFLICT (id) DO NOTHING`
+    );
+
+    // Create test chicken item
+    await client.query(
+      `INSERT INTO public.inv_items (id, name, category, base_uom_id, weighted_avg_cost, default_wastage_pct, reorder_level, is_active)
+      VALUES ('item_chicken', 'Whole Chicken', 'Food', 'uom_gram', 0.0085, 5.00, 10000.00, true)
+      ON CONFLICT (id) DO NOTHING`
+    );
+
     // Create test recipe for Quarter Chicken
     const recipeRes = await client.query(
-      `INSERT INTO public.inv_recipes 
+      `INSERT INTO public.inv_recipes
       (id, menu_item_id, is_current, created_by)
       SELECT gen_random_uuid()::text, 'menu_quarter_chicken', true, 'test_user'
       WHERE NOT EXISTS (SELECT 1 FROM public.inv_recipes WHERE menu_item_id = 'menu_quarter_chicken' AND is_current = true)
@@ -236,7 +274,7 @@ async function runTests() {
       WHERE item_id = 'item_chicken' AND location_id = 'loc_restaurant' AND ledger_type = 'SALE_DEPLETION'`
     );
 
-    if (depletionRes.rows[0].balance === '-3500') {
+    if (parseFloat(depletionRes.rows[0].balance) === -3500.0) {
       success('Test 3 PASSED: POS depletion recorded - 3500g depleted');
       passedTests++;
       testResults.push({ test: 'POS Sale Depletion', status: 'PASS' });

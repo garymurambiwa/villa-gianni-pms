@@ -803,10 +803,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                    </span>
                  </div>
                ))}
-               <div className="border-t pt-2 font-semibold flex justify-between">
-                 <span>Total:</span>
-                 <span>{formatCurrency(Number.isNaN(Number(discountMode==='percent' ? Math.max(0, bill.total - (bill.total*(discountValue/100))) : Math.max(0, bill.total - discountValue))) ? 0 : Number(discountMode==='percent' ? Math.max(0, bill.total - (bill.total*(discountValue/100))) : Math.max(0, bill.total - discountValue))}</span>
-               </div>
+                <div className="border-t pt-2 font-semibold flex justify-between">
+                  <span>Total:</span>
+                  <span>{formatCurrency(Number.isNaN(Number(discountMode==='percent' ? Math.max(0, bill.total - (bill.total*(discountValue/100))) : Math.max(0, bill.total - discountValue))) ? 0 : Number(discountMode==='percent' ? Math.max(0, bill.total - (bill.total*(discountValue/100))) : Math.max(0, bill.total - discountValue)))}</span>
+                </div>
              </div>
            </div>
 
