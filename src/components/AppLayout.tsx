@@ -48,6 +48,7 @@ import ProfileSettings from './modules/ProfileSettings';
 import TransactionClearingAdmin from './modules/TransactionClearingAdmin';
 import SuperAdminSettings from './modules/SuperAdminSettings';
 import Tasks from './modules/Tasks';
+import { BarmanDashboard } from './modules/BarmanDashboard';
 import ProfileAdmin from './modules/ProfileAdmin';
 import PrinterConfiguration from './modules/PrinterConfiguration';
 import AdminManagement from './modules/AdminManagement';
@@ -536,6 +537,13 @@ const AppLayout: React.FC = () => {
             </ErrorBoundary>
           )
           : renderAccessDenied('You do not have permission to access Inventory Audit.', 'dashboard', 'Back to Dashboard');
+      }
+      case 'barman-dashboard': {
+        return (
+          <ErrorBoundary fallbackTitle="Bar Dashboard Error" fallbackMessage="Please reload or contact support.">
+            <BarmanDashboard />
+          </ErrorBoundary>
+        );
       }
       default: return <Dashboard />;
     }
