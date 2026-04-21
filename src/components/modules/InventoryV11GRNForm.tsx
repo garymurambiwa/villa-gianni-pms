@@ -58,10 +58,10 @@ const ItemAutoSuggest: React.FC<ItemAutoSuggestProps> = ({
   const [selectedIndex, setSelectedIndex] = useState(-1);
 
   // Filter items based on current input
-  const filteredItems = items.filter(item =>
+  const filteredItems = value.length > 0 ? items.filter(item =>
     item.name.toLowerCase().includes(value.toLowerCase()) ||
     (item.sku && item.sku.toLowerCase().includes(value.toLowerCase()))
-  ).slice(0, 8); // Limit to 8 suggestions
+  ).slice(0, 8) : []; // Limit to 8 suggestions
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value;
@@ -129,7 +129,7 @@ const ItemAutoSuggest: React.FC<ItemAutoSuggestProps> = ({
         autoComplete="off"
       />
 
-      {isOpen && filteredItems.length > 0 && (
+      {isOpen && value.length > 0 && filteredItems.length > 0 && (
         <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-64 overflow-y-auto">
           {filteredItems.map((item, index) => (
             <div
