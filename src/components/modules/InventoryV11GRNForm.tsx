@@ -3,7 +3,7 @@
  * Location: src/components/modules/InventoryV11GRNForm.tsx
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,15 +19,7 @@ import {
 import { Plus, Trash2, ChevronLeft, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
-interface InventoryItem {
-  id: string;
-  name: string;
-  category: string;
-  sku: string;
-  barcode: string;
-  base_uom_symbol: string;
-  weighted_avg_cost: number;
-}
+
 
 interface GRNLineItem {
   id: string;
@@ -38,132 +30,7 @@ interface GRNLineItem {
   unit_cost: number;
 }
 
-// Auto-suggest text input component for item selection
-interface ItemAutoSuggestProps {
-  value: string;
-  onSelect: (item: InventoryItem) => void;
-  onChange: (value: string) => void;
-  items: InventoryItem[];
-  placeholder?: string;
-}
 
-const ItemAutoSuggest: React.FC<ItemAutoSuggestProps> = ({
-  value,
-  onSelect,
-  onChange,
-  items,
-  placeholder = "Type to search items..."
-}) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState(-1);
-
-  // Filter items based on current input
-  const filteredItems = value.length > 0 ? items.filter(item =>
-    item.name.toLowerCase().includes(value.toLowerCase()) ||
-    (item.sku && item.sku.toLowerCase().includes(value.toLowerCase()))
-  ).slice(0, 8) : []; // Limit to 8 suggestions
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = e.target.value;
-    onChange(newValue);
-    setIsOpen(newValue.length > 0 && filteredItems.length > 0);
-    setSelectedIndex(-1);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!isOpen || filteredItems.length === 0) return;
-
-    switch (e.key) {
-      case 'ArrowDown':
-        e.preventDefault();
-        setSelectedIndex(prev => Math.min(prev + 1, filteredItems.length - 1));
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        setSelectedIndex(prev => Math.max(prev - 1, -1));
-        break;
-      case 'Enter':
-        e.preventDefault();
-        if (selectedIndex >= 0 && selectedIndex < filteredItems.length) {
-          handleItemSelect(filteredItems[selectedIndex]);
-        }
-        break;
-      case 'Escape':
-        setIsOpen(false);
-        setSelectedIndex(-1);
-        break;
-    }
-  };
-
-  const handleItemSelect = (item: InventoryItem) => {
-    console.log('🔍 Item selected:', item.name, 'ID:', item.id);
-    // First update the input value to match the selected item
-    onChange(item.name);
-    // Then call the select callback
-    onSelect(item);
-    setIsOpen(false);
-    setSelectedIndex(-1);
-  };
-
-  const handleFocus = () => {
-    if (value.length > 0 && filteredItems.length > 0) {
-      setIsOpen(true);
-    }
-  };
-
-  const handleBlur = () => {
-    // Delay closing to allow click events on suggestions
-    setTimeout(() => {
-      setIsOpen(false);
-      setSelectedIndex(-1);
-    }, 150);
-  };
-
-  return (
-    <div className="relative">
-      <Input
-        type="text"
-        placeholder={placeholder}
-        value={value}
-        onChange={handleInputChange}
-        onKeyDown={handleKeyDown}
-        onFocus={handleFocus}
-        onBlur={handleBlur}
-        className="text-xs"
-        autoComplete="off"
-      />
-
-      {isOpen && value.length > 0 && filteredItems.length > 0 && (
-        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-64 overflow-y-auto">
-          {filteredItems.map((item, index) => (
-            <div
-              key={item.id}
-              className={`px-3 py-2 cursor-pointer hover:bg-gray-100 text-xs ${
-                index === selectedIndex ? 'bg-blue-50' : ''
-              }`}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleItemSelect(item);
-              }}
-              onMouseEnter={() => setSelectedIndex(index)}
-            >
-              <div className="font-medium">{item.name}</div>
-              <div className="text-gray-500 text-xs">
-                {item.sku && `SKU: ${item.sku}`} • {item.category} • {item.base_uom_symbol}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {value.length > 0 && filteredItems.length === 0 && (
-        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg p-3 text-xs text-gray-500">
-          No matching items found. Only existing inventory items are allowed.
-        </div>
-      )}
-    </div>
-  );
-};
 
 export const InventoryV11GRNForm: React.FC = () => {
   const { toast } = useToast();
@@ -171,45 +38,12 @@ export const InventoryV11GRNForm: React.FC = () => {
   const [destinationLocation, setDestinationLocation] = useState('loc_main_cellar');
   const [lines, setLines] = useState<GRNLineItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
-  const [itemsLoading, setItemsLoading] = useState(false);
 
   const navigateTo = (module: string) => {
     window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } }));
   };
 
-  // Fetch inventory items on component mount
-  useEffect(() => {
-    fetchInventoryItems();
-  }, []);
 
-  const fetchInventoryItems = async () => {
-    setItemsLoading(true);
-    try {
-      console.log('🔍 Fetching inventory items from /api/v1/inventory/items?limit=1000');
-      const response = await fetch('/api/v1/inventory/items?limit=1000');
-      console.log('📡 Response status:', response.status);
-
-      if (!response.ok) {
-        console.error('❌ Response not OK:', response.status, response.statusText);
-        return;
-      }
-
-      const result = await response.json();
-      console.log('📦 API result:', result);
-
-      if (result.ok && result.data) {
-        console.log('✅ Setting', result.data.length, 'inventory items');
-        setInventoryItems(result.data);
-      } else {
-        console.error('❌ API returned error:', result.error);
-      }
-    } catch (error) {
-      console.error('💥 Error fetching inventory items:', error);
-    } finally {
-      setItemsLoading(false);
-    }
-  };
 
   const locations = [
     { id: 'loc_main_cellar', name: 'Main Cellar' },
@@ -240,42 +74,13 @@ export const InventoryV11GRNForm: React.FC = () => {
     ]);
   };
 
-  const selectItem = (lineId: string, item: InventoryItem) => {
-    console.log('🎯 Selecting item:', item.name, 'ID:', item.id, 'for line:', lineId);
-    updateLine(lineId, 'item_id', item.id);
-    updateLine(lineId, 'item_name', item.name);
-    // Auto-set UOM to item's base UOM if available
-    if (item.base_uom_symbol) {
-      const uomMapping: { [key: string]: string } = {
-        'CASE': 'uom_case',
-        'BOTTLE': 'uom_bottle',
-        'ML': 'uom_ml',
-        'GRAM': 'uom_gram',
-        'KG': 'uom_kg',
-        'UNIT': 'uom_unit',
-      };
-      const uomId = uomMapping[item.base_uom_symbol] || 'uom_case';
-      updateLine(lineId, 'received_uom_id', uomId);
-    }
-  };
 
-  const handleItemNameChange = (lineId: string, value: string) => {
-    console.log('📝 Item name changed for line', lineId, 'to:', value);
-    updateLine(lineId, 'item_name', value);
-    // Only clear item_id if the field is completely empty
-    if (!value.trim()) {
-      updateLine(lineId, 'item_id', '');
-      console.log('🧹 Cleared item_id for empty field');
-    }
-    // Don't clear item_id when typing - user might be selecting from suggestions
-  };
 
   const removeLine = (id: string) => {
     setLines(lines.filter(line => line.id !== id));
   };
 
   const updateLine = (id: string, field: keyof GRNLineItem, value: GRNLineItem[keyof GRNLineItem]) => {
-    console.log('📝 Updating line', id, 'field', field, 'to:', value);
     setLines(
       lines.map(line =>
         line.id === id ? { ...line, [field]: value } : line
@@ -299,40 +104,19 @@ export const InventoryV11GRNForm: React.FC = () => {
 
     // Validate all lines have required data
     for (const line of lines) {
-      if (!line.item_name || line.qty_received <= 0 || line.unit_cost < 0) {
+      if (!line.item_name.trim() || line.qty_received <= 0 || line.unit_cost < 0) {
         toast({
           title: 'Invalid Line Item',
-          description: `All line items must have: Valid item name (from inventory), Quantity > 0, and Unit Cost ≥ 0`,
+          description: `All line items must have: Item name, Quantity > 0, and Unit Cost ≥ 0`,
           variant: 'destructive',
         });
         return;
       }
 
-      // Validate that item_name matches a valid inventory item (case-insensitive)
-      console.log('🔍 Validating line:', line.id, 'item_name:', line.item_name, 'item_id:', line.item_id);
-
-      const validItem = inventoryItems.find(item =>
-        item.name.toLowerCase().trim() === line.item_name.toLowerCase().trim()
-      );
-
-      if (!validItem) {
-        console.error('❌ Validation failed for item:', line.item_name);
-        console.log('📋 Available items:', inventoryItems.map(i => i.name));
-        toast({
-          title: 'Invalid Item Name',
-          description: `"${line.item_name}" is not a valid inventory item. Please select from the auto-suggestions.`,
-          variant: 'destructive',
-        });
-        return;
+      // Generate a simple item_id if not set (for backward compatibility)
+      if (!line.item_id) {
+        updateLine(line.id, 'item_id', `item_${line.item_name.replace(/\s+/g, '_').toLowerCase()}_${Date.now()}`);
       }
-
-      // Ensure item_id is set correctly
-      if (!line.item_id || line.item_id !== validItem.id) {
-        console.log('🔧 Setting item_id for:', line.item_name, 'to:', validItem.id);
-        updateLine(line.id, 'item_id', validItem.id);
-      }
-
-      console.log('✅ Validation passed for:', line.item_name, 'with ID:', validItem.id);
     }
 
     setLoading(true);
@@ -387,9 +171,7 @@ export const InventoryV11GRNForm: React.FC = () => {
           <ChevronLeft className="w-4 h-4" />
           Back to Inventory
         </Button>
-        <span className="text-xs text-gray-500">
-          {itemsLoading ? 'Loading items...' : `${inventoryItems.length} items available for selection`}
-        </span>
+
       </div>
 
       <Card>
@@ -451,12 +233,11 @@ export const InventoryV11GRNForm: React.FC = () => {
                   {lines.map((line, idx) => (
                     <tr key={line.id} className="border-b hover:bg-gray-50">
                       <td className="px-4 py-2">
-                        <ItemAutoSuggest
+                        <Input
+                          placeholder="e.g., Tomatoes"
                           value={line.item_name}
-                          onSelect={(item) => selectItem(line.id, item)}
-                          onChange={(value) => handleItemNameChange(line.id, value)}
-                          items={inventoryItems}
-                          placeholder="Type item name..."
+                          onChange={(e) => updateLine(line.id, 'item_name', e.target.value)}
+                          className="text-xs"
                         />
                       </td>
                       <td className="px-4 py-2">
