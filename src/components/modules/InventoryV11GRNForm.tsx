@@ -96,6 +96,10 @@ const ItemAutoSuggest: React.FC<ItemAutoSuggestProps> = ({
   };
 
   const handleItemSelect = (item: InventoryItem) => {
+    console.log('🔍 Item selected:', item.name, 'ID:', item.id);
+    // First update the input value to match the selected item
+    onChange(item.name);
+    // Then call the select callback
     onSelect(item);
     setIsOpen(false);
     setSelectedIndex(-1);
@@ -237,6 +241,7 @@ export const InventoryV11GRNForm: React.FC = () => {
   };
 
   const selectItem = (lineId: string, item: InventoryItem) => {
+    console.log('🎯 Selecting item:', item.name, 'ID:', item.id, 'for line:', lineId);
     updateLine(lineId, 'item_id', item.id);
     updateLine(lineId, 'item_name', item.name);
     // Auto-set UOM to item's base UOM if available
@@ -255,11 +260,14 @@ export const InventoryV11GRNForm: React.FC = () => {
   };
 
   const handleItemNameChange = (lineId: string, value: string) => {
+    console.log('📝 Item name changed for line', lineId, 'to:', value);
     updateLine(lineId, 'item_name', value);
-    // Clear item_id if name is cleared or changed manually
+    // Only clear item_id if the field is completely empty
     if (!value.trim()) {
       updateLine(lineId, 'item_id', '');
+      console.log('🧹 Cleared item_id for empty field');
     }
+    // Don't clear item_id when typing - user might be selecting from suggestions
   };
 
   const removeLine = (id: string) => {
@@ -267,6 +275,7 @@ export const InventoryV11GRNForm: React.FC = () => {
   };
 
   const updateLine = (id: string, field: keyof GRNLineItem, value: GRNLineItem[keyof GRNLineItem]) => {
+    console.log('📝 Updating line', id, 'field', field, 'to:', value);
     setLines(
       lines.map(line =>
         line.id === id ? { ...line, [field]: value } : line
@@ -299,9 +308,16 @@ export const InventoryV11GRNForm: React.FC = () => {
         return;
       }
 
-      // Validate that item_name matches a valid inventory item
-      const validItem = inventoryItems.find(item => item.name === line.item_name.trim());
+      // Validate that item_name matches a valid inventory item (case-insensitive)
+      console.log('🔍 Validating line:', line.id, 'item_name:', line.item_name, 'item_id:', line.item_id);
+
+      const validItem = inventoryItems.find(item =>
+        item.name.toLowerCase().trim() === line.item_name.toLowerCase().trim()
+      );
+
       if (!validItem) {
+        console.error('❌ Validation failed for item:', line.item_name);
+        console.log('📋 Available items:', inventoryItems.map(i => i.name));
         toast({
           title: 'Invalid Item Name',
           description: `"${line.item_name}" is not a valid inventory item. Please select from the auto-suggestions.`,
@@ -312,8 +328,11 @@ export const InventoryV11GRNForm: React.FC = () => {
 
       // Ensure item_id is set correctly
       if (!line.item_id || line.item_id !== validItem.id) {
+        console.log('🔧 Setting item_id for:', line.item_name, 'to:', validItem.id);
         updateLine(line.id, 'item_id', validItem.id);
       }
+
+      console.log('✅ Validation passed for:', line.item_name, 'with ID:', validItem.id);
     }
 
     setLoading(true);
