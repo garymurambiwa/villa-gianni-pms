@@ -15,19 +15,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-} from '@/components/ui/command';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import { Plus, Trash2, Check, ChevronLeft, ChevronsUpDown } from 'lucide-react';
+
+import { Plus, Trash2, ChevronLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface InventoryItem {
@@ -49,64 +38,126 @@ interface GRNLineItem {
   unit_cost: number;
 }
 
-// Item selector combobox component
-interface ItemSelectorProps {
+// Auto-suggest text input component for item selection
+interface ItemAutoSuggestProps {
   value: string;
   onSelect: (item: InventoryItem) => void;
+  onChange: (value: string) => void;
   items: InventoryItem[];
   placeholder?: string;
 }
 
-const ItemSelector: React.FC<ItemSelectorProps> = ({ value, onSelect, items, placeholder = "Select item..." }) => {
-  const [open, setOpen] = useState(false);
+const ItemAutoSuggest: React.FC<ItemAutoSuggestProps> = ({
+  value,
+  onSelect,
+  onChange,
+  items,
+  placeholder = "Type to search items..."
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(-1);
 
-  console.log('🎯 ItemSelector rendered with', items.length, 'items, value:', value);
+  // Filter items based on current input
+  const filteredItems = items.filter(item =>
+    item.name.toLowerCase().includes(value.toLowerCase()) ||
+    (item.sku && item.sku.toLowerCase().includes(value.toLowerCase()))
+  ).slice(0, 8); // Limit to 8 suggestions
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.value;
+    onChange(newValue);
+    setIsOpen(newValue.length > 0 && filteredItems.length > 0);
+    setSelectedIndex(-1);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isOpen || filteredItems.length === 0) return;
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setSelectedIndex(prev => Math.min(prev + 1, filteredItems.length - 1));
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setSelectedIndex(prev => Math.max(prev - 1, -1));
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (selectedIndex >= 0 && selectedIndex < filteredItems.length) {
+          handleItemSelect(filteredItems[selectedIndex]);
+        }
+        break;
+      case 'Escape':
+        setIsOpen(false);
+        setSelectedIndex(-1);
+        break;
+    }
+  };
+
+  const handleItemSelect = (item: InventoryItem) => {
+    onSelect(item);
+    setIsOpen(false);
+    setSelectedIndex(-1);
+  };
+
+  const handleFocus = () => {
+    if (value.length > 0 && filteredItems.length > 0) {
+      setIsOpen(true);
+    }
+  };
+
+  const handleBlur = () => {
+    // Delay closing to allow click events on suggestions
+    setTimeout(() => {
+      setIsOpen(false);
+      setSelectedIndex(-1);
+    }, 150);
+  };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          className="w-full justify-between text-xs h-8"
-        >
-          {value || placeholder}
-          <ChevronsUpDown className="ml-2 h-3 w-3 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[300px] p-0">
-        <Command>
-          <CommandInput placeholder="Search items..." className="text-xs" />
-          <CommandEmpty>No items found.</CommandEmpty>
-          <CommandGroup className="max-h-64 overflow-auto">
-            {items.map((item) => (
-              <CommandItem
-                key={item.id}
-                value={item.name}
-                onSelect={() => {
-                  onSelect(item);
-                  setOpen(false);
-                }}
-                className="text-xs"
-              >
-                <Check
-                  className={`mr-2 h-3 w-3 ${
-                    value === item.name ? "opacity-100" : "opacity-0"
-                  }`}
-                />
-                <div className="flex flex-col">
-                  <span className="font-medium">{item.name}</span>
-                  <span className="text-xs text-gray-500">
-                    {item.sku && `SKU: ${item.sku}`} • {item.category} • {item.base_uom_symbol}
-                  </span>
-                </div>
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        </Command>
-      </PopoverContent>
-    </Popover>
+    <div className="relative">
+      <Input
+        type="text"
+        placeholder={placeholder}
+        value={value}
+        onChange={handleInputChange}
+        onKeyDown={handleKeyDown}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        className="text-xs"
+        autoComplete="off"
+      />
+
+      {isOpen && filteredItems.length > 0 && (
+        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-64 overflow-y-auto">
+          {filteredItems.map((item, index) => (
+            <div
+              key={item.id}
+              className={`px-3 py-2 cursor-pointer hover:bg-gray-100 text-xs ${
+                index === selectedIndex ? 'bg-blue-50' : ''
+              }`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handleItemSelect(item);
+              }}
+              onMouseEnter={() => setSelectedIndex(index)}
+            >
+              <div className="font-medium">{item.name}</div>
+              <div className="text-gray-500 text-xs">
+                {item.sku && `SKU: ${item.sku}`} • {item.category} • {item.base_uom_symbol}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {value.length > 0 && filteredItems.length === 0 && (
+        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg p-3 text-xs text-gray-500">
+          No matching items found. Only existing inventory items are allowed.
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -203,6 +254,14 @@ export const InventoryV11GRNForm: React.FC = () => {
     }
   };
 
+  const handleItemNameChange = (lineId: string, value: string) => {
+    updateLine(lineId, 'item_name', value);
+    // Clear item_id if name is cleared or changed manually
+    if (!value.trim()) {
+      updateLine(lineId, 'item_id', '');
+    }
+  };
+
   const removeLine = (id: string) => {
     setLines(lines.filter(line => line.id !== id));
   };
@@ -231,13 +290,29 @@ export const InventoryV11GRNForm: React.FC = () => {
 
     // Validate all lines have required data
     for (const line of lines) {
-      if (!line.item_id || !line.item_name || line.qty_received <= 0 || line.unit_cost < 0) {
+      if (!line.item_name || line.qty_received <= 0 || line.unit_cost < 0) {
         toast({
           title: 'Invalid Line Item',
-          description: `All line items must have: Item name, Quantity > 0, and Unit Cost ≥ 0`,
+          description: `All line items must have: Valid item name (from inventory), Quantity > 0, and Unit Cost ≥ 0`,
           variant: 'destructive',
         });
         return;
+      }
+
+      // Validate that item_name matches a valid inventory item
+      const validItem = inventoryItems.find(item => item.name === line.item_name.trim());
+      if (!validItem) {
+        toast({
+          title: 'Invalid Item Name',
+          description: `"${line.item_name}" is not a valid inventory item. Please select from the auto-suggestions.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Ensure item_id is set correctly
+      if (!line.item_id || line.item_id !== validItem.id) {
+        updateLine(line.id, 'item_id', validItem.id);
       }
     }
 
@@ -294,7 +369,7 @@ export const InventoryV11GRNForm: React.FC = () => {
           Back to Inventory
         </Button>
         <span className="text-xs text-gray-500">
-          {itemsLoading ? 'Loading items...' : `${inventoryItems.length} items available`}
+          {itemsLoading ? 'Loading items...' : `${inventoryItems.length} items available for selection`}
         </span>
       </div>
 
@@ -357,11 +432,12 @@ export const InventoryV11GRNForm: React.FC = () => {
                   {lines.map((line, idx) => (
                     <tr key={line.id} className="border-b hover:bg-gray-50">
                       <td className="px-4 py-2">
-                        <ItemSelector
+                        <ItemAutoSuggest
                           value={line.item_name}
                           onSelect={(item) => selectItem(line.id, item)}
+                          onChange={(value) => handleItemNameChange(line.id, value)}
                           items={inventoryItems}
-                          placeholder="Select item..."
+                          placeholder="Type item name..."
                         />
                       </td>
                       <td className="px-4 py-2">
