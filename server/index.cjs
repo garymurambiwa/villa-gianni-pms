@@ -1,5 +1,9 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
+
+// Load database module
+const db = require('./db-web.cjs');
 
 // Load environment variables
 try { require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }) } catch { }
@@ -16,6 +20,9 @@ app.use((req, res, next) => {
   console.log(`📨 ${req.method} ${req.url}`);
   next();
 });
+
+// Serve static files from dist directory
+app.use(express.static(path.join(__dirname, '..', 'dist')));
 
 // Basic test route
 app.get('/api/test', (req, res) => {
@@ -407,6 +414,15 @@ try {
 } catch (error) {
   console.error('❌ Failed to load inventory routes:', error.message);
 }
+
+// Catch-all handler: serve React app for client-side routing
+app.use((req, res, next) => {
+  // Skip API routes
+  if (req.path.startsWith('/api/')) {
+    return next();
+  }
+  res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+});
 
 // Start Server
 const server = app.listen(PORT, '0.0.0.0', () => {
