@@ -19,6 +19,7 @@ import StockTab from '@/components/modules/StockTab';
 import ReceiptSettingsModal from '@/components/modules/ReceiptSettingsModal';
 import HorizontalScrollNav from '@/components/ui/HorizontalScrollNav';
 import { Label } from '@/components/ui/label';
+import PosReports from '@/components/modules/PosReports';
 import { db } from '@/lib/db';
 import { parseColor, getContrastRatio } from '@/lib/colorUtils';
 import {
@@ -2983,31 +2984,9 @@ export const PosSettings: React.FC = () => {
         )}
       </div>
 
-      {activeTab === 'admin' && (
+      {activeTab === 'admin' && activeSectionId === 'pos-reporting-tools' && (
         <Section id="pos-reporting-tools" title="POS Reporting Tools">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Select>
-              <SelectTrigger>
-                <SelectValue placeholder="Range" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="7d">Last 7 Days</SelectItem>
-                <SelectItem value="30d">Last 30 Days</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select>
-              <SelectTrigger>
-                <SelectValue placeholder="Report Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="sales">Sales</SelectItem>
-                <SelectItem value="performance">Performance</SelectItem>
-                <SelectItem value="inventory">Inventory</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <Button variant="secondary" onClick={() => log('REPORT_GENERATE')}>Generate Report</Button>
+          <PosReports />
         </Section>
       )}
 
