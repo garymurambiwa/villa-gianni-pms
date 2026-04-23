@@ -347,7 +347,6 @@ export const PosReports: React.FC = () => {
       
       {!loading && selectedReport === 'x-summary' && (
         <div>
-        <div>
           <h3 className="font-bold mb-2">Category Financial Summary (COGS & Profit)</h3>
           <table className="ds-table">
             <thead><tr><th>Outlet</th><th className="right">Sold</th><th className="right">Gross Sales</th><th className="right">COGS</th><th className="right">Gross Profit</th><th className="right">Margin %</th></tr></thead>
