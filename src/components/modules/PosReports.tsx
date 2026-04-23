@@ -231,23 +231,48 @@ export const PosReports: React.FC = () => {
   }, [dbPosBills, selectedShift]);
 
   const categorySummary = React.useMemo(() => {
-    const map = new Map<string, { itemsSold: number; grossSales: number; discounts: number; netSales: number }>();
+    const map = new Map<string, { itemsSold: number; grossSales: number; discounts: number; netSales: number; cogs: number }>();
     nonVoidedBills.forEach((bill: any) => {
       (bill.items || []).forEach((d: any) => {
         const qty = Number(d.quantity || 0);
         const price = Number(d.price || 0);
-        // We use the bill's outlet to categorise (Restaurant / Bar)
+        // Find cost from inventory
+        const itemObj = itemIndexByName.get(String(d.name || '').toLowerCase());
+        const cost = itemObj ? Number(itemObj.cost || 0) : 0;
+
         const catName = bill.outlet || 'Unknown';
         
-        const row = map.get(catName) || { itemsSold: 0, grossSales: 0, discounts: 0, netSales: 0 };
+        const row = map.get(catName) || { itemsSold: 0, grossSales: 0, discounts: 0, netSales: 0, cogs: 0 };
         row.itemsSold += qty; 
         row.grossSales += qty * price; 
+        row.cogs += qty * cost;
         row.netSales = row.grossSales - row.discounts;
         map.set(catName, row);
       });
     });
     const totalGross = Array.from(map.values()).reduce((s, r) => s + r.grossSales, 0);
-    return { rows: Array.from(map.entries()).map(([name, r]) => ({ name, ...r, percent: totalGross ? (r.grossSales / totalGross) * 100 : 0 })), totalGross };
+    return { rows: Array.from(map.entries()).map(([name, r]) => ({ name, ...r, percent: totalGross ? (r.grossSales / totalGross) * 100 : 0, profit: r.netSales - r.cogs })), totalGross };
+  }, [nonVoidedBills, itemIndexByName]);
+
+  const paymentSummary = React.useMemo(() => {
+    const map = new Map<string, number>();
+    nonVoidedBills.forEach((bill: any) => {
+       const method = (bill.payment_method || 'Unknown').toUpperCase();
+       map.set(method, (map.get(method) || 0) + Number(bill.total_amount || 0));
+    });
+    return Array.from(map.entries()).map(([method, total]) => ({ method, total }));
+  }, [nonVoidedBills]);
+
+  const staffSummary = React.useMemo(() => {
+    const map = new Map<string, { bills: number; totalSales: number }>();
+    nonVoidedBills.forEach((bill: any) => {
+       const staff = bill.opened_by || 'System';
+       const current = map.get(staff) || { bills: 0, totalSales: 0 };
+       current.bills += 1;
+       current.totalSales += Number(bill.total_amount || 0);
+       map.set(staff, current);
+    });
+    return Array.from(map.entries()).sort((a,b) => b[1].totalSales - a[1].totalSales);
   }, [nonVoidedBills]);
 
   const detailedRowsByCategory = React.useMemo(() => {
@@ -299,6 +324,8 @@ export const PosReports: React.FC = () => {
             <SelectContent>
               <SelectItem value="x-summary">X-Reading Summary</SelectItem>
               <SelectItem value="x-detail">X-Reading Detail</SelectItem>
+              <SelectItem value="payment-methods">Payment Methods</SelectItem>
+              <SelectItem value="staff-performance">Staff Performance</SelectItem>
               <SelectItem value="cocktail-usage">Cocktail Usage</SelectItem>
               <SelectItem value="goods-received">Goods Received</SelectItem>
               <SelectItem value="voids">Voids</SelectItem>
@@ -320,12 +347,40 @@ export const PosReports: React.FC = () => {
       
       {!loading && selectedReport === 'x-summary' && (
         <div>
-          <h3 className="font-bold mb-2">Category Summary</h3>
+        <div>
+          <h3 className="font-bold mb-2">Category Financial Summary (COGS & Profit)</h3>
           <table className="ds-table">
-            <thead><tr><th>Outlet</th><th className="right">Sold</th><th className="right">Gross</th><th className="right">Percent</th></tr></thead>
+            <thead><tr><th>Outlet</th><th className="right">Sold</th><th className="right">Gross Sales</th><th className="right">COGS</th><th className="right">Gross Profit</th><th className="right">Margin %</th></tr></thead>
             <tbody>
-              {categorySummary.rows.map(r => (<tr key={r.name}><td>{r.name}</td><td className="right">{r.itemsSold}</td><td className="right">{formatCurrency(r.grossSales)}</td><td className="right">{r.percent.toFixed(2)}%</td></tr>))}
-              {categorySummary.rows.length === 0 && <tr><td colSpan={4} className="text-center p-4">No Sales found in range</td></tr>}
+              {categorySummary.rows.map(r => (<tr key={r.name}><td>{r.name}</td><td className="right">{r.itemsSold}</td><td className="right">{formatCurrency(r.grossSales)}</td><td className="right text-red-600">-{formatCurrency(r.cogs)}</td><td className="right font-bold text-green-600">{formatCurrency(r.profit)}</td><td className="right">{r.grossSales ? ((r.profit / r.grossSales) * 100).toFixed(1) : 0}%</td></tr>))}
+              {categorySummary.rows.length === 0 && <tr><td colSpan={6} className="text-center p-4">No Sales found in range</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!loading && selectedReport === 'payment-methods' && (
+        <div className="max-w-xl">
+          <h3 className="font-bold mb-2">Payment Method Breakdown</h3>
+          <table className="ds-table">
+            <thead><tr><th>Method</th><th className="right">Total Expected</th></tr></thead>
+            <tbody>
+              {paymentSummary.map(p => (<tr key={p.method}><td>{p.method}</td><td className="right font-bold">{formatCurrency(p.total)}</td></tr>))}
+              {paymentSummary.length === 0 && <tr><td colSpan={2} className="text-center p-4">No payments recorded</td></tr>}
+            </tbody>
+          </table>
+          <p className="text-xs text-gray-500 mt-2">Use this total to reconcile your physical cash drawer vs card machine printouts at Z-reading.</p>
+        </div>
+      )}
+
+      {!loading && selectedReport === 'staff-performance' && (
+        <div className="max-w-2xl">
+          <h3 className="font-bold mb-2">Staff Sales Performance</h3>
+          <table className="ds-table">
+            <thead><tr><th>Staff Member (Opened By)</th><th className="right">Total Bills Handled</th><th className="right">Total Sales Captured</th></tr></thead>
+            <tbody>
+              {staffSummary.map(([staff, data]) => (<tr key={staff}><td>{staff}</td><td className="right">{data.bills}</td><td className="right font-bold">{formatCurrency(data.totalSales)}</td></tr>))}
+              {staffSummary.length === 0 && <tr><td colSpan={3} className="text-center p-4">No staff sales recorded</td></tr>}
             </tbody>
           </table>
         </div>
