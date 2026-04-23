@@ -2,61 +2,22 @@ import React from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
 import { canManagePOS } from '@/lib/permissions';
-import { createAuditEntry, formatCurrency } from '@/lib/posIntegration';
+import { formatCurrency } from '@/lib/posIntegration';
 import menuCats from '@/lib/menuCategories';
 import cocktailEng from '@/lib/cocktailEngineering';
 import { useToast } from '@/hooks/use-toast';
-import { readPrinterConfig } from '@/lib/printerConfig';
-import PrintCustomizationModal from '@/components/modules/PrintCustomizationModal';
-import { readReceiptBranding } from '@/lib/printSettings';
+import db from '@/lib/db';
 
 type DateRange = { start: string; end: string };
-
-const readJSON = (key: string, fallback: any = []) => {
-  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
-};
-
-const cacheSet = (key: string, value: any) => {
-  try { localStorage.setItem(key, JSON.stringify({ value, ts: Date.now() })); } catch {}
-};
 
 const exportCSV = (filename: string, headers: string[], rows: string[][]) => {
   const csv = [headers.join(','), ...rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(','))].join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
-};
-
-const openPrintable = (title: string, html: string) => {
-  const win = window.open('', '_blank');
-  if (!win) return;
-  const brand = readReceiptBranding();
-  const header = `
-    ${brand.show_logo && brand.logo_url ? `<div style="text-align:center"><img src="${brand.logo_url}" alt="Logo" style="max-width:120px"/></div>` : ''}
-    <div style="text-align:center;font-weight:bold">${brand.restaurant_name}</div>
-  `;
-  const footer = `<div style="text-align:center;margin-top:12px;font-size:11px;color:#555">Powered By Coredigita</div>`;
-  win.document.write(`<html><head><title>${title}</title><style>body{font-family:system-ui,sans-serif;padding:16px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:6px;text-align:left}.right{text-align:right}</style></head><body>${header}${html}${footer}</body></html>`);
-  win.document.close();
-  try { win.focus(); win.print(); } catch {}
-};
-
-const loadXLSX = async (): Promise<any|null> => {
-  try {
-    const w = window as any;
-    if (w.XLSX) return w.XLSX;
-    await new Promise<void>((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error('XLSX load failed'));
-      document.head.appendChild(s);
-    });
-    return (window as any).XLSX || null;
-  } catch { return null; }
+  const url = URL.createObjectURL(blob); 
+  const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); 
+  URL.revokeObjectURL(url);
 };
 
 const formatDetailsText = (d: any): string => {
@@ -74,23 +35,10 @@ const formatDetailsText = (d: any): string => {
   return String(d);
 };
 
-// Sub-components for specific reports
-const VoidsReportView: React.FC<{ auditLog: any[]; itemIndexByName: Map<string, any>; rangeText: string }> = ({ auditLog, itemIndexByName, rangeText }) => {
+const VoidsReportView: React.FC<{ voidsRows: any[] }> = ({ voidsRows }) => {
   const [voidsFilter, setVoidsFilter] = React.useState<'all'|'kitchen'|'cellar'>('all');
-  const voidsEnriched = React.useMemo(() => {
-    return auditLog.filter((a: any) => String(a.action || '').includes('VOID')).map((a: any) => {
-      let d = a.details;
-      if (typeof d === 'string') { try { d = JSON.parse(d); } catch {} }
-      let nameCandidate = '';
-      if (typeof d === 'string') nameCandidate = d;
-      else if (d && typeof d === 'object') nameCandidate = String(d.name || d.item || d.menuItem || d.desc || '');
-      const item = itemIndexByName.get(nameCandidate.toLowerCase());
-      const invCat = item ? (item.costCenter === 'bar' ? 'cellar' : 'kitchen') : '';
-      return { ...a, invCat };
-    });
-  }, [auditLog, itemIndexByName]);
-
-  const filtered = voidsEnriched.filter(v => voidsFilter === 'all' || v.invCat === voidsFilter);
+  
+  const filtered = voidsRows.filter(v => voidsFilter === 'all' || v.outlet?.toLowerCase().includes(voidsFilter) || v.invCat === voidsFilter);
 
   return (
     <div className="mb-6">
@@ -104,7 +52,13 @@ const VoidsReportView: React.FC<{ auditLog: any[]; itemIndexByName: Map<string, 
         <table className="ds-table">
           <thead><tr><th className="p-2 text-left">Time</th><th className="p-2">Action</th><th className="p-2">Details</th></tr></thead>
           <tbody>
-            {filtered.map((v, i) => (<tr key={i}><td className="p-2">{v.timestamp}</td><td className="p-2">{v.action}</td><td className="p-2">{formatDetailsText(v.details)}</td></tr>))}
+            {filtered.map((v, i) => (
+              <tr key={i}>
+                <td className="p-2">{new Date(v.voided_at || v.timestamp).toLocaleString()}</td>
+                <td className="p-2">VOID</td>
+                <td className="p-2">{formatDetailsText(v.items || v.details)}</td>
+              </tr>
+            ))}
             {!filtered.length && (<tr><td className="p-2 text-center" colSpan={3}>No voids found.</td></tr>)}
           </tbody>
         </table>
@@ -113,17 +67,23 @@ const VoidsReportView: React.FC<{ auditLog: any[]; itemIndexByName: Map<string, 
   );
 };
 
-const StockMovementReportView: React.FC<{ auditLog: any[]; itemIndexByName: Map<string, any>; rangeText: string }> = ({ auditLog, itemIndexByName, rangeText }) => {
-  const movement = auditLog.filter(a => a.action === 'STOCK_ADJUST' || a.action === 'INVENTORY_DEPLETION');
+const StockMovementReportView: React.FC<{ movementRows: any[] }> = ({ movementRows }) => {
   return (
     <div className="mb-6">
-      <h3 className="text-lg font-semibold mb-2">Stock Movement</h3>
+      <h3 className="text-lg font-semibold mb-2">Stock Movement DB</h3>
       <div className="overflow-x-auto">
         <table className="ds-table">
-          <thead><tr><th className="p-2 text-left">Time</th><th className="p-2">Type</th><th className="p-2">Details</th></tr></thead>
+          <thead><tr><th className="p-2 text-left">Time</th><th className="p-2">Type</th><th className="p-2">Item</th><th className="p-2">Change</th></tr></thead>
           <tbody>
-            {movement.map((m, i) => (<tr key={i}><td className="p-2">{m.timestamp}</td><td className="p-2">{m.action}</td><td className="p-2">{formatDetailsText(m.details)}</td></tr>))}
-            {!movement.length && (<tr><td className="p-2 text-center" colSpan={3}>No movements in range.</td></tr>)}
+            {movementRows.map((m, i) => (
+              <tr key={i}>
+                <td className="p-2">{new Date(m.inserted_at).toLocaleString()}</td>
+                <td className="p-2">DEPLETION</td>
+                <td className="p-2">{m.name || m.item_id}</td>
+                <td className="p-2">{m.delta}</td>
+              </tr>
+            ))}
+            {!movementRows.length && (<tr><td className="p-2 text-center" colSpan={4}>No movements in range.</td></tr>)}
           </tbody>
         </table>
       </div>
@@ -131,43 +91,32 @@ const StockMovementReportView: React.FC<{ auditLog: any[]; itemIndexByName: Map<
   );
 };
 
-const GoodsReceivedReportView: React.FC<{ rangeText: string; inRange: (ts: string) => boolean }> = ({ rangeText, inRange }) => {
-  const goodsReceived = React.useMemo(() => readJSON('corepms_goods_received', []), []);
-  const goodsReceivedInRange = React.useMemo(() => goodsReceived.filter((v: any) => inRange(v.dateReceived)), [goodsReceived, inRange]);
+const GoodsReceivedReportView: React.FC<{ rangeText: string; grnRows: any[] }> = ({ rangeText, grnRows }) => {
   const [grvSupplier, setGrvSupplier] = React.useState<string>('all');
-  const [grvLocation, setGrvLocation] = React.useState<'all' | 'Kitchen' | 'Cellar'>('all');
+  const [grvLocation, setGrvLocation] = React.useState<'all' | 'loc_main_cellar' | 'loc_dry_goods'>('all');
 
   const grvSuppliers = React.useMemo(() => {
     const set = new Set<string>();
-    goodsReceived.forEach((v: any) => { if (v.supplier) set.add(String(v.supplier)); });
+    grnRows.forEach((v: any) => { if (v.supplier_name) set.add(String(v.supplier_name)); });
     return ['all', ...Array.from(set)];
-  }, [goodsReceived]);
+  }, [grnRows]);
 
   const grvFiltered = React.useMemo(() =>
-    goodsReceivedInRange.filter((v: any) =>
-      (grvSupplier === 'all' || String(v.supplier) === grvSupplier) &&
-      (grvLocation === 'all' || String(v.location) === grvLocation)
+    grnRows.filter((v: any) =>
+      (grvSupplier === 'all' || String(v.supplier_name) === grvSupplier) &&
+      (grvLocation === 'all' || String(v.destination_location_id) === grvLocation)
     ),
-    [goodsReceivedInRange, grvSupplier, grvLocation]
-  );
-
-  const grvRows = React.useMemo(() =>
-    grvFiltered.flatMap((v: any) =>
-      (v.items || []).map((it: any) => ({
-        id: v.id, date: v.dateReceived, supplier: v.supplier, location: v.location, itemId: it.itemId, qty: Number(it.qty || 0), totalCost: Number(it.totalCost || 0)
-      }))
-    ),
-    [grvFiltered]
+    [grnRows, grvSupplier, grvLocation]
   );
 
   const grvTotals = React.useMemo(() => ({
-    qty: grvRows.reduce((s, r) => s + r.qty, 0),
-    cost: grvRows.reduce((s, r) => s + r.totalCost, 0)
-  }), [grvRows]);
+    qty: grvFiltered.reduce((s, r) => s + Number(r.total_qty || 0), 0),
+    cost: grvFiltered.reduce((s, r) => s + Number(r.total_value || 0), 0)
+  }), [grvFiltered]);
 
   return (
     <div className="mb-6">
-      <h3 className="text-lg font-semibold mb-2">Goods Received Vouchers</h3>
+      <h3 className="text-lg font-semibold mb-2">Goods Received Notes (Live from DB)</h3>
       <div className="flex items-center gap-2 mb-3">
         <label className="text-xs">Supplier</label>
         <Select value={grvSupplier} onValueChange={setGrvSupplier}>
@@ -176,20 +125,20 @@ const GoodsReceivedReportView: React.FC<{ rangeText: string; inRange: (ts: strin
         </Select>
         <label className="text-xs">Location</label>
         <Select value={grvLocation} onValueChange={(v) => setGrvLocation(v as any)}>
-          <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-          <SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="Kitchen">Kitchen</SelectItem><SelectItem value="Cellar">Cellar</SelectItem></SelectContent>
+          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="loc_main_cellar">Cellar</SelectItem><SelectItem value="loc_dry_goods">Dry Goods</SelectItem></SelectContent>
         </Select>
-        <Button variant="outline" onClick={() => exportCSV(`grv_${rangeText}.csv`, ['ID','Date','Supplier','Location','Item','Qty','Cost'], grvRows.map(r=>[r.id,r.date,String(r.supplier),String(r.location),r.itemId,String(r.qty),r.totalCost.toFixed(2)]))}>CSV</Button>
+        <Button variant="outline" onClick={() => exportCSV(`grv_${rangeText}.csv`, ['GRN','Date','Supplier','Location','Total Cost'], grvFiltered.map(r=>[r.grn_number,r.inserted_at,String(r.supplier_name),String(r.destination_location_id),Number(r.total_value || 0).toFixed(2)]))}>CSV</Button>
       </div>
       <div className="grid grid-cols-2 gap-4 mb-3">
-        <div className="border rounded p-2">Total Qty: {grvTotals.qty}</div>
-        <div className="border rounded p-2">Total Cost: {formatCurrency(Number.isNaN(Number(grvTotals.cost)) ? 0 : Number(grvTotals.cost))}</div>
+        <div className="border rounded p-2">Total GRNs: {grvFiltered.length}</div>
+        <div className="border rounded p-2">Total Value: {formatCurrency(Number.isNaN(Number(grvTotals.cost)) ? 0 : Number(grvTotals.cost))}</div>
       </div>
       <div className="overflow-x-auto">
         <table className="ds-table">
-          <thead><tr><th className="p-2 text-left">Voucher</th><th className="p-2">Date</th><th className="p-2 text-right">Qty</th><th className="p-2 text-right">Cost</th></tr></thead>
+          <thead><tr><th className="p-2 text-left">GRN Number</th><th className="p-2">Date</th><th className="p-2">Supplier</th><th className="p-2 text-right">Value</th></tr></thead>
           <tbody>
-             {grvRows.map((r, i) => (<tr key={i}><td className="p-2">{r.id}</td><td className="p-2">{r.date}</td><td className="p-2 text-right">{r.qty}</td><td className="p-2 text-right">{formatCurrency(Number.isNaN(Number(r.totalCost)) ? 0 : Number(r.totalCost))}</td></tr>))}
+             {grvFiltered.map((r, i) => (<tr key={i}><td className="p-2">{r.grn_number}</td><td className="p-2">{new Date(r.inserted_at).toLocaleDateString()}</td><td className="p-2">{r.supplier_name}</td><td className="p-2 text-right">{formatCurrency(Number(r.total_value || 0))}</td></tr>))}
           </tbody>
         </table>
       </div>
@@ -202,9 +151,7 @@ export const PosReports: React.FC = () => {
   const isManager = canManagePOS(user?.role);
   const { toast } = useToast();
   const [loading, setLoading] = React.useState<boolean>(true);
-  const [error, setError] = React.useState<string>('');
   const [reportType, setReportType] = React.useState<'individual'|'consolidated'|'custom'>('individual');
-  const [preset, setPreset] = React.useState<'none'|'today'|'this-week'|'this-month'>('none');
   const [selectedCentres, setSelectedCentres] = React.useState<string[]>(['bar']);
   const [selectedReport, setSelectedReport] = React.useState<string>('x-summary');
   const [selectedShift, setSelectedShift] = React.useState<string>('all');
@@ -214,77 +161,110 @@ export const PosReports: React.FC = () => {
   }));
   const [cocktailUsageData, setCocktailUsageData] = React.useState<{ usageRows: any[]; totalIngredients: number }>({ usageRows: [], totalIngredients: 0 });
 
-  const items = React.useMemo(() => readJSON('corepms_pos_items', []), []);
-  const auditLog = React.useMemo(() => readJSON('corepms_pos_audit', []), []);
+  const [dbPosBills, setDbPosBills] = React.useState<any[]>([]);
+  const [dbInventoryItems, setDbInventoryItems] = React.useState<any[]>([]);
+  const [dbGrns, setDbGrns] = React.useState<any[]>([]);
+  const [dbMovements, setDbMovements] = React.useState<any[]>([]);
 
-  const inRange = React.useCallback((ts: string) => {
-    const s = new Date(range.start + 'T00:00:00'); const e = new Date(range.end + 'T23:59:59');
-    const d = new Date(ts); return d >= s && d <= e;
+  React.useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const isConfigured = await db.isConfigured();
+        if (!isConfigured) return;
+
+        // Fetch POS Bills
+        const billsRes = await db.query(
+          `SELECT * FROM pos_bills WHERE DATE(opened_at) >= $1 AND DATE(opened_at) <= $2`,
+          [range.start, range.end]
+        );
+        if(!('error' in billsRes)) {
+          // Parse JSON if needed
+          const processedBills = (billsRes.rows || []).map((row: any) => ({
+             ...row,
+             items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
+          }));
+          setDbPosBills(processedBills);
+        }
+
+        // Fetch GRNs
+        const grnsRes = await db.query(
+          `SELECT * FROM inv_grn_headers WHERE DATE(inserted_at) >= $1 AND DATE(inserted_at) <= $2`,
+          [range.start, range.end]
+        );
+        if(!('error' in grnsRes)) setDbGrns(grnsRes.rows || []);
+
+        // Fetch Movememts
+        const movRes = await db.query(
+          `SELECT m.*, i.name FROM inventory_movements m LEFT JOIN inventory_items i ON m.item_id = i.id WHERE DATE(m.inserted_at) >= $1 AND DATE(m.inserted_at) <= $2`,
+          [range.start, range.end]
+        );
+        if(!('error' in movRes)) setDbMovements(movRes.rows || []);
+
+        // Fetch items
+        const invRes = await db.query(`SELECT id, name, cost FROM inventory_items`);
+        if(!('error' in invRes)) setDbInventoryItems(invRes.rows || []);
+
+      } catch (err) {
+        console.error('Failed to fetch report data from DB', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
   }, [range]);
-
-  const depletionEntries = React.useMemo(() => {
-    return auditLog.filter((a: any) => {
-      if (a.action !== 'INVENTORY_DEPLETION' || !inRange(a.timestamp)) return false;
-      if (selectedCentres.length > 0 && a.cost_center && !selectedCentres.includes(a.cost_center)) return false;
-      if (selectedShift !== 'all' && a.shift_id && a.shift_id !== selectedShift) return false;
-      return true;
-    });
-  }, [auditLog, inRange, selectedCentres, selectedShift]);
 
   const itemIndexByName = React.useMemo(() => {
     const map = new Map<string, any>();
-    items.forEach((it: any) => map.set(String(it.name || '').toLowerCase(), it));
+    dbInventoryItems.forEach((it: any) => map.set(String(it.name || '').toLowerCase(), it));
     return map;
-  }, [items]);
+  }, [dbInventoryItems]);
 
-       const categorySummary = React.useMemo(() => {
-        const map = new Map<string, { itemsSold: number; grossSales: number; discounts: number; netSales: number }>();
-        depletionEntries.forEach((e: any) => {
-          let details = e.details;
-          if (typeof details === 'string') { try { details = JSON.parse(details); } catch { details = []; } }
-          (Array.isArray(details) ? details : []).forEach((d: any) => {
-            const it = itemIndexByName.get(String(d.name || '').toLowerCase());
-            // Handle missing items gracefully
-            const catName = it ? (menuCats.getCategoryById(it.category_id)?.category_name || 'Uncategorized') : 'Uncategorized';
-            const qty = Number(d.quantity || 0);
-            // Use 0 for missing items to avoid NaN, but log for debugging
-            const price = it ? Number(it?.sellingPrice || 0) : 0;
-            if (!it) {
-              console.warn(`PosReports: Item not found in index: "${String(d.name || '').toLowerCase()}"`);
-            }
-            const row = map.get(catName) || { itemsSold: 0, grossSales: 0, discounts: 0, netSales: 0 };
-            row.itemsSold += qty; 
-            row.grossSales += qty * price; 
-            row.netSales = row.grossSales - row.discounts;
-            map.set(catName, row);
-          });
-        });
-        const totalGross = Array.from(map.values()).reduce((s, r) => s + r.grossSales, 0);
-        return { rows: Array.from(map.entries()).map(([name, r]) => ({ name, ...r, percent: totalGross ? (r.grossSales / totalGross) * 100 : 0 })), totalGross };
-      }, [depletionEntries, itemIndexByName]);
+  const availableShifts = React.useMemo(() => Array.from(new Set(dbPosBills.map((a:any)=>a.shift_id).filter(Boolean))).sort().reverse(), [dbPosBills]);
 
-       const detailedRowsByCategory = React.useMemo(() => {
-        const groups = new Map<string, any[]>();
-        depletionEntries.forEach((e: any) => {
-          let details = e.details;
-          if (typeof details === 'string') { try { details = JSON.parse(details); } catch { details = []; } }
-          (Array.isArray(details) ? details : []).forEach((d: any) => {
-            const it = itemIndexByName.get(String(d.name || '').toLowerCase());
-            // Handle missing items gracefully
-            const catName = it ? (menuCats.getCategoryById(it.category_id)?.category_name || 'Uncategorized') : 'Uncategorized';
-            const qty = Number(d.quantity || 0);
-            // Use 0 for missing items to avoid NaN, but log for debugging
-            const unit = it ? Number(it?.sellingPrice || 0) : 0;
-            if (!it) {
-              console.warn(`PosReports: Item not found in index for detailed view: "${String(d.name || '').toLowerCase()}"`);
-            }
-            const arr = groups.get(catName) || [];
-            arr.push({ ts: e.timestamp, sku: it?.id || '', desc: it?.name || d.name, qty, unit, total: qty * unit });
-            groups.set(catName, arr);
-          });
-        });
-        return groups;
-      }, [depletionEntries, itemIndexByName]);
+  const nonVoidedBills = React.useMemo(() => {
+    return dbPosBills.filter(b => !b.is_voided && (selectedShift === 'all' ? true : b.shift_id === selectedShift));
+  }, [dbPosBills, selectedShift]);
+
+  const voidedBills = React.useMemo(() => {
+    return dbPosBills.filter(b => b.is_voided && (selectedShift === 'all' ? true : b.shift_id === selectedShift));
+  }, [dbPosBills, selectedShift]);
+
+  const categorySummary = React.useMemo(() => {
+    const map = new Map<string, { itemsSold: number; grossSales: number; discounts: number; netSales: number }>();
+    nonVoidedBills.forEach((bill: any) => {
+      (bill.items || []).forEach((d: any) => {
+        const qty = Number(d.quantity || 0);
+        const price = Number(d.price || 0);
+        // We use the bill's outlet to categorise (Restaurant / Bar)
+        const catName = bill.outlet || 'Unknown';
+        
+        const row = map.get(catName) || { itemsSold: 0, grossSales: 0, discounts: 0, netSales: 0 };
+        row.itemsSold += qty; 
+        row.grossSales += qty * price; 
+        row.netSales = row.grossSales - row.discounts;
+        map.set(catName, row);
+      });
+    });
+    const totalGross = Array.from(map.values()).reduce((s, r) => s + r.grossSales, 0);
+    return { rows: Array.from(map.entries()).map(([name, r]) => ({ name, ...r, percent: totalGross ? (r.grossSales / totalGross) * 100 : 0 })), totalGross };
+  }, [nonVoidedBills]);
+
+  const detailedRowsByCategory = React.useMemo(() => {
+    const groups = new Map<string, any[]>();
+    nonVoidedBills.forEach((bill: any) => {
+      (bill.items || []).forEach((d: any) => {
+        const catName = bill.outlet || 'Unknown';
+        const qty = Number(d.quantity || 0);
+        const price = Number(d.price || 0);
+        
+        const arr = groups.get(catName) || [];
+        arr.push({ ts: bill.opened_at, sku: d.id || '', desc: d.name, qty, unit: price, total: qty * price });
+        groups.set(catName, arr);
+      });
+    });
+    return groups;
+  }, [nonVoidedBills]);
 
   React.useEffect(() => {
     const fetchUsage = async () => {
@@ -305,14 +285,10 @@ export const PosReports: React.FC = () => {
       } catch { }
     };
     fetchUsage();
-    setLoading(false);
   }, [range]);
 
-  const availableShifts = React.useMemo(() => Array.from(new Set(auditLog.map((a:any)=>a.shift_id).filter(Boolean))).sort().reverse(), [auditLog]);
-  const centreOptions = React.useMemo(() => Array.from(new Set(items.map((it:any)=>it.costCenter).filter(Boolean))), [items]);
 
   if (!isManager) return <div className="p-6 text-center">Manager Access Required</div>;
-  if (loading) return <div className="p-6">Loading...</div>;
 
   return (
     <div className="ds-card p-4">
@@ -339,20 +315,23 @@ export const PosReports: React.FC = () => {
           </Select>
         </div>
       </div>
-
-      {selectedReport === 'x-summary' && (
+      
+      {loading && <div className="py-8 text-center text-gray-500">Loading Database Records...</div>}
+      
+      {!loading && selectedReport === 'x-summary' && (
         <div>
           <h3 className="font-bold mb-2">Category Summary</h3>
           <table className="ds-table">
-            <thead><tr><th>Category</th><th className="right">Sold</th><th className="right">Gross</th><th className="right">Percent</th></tr></thead>
+            <thead><tr><th>Outlet</th><th className="right">Sold</th><th className="right">Gross</th><th className="right">Percent</th></tr></thead>
             <tbody>
               {categorySummary.rows.map(r => (<tr key={r.name}><td>{r.name}</td><td className="right">{r.itemsSold}</td><td className="right">{formatCurrency(r.grossSales)}</td><td className="right">{r.percent.toFixed(2)}%</td></tr>))}
+              {categorySummary.rows.length === 0 && <tr><td colSpan={4} className="text-center p-4">No Sales found in range</td></tr>}
             </tbody>
           </table>
         </div>
       )}
 
-      {selectedReport === 'x-detail' && (
+      {!loading && selectedReport === 'x-detail' && (
         <div>
           <h3 className="font-bold mb-2">Detailed Sales</h3>
           {Array.from(detailedRowsByCategory.entries()).map(([cat, rows]) => (
@@ -360,24 +339,25 @@ export const PosReports: React.FC = () => {
               <div className="font-semibold bg-gray-50 p-1">{cat}</div>
               <table className="ds-table">
                 <tbody>
-                  {rows.map((r, i) => (<tr key={i}><td className="text-xs">{r.ts.slice(11,16)}</td><td>{r.desc}</td><td className="right">{r.qty}</td><td className="right">{formatCurrency(r.total)}</td></tr>))}
+                  {rows.map((r, i) => (<tr key={i}><td className="text-xs">{new Date(r.ts).toLocaleString()}</td><td>{r.desc}</td><td className="right">{r.qty}</td><td className="right">{formatCurrency(r.total)}</td></tr>))}
                 </tbody>
               </table>
             </div>
           ))}
+          {detailedRowsByCategory.size === 0 && <div className="text-center p-4 border rounded">No Sales found in range</div>}
         </div>
       )}
 
-      {selectedReport === 'cocktail-usage' && (
+      {!loading && selectedReport === 'cocktail-usage' && (
         <table className="ds-table">
           <thead><tr><th>Ingredient</th><th>Unit</th><th className="right">Used</th></tr></thead>
           <tbody>{cocktailUsageData.usageRows.map((r, i) => (<tr key={i}><td>{r.name}</td><td>{r.unit}</td><td className="right">{r.used.toFixed(2)}</td></tr>))}</tbody>
         </table>
       )}
 
-      {selectedReport === 'goods-received' && <GoodsReceivedReportView rangeText={`${range.start} to ${range.end}`} inRange={inRange} />}
-      {selectedReport === 'voids' && <VoidsReportView auditLog={auditLog} itemIndexByName={itemIndexByName} rangeText="" />}
-      {selectedReport === 'stock-movement' && <StockMovementReportView auditLog={auditLog} itemIndexByName={itemIndexByName} rangeText="" />}
+      {!loading && selectedReport === 'goods-received' && <GoodsReceivedReportView rangeText={`${range.start} to ${range.end}`} grnRows={dbGrns} />}
+      {!loading && selectedReport === 'voids' && <VoidsReportView voidsRows={voidedBills} />}
+      {!loading && selectedReport === 'stock-movement' && <StockMovementReportView movementRows={dbMovements} />}
     </div>
   );
 };

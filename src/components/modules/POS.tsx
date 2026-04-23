@@ -2,7 +2,7 @@ import React, { useMemo, useState, useRef } from 'react';
 import { useData } from '@/context/DataContext';
 import { PaymentModal, BillSummary, QuickActions } from '../pos/POSIntegrationComponents';
 import { formatCurrency, generateShiftXReadingHTML, printDocument } from '@/lib/posIntegration';
-import { deductInventoryStock } from '@/lib/dbSync';
+import { deductInventoryStock, syncPosBillToDb } from '@/lib/dbSync';
 import { useShift } from '@/contexts/ShiftContext';
 import { getOutletReceiptSettings } from '@/components/modules/ReceiptSettingsModal';
 import { useAuth } from '@/context/AuthContext';
@@ -275,6 +275,39 @@ export const POS: React.FC = () => {
       await deductInventoryStock(deductionItems);
     } catch (err) {
       console.error('Failed to deduct stock:', err);
+    }
+
+    // Sync POS Bill to DB
+    try {
+      const dbBill = {
+        id: bill.id,
+        bill_number: formatBillNumber(bill.id),
+        outlet: activeCategory === 'bar' ? 'Bar' : 'Restaurant',
+        table_number: null,
+        guest_id: paymentData.paymentMethod === 'room-charge' ? (guests.find((g: any) => g.roomNumber === paymentData.roomNumber)?.id || null) : null,
+        folio_id: folioChargeId || null,
+        room_number: paymentData.roomNumber || null,
+        subtotal: bill.subtotal,
+        tax_amount: bill.tax,
+        discount_amount: 0,
+        service_charge: 0,
+        total_amount: bill.total,
+        items: bill.items,
+        payment_method: paymentData.paymentMethod,
+        payment_status: paymentData.paymentMethod === 'room-charge' ? 'charged_to_room' : 'paid',
+        amount_paid: bill.total,
+        change_amount: 0,
+        business_date: activeShift?.date || new Date().toISOString().slice(0, 10),
+        opened_at: bill.createdAt,
+        closed_at: new Date().toISOString(),
+        opened_by: user?.username || 'system',
+        closed_by: user?.username || 'system',
+        is_voided: false,
+        shift_id: activeShift?.id || null
+      };
+      await syncPosBillToDb(dbBill as any);
+    } catch (err) {
+      console.error('Failed to sync POS bill to DB:', err);
     }
 
     return { ok: true, method: paymentData.paymentMethod, billId: bill.id, folioPosted, folioChargeId };
