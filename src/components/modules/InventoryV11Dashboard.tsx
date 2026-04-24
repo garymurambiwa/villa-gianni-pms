@@ -30,15 +30,23 @@ export const InventoryV11Dashboard: React.FC = () => {
   const fetchStats = async () => {
     try {
       setLoading(true);
-      // Fetch from API
-      const response = await fetch('/api/v1/inventory/balance/loc_main_cellar');
-      const data = await response.json();
+      // Fetch balance for critical stock check
+      const balRes = await fetch('/api/v1/inventory/balance/loc_main_cellar');
+      const balData = await balRes.json();
       
+      // Fetch recent GRNs
+      const grnRes = await fetch('/api/v1/inventory/grn?limit=5');
+      const grnData = await grnRes.json();
+
+      // Fetch pending transfers
+      const transRes = await fetch('/api/v1/inventory/transfer?status=draft');
+      const transData = await transRes.json();
+
       setStats({
-        totalStockValue: 0,
-        criticalItems: 0,
-        pendingTransfers: 0,
-        recentGRNs: [],
+        totalStockValue: balData.ok ? balData.data.reduce((sum: number, i: any) => sum + (parseFloat(i.current_balance) * parseFloat(i.weighted_avg_cost || 0)), 0) : 0,
+        criticalItems: balData.ok ? balData.data.filter((i: any) => parseFloat(i.current_balance) < 5).length : 0,
+        pendingTransfers: transData.ok ? transData.data.length : 0,
+        recentGRNs: grnData.ok ? grnData.data : [],
         varianceAlerts: [],
       });
     } catch (error) {
@@ -57,7 +65,7 @@ export const InventoryV11Dashboard: React.FC = () => {
             <CardTitle className="text-sm font-medium text-gray-600">Total Stock Value</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-gray-900">$0.00</div>
+            <div className="text-2xl font-bold text-gray-900">${stats.totalStockValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             <p className="text-xs text-gray-500 mt-1">Across all locations</p>
           </CardContent>
         </Card>
@@ -118,7 +126,20 @@ export const InventoryV11Dashboard: React.FC = () => {
             <p className="text-sm text-gray-500">No GRNs recorded yet</p>
           ) : (
             <div className="space-y-2">
-              {/* GRN items would go here */}
+              {stats.recentGRNs.map((grn: any) => (
+                <div key={grn.id} className="flex justify-between items-center p-2 hover:bg-gray-50 rounded-md border text-sm">
+                  <div className="flex flex-col">
+                    <span className="font-semibold">{grn.grn_number}</span>
+                    <span className="text-xs text-gray-500">{grn.supplier_name}</span>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="font-medium">${parseFloat(grn.total_value || 0).toFixed(2)}</span>
+                    <span className={`text-[10px] uppercase px-1 rounded ${grn.status === 'posted' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                      {grn.status}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>
