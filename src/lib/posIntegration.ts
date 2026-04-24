@@ -287,142 +287,120 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<{ id: str
  * Integration: Use for folio printing, confirmation letters, receipts
  */
 export const generateReceiptHTML = (
-  data: Bill,
-  settings: ReceiptSettings,
-  type: 'receipt' | 'folio' | 'confirmation' = 'receipt',
-  options: {
-    includeSignature?: boolean;
-    showTaxBreakdown?: boolean;
-    serverName?: string;
-    taxLines?: Array<{ name: string; amount: number }>;
-    subtotalOverride?: number;
-    totalOverride?: number;
-  } = {}
-): string => {
-  const subtotal = Number(options.subtotalOverride ?? (Array.isArray(data.items) ? data.items.reduce((s, it) => s + Number(it.subtotal || 0), 0) : 0))
-  let tax = 0
-  const total = Number(options.totalOverride ?? data.total ?? 0)
-  const taxLines = Array.isArray(options.taxLines) ? options.taxLines : [{ name: `Tax`, amount: Number(((total - subtotal) || 0).toFixed(2)) }]
-  tax = taxLines.reduce((s, t) => s + Number(t.amount || 0), 0)
-  const timestamp = new Date().toLocaleString();
+  data,
+  settings,
+  type = 'receipt',
+  options = {}
+) => {
   const safeItems = Array.isArray(data.items) ? data.items : [];
+  const subtotal = Number(
+    options.subtotalOverride != null ? options.subtotalOverride :
+    safeItems.reduce((s, it) => s + Number(it.subtotal || (Number(it.quantity || 0) * Number(it.price || 0))), 0)
+  );
+  const total = Number(options.totalOverride != null ? options.totalOverride : (Number(data.total) > 0 ? data.total : subtotal));
+  const taxLines = Array.isArray(options.taxLines) ? options.taxLines : [];
+  const isKOT = type === 'confirmation';
+  const timestamp = new Date().toLocaleString();
+  const receiptNum = String(data.id || '').replace(/[^a-zA-Z0-9\-]/g, '').slice(0, 20);
+  const tblId = data.tableId ? data.tableId : '';
+  const tableInfo = tblId ? '<div>Table: ' + tblId.replace('t', 'T').toUpperCase() + '</div>' : '';
+  const pageSize = settings.paper_size === '58mm' ? '58mm' : '80mm';
+  const bodyWidth = settings.paper_size === '58mm' ? '54mm' : '74mm';
+  const fontSize = settings.paper_size === '58mm' ? '10px' : '11px';
+
   const rowsHTML = safeItems.map(item => {
-    const qty = Number(item.quantity ?? 0);
-    const price = Number(item.price ?? 0);
-    const sub = Number(item.subtotal ?? (qty * price));
-    const name = String(item.name ?? 'Item');
-    return `
-          <tr>
-            <td>${name}</td>
-            <td style="text-align: center;">${qty || ''}</td>
-            <td class="right">$${sub.toFixed(2)}</td>
-          </tr>`;
+    const qty = Number(item.quantity != null ? item.quantity : 0);
+    const price = Number(item.price != null ? item.price : 0);
+    const sub = Number(item.subtotal != null ? item.subtotal : (qty * price));
+    const name = String(item.name != null ? item.name : 'Item');
+    return '<tr><td class="nm">' + name + '</td><td class="qt">' + (qty || '') + '</td><td class="pr">' + (isKOT ? '' : '$' + sub.toFixed(2)) + '</td></tr>';
   }).join('');
 
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>${type.charAt(0).toUpperCase() + type.slice(1)} - ${data.id}</title>
-      <style>
-        @media print {
-          @page { margin: 0; }
-          body { margin: 1cm; }
-        }
-        body {
-          font-family: Arial, sans-serif;
-          font-size: 12px;
-          max-width: ${settings.paper_size === '58mm' ? '200px' : '300px'};
-          margin: 0 auto;
-          padding: 20px;
-        }
-        .center { text-align: center; }
-        .bold { font-weight: bold; }
-        .large { font-size: 16px; }
-        table { width: 100%; border-collapse: collapse; }
-        td, th { padding: 4px; border-bottom: 1px solid #f0f0f0; }
-        .right { text-align: right; }
-        .border-top { border-top: 1px solid #ccc; }
-        .border-bottom { border-bottom: 1px solid #ccc; }
-        .signature-line { border-bottom: 1px solid black; height: 40px; margin: 10px 0; }
-      </style>
-    </head>
-    <body>
-      <!-- Header with branding -->
-      ${settings.show_logo && settings.logo_url ? `<div class="center"><img src="${settings.logo_url}" alt="Logo" style="max-width: 100px;"></div>` : ''}
-      <div class="center bold large">${settings.restaurant_name}</div>
-      ${settings.address ? `<div class="center">${settings.address}</div>` : ''}
-      ${settings.phone ? `<div class="center">Phone: ${settings.phone}</div>` : ''}
-      ${settings.email ? `<div class="center">Email: ${settings.email}</div>` : ''}
-      ${settings.header_text ? `<div class="center">${settings.header_text}</div>` : ''}
-      
-      <br>
-      
-      <!-- Transaction details -->
-      <div class="border-top border-bottom" style="padding: 8px 0;">
-        <div>${type.toUpperCase()}: ${data.id.slice(0, 8)}</div>
-        ${data.roomNumber ? `<div>Room: ${data.roomNumber}</div>` : ''}
-        ${options.serverName ? `<div>Staff: ${options.serverName}</div>` : ''}
-        <div>${timestamp}</div>
-        ${data.customerName ? `<div>Guest: ${data.customerName}</div>` : ''}
-        ${data.roomNumber ? `<div>Room: ${data.roomNumber}</div>` : ''}
-      </div>
-      
-      <br>
-      
-      <!-- Items table -->
-      <table>
-        <tr class="border-bottom">
-          <th style="text-align: left;">Item</th>
-          <th>Qty</th>
-          <th class="right">Price</th>
-        </tr>
-        ${rowsHTML}
-      </table>
-      
-      <br>
-      
-      <!-- Totals section -->
-      <div class="border-top" style="padding-top: 8px;">
-        ${options.showTaxBreakdown || settings.show_tax_breakdown ? `
-          <div>Subtotal: <span class="right">$${subtotal.toFixed(2)}</span></div>
-          ${taxLines.map(tl => `<div>${tl.name}: <span class="right">$${tl.amount.toFixed(2)}</span></div>`).join('')}
-        ` : ''}
-        <div class="bold large">TOTAL: <span class="right">$${total.toFixed(2)}</span></div>
-      </div>
-      
-      <!-- Signature section for room charges -->
-      ${options.includeSignature ? `
-        <br>
-        <div class="border-top" style="padding-top: 12px;">
-          <div class="bold">Guest Signature:</div>
-          <div class="signature-line"></div>
-          <div style="font-size: 12px;">I agree to have this amount charged to my room folio.</div>
-        </div>
-      ` : ''}
-      
-      <br>
-      
-      <!-- Footer -->
-      ${settings.promotional_message ? `<div class="center">${settings.promotional_message}</div>` : ''}
-      ${settings.footer_text ? `<div class="center">${settings.footer_text}</div>` : ''}
-      <div class="center" style="margin-top:12px;font-size:10px;color:#555">Powered By Coredigita</div>
-      <div class="center">Thank you!</div>
-      <!-- ReceiptBrandingApplied -->
-  </body>
-  </html>
-  `;
+  const totalsHTML = !isKOT ? (
+    '<div class="div">--------------------------------</div>' +
+    '<table>' +
+    (options.showTaxBreakdown && Math.abs(subtotal - total) > 0.01 ? '<tr class="tot"><td>Subtotal</td><td class="r">$' + subtotal.toFixed(2) + '</td></tr>' : '') +
+    taxLines.map(tl => '<tr class="tot"><td>' + tl.name + '</td><td class="r">$' + Number(tl.amount).toFixed(2) + '</td></tr>').join('') +
+    '<tr class="tot grand"><td>TOTAL</td><td class="r">$' + total.toFixed(2) + '</td></tr>' +
+    '</table>'
+  ) : '';
+
+  const sigHTML = options.includeSignature ? (
+    '<div class="div">--------------------------------</div>' +
+    '<div style="margin-top:8mm"><div>Guest Signature:</div>' +
+    '<div style="border-bottom:1px solid #000;height:10mm;margin:2mm 0;"></div>' +
+    '<div style="font-size:0.82em">I agree to have this charged to my room folio.</div></div>'
+  ) : '';
+
+  const logoHTML = (settings.show_logo && settings.logo_url)
+    ? '<div class="logo"><img src="' + settings.logo_url + '" alt=""/></div>'
+    : '';
+
+  return '<!DOCTYPE html>\n<html>\n<head>\n' +
+    '<title>' + (isKOT ? 'KOT' : 'Receipt') + ' ' + receiptNum + '</title>\n' +
+    '<meta charset="UTF-8"/>\n' +
+    '<style>\n' +
+    '@page { size: ' + pageSize + ' auto; margin: 0; }\n' +
+    '* { box-sizing: border-box; margin: 0; padding: 0; }\n' +
+    'html, body { width: ' + bodyWidth + '; background: #fff; color: #000; }\n' +
+    'body { font-family: \'Courier New\', Courier, monospace; font-size: ' + fontSize + '; padding: 3mm 2mm 8mm; -webkit-print-color-adjust: exact; print-color-adjust: exact; }\n' +
+    '.c { text-align: center; } .r { text-align: right; } .b { font-weight: bold; }\n' +
+    '.div { text-align: center; margin: 1.5mm 0; }\n' +
+    '.logo { text-align: center; margin-bottom: 2mm; }\n' +
+    '.logo img { max-width: 48mm; max-height: 18mm; object-fit: contain; }\n' +
+    '.biz { font-weight: bold; font-size: 1.3em; text-align: center; }\n' +
+    '.info { text-align: center; font-size: 0.9em; line-height: 1.5; }\n' +
+    '.ttl { font-weight: bold; font-size: 1.1em; text-align: center; text-transform: uppercase; margin: 2mm 0 1mm; }\n' +
+    '.meta { font-size: 0.9em; line-height: 1.6; }\n' +
+    'table { width: 100%; border-collapse: collapse; }\n' +
+    'thead th { font-weight: bold; border-bottom: 1px dashed #000; padding-bottom: 1mm; }\n' +
+    '.nm { text-align: left; width: 58%; word-break: break-word; padding: 0.8mm 0; }\n' +
+    '.qt { text-align: center; width: 10%; padding: 0.8mm 1mm; }\n' +
+    '.pr { text-align: right; width: 32%; padding: 0.8mm 0; }\n' +
+    '.tot td { padding: 0.5mm 0; font-size: 0.95em; }\n' +
+    '.tot.grand td { font-weight: bold; font-size: 1.25em; border-top: 1px solid #000; padding-top: 1.5mm; }\n' +
+    '.ft { text-align: center; font-size: 0.88em; margin-top: 2mm; line-height: 1.6; }\n' +
+    '.pw { text-align: center; font-size: 0.78em; margin-top: 3mm; color: #444; }\n' +
+    '@media print { body { padding-bottom: 10mm; } }\n' +
+    '</style>\n</head>\n<body>\n' +
+    logoHTML +
+    '<div class="biz">' + settings.restaurant_name + '</div>\n' +
+    '<div class="info">' +
+      (settings.address ? '<div>' + settings.address + '</div>' : '') +
+      (settings.phone ? '<div>Phone: ' + settings.phone + '</div>' : '') +
+      (settings.email ? '<div>' + settings.email + '</div>' : '') +
+      (settings.header_text ? '<div>' + settings.header_text + '</div>' : '') +
+    '</div>\n' +
+    '<div class="div">================================</div>\n' +
+    '<div class="ttl">' + (isKOT ? 'Kitchen Order Ticket' : type === 'folio' ? 'Tax Invoice' : 'Receipt') + '</div>\n' +
+    '<div class="div">--------------------------------</div>\n' +
+    '<div class="meta">' +
+      '<div>RECEIPT: ' + receiptNum + '</div>' +
+      (data.customerName ? '<div>Guest: ' + data.customerName + '</div>' : '') +
+      (data.roomNumber ? '<div>Room: ' + data.roomNumber + '</div>' : '') +
+      tableInfo +
+      (options.serverName ? '<div>Staff: ' + options.serverName + '</div>' : '') +
+      '<div>' + timestamp + '</div>' +
+    '</div>\n' +
+    '<div class="div">--------------------------------</div>\n' +
+    '<table><thead><tr>' +
+      '<th class="nm">Item</th>' +
+      '<th class="qt c">Qty</th>' +
+      '<th class="pr r">' + (isKOT ? '' : 'Price') + '</th>' +
+    '</tr></thead><tbody>' + rowsHTML + '</tbody></table>\n' +
+    totalsHTML +
+    sigHTML +
+    '<div class="div">--------------------------------</div>\n' +
+    '<div class="ft">' +
+      (settings.promotional_message ? '<div>' + settings.promotional_message + '</div>' : '') +
+      (settings.footer_text ? '<div>' + settings.footer_text + '</div>' : '<div>Thank you!</div>') +
+    '</div>\n' +
+    '<div class="pw">Powered By Coredigita</div>\n' +
+    '<!-- ReceiptBrandingApplied -->\n' +
+    '</body>\n</html>';
 };
 
-/**
- * Prints document using browser print dialog
- * 
- * @param htmlContent - HTML content to print
- * @param title - Document title
- * @param autoClose - Whether to auto-close print window
- * 
- * Integration: Use for all PMS document printing (folios, receipts, confirmations)
- */
+
 export const printDocument = (
   htmlContent: string,
   title: string = 'Document',
@@ -431,7 +409,9 @@ export const printDocument = (
   const printWindow = window.open('', '_blank');
   if (!printWindow) { alert('Please allow popups to print documents'); return; }
 
-  const wrapped = applySettingsToHTML(title, htmlContent);
+  // Thermal receipts are self-contained — skip A4 wrapper to preserve @page thermal sizing
+  const isThermal = htmlContent.includes('<!-- ReceiptBrandingApplied -->');
+  const wrapped = isThermal ? htmlContent : applySettingsToHTML(title, htmlContent);
 
   try {
     printWindow.document.open();

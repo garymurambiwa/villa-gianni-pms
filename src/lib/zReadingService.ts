@@ -92,11 +92,6 @@ export const generateZReadingHTML = (
   let settings = receiptSettings;
   if (!settings) {
     try {
-      // access local receipt settings or default
-      const raw = localStorage.getItem('corepms_receipt_settings'); // Receipt settings still local? 
-      // Note: Receipt settings were not part of migration scope, so we leave as localStorage or migrate?
-      // Let's leave for now as it wasn't explicitly requested and is config.
-      // Actually user passed them in usually.
       settings = getOutletReceiptSettings(outlet);
     } catch {
       settings = { restaurant_name: 'Property Management System' };
@@ -106,140 +101,123 @@ export const generateZReadingHTML = (
   const outletDisplayName = outlet === 'default' ? 'All Outlets' :
     outlet.charAt(0).toUpperCase() + outlet.slice(1);
 
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Z Reading - ${zReading.id}</title>
-      <style>
-        @media print { 
-          @page { margin: 0; } 
-          body { margin: 1cm; } 
-          .no-print { display: none; }
-        }
-        body { 
-          font-family: Arial, sans-serif; 
-          max-width: 600px; 
-          margin: 0 auto; 
-          padding: 20px; 
-          font-size: 12px;
-        }
-        .center { text-align: center; }
-        .bold { font-weight: bold; }
-        .header { border-bottom: 1px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
-        .outlet-badge { background: #333; color: #fff; padding: 4px 12px; border-radius: 4px; display: inline-block; margin-top: 5px; }
-        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-        td, th { padding: 4px 8px; border-bottom: 1px solid #eee; }
-        .right { text-align: right; }
-        .section { margin: 15px 0; border-top: 1px solid #eee; padding-top: 10px; }
-        .highlight { background-color: #f0f0f0; font-weight: bold; }
-        .cash-summary { border: 1px solid #000; padding: 10px; margin: 15px 0; }
-      </style>
-    </head>
-    <body>
-      <div class="header">
-        ${settings?.show_logo && settings.logo_url ?
-      `<div class="center"><img src="${settings.logo_url}" alt="Logo" style="max-width: 120px;"></div>` : ''}
-        <div class="center bold" style="font-size: 16px;">${settings?.restaurant_name || 'Property Management System'}</div>
-        ${settings?.address ? `<div class="center">${settings.address}</div>` : ''}
-        ${settings?.phone ? `<div class="center">Phone: ${settings.phone}</div>` : ''}
-        <div class="center outlet-badge">${outletDisplayName}</div>
-        <div class="center bold" style="font-size: 14px; margin-top: 10px;">Z READING - CASH UP SLIP</div>
-        <div class="center">Reading #${zReading.reading_number}</div>
-        <div class="center">Printed: ${timestamp}</div>
-      </div>
+  const bodyWidth = '74mm';
+  const fontSize = '11px';
 
-      <div class="section">
-        <div class="bold">SHIFT INFORMATION</div>
-        <table>
-          <tr><td>Shift ID:</td><td class="right">${shift.id}</td></tr>
-          <tr><td>Opened By:</td><td class="right">${shift.openedBy || 'N/A'}</td></tr>
-          <tr><td>Started:</td><td class="right">${new Date(shift.startedAt).toLocaleString()}</td></tr>
-          <tr><td>Ended:</td><td class="right">${shift.endedAt ? new Date(shift.endedAt).toLocaleString() : 'N/A'}</td></tr>
-          <tr><td>Duration:</td><td class="right">${shiftDuration}</td></tr>
-        </table>
-      </div>
-
-      <div class="section">
-        <div class="bold">SALES SUMMARY</div>
-        <table>
-          <tr><td>Total Sales:</td><td class="right bold">${formatCurrency(zReading.total_sales)}</td></tr>
-          <tr><td>Total Transactions:</td><td class="right">${zReading.total_transactions}</td></tr>
-          <tr><td>Restaurant Sales:</td><td class="right">${formatCurrency(zReading.restaurant_sales)}</td></tr>
-          <tr><td>Bar Sales:</td><td class="right">${formatCurrency(zReading.bar_sales)}</td></tr>
-        </table>
-      </div>
-
-      <div class="section">
-        <div class="bold">PAYMENT BREAKDOWN</div>
-        <table>
-          <tr><td>Cash Payments:</td><td class="right">${formatCurrency(zReading.cash_payments)}</td></tr>
-          <tr><td>Card Payments:</td><td class="right">${formatCurrency(zReading.card_payments)}</td></tr>
-          <tr><td>Room Charges:</td><td class="right">${formatCurrency(zReading.room_charge_payments)}</td></tr>
-        </table>
-      </div>
-
-      ${shift.voidedTransactions.length > 0 ? `
-      <div class="section">
-        <div class="bold">VOIDED TRANSACTIONS</div>
-        <table>
-          <tr><th>Time</th><th>Method</th><th>Amount</th><th>Reason</th></tr>
-          ${shift.voidedTransactions.map(tx => `
-            <tr>
-              <td>${new Date(tx.voidedAt || tx.createdAt).toLocaleTimeString()}</td>
-              <td>${tx.method.toUpperCase()}</td>
-              <td class="right">${formatCurrency(tx.amount)}</td>
-              <td>${tx.voidReason || 'N/A'}</td>
-            </tr>
-          `).join('')}
-        </table>
-        <div style="margin-top: 10px;">
-          <strong>Total Voided: ${formatCurrency(shift.voidedTransactions.reduce((sum, tx) => sum + tx.amount, 0))}</strong>
-        </div>
-      </div>
-      ` : ''}
-
-      <div class="cash-summary">
-        <div class="bold center">CASH RECONCILIATION</div>
-        <table>
-          <tr><td>Opening Cash:</td><td class="right">${formatCurrency(shift.openingCash)}</td></tr>
-          <tr><td>Cash Sales:</td><td class="right">${formatCurrency(zReading.cash_payments)}</td></tr>
-          <tr class="highlight"><td>Expected Cash:</td><td class="right">${formatCurrency(zReading.report_data?.expectedCash || 0)}</td></tr>
-          <tr><td>Closing Cash:</td><td class="right">${formatCurrency(zReading.report_data?.closingCash || 0)}</td></tr>
-          <tr class="highlight">
-            <td>Difference:</td>
-            <td class="right" style="color: ${(zReading.report_data?.cashDifference || 0) >= 0 ? 'green' : 'red'}">
-              ${formatCurrency(zReading.report_data?.cashDifference || 0)}
-            </td>
-          </tr>
-        </table>
-      </div>
-
-      <div class="section">
-        <div class="bold">TRANSACTION DETAILS</div>
-        <table>
-          <tr><th>Time</th><th>Method</th><th>Reference</th><th class="right">Amount</th></tr>
-          ${shift.transactions.map(tx => `
-            <tr>
-              <td>${new Date(tx.createdAt).toLocaleTimeString()}</td>
-              <td>${tx.method.toUpperCase()}</td>
-              <td>${tx.reference || '—'}</td>
-              <td class="right">${formatCurrency(tx.amount)}</td>
-            </tr>
-          `).join('')}
-        </table>
-      </div>
-
-      <div class="section center">
-        <div style="margin-top: 20px; font-size: 10px;">
-          <div>Z Reading ID: ${zReading.id}</div>
-          <div>Generated: ${zReading.created_at}</div>
-          <div>System: CorePMS v1.0</div>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>Z Reading - ${zReading.id}</title>
+  <meta charset="UTF-8"/>
+  <style>
+    @page { size: 80mm auto; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: ${bodyWidth}; background: #fff; color: #000; }
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: ${fontSize};
+      padding: 3mm 2mm 8mm;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .c { text-align: center; }
+    .r { text-align: right; }
+    .b { font-weight: bold; }
+    .div { text-align: center; margin: 1.5mm 0; white-space: nowrap; overflow: hidden; }
+    .logo { text-align: center; margin-bottom: 2mm; }
+    .logo img { max-width: 48mm; max-height: 18mm; object-fit: contain; }
+    .biz { font-weight: bold; font-size: 1.3em; text-align: center; }
+    .info { text-align: center; font-size: 0.9em; line-height: 1.5; }
+    .ttl { font-weight: bold; font-size: 1.1em; text-align: center; text-transform: uppercase; margin: 2mm 0 1mm; }
+    .meta { font-size: 0.9em; line-height: 1.6; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th { font-weight: bold; border-bottom: 1px dashed #000; padding-bottom: 1mm; }
+    .nm { text-align: left; width: 40%; word-break: break-word; padding: 0.8mm 0; }
+    .qt { text-align: center; width: 20%; padding: 0.8mm 1mm; }
+    .pr { text-align: right; width: 40%; padding: 0.8mm 0; }
+    .tot td { padding: 0.5mm 0; font-size: 0.95em; }
+    .ft { text-align: center; font-size: 0.88em; margin-top: 2mm; line-height: 1.6; }
+    .pw { text-align: center; font-size: 0.78em; margin-top: 3mm; color: #444; }
+  </style>
+</head>
+<body>
+  ${settings?.show_logo && settings.logo_url ? `<div class="logo"><img src="${settings.logo_url}" alt=""/></div>` : ''}
+  <div class="biz">${settings?.restaurant_name || 'Property Management System'}</div>
+  <div class="info">
+    ${settings?.address ? `<div>${settings.address}</div>` : ''}
+    ${settings?.phone ? `<div>Phone: ${settings.phone}</div>` : ''}
+    ${settings?.email ? `<div>${settings.email}</div>` : ''}
+  </div>
+  <div class="div">================================</div>
+  <div class="ttl">Z Reading - Cash Up Slip</div>
+  <div class="div">--------------------------------</div>
+  <div class="meta">
+    <div>Reading: ${zReading.reading_number}</div>
+    <div>Outlet: ${outletDisplayName}</div>
+    <div>Printed: ${timestamp}</div>
+  </div>
+  <div class="div">--------------------------------</div>
+  <div class="meta">
+    <div>Shift ID: ${shift.id}</div>
+    <div>Opened By: ${shift.openedBy || 'N/A'}</div>
+    <div>Started: ${new Date(shift.startedAt).toLocaleString()}</div>
+    <div>Ended: ${shift.endedAt ? new Date(shift.endedAt).toLocaleString() : 'N/A'}</div>
+    <div>Duration: ${shiftDuration}</div>
+  </div>
+  <div class="div">--------------------------------</div>
+  <table>
+    <tbody>
+      <tr><td>Total Sales</td><td class="r b">${formatCurrency(zReading.total_sales)}</td></tr>
+      <tr><td>Transactions</td><td class="r">${zReading.total_transactions}</td></tr>
+      <tr><td>Restaurant</td><td class="r">${formatCurrency(zReading.restaurant_sales)}</td></tr>
+      <tr><td>Bar</td><td class="r">${formatCurrency(zReading.bar_sales)}</td></tr>
+    </tbody>
+  </table>
+  <div class="div">--------------------------------</div>
+  <table>
+    <tbody>
+      <tr><td>Cash</td><td class="r">${formatCurrency(zReading.cash_payments)}</td></tr>
+      <tr><td>Card</td><td class="r">${formatCurrency(zReading.card_payments)}</td></tr>
+      <tr><td>Room Charge</td><td class="r">${formatCurrency(zReading.room_charge_payments)}</td></tr>
+    </tbody>
+  </table>
+  ${shift.voidedTransactions.length > 0 ? `
+  <div class="div">--------------------------------</div>
+  <div class="b">Voided Transactions</div>
+  <table>
+    <tbody>
+      ${shift.voidedTransactions.map(tx => `<tr><td class="nm">${new Date(tx.voidedAt || tx.createdAt).toLocaleTimeString()}</td><td class="qt">${tx.method.toUpperCase()}</td><td class="pr">${formatCurrency(tx.amount)}</td></tr>`).join('')}
+    </tbody>
+  </table>
+  <div>Total Voided: ${formatCurrency(shift.voidedTransactions.reduce((sum, tx) => sum + tx.amount, 0))}</div>
+  ` : ''}
+  <div class="div">--------------------------------</div>
+  <div class="b c">Cash Reconciliation</div>
+  <table>
+    <tbody>
+      <tr><td>Opening Cash</td><td class="r">${formatCurrency(shift.openingCash)}</td></tr>
+      <tr><td>Cash Sales</td><td class="r">${formatCurrency(zReading.cash_payments)}</td></tr>
+      <tr><td>Expected</td><td class="r b">${formatCurrency(zReading.report_data?.expectedCash || 0)}</td></tr>
+      <tr><td>Closing</td><td class="r">${formatCurrency(zReading.report_data?.closingCash || 0)}</td></tr>
+      <tr><td>Difference</td><td class="r" style="color: ${(zReading.report_data?.cashDifference || 0) >= 0 ? '#000' : '#000'}">${formatCurrency(zReading.report_data?.cashDifference || 0)}</td></tr>
+    </tbody>
+  </table>
+  <div class="div">--------------------------------</div>
+  <div class="b">Transactions</div>
+  <table>
+    <tbody>
+      ${shift.transactions.slice(0, 20).map(tx => `<tr><td class="nm">${new Date(tx.createdAt).toLocaleTimeString()}</td><td class="qt">${tx.method.toUpperCase()}</td><td class="pr">${formatCurrency(tx.amount)}</td></tr>`).join('')}
+    </tbody>
+  </table>
+  ${shift.transactions.length > 20 ? `<div>... and ${shift.transactions.length - 20} more</div>` : ''}
+  <div class="div">--------------------------------</div>
+  <div class="ft">
+    ${settings?.footer_text ? `<div>${settings.footer_text}</div>` : '<div>Thank you!</div>'}
+  </div>
+  <div class="pw">Powered By Coredigita</div>
+  <!-- ReceiptBrandingApplied -->
+</body>
+</html>`;
 };
 
 export const printZReading = async (
