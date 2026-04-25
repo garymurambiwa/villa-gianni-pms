@@ -120,8 +120,8 @@ export const validateReceiptBranding = (b: Partial<ReceiptBranding>, requireName
   // Validate logo_url - allow empty, http(s) URLs, and base64 data URLs
   if (b.logo_url !== undefined) {
     const u = String(b.logo_url || '').trim();
-    if (u && !/^(https?:\/\/|data:image\/)/i.test(u)) {
-      errors.logo_url = 'Logo must be a valid URL or uploaded image';
+    if (u && !/^(https?:\/\/|data:image\/|\/)/i.test(u)) {
+      errors.logo_url = 'Logo must be a valid URL, absolute path (starting with /), or uploaded image';
     }
   }
 

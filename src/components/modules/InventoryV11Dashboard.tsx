@@ -8,6 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertTriangle, CheckCircle, TrendingDown } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 export const InventoryV11Dashboard: React.FC = () => {
   const [stats, setStats] = useState({
@@ -16,6 +23,7 @@ export const InventoryV11Dashboard: React.FC = () => {
     pendingTransfers: 0,
     recentGRNs: [],
     varianceAlerts: [],
+    items: [] as any[],
   });
   const [loading, setLoading] = useState(true);
 
@@ -48,6 +56,7 @@ export const InventoryV11Dashboard: React.FC = () => {
         pendingTransfers: transData.ok ? transData.data.length : 0,
         recentGRNs: grnData.ok ? grnData.data : [],
         varianceAlerts: [],
+        items: balData.ok ? balData.data : [],
       });
     } catch (error) {
       console.error('Failed to fetch inventory stats:', error);
@@ -142,6 +151,57 @@ export const InventoryV11Dashboard: React.FC = () => {
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Stock Levels Table */}
+      <Card>
+        <CardHeader>
+          <div className="flex justify-between items-center">
+            <CardTitle className="text-base">Current Stock Levels</CardTitle>
+            <Select defaultValue="loc_main_cellar">
+              <SelectTrigger className="w-[180px] h-8">
+                <SelectValue placeholder="Location" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="loc_main_cellar">Main Cellar</SelectItem>
+                <SelectItem value="loc_bar1">Bar 1</SelectItem>
+                <SelectItem value="loc_restaurant">Restaurant</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="border rounded-md overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="px-4 py-2 text-left font-medium">Item Name</th>
+                  <th className="px-4 py-2 text-center font-medium">Stock Level</th>
+                  <th className="px-4 py-2 text-center font-medium">UOM</th>
+                  <th className="px-4 py-2 text-right font-medium">Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.items.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
+                      No stock records found for this location. Record a GRN to add stock.
+                    </td>
+                  </tr>
+                ) : (
+                  stats.items.map((item: any) => (
+                    <tr key={item.item_id} className="border-b hover:bg-gray-50">
+                      <td className="px-4 py-2 font-medium">{item.name || item.item_id}</td>
+                      <td className="px-4 py-2 text-center">{parseFloat(item.current_balance).toFixed(2)}</td>
+                      <td className="px-4 py-2 text-center text-xs text-gray-500">{item.base_uom_symbol || 'UNIT'}</td>
+                      <td className="px-4 py-2 text-right">${(parseFloat(item.current_balance) * parseFloat(item.weighted_avg_cost || 0)).toFixed(2)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
 

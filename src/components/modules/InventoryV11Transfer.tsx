@@ -36,6 +36,21 @@ export const InventoryV11Transfer: React.FC = () => {
   const [referenceText, setReferenceText] = useState('');
   const [lines, setLines] = useState<TransferLine[]>([]);
   const [loading, setLoading] = useState(false);
+  const [availableItems, setAvailableItems] = useState<any[]>([]);
+
+  React.useEffect(() => {
+    fetchAvailableStock();
+  }, [sourceLocation]);
+
+  const fetchAvailableStock = async () => {
+    try {
+      const res = await fetch(`/api/v1/inventory/balance/${sourceLocation}`);
+      const data = await res.json();
+      if (data.ok) setAvailableItems(data.data);
+    } catch (e) {
+      console.error('Failed to fetch balance', e);
+    }
+  };
 
   const navigateTo = (module: string) => {
     window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } }));
@@ -227,12 +242,25 @@ export const InventoryV11Transfer: React.FC = () => {
                   {lines.map((line) => (
                     <tr key={line.id} className="border-b hover:bg-gray-50">
                       <td className="px-4 py-2">
-                        <Input
-                          placeholder="Item ID"
-                          value={line.item_id}
-                          onChange={(e) => updateLine(line.id, 'item_id', e.target.value)}
-                          className="text-xs"
-                        />
+                        <Select 
+                          value={line.item_id} 
+                          onValueChange={(val) => {
+                            const item = availableItems.find(i => i.item_id === val);
+                            updateLine(line.id, 'item_id', val);
+                            updateLine(line.id, 'current_source_balance', parseFloat(item?.current_balance || '0'));
+                          }}
+                        >
+                          <SelectTrigger className="text-xs h-8">
+                            <SelectValue placeholder="Select Item" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableItems.map(item => (
+                              <SelectItem key={item.item_id} value={item.item_id}>
+                                {item.item_id} ({parseFloat(item.current_balance).toFixed(2)})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </td>
                       <td className="px-4 py-2 font-medium text-green-600">{line.current_source_balance.toFixed(2)}</td>
                       <td className="px-4 py-2">

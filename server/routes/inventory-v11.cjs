@@ -39,7 +39,7 @@ router.post('/grn', async (req, res) => {
     const grnCountRes = await client.query(
       `SELECT COALESCE(MAX(CAST(SUBSTRING(grn_number FROM 10) AS INTEGER)), 0) + 1 as next_num
        FROM public.inv_grn_headers 
-       WHERE grn_number ~ '^GRN-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-\\d+$'`
+       WHERE grn_number ~ ('^GRN-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-\\d+$')`
     );
     const nextNum = grnCountRes.rows[0].next_num;
     const grnNumber = 'GRN-' + new Date().getFullYear() + '-' + String(nextNum).padStart(4, '0');
@@ -218,7 +218,7 @@ router.post('/transfer', async (req, res) => {
     const transCountRes = await client.query(
       `SELECT COALESCE(MAX(CAST(SUBSTRING(transfer_number FROM 12) AS INTEGER)), 0) + 1 as next_num
        FROM public.inv_transfer_headers 
-       WHERE transfer_number ~ '^TRANS-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-\\d+$'`
+       WHERE transfer_number ~ ('^TRANS-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-\\d+$')`
     );
     const nextNum = transCountRes.rows[0].next_num;
     const transferNumber = 'TRANS-' + new Date().getFullYear() + '-' + String(nextNum).padStart(4, '0');
@@ -519,7 +519,7 @@ router.post('/variance/generate', async (req, res) => {
     const varCountRes = await client.query(
       `SELECT COALESCE(MAX(CAST(SUBSTRING(report_number FROM 10) AS INTEGER)), 0) + 1 as next_num
        FROM public.inv_variance_reports
-       WHERE report_number ~ '^VAR-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-\\d+$'`
+       WHERE report_number ~ ('^VAR-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-\\d+$')`
     );
     const nextNum = varCountRes.rows[0].next_num;
     const reportNumber = 'VAR-' + new Date().getFullYear() + '-' + String(nextNum).padStart(4, '0');

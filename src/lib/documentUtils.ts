@@ -31,11 +31,12 @@ export interface BatchExportOptions extends ExportOptions {
 }
 
 // Helper function to format currency
-export const formatCurrency = (amount: number): string => {
+export const formatCurrency = (amount: any): string => {
+  const num = Number(amount);
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
-  }).format(amount);
+  }).format(isNaN(num) ? 0 : num);
 };
 
 // Generate folio document content

@@ -46,7 +46,7 @@ const readOutletSettings = (): OutletSettings => {
       email: defaultPrefs.email,
       website: defaultPrefs.website,
       logo_url: defaultPrefs.logo_url,
-      show_logo: defaultPrefs.show_logo,
+      show_logo: defaultPrefs.show_logo ?? true,
       header_text: defaultPrefs.header_text,
       footer_text: defaultPrefs.footer_text,
       paper_size: defaultPrefs.paper_size,
@@ -87,6 +87,7 @@ const ReceiptSettingsModal: React.FC<Props> = ({ open, onClose }) => {
   const [activeOutlet, setActiveOutlet] = React.useState<OutletType>('default');
   const [outletSettings, setOutletSettings] = React.useState<OutletSettings>(readOutletSettings());
   const [logoPreview, setLogoPreview] = React.useState<string | undefined>(undefined);
+  const [logoSource, setLogoSource] = React.useState<'upload' | 'url'>('upload');
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [saving, setSaving] = React.useState(false);
 
@@ -104,6 +105,7 @@ const ReceiptSettingsModal: React.FC<Props> = ({ open, onClose }) => {
       const settings = readOutletSettings();
       setOutletSettings(settings);
       setLogoPreview(settings.default.logo_url);
+      setLogoSource(settings.default.logo_url?.startsWith('data:image/') ? 'upload' : 'url');
       setErrors({});
       setActiveOutlet('default');
     }
@@ -167,6 +169,12 @@ const ReceiptSettingsModal: React.FC<Props> = ({ open, onClose }) => {
     reader.readAsDataURL(file);
   };
 
+  const handleLogoUrlChange = (url: string) => {
+    setLogoPreview(url);
+    updatePrefs({ logo_url: url, show_logo: true });
+    setErrors(prev => ({ ...prev, logo_url: '' }));
+  };
+
   const validate = (): boolean => {
     const prefs = activeOutlet === 'default' ? outletSettings.default : currentPrefs;
     const e: Record<string, string> = {};
@@ -202,8 +210,9 @@ const ReceiptSettingsModal: React.FC<Props> = ({ open, onClose }) => {
     // Validate logo URL format if provided
     if (prefs.logo_url) {
       const logoUrl = String(prefs.logo_url).trim();
-      if (logoUrl && !/^(https?:\/\/|data:image\/)/i.test(logoUrl)) {
-        e.logo_url = 'Logo must be a valid URL or uploaded image.';
+      // Allow http, https, data urls, or absolute paths starting with /
+      if (logoUrl && !/^(https?:\/\/|data:image\/|\/)/i.test(logoUrl)) {
+        e.logo_url = 'Logo must be a valid URL, absolute path (starting with /), or uploaded image.';
       }
     }
     
@@ -373,14 +382,51 @@ const ReceiptSettingsModal: React.FC<Props> = ({ open, onClose }) => {
         </div>
       </div>
       <div>
-        <Label>Company Logo (PNG, JPG, SVG)</Label>
-        <Input
-          type="file"
-          accept="image/png,image/jpeg,image/svg+xml"
-          onChange={(e) => handleLogoUpload(e.target.files?.[0])}
-          disabled={disabled}
-        />
-        {errors.logo_url && <div className="text-xs text-red-600">{errors.logo_url}</div>}
+        <Label>Company Logo</Label>
+        <div className="space-y-2">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <input
+                type="radio"
+                id="logo-upload"
+                name="logo-source"
+                checked={logoSource === 'upload'}
+                onChange={() => setLogoSource('upload')}
+                disabled={disabled}
+              />
+              <Label htmlFor="logo-upload" className="cursor-pointer">Upload File</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="radio"
+                id="logo-url"
+                name="logo-source"
+                checked={logoSource === 'url'}
+                onChange={() => setLogoSource('url')}
+                disabled={disabled}
+              />
+              <Label htmlFor="logo-url" className="cursor-pointer">Enter URL</Label>
+            </div>
+          </div>
+
+          {logoSource === 'upload' ? (
+            <Input
+              type="file"
+              accept="image/png,image/jpeg,image/svg+xml"
+              onChange={(e) => handleLogoUpload(e.target.files?.[0])}
+              disabled={disabled}
+            />
+          ) : (
+            <Input
+              type="text"
+              value={currentPrefs.logo_url || ''}
+              onChange={(e) => handleLogoUrlChange(e.target.value)}
+              placeholder="/logo.png or https://example.com/logo.png"
+              disabled={disabled}
+            />
+          )}
+          {errors.logo_url && <div className="text-xs text-red-600">{errors.logo_url}</div>}
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <input

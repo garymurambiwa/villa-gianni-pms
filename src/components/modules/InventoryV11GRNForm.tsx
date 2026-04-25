@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, Trash2, ChevronLeft, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -38,6 +39,7 @@ export const InventoryV11GRNForm: React.FC = () => {
   const [destinationLocation, setDestinationLocation] = useState('loc_main_cellar');
   const [lines, setLines] = useState<GRNLineItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [autoPost, setAutoPost] = useState(true);
 
   const navigateTo = (module: string) => {
     window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } }));
@@ -134,10 +136,22 @@ export const InventoryV11GRNForm: React.FC = () => {
 
       const result = await response.json();
 
-      if (result.ok) {
+        if (autoPost) {
+          toast({
+            title: 'Posting...',
+            description: 'Officially updating stock levels...',
+          });
+          
+          await fetch(`/api/v1/inventory/grn/${result.data.id}/post`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ posted_by: 'current-user' }),
+          });
+        }
+
         toast({
           title: 'Success',
-          description: `GRN created: ${result.data.grn_number}`,
+          description: `GRN created ${autoPost ? 'and posted' : ''}: ${result.data.grn_number}`,
         });
 
         // Reset form
@@ -317,6 +331,14 @@ export const InventoryV11GRNForm: React.FC = () => {
 
           {/* Submit Buttons */}
           <div className="flex justify-end gap-3 pt-4 border-t">
+            <div className="flex items-center space-x-2 mr-auto px-4">
+              <Checkbox 
+                id="auto-post" 
+                checked={autoPost} 
+                onCheckedChange={(val) => setAutoPost(!!val)} 
+              />
+              <Label htmlFor="auto-post" className="text-sm cursor-pointer">Auto-post to stock ledger</Label>
+            </div>
             <Button variant="outline">Cancel</Button>
             <Button
               onClick={handleSubmit}
