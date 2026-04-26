@@ -76,6 +76,7 @@ export const calculateTaxesForAmount = async (amount: number, category: 'all'|'a
   const taxes = await getActiveTaxes(category)
   const subtotal = Number(amount.toFixed(2))
   let taxTotal = 0
+  let exclusiveTaxTotal = 0
   const lines: Array<{ id: string; name: string; amount: number; inclusive: boolean }> = []
   for (const t of taxes) {
     const rate = Number(t.percentage || 0) / 100
@@ -88,10 +89,11 @@ export const calculateTaxesForAmount = async (amount: number, category: 'all'|'a
       const exc = subtotal * rate
       const amt = Number(exc.toFixed(2))
       taxTotal += amt
+      exclusiveTaxTotal += amt
       lines.push({ id: t.id, name: t.name, amount: amt, inclusive: false })
     }
   }
-  const total = Number((subtotal + taxTotal).toFixed(2))
+  const total = Number((subtotal + exclusiveTaxTotal).toFixed(2))
   return { subtotal, taxTotal: Number(taxTotal.toFixed(2)), total, lines }
 }
 

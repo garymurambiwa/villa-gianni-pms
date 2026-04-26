@@ -152,7 +152,7 @@ export const FrontOffice: React.FC = () => {
   const [lookupQuery, setLookupQuery] = useState('');
   const [arrivalsPreviewOpen, setArrivalsPreviewOpen] = useState(false);
   const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
-  const [printMode, setPrintMode] = useState<'restaurant' | 'arrivals' | 'both'>('restaurant');
+  const [printMode, setPrintMode] = useState<'restaurant' | 'arrivals' | 'departures' | 'inhouse' | 'both'>('restaurant');
   const [exportFormat, setExportFormat] = useState<'pdf' | 'html' | 'txt'>('pdf');
   const [printDestination, setPrintDestination] = useState<'printer' | 'download' | 'email'>('printer');
 
@@ -391,6 +391,128 @@ export const FrontOffice: React.FC = () => {
     `;
   };
 
+  const generateDeparturesReport = (): string => {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const departingGuests = reservations.filter(r => {
+      const status = getResStatus(r);
+      return (status === 'checked-in' || status === 'checked-out') && r.checkOut === today;
+    });
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Today's Departures - ${today}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          h1 { text-align: center; color: #333; border-bottom: 2px solid #333; padding-bottom: 10px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+          th { background-color: #f2f2f2; font-weight: bold; }
+          .summary { margin-top: 20px; font-weight: bold; }
+          @media print { body { padding: 10px; } }
+        </style>
+      </head>
+      <body>
+        <h1>Today's Departures</h1>
+        <p>Date: ${today}</p>
+        <p>Prepared for: Front Office Operations</p>
+        
+        <table>
+          <thead>
+            <tr>
+              <th>Guest Name</th>
+              <th>Room #</th>
+              <th>Status</th>
+              <th>Pax</th>
+              <th>Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${departingGuests.map(r => {
+              const roomAssignment = getRoomAssignment(r);
+              return `
+                <tr>
+                  <td>${r.guestName}</td>
+                  <td>${roomAssignment}</td>
+                  <td>${getResStatus(r) === 'checked-out' ? 'Checked Out' : 'Due Out'}</td>
+                  <td>${r.adults + (r.children || 0)}</td>
+                  <td>$${r.rate || 0}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+        
+        <div class="summary">
+          <h3>Summary</h3>
+          <p>Total Departures: ${departingGuests.length}</p>
+        </div>
+      </body>
+      </html>
+    `;
+  };
+
+  const generateInHouseReport = (): string => {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const checkedInGuests = reservations.filter(r => getResStatus(r) === 'checked-in');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>In-House Guest List - ${today}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          h1 { text-align: center; color: #333; border-bottom: 2px solid #333; padding-bottom: 10px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+          th { background-color: #f2f2f2; font-weight: bold; }
+          .summary { margin-top: 20px; font-weight: bold; }
+          @media print { body { padding: 10px; } }
+        </style>
+      </head>
+      <body>
+        <h1>In-House Guest List</h1>
+        <p>Date: ${today}</p>
+        
+        <table>
+          <thead>
+            <tr>
+              <th>Guest Name</th>
+              <th>Room #</th>
+              <th>Check-In</th>
+              <th>Check-Out</th>
+              <th>Pax</th>
+              <th>Package</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${checkedInGuests.map(r => {
+              const roomAssignment = getRoomAssignment(r);
+              return `
+                <tr>
+                  <td>${r.guestName}</td>
+                  <td>${roomAssignment}</td>
+                  <td>${r.checkIn}</td>
+                  <td>${r.checkOut}</td>
+                  <td>${r.adults + (r.children || 0)}</td>
+                  <td>${getResPackage(r)}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+        
+        <div class="summary">
+          <h3>Summary</h3>
+          <p>Total In-House Guests: ${checkedInGuests.length}</p>
+        </div>
+      </body>
+      </html>
+    `;
+  };
+
   // Export Handler Functions
   const handlePDFExport = async (htmlContent: string, fileName: string) => {
     try {
@@ -480,6 +602,12 @@ export const FrontOffice: React.FC = () => {
       } else if (printMode === 'arrivals') {
         htmlContent = generateArrivalsReport();
         fileName = `todays-arrivals-${format(new Date(), 'yyyy-MM-dd')}`;
+      } else if (printMode === 'departures') {
+        htmlContent = generateDeparturesReport();
+        fileName = `todays-departures-${format(new Date(), 'yyyy-MM-dd')}`;
+      } else if (printMode === 'inhouse') {
+        htmlContent = generateInHouseReport();
+        fileName = `in-house-guests-${format(new Date(), 'yyyy-MM-dd')}`;
       } else {
         htmlContent = generateCombinedReport();
         fileName = `daily-operations-${format(new Date(), 'yyyy-MM-dd')}`;
@@ -1926,7 +2054,7 @@ export const FrontOffice: React.FC = () => {
                       name="print-mode"
                       value="restaurant"
                       checked={printMode === 'restaurant'}
-                      onChange={(e) => setPrintMode(e.target.value as 'restaurant' | 'arrivals' | 'both')}
+                      onChange={(e) => setPrintMode(e.target.value as any)}
                       className="h-4 w-4 text-primary focus:ring-primary"
                       title="Restaurant Guest List"
                       aria-label="Restaurant Guest List"
@@ -1947,7 +2075,7 @@ export const FrontOffice: React.FC = () => {
                       name="print-mode"
                       value="arrivals"
                       checked={printMode === 'arrivals'}
-                      onChange={(e) => setPrintMode(e.target.value as 'restaurant' | 'arrivals' | 'both')}
+                      onChange={(e) => setPrintMode(e.target.value as any)}
                       className="h-4 w-4 text-primary focus:ring-primary"
                       title="Today's Arrivals"
                       aria-label="Today's Arrivals"
@@ -1964,11 +2092,53 @@ export const FrontOffice: React.FC = () => {
                   <div className="flex items-center space-x-2">
                     <input
                       type="radio"
+                      id="print-departures"
+                      name="print-mode"
+                      value="departures"
+                      checked={printMode === 'departures'}
+                      onChange={(e) => setPrintMode(e.target.value as any)}
+                      className="h-4 w-4 text-primary focus:ring-primary"
+                      title="Today's Departures"
+                      aria-label="Today's Departures"
+                    />
+                    <Label htmlFor="print-departures" className="flex items-center gap-2">
+                      <UserX className="h-4 w-4" />
+                      Today's Departures
+                      <span className="text-xs text-muted-foreground ml-1">
+                        (Guests checking out today)
+                      </span>
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id="print-inhouse"
+                      name="print-mode"
+                      value="inhouse"
+                      checked={printMode === 'inhouse'}
+                      onChange={(e) => setPrintMode(e.target.value as any)}
+                      className="h-4 w-4 text-primary focus:ring-primary"
+                      title="In-House Guest List"
+                      aria-label="In-House Guest List"
+                    />
+                    <Label htmlFor="print-inhouse" className="flex items-center gap-2">
+                      <UserCheck className="h-4 w-4" />
+                      In-House Guest List
+                      <span className="text-xs text-muted-foreground ml-1">
+                        (All currently checked-in guests)
+                      </span>
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
                       id="print-both"
                       name="print-mode"
                       value="both"
                       checked={printMode === 'both'}
-                      onChange={(e) => setPrintMode(e.target.value as 'restaurant' | 'arrivals' | 'both')}
+                      onChange={(e) => setPrintMode(e.target.value as any)}
                       className="h-4 w-4 text-primary focus:ring-primary"
                       title="Combined Report"
                       aria-label="Combined Report"
@@ -2077,6 +2247,12 @@ export const FrontOffice: React.FC = () => {
                     )}
                     {printMode === 'arrivals' && (
                       <>Arrivals report: {todayArrivals.length} guests checking in today</>
+                    )}
+                    {printMode === 'departures' && (
+                      <>Departures report: Guests checking out today</>
+                    )}
+                    {printMode === 'inhouse' && (
+                      <>In-House report: {inHouse.length} currently checked-in guests</>
                     )}
                     {printMode === 'both' && (
                       <>Combined report: {inHouse.length} in-house + {todayArrivals.length} arrivals</>

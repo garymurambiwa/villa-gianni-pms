@@ -11,6 +11,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
 const router = express.Router();
+require('express-ws')(router);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 // WebSocket connections for real-time updates

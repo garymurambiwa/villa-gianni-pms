@@ -261,7 +261,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const handlePrintBill = async () => {
     if (!effectiveSettings) return;
     const itemsSafe = Array.isArray(bill.items) ? bill.items : [];
-    const sub = itemsSafe.reduce((s, i) => s + Number(i.subtotal || 0), 0)
+    const sub = itemsSafe.reduce((s, i) => s + Number(i.subtotal != null ? i.subtotal : (Number(i.quantity || 0) * Number(i.price || 0))), 0)
     let taxLines: Array<{ name: string; amount: number }> = []
     let total = Number(bill.total || 0)
     try {
@@ -399,7 +399,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
     try {
       if (effectiveSettings) {
-        const subMain = Array.isArray(bill.items) ? bill.items.reduce((s, i) => s + Number(i.subtotal || 0), 0) : 0
+        const subMain = Array.isArray(bill.items) ? bill.items.reduce((s, i) => s + Number(i.subtotal != null ? i.subtotal : (Number(i.quantity || 0) * Number(i.price || 0))), 0) : 0
         let taxLinesMain: Array<{ name: string; amount: number }> = []
         let totalMain = Number(bill.total || 0)
         try {
@@ -417,7 +417,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         if (splits.length) {
           for (let idx = 0; idx < splits.length; idx++) {
             const s = splits[idx];
-            const subSplit = Array.isArray(bill.items) ? bill.items.reduce((sum, i) => sum + Number(i.subtotal || 0), 0) * (s.amount / Number(bill.total || 1)) : s.amount
+            const subSplit = Array.isArray(bill.items) ? bill.items.reduce((sum, i) => sum + Number(i.subtotal != null ? i.subtotal : (Number(i.quantity || 0) * Number(i.price || 0))), 0) * (s.amount / Number(bill.total || 1)) : s.amount
             let taxLinesSplit: Array<{ name: string; amount: number }> = []
             try {
               const calcSplit = await calculateTaxBreakdown(subSplit)

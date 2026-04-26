@@ -69,7 +69,7 @@ export const Dashboard: React.FC = () => {
     { label: 'Today Check-Ins', value: todayCheckIns, color: 'var(--hotel-accent)', icon: <LogIn className="w-5 h-5" /> },
     { label: 'Today Check-Outs', value: todayCheckOuts, color: 'var(--hotel-accent)', icon: <LogOut className="w-5 h-5" /> },
     { label: 'ADR', value: `$${avgDailyRate.toFixed(2)}`, color: 'var(--hotel-gold)', icon: <DollarSign className="w-5 h-5" /> },
-    { label: 'ARR', value: `$${avgRoomRate.toFixed(2)}`, color: 'var(--hotel-gold)', icon: <Building2 className="w-5 h-5" /> }
+    { label: 'RevPAR', value: `$${avgRoomRate.toFixed(2)}`, color: 'var(--hotel-gold)', icon: <Building2 className="w-5 h-5" /> }
   ];
 
   // Count room statuses - normalize to standard codes

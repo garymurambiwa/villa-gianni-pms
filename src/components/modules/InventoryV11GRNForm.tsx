@@ -136,6 +136,7 @@ export const InventoryV11GRNForm: React.FC = () => {
 
       const result = await response.json();
 
+      if (response.ok) {
         if (autoPost) {
           toast({
             title: 'Posting...',
