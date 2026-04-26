@@ -8,7 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, ArrowLeft, Building2, Palette, Globe, Receipt } from 'lucide-react';
+import { Loader2, ArrowLeft, Building2, Palette, Globe, Receipt, Database, Download } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 // ─── Options ───────────────────────────────────────────────────────────────
@@ -73,6 +73,7 @@ const SystemSettings = () => {
         ...settings,
     });
     const [isSaving, setIsSaving] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
 
     useEffect(() => {
         if (!isLoading) {
@@ -114,6 +115,32 @@ const SystemSettings = () => {
             toast({ title: 'Error', description: 'An unexpected error occurred.', variant: 'destructive' });
         } finally {
             setIsSaving(false);
+        }
+    };
+
+    const handleExport = async () => {
+        setIsExporting(true);
+        try {
+            // Trigger the backend export
+            const response = await fetch('/api/system/db-export');
+            if (!response.ok) throw new Error('Export failed');
+
+            // Download the blob
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `corepms_backup_${new Date().toISOString().split('T')[0]}.sql`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+
+            toast({ title: 'Export Successful', description: 'Database backup has been downloaded.' });
+        } catch (error: any) {
+            toast({ title: 'Export Failed', description: error.message, variant: 'destructive' });
+        } finally {
+            setIsExporting(false);
         }
     };
 
@@ -291,6 +318,39 @@ const SystemSettings = () => {
                                 placeholder="e.g. Thank you for staying with us! We hope to see you again." />
                             <p className="text-xs text-gray-500">Displayed at the bottom of every POS receipt and folio invoice.</p>
                         </div>
+                    </CardContent>
+                </Card>
+
+                {/* ── 6. Maintenance & Backup ── */}
+                <Card className="border-orange-100 bg-orange-50/30">
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-orange-800">
+                            <Database className="w-5 h-5" /> Maintenance & Backup
+                        </CardTitle>
+                        <CardDescription>Keep your data safe by performing regular exports.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="flex items-center justify-between p-4 bg-white border rounded-lg shadow-sm">
+                            <div className="space-y-1">
+                                <h4 className="font-medium text-gray-900">Database Export (.sql)</h4>
+                                <p className="text-sm text-gray-500">Downloads a full SQL dump of your database tables and data.</p>
+                            </div>
+                            <Button 
+                                variant="outline" 
+                                onClick={handleExport} 
+                                disabled={isExporting}
+                                className="border-orange-200 hover:bg-orange-100 text-orange-700 font-semibold"
+                            >
+                                {isExporting ? (
+                                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Exporting...</>
+                                ) : (
+                                    <><Download className="mr-2 h-4 w-4" /> Export & Download</>
+                                )}
+                            </Button>
+                        </div>
+                        <p className="text-xs text-orange-600/70 italic px-1">
+                            Note: This process may take a few seconds depending on the size of your database.
+                        </p>
                     </CardContent>
                 </Card>
 

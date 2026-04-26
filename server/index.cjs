@@ -415,6 +415,15 @@ try {
   console.error('❌ Failed to load inventory routes:', error.message);
 }
 
+// System / Maintenance routes
+try {
+  const systemRoutes = require('./routes/system.cjs');
+  console.log('🛠️ Registering system routes at /api/system');
+  app.use('/api/system', systemRoutes);
+} catch (error) {
+  console.error('❌ Failed to load system routes:', error.message);
+}
+
 // Catch-all handler: serve React app for client-side routing
 app.use((req, res, next) => {
   // Skip API routes

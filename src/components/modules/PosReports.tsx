@@ -146,6 +146,57 @@ const GoodsReceivedReportView: React.FC<{ rangeText: string; grnRows: any[] }> =
   );
 };
 
+const ItemSalesReportView: React.FC<{ itemsRows: any[] }> = ({ itemsRows }) => {
+  const [itemSort, setItemSort] = React.useState<'qty' | 'revenue' | 'profit'>('revenue');
+  
+  const sorted = React.useMemo(() => {
+    return [...itemsRows].sort((a, b) => {
+      if (itemSort === 'qty') return b.qty - a.qty;
+      if (itemSort === 'revenue') return b.revenue - a.revenue;
+      if (itemSort === 'profit') return b.profit - a.profit;
+      return 0;
+    });
+  }, [itemsRows, itemSort]);
+
+  return (
+    <div className="mb-6">
+      <h3 className="text-lg font-semibold mb-2">Item-wise Sales Performance</h3>
+      <div className="flex gap-2 mb-3">
+        <Button variant={itemSort==='qty'?'secondary':'outline'} onClick={()=>setItemSort('qty')}>Sort by Qty</Button>
+        <Button variant={itemSort==='revenue'?'secondary':'outline'} onClick={()=>setItemSort('revenue')}>Sort by Revenue</Button>
+        <Button variant={itemSort==='profit'?'secondary':'outline'} onClick={()=>setItemSort('profit')}>Sort by Profit</Button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="ds-table">
+          <thead>
+            <tr>
+              <th className="p-2 text-left">Item Name</th>
+              <th className="p-2 text-right">Qty Sold</th>
+              <th className="p-2 text-right">Revenue</th>
+              <th className="p-2 text-right">Cost (COGS)</th>
+              <th className="p-2 text-right">Profit</th>
+              <th className="p-2 text-right">Margin</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r, i) => (
+              <tr key={i}>
+                <td className="p-2 font-medium">{r.name}</td>
+                <td className="p-2 text-right">{r.qty}</td>
+                <td className="p-2 text-right">{formatCurrency(r.revenue)}</td>
+                <td className="p-2 text-right text-red-600">{formatCurrency(r.cost)}</td>
+                <td className="p-2 text-right font-bold text-green-600">{formatCurrency(r.profit)}</td>
+                <td className="p-2 text-right">{r.revenue ? ((r.profit / r.revenue) * 100).toFixed(1) : 0}%</td>
+              </tr>
+            ))}
+            {!sorted.length && (<tr><td className="p-2 text-center" colSpan={6}>No item sales found.</td></tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 export const PosReports: React.FC = () => {
   const { user } = useAuth();
   const isManager = canManagePOS(user?.role);
@@ -173,19 +224,52 @@ export const PosReports: React.FC = () => {
         const isConfigured = await db.isConfigured();
         if (!isConfigured) return;
 
-        // Fetch POS Bills
-        const billsRes = await db.query(
-          `SELECT * FROM pos_bills WHERE DATE(opened_at) >= $1 AND DATE(opened_at) <= $2`,
-          [range.start, range.end]
-        );
+        // Fetch POS Bills and Orders (Unified Sales)
+        const [billsRes, ordersRes] = await Promise.all([
+          db.query(
+            `SELECT * FROM pos_bills WHERE DATE(opened_at) >= $1 AND DATE(opened_at) <= $2`,
+            [range.start, range.end]
+          ),
+          db.query(
+            `SELECT * FROM pos_orders WHERE status = 'closed' AND DATE(created_at) >= $1 AND DATE(created_at) <= $2`,
+            [range.start, range.end]
+          )
+        ]);
+
+        const processedBills = [];
+        
         if(!('error' in billsRes)) {
-          // Parse JSON if needed
-          const processedBills = (billsRes.rows || []).map((row: any) => ({
-             ...row,
-             items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || [])
-          }));
-          setDbPosBills(processedBills);
+          (billsRes.rows || []).forEach((row: any) => {
+            processedBills.push({
+              ...row,
+              id: row.id,
+              outlet: row.outlet || 'Restaurant',
+              opened_at: row.opened_at,
+              items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+              total_amount: Number(row.total_amount || 0),
+              is_voided: !!row.is_voided,
+              staff: row.opened_by || 'System',
+              shift_id: row.shift_id
+            });
+          });
         }
+
+        if(!('error' in ordersRes)) {
+          (ordersRes.rows || []).forEach((row: any) => {
+            processedBills.push({
+              ...row,
+              id: row.id,
+              outlet: row.cost_center || 'Restaurant',
+              opened_at: row.created_at, // Map created_at to opened_at
+              items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+              total_amount: Number(row.total_amount || 0),
+              is_voided: false, // Orders table doesn't have voided flag usually
+              staff: 'System', // Orders table doesn't have staff usually
+              shift_id: row.shift_id
+            });
+          });
+        }
+        setDbPosBills(processedBills);
 
         // Fetch GRNs
         const grnsRes = await db.query(
@@ -194,15 +278,25 @@ export const PosReports: React.FC = () => {
         );
         if(!('error' in grnsRes)) setDbGrns(grnsRes.rows || []);
 
-        // Fetch Movememts
+        // Fetch Movements from New Stock Ledger (v11)
         const movRes = await db.query(
-          `SELECT m.*, i.name FROM inventory_movements m LEFT JOIN inventory_items i ON m.item_id = i.id WHERE DATE(m.inserted_at) >= $1 AND DATE(m.inserted_at) <= $2`,
+          `SELECT l.*, i.name FROM inv_stock_ledger l 
+           LEFT JOIN inv_items i ON l.item_id = i.id 
+           WHERE DATE(l.inserted_at) >= $1 AND DATE(l.inserted_at) <= $2`,
           [range.start, range.end]
         );
-        if(!('error' in movRes)) setDbMovements(movRes.rows || []);
+        if(!('error' in movRes)) {
+          // Normalize v11 ledger to old movement format for UI
+          const normalizedMovs = (movRes.rows || []).map((l: any) => ({
+            ...l,
+            delta: l.quantity_change,
+            inserted_at: l.inserted_at
+          }));
+          setDbMovements(normalizedMovs);
+        }
 
-        // Fetch items
-        const invRes = await db.query(`SELECT id, name, cost FROM inventory_items`);
+        // Fetch items from New Inventory (v11)
+        const invRes = await db.query(`SELECT id, name, weighted_avg_cost as cost FROM inv_items`);
         if(!('error' in invRes)) setDbInventoryItems(invRes.rows || []);
 
       } catch (err) {
@@ -232,15 +326,21 @@ export const PosReports: React.FC = () => {
 
   const categorySummary = React.useMemo(() => {
     const map = new Map<string, { itemsSold: number; grossSales: number; discounts: number; netSales: number; cogs: number }>();
+    
+    // Create an ID index for better accuracy
+    const itemIndexById = new Map<string, any>();
+    dbInventoryItems.forEach((it: any) => itemIndexById.set(String(it.id), it));
+
     nonVoidedBills.forEach((bill: any) => {
       (bill.items || []).forEach((d: any) => {
         const qty = Number(d.quantity || 0);
         const price = Number(d.price || 0);
-        // Find cost from inventory
-        const itemObj = itemIndexByName.get(String(d.name || '').toLowerCase());
+        
+        // Find cost from inventory (Try ID first, then Name)
+        const itemObj = itemIndexById.get(String(d.id)) || itemIndexByName.get(String(d.name || '').toLowerCase());
         const cost = itemObj ? Number(itemObj.cost || 0) : 0;
 
-        const catName = bill.outlet || 'Unknown';
+        const catName = bill.outlet || 'Restaurant';
         
         const row = map.get(catName) || { itemsSold: 0, grossSales: 0, discounts: 0, netSales: 0, cogs: 0 };
         row.itemsSold += qty; 
@@ -252,7 +352,7 @@ export const PosReports: React.FC = () => {
     });
     const totalGross = Array.from(map.values()).reduce((s, r) => s + r.grossSales, 0);
     return { rows: Array.from(map.entries()).map(([name, r]) => ({ name, ...r, percent: totalGross ? (r.grossSales / totalGross) * 100 : 0, profit: r.netSales - r.cogs })), totalGross };
-  }, [nonVoidedBills, itemIndexByName]);
+  }, [nonVoidedBills, itemIndexByName, dbInventoryItems]);
 
   const paymentSummary = React.useMemo(() => {
     const map = new Map<string, number>();
@@ -263,10 +363,40 @@ export const PosReports: React.FC = () => {
     return Array.from(map.entries()).map(([method, total]) => ({ method, total }));
   }, [nonVoidedBills]);
 
+  const itemSalesSummary = React.useMemo(() => {
+    const map = new Map<string, { id: string; name: string; qty: number; revenue: number; cost: number; profit: number }>();
+    
+    // Create an ID index for better accuracy
+    const itemIndexById = new Map<string, any>();
+    dbInventoryItems.forEach((it: any) => itemIndexById.set(String(it.id), it));
+
+    nonVoidedBills.forEach((bill: any) => {
+      (bill.items || []).forEach((d: any) => {
+        const id = String(d.id || d.itemId || '');
+        const name = d.name || 'Unknown Item';
+        const qty = Number(d.quantity || 0);
+        const price = Number(d.price || 0);
+        
+        // Find cost from inventory (Try ID first, then Name)
+        const itemObj = itemIndexById.get(id) || itemIndexByName.get(name.toLowerCase());
+        const cost = itemObj ? Number(itemObj.cost || 0) : 0;
+
+        const key = id || name;
+        const row = map.get(key) || { id, name, qty: 0, revenue: 0, cost: 0, profit: 0 };
+        row.qty += qty;
+        row.revenue += qty * price;
+        row.cost += qty * cost;
+        row.profit = row.revenue - row.cost;
+        map.set(key, row);
+      });
+    });
+    return Array.from(map.values());
+  }, [nonVoidedBills, itemIndexByName, dbInventoryItems]);
+
   const staffSummary = React.useMemo(() => {
     const map = new Map<string, { bills: number; totalSales: number }>();
     nonVoidedBills.forEach((bill: any) => {
-       const staff = bill.opened_by || 'System';
+       const staff = bill.staff || bill.opened_by || 'System';
        const current = map.get(staff) || { bills: 0, totalSales: 0 };
        current.bills += 1;
        current.totalSales += Number(bill.total_amount || 0);
@@ -325,6 +455,7 @@ export const PosReports: React.FC = () => {
               <SelectItem value="x-summary">X-Reading Summary</SelectItem>
               <SelectItem value="x-detail">X-Reading Detail</SelectItem>
               <SelectItem value="payment-methods">Payment Methods</SelectItem>
+              <SelectItem value="item-sales">Item Sales</SelectItem>
               <SelectItem value="staff-performance">Staff Performance</SelectItem>
               <SelectItem value="cocktail-usage">Cocktail Usage</SelectItem>
               <SelectItem value="goods-received">Goods Received</SelectItem>
@@ -370,6 +501,10 @@ export const PosReports: React.FC = () => {
           </table>
           <p className="text-xs text-gray-500 mt-2">Use this total to reconcile your physical cash drawer vs card machine printouts at Z-reading.</p>
         </div>
+      )}
+
+      {!loading && selectedReport === 'item-sales' && (
+        <ItemSalesReportView itemsRows={itemSalesSummary} />
       )}
 
       {!loading && selectedReport === 'staff-performance' && (
