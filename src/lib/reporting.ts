@@ -1488,3 +1488,90 @@ export const generateDetailedReportHTML = (options: ReportOptions): string => {
 export const generateSummaryReportHTML = (options: ReportOptions): string => {
   return generateDetailedReportHTML({ ...options, reportType: 'summary' });
 };
+
+/**
+ * Generate a blank registration card / check-in form for physical use.
+ */
+export const generateBlankCheckInFormHTML = (): string => {
+  const brand = readReceiptBranding();
+  return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <title>Blank Check-in Form</title>
+      <style>
+        body { font-family: sans-serif; padding: 40px; color: #333; line-height: 1.6; }
+        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
+        .header h1 { margin: 0; text-transform: uppercase; letter-spacing: 2px; }
+        .section { margin-bottom: 25px; border: 1px solid #ddd; padding: 20px; border-radius: 4px; }
+        .section-title { font-weight: bold; text-transform: uppercase; font-size: 0.9em; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .field { margin-bottom: 15px; }
+        .label { display: block; font-size: 0.8em; color: #666; margin-bottom: 5px; }
+        .input-line { border-bottom: 1px solid #999; height: 25px; }
+        .full-width { grid-column: span 2; }
+        .signature-area { margin-top: 50px; display: grid; grid-template-columns: 1fr 1fr; gap: 50px; }
+        .signature-box { text-align: center; }
+        .sig-line { border-top: 1px solid #333; margin-top: 40px; padding-top: 5px; font-size: 0.8em; }
+        @media print {
+          body { padding: 0; }
+          .section { border: 1px solid #000; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>${brand.restaurant_name || 'Villa Gianni PMS'}</h1>
+        <p>${brand.address || ''} ${brand.phone ? `| Tel: ${brand.phone}` : ''}</p>
+        <h2 style="margin-top: 15px; color: #444;">GUEST REGISTRATION CARD</h2>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Guest Information</div>
+        <div class="grid">
+          <div class="field"><span class="label">Full Name</span><div class="input-line"></div></div>
+          <div class="field"><span class="label">ID / Passport Number</span><div class="input-line"></div></div>
+          <div class="field"><span class="label">Nationality</span><div class="input-line"></div></div>
+          <div class="field"><span class="label">Company Name (If applicable)</span><div class="input-line"></div></div>
+          <div class="field full-width"><span class="label">Residential Address</span><div class="input-line"></div></div>
+          <div class="field"><span class="label">Phone Number</span><div class="input-line"></div></div>
+          <div class="field"><span class="label">Email Address</span><div class="input-line"></div></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Stay Details</div>
+        <div class="grid">
+          <div class="field"><span class="label">Arrival Date</span><div class="input-line"></div></div>
+          <div class="field"><span class="label">Departure Date</span><div class="input-line"></div></div>
+          <div class="field"><span class="label">Room Number</span><div class="input-line"></div></div>
+          <div class="field"><span class="label">Rate per Night</span><div class="input-line"></div></div>
+          <div class="field"><span class="label">Number of Adults</span><div class="input-line"></div></div>
+          <div class="field"><span class="label">Number of Children</span><div class="input-line"></div></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Terms & Conditions</div>
+        <p style="font-size: 0.75em; color: #555;">
+          I agree that my liability for this bill is not waived and agree to be held personally liable in the event that the indicated person, company or association fails to pay for any part or the full amount of these charges. I also agree to the house rules regarding smoking, noise, and property damage.
+        </p>
+      </div>
+
+      <div class="signature-area">
+        <div class="signature-box">
+          <div class="sig-line">Guest Signature</div>
+        </div>
+        <div class="signature-box">
+          <div class="sig-line">Receptionist Signature / Date</div>
+        </div>
+      </div>
+
+      <p style="text-align: center; font-size: 0.7em; color: #999; margin-top: 40px;">
+        Printed on ${new Date().toLocaleDateString()} | Powered by Core DPMS
+      </p>
+    </body>
+    </html>
+  `;
+};

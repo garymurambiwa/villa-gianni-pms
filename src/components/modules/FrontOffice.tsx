@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import { getResPackageLabel, computeTotalRate, sanitizePackageCode } from '@/lib/packageUtils';
 import { logger } from '@/lib/logger';
 import FOPrintCustomization from '@/components/modules/FOPrintCustomization';
+import { generateBlankCheckInFormHTML } from '@/lib/reporting';
 import FolioManagement from './folio/FolioManagement';
 import { TransferRoomModal } from './folio/TransferRoomModal';
 import { ReportLayout, ReportTable } from '../ui/ReportLayout';
@@ -152,7 +153,7 @@ export const FrontOffice: React.FC = () => {
   const [lookupQuery, setLookupQuery] = useState('');
   const [arrivalsPreviewOpen, setArrivalsPreviewOpen] = useState(false);
   const [printOptionsOpen, setPrintOptionsOpen] = useState(false);
-  const [printMode, setPrintMode] = useState<'restaurant' | 'arrivals' | 'departures' | 'inhouse' | 'both'>('restaurant');
+  const [printMode, setPrintMode] = useState<'restaurant' | 'arrivals' | 'departures' | 'inhouse' | 'blank-form' | 'both'>('restaurant');
   const [exportFormat, setExportFormat] = useState<'pdf' | 'html' | 'txt'>('pdf');
   const [printDestination, setPrintDestination] = useState<'printer' | 'download' | 'email'>('printer');
 
@@ -608,6 +609,9 @@ export const FrontOffice: React.FC = () => {
       } else if (printMode === 'inhouse') {
         htmlContent = generateInHouseReport();
         fileName = `in-house-guests-${format(new Date(), 'yyyy-MM-dd')}`;
+      } else if (printMode === 'blank-form') {
+        htmlContent = generateBlankCheckInFormHTML();
+        fileName = `blank-checkin-form-${format(new Date(), 'yyyy-MM-dd')}`;
       } else {
         htmlContent = generateCombinedReport();
         fileName = `daily-operations-${format(new Date(), 'yyyy-MM-dd')}`;
@@ -2148,6 +2152,27 @@ export const FrontOffice: React.FC = () => {
                       Combined Report
                       <span className="text-xs text-muted-foreground ml-1">
                         (Both restaurant list and arrivals)
+                      </span>
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center space-x-2 pt-2 border-t mt-2">
+                    <input
+                      type="radio"
+                      id="print-blank"
+                      name="print-mode"
+                      value="blank-form"
+                      checked={printMode === 'blank-form'}
+                      onChange={(e) => setPrintMode(e.target.value as any)}
+                      className="h-4 w-4 text-primary focus:ring-primary"
+                      title="Blank Check-in Form"
+                      aria-label="Blank Check-in Form"
+                    />
+                    <Label htmlFor="print-blank" className="flex items-center gap-2 font-semibold">
+                      <Printer className="h-4 w-4 text-hotel-primary" />
+                      Print Blank Check-in Form
+                      <span className="text-xs text-muted-foreground ml-1 font-normal">
+                        (Clean form for walk-ins)
                       </span>
                     </Label>
                   </div>

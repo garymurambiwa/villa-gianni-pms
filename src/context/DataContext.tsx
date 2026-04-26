@@ -848,8 +848,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // If no existing guest found, create a new one
         if (!guestId) {
           const newGuestId = `G${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-          const guestSql = "INSERT INTO guests (id, full_name, email, phone) VALUES (?, ?, ?, ?)";
-          const guestParams = [newGuestId, guestName, guestEmail, guestPhone];
+          const guestSql = "INSERT INTO guests (id, full_name, email, phone, id_number) VALUES (?, ?, ?, ?, ?)";
+          const guestParams = [newGuestId, guestName, guestEmail, guestPhone, resData.idNumber || resData.passportNumber || null];
           const guestResult = await db.query(guestSql, guestParams);
 
           if ('error' in guestResult) {
@@ -865,8 +865,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const reservationId = `RES${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
       // Prepare id_document_enc (required field) - encrypt if provided, use placeholder if not
-      const idDocumentEnc = resData.idDocumentNumber
-        ? String(resData.idDocumentNumber)
+      const idDocumentEnc = resData.idNumber || resData.passportNumber || resData.idDocumentNumber
+        ? String(resData.idNumber || resData.passportNumber || resData.idDocumentNumber)
         : 'NOT_PROVIDED';
 
       const sql = `INSERT INTO reservations(

@@ -22,6 +22,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
     const [guestName, setGuestName] = useState('');
     const [phoneNumber, setPhoneNumber] = useState('');
     const [email, setEmail] = useState('');
+    const [idNumber, setIdNumber] = useState('');
     const [roomId, setRoomId] = useState('');
     const [nights, setNights] = useState('1');
     const [adults, setAdults] = useState('1');
@@ -91,6 +92,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
                 guestName,
                 phone: phoneNumber,
                 email,
+                idNumber,
                 roomId,
                 checkIn: checkInDate,
                 checkOut: checkOutDate,
@@ -123,6 +125,7 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
             setGuestName('');
             setPhoneNumber('');
             setEmail('');
+            setIdNumber('');
             setRoomId('');
             setNights('1');
             setAdults('1');
@@ -171,15 +174,26 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
                         </div>
                     </div>
 
-                    <div className="space-y-2">
-                        <Label htmlFor="email">Email</Label>
-                        <Input
-                            id="email"
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder="Optional"
-                        />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label htmlFor="email">Email</Label>
+                            <Input
+                                id="email"
+                                type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder="Optional"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="idNumber">Passport / ID Number</Label>
+                            <Input
+                                id="idNumber"
+                                value={idNumber}
+                                onChange={(e) => setIdNumber(e.target.value)}
+                                placeholder="Required for Check-in"
+                            />
+                        </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
