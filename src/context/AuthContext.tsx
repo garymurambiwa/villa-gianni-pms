@@ -75,7 +75,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     };
     if (!isSupabaseEnabled) {
-      sessionCheckInterval = setInterval(checkSessionExpiry, 30000);
+      sessionCheckInterval = setInterval(checkSessionExpiry, 15000);
     }
     return () => {
       if (sessionCheckInterval) clearInterval(sessionCheckInterval);
