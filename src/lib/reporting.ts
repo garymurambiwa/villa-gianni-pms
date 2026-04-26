@@ -1501,21 +1501,32 @@ export const generateBlankCheckInFormHTML = (): string => {
       <meta charset="UTF-8">
       <title>Blank Check-in Form</title>
       <style>
-        body { font-family: sans-serif; padding: 40px; color: #333; line-height: 1.6; }
-        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
-        .header h1 { margin: 0; text-transform: uppercase; letter-spacing: 2px; }
-        .section { margin-bottom: 25px; border: 1px solid #ddd; padding: 20px; border-radius: 4px; }
-        .section-title { font-weight: bold; text-transform: uppercase; font-size: 0.9em; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        .field { margin-bottom: 15px; }
-        .label { display: block; font-size: 0.8em; color: #666; margin-bottom: 5px; }
-        .input-line { border-bottom: 1px solid #999; height: 25px; }
+        @page { size: A4; margin: 10mm; }
+        body { font-family: sans-serif; padding: 0; margin: 0; color: #333; line-height: 1.4; font-size: 10pt; }
+        .header { text-align: center; border-bottom: 1.5px solid #333; padding-bottom: 10px; margin-bottom: 15px; }
+        .header h1 { margin: 0; font-size: 16pt; text-transform: uppercase; letter-spacing: 1px; }
+        .header p { margin: 2px 0; font-size: 9pt; color: #555; }
+        .header h2 { margin: 8px 0 0; font-size: 12pt; color: #444; text-transform: uppercase; }
+        
+        .section { margin-bottom: 12px; border: 1px solid #ccc; padding: 12px; border-radius: 4px; }
+        .section-title { font-weight: bold; text-transform: uppercase; font-size: 8.5pt; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 3px; color: #222; }
+        
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .field { margin-bottom: 8px; }
+        .label { display: block; font-size: 7.5pt; color: #666; margin-bottom: 2px; text-transform: uppercase; }
+        .input-line { border-bottom: 1px solid #aaa; height: 18px; }
         .full-width { grid-column: span 2; }
-        .signature-area { margin-top: 50px; display: grid; grid-template-columns: 1fr 1fr; gap: 50px; }
+        
+        .terms { font-size: 7pt; color: #555; margin-top: 5px; line-height: 1.3; }
+        
+        .signature-area { margin-top: 25px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
         .signature-box { text-align: center; }
-        .sig-line { border-top: 1px solid #333; margin-top: 40px; padding-top: 5px; font-size: 0.8em; }
+        .sig-line { border-top: 1px solid #333; margin-top: 30px; padding-top: 4px; font-size: 7.5pt; text-transform: uppercase; color: #444; }
+        
+        .footer { text-align: center; font-size: 6.5pt; color: #999; margin-top: 20px; }
+        
         @media print {
-          body { padding: 0; }
+          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .section { border: 1px solid #000; }
         }
       </style>
@@ -1524,7 +1535,7 @@ export const generateBlankCheckInFormHTML = (): string => {
       <div class="header">
         <h1>${brand.restaurant_name || 'Villa Gianni PMS'}</h1>
         <p>${brand.address || ''} ${brand.phone ? `| Tel: ${brand.phone}` : ''}</p>
-        <h2 style="margin-top: 15px; color: #444;">GUEST REGISTRATION CARD</h2>
+        <h2>GUEST REGISTRATION CARD</h2>
       </div>
 
       <div class="section">
@@ -1554,9 +1565,9 @@ export const generateBlankCheckInFormHTML = (): string => {
 
       <div class="section">
         <div class="section-title">Terms & Conditions</div>
-        <p style="font-size: 0.75em; color: #555;">
+        <div class="terms">
           I agree that my liability for this bill is not waived and agree to be held personally liable in the event that the indicated person, company or association fails to pay for any part or the full amount of these charges. I also agree to the house rules regarding smoking, noise, and property damage.
-        </p>
+        </div>
       </div>
 
       <div class="signature-area">
@@ -1568,9 +1579,9 @@ export const generateBlankCheckInFormHTML = (): string => {
         </div>
       </div>
 
-      <p style="text-align: center; font-size: 0.7em; color: #999; margin-top: 40px;">
-        Printed on ${new Date().toLocaleDateString()} | Powered by Core DPMS
-      </p>
+      <div class="footer">
+        Printed on ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()} | Powered by Core DPMS
+      </div>
     </body>
     </html>
   `;
