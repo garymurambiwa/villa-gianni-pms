@@ -333,11 +333,14 @@ export const PosReports: React.FC = () => {
 
     nonVoidedBills.forEach((bill: any) => {
       (bill.items || []).forEach((d: any) => {
+        // Handle both formats: flat (pos_bills) or nested menuItem (pos_orders)
         const qty = Number(d.quantity || 0);
-        const price = Number(d.price || 0);
+        const price = Number(d.price || d.menuItem?.price || 0);
+        const id = String(d.id || d.itemId || d.menuItem?.id || '');
+        const name = d.name || d.menuItem?.name || 'Unknown Item';
         
         // Find cost from inventory (Try ID first, then Name)
-        const itemObj = itemIndexById.get(String(d.id)) || itemIndexByName.get(String(d.name || '').toLowerCase());
+        const itemObj = itemIndexById.get(id) || itemIndexByName.get(name.toLowerCase());
         const cost = itemObj ? Number(itemObj.cost || 0) : 0;
 
         const catName = bill.outlet || 'Restaurant';
@@ -372,10 +375,11 @@ export const PosReports: React.FC = () => {
 
     nonVoidedBills.forEach((bill: any) => {
       (bill.items || []).forEach((d: any) => {
-        const id = String(d.id || d.itemId || '');
-        const name = d.name || 'Unknown Item';
+        // Handle both formats: flat (pos_bills) or nested menuItem (pos_orders)
+        const id = String(d.id || d.itemId || d.menuItem?.id || '');
+        const name = d.name || d.menuItem?.name || 'Unknown Item';
         const qty = Number(d.quantity || 0);
-        const price = Number(d.price || 0);
+        const price = Number(d.price || d.menuItem?.price || 0);
         
         // Find cost from inventory (Try ID first, then Name)
         const itemObj = itemIndexById.get(id) || itemIndexByName.get(name.toLowerCase());
@@ -409,12 +413,13 @@ export const PosReports: React.FC = () => {
     const groups = new Map<string, any[]>();
     nonVoidedBills.forEach((bill: any) => {
       (bill.items || []).forEach((d: any) => {
-        const catName = bill.outlet || 'Unknown';
+        const catName = bill.outlet || 'Restaurant';
         const qty = Number(d.quantity || 0);
-        const price = Number(d.price || 0);
+        const price = Number(d.price || d.menuItem?.price || 0);
+        const desc = d.name || d.menuItem?.name || 'Unknown Item';
         
         const arr = groups.get(catName) || [];
-        arr.push({ ts: bill.opened_at, sku: d.id || '', desc: d.name, qty, unit: price, total: qty * price });
+        arr.push({ ts: bill.opened_at, sku: d.id || d.menuItem?.id || '', desc: desc, qty, unit: price, total: qty * price });
         groups.set(catName, arr);
       });
     });
