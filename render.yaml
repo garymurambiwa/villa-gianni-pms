@@ -7,9 +7,9 @@ services:
     startCommand: npm start
     envVars:
       - key: DATABASE_URL
-        sync: false # Set this in Render Dashboard to your Neon URL
+        value: postgresql://neondb_owner:npg_r1fvxIDGLNA8@ep-empty-smoke-ahhjh27q-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require
       - key: VITE_DATABASE_URL
-        sync: false # Set this in Render Dashboard to your Neon URL
+        value: postgresql://neondb_owner:npg_r1fvxIDGLNA8@ep-empty-smoke-ahhjh27q-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require
       - key: NODE_VERSION
         value: 20.11.0
       - key: ELECTRON_SKIP_BINARY_DOWNLOAD

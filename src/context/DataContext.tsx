@@ -1215,7 +1215,7 @@ status = 'checked-in',
 
       // Update room status to vacant
       if (roomId) {
-        const roomSql = "UPDATE rooms SET status = 'VC' WHERE id = ?";
+        const roomSql = "UPDATE rooms SET status = 'VD' WHERE id = ?";
         await db.query(roomSql, [roomId]);
       }
 
