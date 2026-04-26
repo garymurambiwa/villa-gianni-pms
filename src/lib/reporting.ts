@@ -1523,6 +1523,7 @@ export const generateBlankCheckInFormHTML = (): string => {
         .signature-box { text-align: center; }
         .sig-line { border-top: 1px solid #333; margin-top: 30px; padding-top: 4px; font-size: 7.5pt; text-transform: uppercase; color: #444; }
         
+        .company-logo { max-height: 50px; width: auto; margin-bottom: 5px; }
         .footer { text-align: center; font-size: 6.5pt; color: #999; margin-top: 20px; }
         
         @media print {
@@ -1533,6 +1534,7 @@ export const generateBlankCheckInFormHTML = (): string => {
     </head>
     <body>
       <div class="header">
+        ${brand.show_logo && brand.logo_url ? `<img src="${brand.logo_url}" alt="Logo" class="company-logo" />` : ''}
         <h1>${brand.restaurant_name || 'Villa Gianni PMS'}</h1>
         <p>${brand.address || ''} ${brand.phone ? `| Tel: ${brand.phone}` : ''}</p>
         <h2>GUEST REGISTRATION CARD</h2>
@@ -1548,6 +1550,7 @@ export const generateBlankCheckInFormHTML = (): string => {
           <div class="field full-width"><span class="label">Residential Address</span><div class="input-line"></div></div>
           <div class="field"><span class="label">Phone Number</span><div class="input-line"></div></div>
           <div class="field"><span class="label">Email Address</span><div class="input-line"></div></div>
+          <div class="field"><span class="label">Vehicle Registration No.</span><div class="input-line"></div></div>
         </div>
       </div>
 
