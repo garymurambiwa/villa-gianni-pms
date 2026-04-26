@@ -120,6 +120,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
     { id: 'dashboard', name: 'Dashboard', icon: '📊', roles: ['admin', 'frontdesk', 'manager', 'supervisor', 'cashier'], section: 'Front Office' },
     { id: 'barman-dashboard', name: 'Dashboard', icon: '📊', roles: ['barman'], section: 'POS' },
     { id: 'frontoffice', name: 'Front Office', icon: '🏨', roles: ['admin', 'frontdesk', 'manager', 'supervisor'], section: 'Front Office' },
+    { id: 'availability-grid', name: 'Availability Grid', icon: '🗓️', roles: ['admin', 'frontdesk', 'manager', 'supervisor'], section: 'Front Office' },
     { id: 'reservations', name: 'Reservations', icon: '📅', roles: ['admin', 'frontdesk', 'manager', 'supervisor'], section: 'Front Office' },
     { id: 'rooms', name: 'Rooms', icon: '🛏️', roles: ['admin', 'frontdesk', 'housekeeping', 'manager', 'supervisor'], section: 'Front Office' },
     { id: 'folios', name: 'Folio Management', icon: '💳', roles: ['admin', 'frontdesk', 'manager', 'supervisor'], section: 'Front Office' },
@@ -152,6 +153,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, setActiveModule 
   // Permission mapping: Module ID -> Required RightsKey from Users.tsx
   const modulePermissions: Record<string, string> = {
     'frontoffice': 'fo_checkin_checkout',
+    'availability-grid': 'fo_view_room_status',
     'reservations': 'fo_reservations_edit',
     'rooms': 'fo_view_room_status',
     'rate-management': 'fo_reservations_edit',

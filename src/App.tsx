@@ -43,6 +43,7 @@ const router = createHashRouter([
   { path: "/maintenance/work-orders", element: <ModuleAlias module="maintenance" /> },
   { path: "/pos", element: <ModuleAlias module="pos" /> },
   { path: "/pos-settings", element: <ModuleAlias module="pos-settings" /> },
+  { path: "/availability-grid", element: <ModuleAlias module="availability-grid" /> },
   { path: "/users", element: <ModuleAlias module="users" /> },
   { path: "/settings", element: <ModuleAlias module="settings" /> },
   { path: "*", element: <NotFound /> },

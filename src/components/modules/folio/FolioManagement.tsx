@@ -87,6 +87,23 @@ const FolioManagement: React.FC = () => {
     setFolios(newFolios);
   }, [guests, folioCharges, foliosMetadata]);
 
+  // Handle deep-linking to specific folio from Availability Grid or other modules
+  useEffect(() => {
+    const guestId = sessionStorage.getItem('folio_guestId');
+    const folioId = sessionStorage.getItem('folio_folioId');
+    
+    if ((guestId || folioId) && folios.length > 0) {
+      const target = folios.find(f => f.guestId === guestId || f.id === folioId);
+      if (target) {
+        setSelectedFolio(target);
+        setActiveTab("details");
+        // Clear the markers after consumption
+        sessionStorage.removeItem('folio_guestId');
+        sessionStorage.removeItem('folio_folioId');
+      }
+    }
+  }, [folios]);
+
   const handleFolioSelect = (folio: Folio) => {
     setSelectedFolio(folio);
     setActiveTab("details");

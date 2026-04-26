@@ -14,6 +14,7 @@ import { Reports } from './modules/Reports';
 import { Users } from './modules/Users';
 import VersionControl from './modules/VersionControl';
 import SystemSettings from './modules/SystemSettings';
+import { RoomAvailabilityGrid } from './modules/RoomAvailabilityGrid';
 import ErrorBoundary from './ErrorBoundary';
 import LoadingSpinner from './ui/LoadingSpinner';
 import { Button } from './ui/button';
@@ -267,6 +268,11 @@ const AppLayout: React.FC = () => {
       case 'dashboard': return <Dashboard />;
       case 'frontoffice': return <FrontOffice />;
       case 'reservations': return <Reservations />;
+      case 'availability-grid': return (
+        <ErrorBoundary fallbackTitle="Availability Grid Error" fallbackMessage="Please reload or contact support.">
+          <RoomAvailabilityGrid />
+        </ErrorBoundary>
+      );
       case 'rooms': return <Rooms />;
       case 'night-audit': {
         const role = normalizeRole(user?.role);
