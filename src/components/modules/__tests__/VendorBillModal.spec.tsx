@@ -40,7 +40,7 @@ function makeGroup(overrides: Partial<{
         total_cost: 1000,
         tax_amount: 150,
         tax_rate: 15,
-        tax_inclusive: false,
+        tax_inclusive: true,
         expense_date: '2026-03-19',
         reference_number: 'INV-TEST-001',
         category: 'Supplies',

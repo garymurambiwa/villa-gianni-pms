@@ -122,10 +122,13 @@ export const postRoomAndTax = (ctx: NightAuditContext) => {
   const occupiedRooms = ctx.rooms.filter((r: any) => r.status === 'OC' || r.status === 'OD');
   occupiedRooms.forEach((room: any) => {
     const guest = ctx.guests.find((g: any) => String(g.roomNumber) === String(room.number));
-    const baseRate = Number(guest?.dailyRate ?? room?.dailyRate ?? ratePlan?.baseRate ?? 100);
+    const totalAmount = Number(guest?.dailyRate ?? room?.dailyRate ?? ratePlan?.baseRate ?? 100);
     const taxRate = Number(guest?.taxRate ?? taxProfile?.taxRate ?? 0.1);
-    const tax = Number((baseRate * taxRate).toFixed(2));
-    const amount = Number((baseRate + tax).toFixed(2));
+    
+    // Inclusive calculation: Derive tax from gross total
+    const tax = Number((totalAmount * (taxRate / (1 + taxRate))).toFixed(2));
+    const baseRate = Number((totalAmount - tax).toFixed(2));
+    
     const guestId = guest?.id ?? null;
     const postingId = `POST_NA_${businessDate}_${room.number}_${Date.now()}`;
     
@@ -136,7 +139,7 @@ export const postRoomAndTax = (ctx: NightAuditContext) => {
       guestId, 
       baseRate, 
       tax, 
-      amount, 
+      amount: totalAmount, 
       date: businessDate 
     };
     postings.push(posting);

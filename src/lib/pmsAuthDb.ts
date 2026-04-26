@@ -198,7 +198,7 @@ export const pmsAuthDb = {
         payment_info_source TEXT,
         payment_verified BOOLEAN,
         package_code VARCHAR(50) DEFAULT 'RO',
-        tax_inclusive BOOLEAN DEFAULT false,
+        tax_inclusive BOOLEAN DEFAULT true,
         expires_at TIMESTAMP,
         payment_status VARCHAR(20) DEFAULT 'pending',
         inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -268,7 +268,7 @@ export const pmsAuthDb = {
         id VARCHAR(36) PRIMARY KEY,
         name TEXT NOT NULL,
         percentage NUMERIC(12,2) NOT NULL,
-        is_inclusive BOOLEAN NOT NULL DEFAULT false,
+        is_inclusive BOOLEAN NOT NULL DEFAULT true,
         applies_to VARCHAR(50) NOT NULL CHECK (applies_to IN ('all','accommodation','pos','services')),
         active BOOLEAN NOT NULL DEFAULT true,
         inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -332,6 +332,8 @@ export const pmsAuthDb = {
     await db.exec(createInventoryMovements);
     await db.exec(createSuppliers);
     await db.exec(createTaxes);
+    // [VAT-FIX] Force all existing taxes to inclusive
+    try { await db.exec(`UPDATE taxes SET is_inclusive = true WHERE is_inclusive = false`); } catch { }
     await db.exec(createAppSettings);
   },
 

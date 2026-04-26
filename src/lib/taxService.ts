@@ -74,26 +74,23 @@ export const deleteTax = async (id: string): Promise<{ ok: boolean; error?: stri
 
 export const calculateTaxesForAmount = async (amount: number, category: 'all'|'accommodation'|'pos'|'services'): Promise<{ subtotal: number; taxTotal: number; total: number; lines: Array<{ id: string; name: string; amount: number; inclusive: boolean }> }> => {
   const taxes = await getActiveTaxes(category)
-  const subtotal = Number(amount.toFixed(2))
+  const total = Number(amount.toFixed(2))
   let taxTotal = 0
-  let exclusiveTaxTotal = 0
   const lines: Array<{ id: string; name: string; amount: number; inclusive: boolean }> = []
+  
+  // For inclusive taxes, the formula is: Tax = Total * (Rate / (1 + Rate))
+  // We assume all taxes are additive to the base, so if there are multiple, 
+  // they share the same base: Total = Base * (1 + sum(Rates))
+  const totalRate = taxes.reduce((acc, t) => acc + (Number(t.percentage || 0) / 100), 0)
+  const subtotal = Number((total / (1 + totalRate)).toFixed(2))
+  
   for (const t of taxes) {
     const rate = Number(t.percentage || 0) / 100
-    if (t.is_inclusive) {
-      const inc = subtotal * (rate / (1 + rate))
-      const amt = Number(inc.toFixed(2))
-      taxTotal += amt
-      lines.push({ id: t.id, name: t.name, amount: amt, inclusive: true })
-    } else {
-      const exc = subtotal * rate
-      const amt = Number(exc.toFixed(2))
-      taxTotal += amt
-      exclusiveTaxTotal += amt
-      lines.push({ id: t.id, name: t.name, amount: amt, inclusive: false })
-    }
+    const amt = Number((subtotal * rate).toFixed(2))
+    taxTotal += amt
+    lines.push({ id: t.id, name: t.name, amount: amt, inclusive: true })
   }
-  const total = Number((subtotal + exclusiveTaxTotal).toFixed(2))
+  
   return { subtotal, taxTotal: Number(taxTotal.toFixed(2)), total, lines }
 }
 

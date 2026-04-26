@@ -1949,7 +1949,7 @@ export const FrontOffice: React.FC = () => {
                   const baseRate = roomObj?.rate || res?.rate || 0;
                   const pkgCode = sanitizePackageCode(res?.packageCode || res?.package_code || 'RO', 'RO');
                   const totalRate = computeTotalRate(baseRate, pkgCode, packageOptions, 'RO');
-                  checkInGuest(assignRoomResId, assignRoomSelected, { rateOverride: totalRate, packageCode: pkgCode, taxInclusive: false });
+                  checkInGuest(assignRoomResId, assignRoomSelected, { rateOverride: totalRate, packageCode: pkgCode, taxInclusive: true });
                   toast.success('Room assigned successfully');
                   setAssignRoomDialogOpen(false);
                   setAssignRoomResId(null);

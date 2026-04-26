@@ -166,7 +166,7 @@ export const RecordVendorBill: React.FC<{ onCancel: () => void; onSuccess?: () =
         description: line.description,
         quantity: line.quantity,
         unit_cost: line.unit_cost,
-        tax_inclusive: false, // UI logic sits on top
+        tax_inclusive: true, // UI logic sits on top
         tax_rate: applyVat ? vatRate * 100 : 0, 
         tax_amount: lineTax,
         department: line.department,
