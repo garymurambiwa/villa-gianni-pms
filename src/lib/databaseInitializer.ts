@@ -183,6 +183,7 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
     try { await db.exec(`ALTER TABLE pos_orders ADD COLUMN IF NOT EXISTS cost_center VARCHAR(50)`); } catch (e) { }
     try { await db.exec(`ALTER TABLE pos_orders ADD COLUMN IF NOT EXISTS shift_id VARCHAR(36)`); } catch (e) { }
     try { await db.exec(`ALTER TABLE table_status ADD COLUMN IF NOT EXISTS cost_center VARCHAR(50) DEFAULT 'Main Restaurant'`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE guests ADD COLUMN IF NOT EXISTS id_number TEXT`); } catch (e) { console.log('guests.id_number column note:', e); }
     
     // Create indexes
     try {

@@ -169,6 +169,7 @@ export const pmsAuthDb = {
         full_name TEXT NOT NULL,
         email TEXT,
         phone TEXT,
+        id_number TEXT,
         inserted_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
     `;
