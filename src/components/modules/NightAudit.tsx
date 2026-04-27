@@ -30,6 +30,7 @@ const NightAudit: React.FC = () => {
   const [canForceOptions, setCanForceOptions] = React.useState<string[]>([]);
   const [lastRun, setLastRun] = React.useState<any | null>(null);
   const [lastReports, setLastReports] = React.useState<any | null>(null);
+  const [currentRecon, setCurrentRecon] = React.useState<any | null>(null);
   
   // Auto-reconciliation options
   const [autoReconcile, setAutoReconcile] = React.useState(true);
@@ -122,9 +123,13 @@ const NightAudit: React.FC = () => {
       skipBackupCheck
     };
     const res = nightAuditService.prepareAndValidate({ rooms, guests, folioCharges, userId: user?.id || 'unknown' }, options);
+    const recon = nightAuditService.reconcileTotals({ rooms, guests, folioCharges, userId: user?.id || 'unknown' });
+    
     setValidationIssues(res.issues || []);
     setValidationWarnings(res.warnings || []);
     setCanForceOptions(res.canForce || []);
+    setCurrentRecon(recon);
+    
     if (res.ok) {
       toast({ title: 'Validation OK', description: 'All checks passed. Ready to run Night Audit.' });
     } else {
@@ -250,22 +255,145 @@ const NightAudit: React.FC = () => {
               <AlertTriangle className="h-5 w-5" />
               Night Audit Blocked - Issues to Resolve:
             </div>
+            {currentRecon && (
+              <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-2 bg-white/40 p-3 rounded border border-red-100">
+                <div className="text-center border-r border-red-100 last:border-0">
+                  <div className="text-[10px] uppercase text-gray-500">Folio Total</div>
+                  <div className="font-mono font-bold">${currentRecon.folioTotal.toFixed(2)}</div>
+                </div>
+                <div className="text-center border-r border-red-100 last:border-0">
+                  <div className="text-[10px] uppercase text-gray-500">Shift Total</div>
+                  <div className="font-mono font-bold">${currentRecon.shiftTotal.toFixed(2)}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-[10px] uppercase text-gray-500">Postings</div>
+                  <div className="font-mono font-bold">${currentRecon.postingsTodayTotal.toFixed(2)}</div>
+                </div>
+              </div>
+            )}
             <ul className="list-disc pl-5 space-y-2 mb-3">
               {validationIssues.map((issue, idx) => (
-                <li key={idx} className="flex items-start gap-2">
-                  <span className="inline-block mt-1">•</span>
-                  <span>{issue}</span>
+                <li key={idx} className="flex items-start justify-between gap-2 group">
+                  <div className="flex items-start gap-2">
+                    <span className="inline-block mt-1">•</span>
+                    <span>{issue}</span>
+                  </div>
+                  {issue.includes('Variance') && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-6 px-2 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity bg-red-100 text-red-700 hover:bg-red-200"
+                      onClick={() => {
+                        const match = issue.match(/Variance \(([\d.]+)\)/);
+                        if (match && match[1]) {
+                          setTolerance(match[1]);
+                          setAutoReconcile(true);
+                          toast({ title: 'Fixed', description: `Tolerance set to ${match[1]}` });
+                        }
+                      }}
+                    >
+                      Fix Now
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>
             <div className="text-xs bg-white/50 p-2 rounded border">
-              <strong>Quick Solutions:</strong>
-              <ul className="list-disc pl-4 mt-1 space-y-1">
-                <li>Enable "Auto-reconcile variances" to bypass reconciliation issues</li>
-                <li>Enable "Force past active shift" to bypass POS shift issues</li>
-                <li>Enable "Skip backup check" to bypass backup requirements</li>
-                <li>Or resolve issues manually in their respective modules</li>
-              </ul>
+              <div className="flex items-center justify-between mb-2">
+                <strong>Quick Solutions:</strong>
+                <Button 
+                  size="sm" 
+                  variant="destructive" 
+                  className="h-7 px-3 text-[11px] font-bold shadow-lg"
+                  onClick={() => {
+                    setAutoReconcile(true);
+                    setForceShiftClosure(true);
+                    setSkipBackupCheck(true);
+                    const match = validationIssues.find(i => i.includes('Variance'))?.match(/Variance \(([\d.]+)\)/);
+                    if (match && match[1]) {
+                      setTolerance(match[1]);
+                    }
+                    toast({ 
+                      title: 'Overrides Applied', 
+                      description: 'All safety checks bypassed. You can now run the audit.',
+                      variant: 'default'
+                    });
+                    // Trigger a re-run immediately if possible
+                    setTimeout(() => runAudit(), 500);
+                  }}
+                >
+                  Resolve All & Run Audit
+                </Button>
+              </div>
+              <div className="mt-2 space-y-2">
+                {!autoReconcile && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full justify-start text-xs h-8"
+                    onClick={() => {
+                      setAutoReconcile(true);
+                      toast({ title: 'Setting Updated', description: 'Auto-reconcile variances enabled.' });
+                    }}
+                  >
+                    <CheckCircle className="h-3 w-3 mr-2 text-green-600" />
+                    Enable "Auto-reconcile variances" to bypass reconciliation issues
+                  </Button>
+                )}
+                
+                {validationIssues.some(i => i.includes('Variance')) && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full justify-start text-xs h-8 border-amber-300 bg-amber-50"
+                    onClick={() => {
+                      const match = validationIssues.find(i => i.includes('Variance'))?.match(/Variance \(([\d.]+)\)/);
+                      if (match && match[1]) {
+                        setTolerance(match[1]);
+                        setAutoReconcile(true);
+                        toast({ title: 'Tolerance Updated', description: `Tolerance increased to ${match[1]} to match current variance.` });
+                      }
+                    }}
+                  >
+                    <AlertTriangle className="h-3 w-3 mr-2 text-amber-600" />
+                    Adjust tolerance to match variance and auto-reconcile
+                  </Button>
+                )}
+
+                {!forceShiftClosure && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full justify-start text-xs h-8"
+                    onClick={() => {
+                      setForceShiftClosure(true);
+                      toast({ title: 'Setting Updated', description: 'Force past active shift enabled.' });
+                    }}
+                  >
+                    <CheckCircle className="h-3 w-3 mr-2 text-blue-600" />
+                    Enable "Force past active shift" to bypass POS shift issues
+                  </Button>
+                )}
+
+                {!skipBackupCheck && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full justify-start text-xs h-8"
+                    onClick={() => {
+                      setSkipBackupCheck(true);
+                      toast({ title: 'Setting Updated', description: 'Skip backup check enabled.' });
+                    }}
+                  >
+                    <CheckCircle className="h-3 w-3 mr-2 text-purple-600" />
+                    Enable "Skip backup check" to bypass backup requirements
+                  </Button>
+                )}
+                
+                <div className="text-[10px] text-gray-500 pt-1">
+                  Or resolve issues manually in their respective modules.
+                </div>
+              </div>
             </div>
           </div>
         )}
