@@ -856,19 +856,32 @@ export const POSFrontOffice: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2">
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4 md:gap-6">
-              {(visibleTables || []).map(table => (
-                <TableCard
-                  key={table.id}
-                  table={{ ...table, cost_center: costCentre || 'Main Restaurant' } as any}
-                  onClick={() => handleTableClick(table.id)}
-                  onToggleSuspend={() => toggleSuspend(table.id)}
-                  onClearBill={() => clearBill(table.id)}
-                />
-              ))}
-            </div>
-          </div>
+           <div className="lg:col-span-2">
+             {activeShift ? (
+               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4 md:gap-6">
+                 {(visibleTables || []).map(table => (
+                   <TableCard
+                     key={table.id}
+                     table={{ ...table, cost_center: costCentre || 'Main Restaurant' } as any}
+                     onClick={() => handleTableClick(table.id)}
+                     onToggleSuspend={() => toggleSuspend(table.id)}
+                     onClearBill={() => clearBill(table.id)}
+                   />
+                 ))}
+               </div>
+             ) : (
+               <div className="text-center py-12">
+                 <p className="text-lg font-medium text-gray-600 mb-4">
+                   Please start a shift to access table management
+                 </p>
+                 <div className="flex items-center space-x-4">
+                   <div className="text-sm text-gray-500">
+                     Tables will be available once your shift begins
+                   </div>
+                 </div>
+               </div>
+             )}
+           </div>
 
           <div className="bg-white rounded-xl shadow-lg p-6">
             <h3 className="text-xl font-bold text-gray-800 mb-4">Current Bill</h3>

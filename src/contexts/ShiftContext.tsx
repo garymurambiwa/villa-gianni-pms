@@ -2,7 +2,7 @@ import React, { createContext, useContext, useMemo, useState, useEffect } from '
 import { ShiftReading } from '../types';
 import pmsAuthDb from '../lib/pmsAuthDb';
 
-export type PaymentMethod = 'cash' | 'card' | 'room-charge';
+export type PaymentMethod = 'cash' | 'ecocash' | 'swipe' | 'room-charge';
 
 export interface ShiftTransaction {
   id: string;

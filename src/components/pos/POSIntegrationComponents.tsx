@@ -110,13 +110,13 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   receiptSettings,
   voidContext
 }) => {
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'room-charge' | 'city-ledger'>(() => {
-    try {
-      const m = localStorage.getItem('corepms_pos_last_payment_method');
-      if (m === 'cash' || m === 'card' || m === 'room-charge' || m === 'city-ledger') return m as any;
-    } catch {}
-    return 'cash';
-  });
+   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'ecocash' | 'swipe' | 'room-charge'>(() => {
+     try {
+       const m = localStorage.getItem('corepms_pos_last_payment_method');
+       if (m === 'cash' || m === 'ecocash' || m === 'swipe' || m === 'room-charge') return m as any;
+     } catch {}
+     return 'cash';
+   });
   const [customerName, setCustomerName] = useState(bill.customerName || '');
   const [roomNumber, setRoomNumber] = useState(bill.roomNumber || '');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -221,20 +221,20 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     }
   }, [isOpen]);
 
-  const selectPaymentMethod = (method: 'cash' | 'card' | 'room-charge' | 'city-ledger') => {
-    if (isProcessing) return;
-    if (paymentMethod === method) return;
-    try {
-      const prev = paymentMethod;
-      setPaymentMethod(method);
-      localStorage.setItem('corepms_pos_last_payment_method', method);
-      const logRaw = localStorage.getItem('corepms_pos_payment_logs');
-      const list = logRaw ? JSON.parse(logRaw) : [];
-      const entry = { billId: bill.id, prev, next: method, at: new Date().toISOString() };
-      localStorage.setItem('corepms_pos_payment_logs', JSON.stringify([entry, ...list].slice(0, 200)));
-      console.log('[POS] Payment method changed', entry);
-    } catch {}
-  };
+   const selectPaymentMethod = (method: 'cash' | 'ecocash' | 'swipe' | 'room-charge') => {
+     if (isProcessing) return;
+     if (paymentMethod === method) return;
+     try {
+       const prev = paymentMethod;
+       setPaymentMethod(method);
+       localStorage.setItem('corepms_pos_last_payment_method', method);
+       const logRaw = localStorage.getItem('corepms_pos_payment_logs');
+       const list = logRaw ? JSON.parse(logRaw) : [];
+       const entry = { billId: bill.id, prev, next: method, at: new Date().toISOString() };
+       localStorage.setItem('corepms_pos_payment_logs', JSON.stringify([entry, ...list].slice(0, 200)));
+       console.log('[POS] Payment method changed', entry);
+     } catch {}
+   };
 
   const mapBrand = () => {
     const b = readReceiptBranding();
@@ -299,18 +299,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       return;
     }
 
-    if (paymentMethod === 'city-ledger') {
-      if (!selectedAccount) { alert('Select a City Ledger account to post this bill.'); return; }
-      if (selectedAccount.status && selectedAccount.status !== 'Active') { alert(`Account status is ${selectedAccount.status}. Cannot post.`); return; }
-      const projectedBalance = Number(selectedAccount.balance || 0) + Number(bill.total || 0);
-      const limit = Number(selectedAccount.creditLimit || 0);
-      if (limit > 0 && projectedBalance > limit) {
-        if (!managerOverride || !canManagerOverride) { alert('Posting would exceed credit limit. Select a different account or record a payment.'); return; }
-      }
-      if (!isAccountTypeAllowedForDept(selectedAccount)) {
-        if (!managerOverride || !canManagerOverride) { alert(`Account type '${selectedAccount.type}' is restricted for ${deptHeuristic}. Manager override required.`); return; }
-      }
-    }
+
 
     setIsProcessing(true);
 
@@ -494,25 +483,25 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             </Button>
           </div>
 
-          {/* Payment Method Selection */}
-          <div>
-            <Label>Payment Method</Label>
-            <div className="grid grid-cols-4 gap-3 mt-2">
-              {(['cash', 'card', 'room-charge', 'city-ledger'] as const).map(method => {
-                const base = 'pay-btn ' + (method==='cash' ? 'pay-btn-cash' : method==='card' ? 'pay-btn-card' : method==='room-charge' ? 'pay-btn-room' : 'pay-btn-city');
-                const state = paymentMethod === method ? ' pay-btn-active' : ' pay-btn-inactive';
-                return (
-                  <button
-                    key={method}
-                    onClick={() => selectPaymentMethod(method)}
-                    className={base + state}
-                  >
-                    {method==='city-ledger' ? 'City Ledger' : method === 'room-charge' ? 'Room Charge' : method.charAt(0).toUpperCase() + method.slice(1)}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+           {/* Payment Method Selection */}
+           <div>
+             <Label>Payment Method</Label>
+             <div className="grid grid-cols-4 gap-3 mt-2">
+               {(['cash', 'ecocash', 'swipe', 'room-charge'] as const).map(method => {
+                 const base = 'pay-btn ' + (method==='cash' ? 'pay-btn-cash' : method==='ecocash' ? 'pay-btn-ecocash' : method==='swipe' ? 'pay-btn-swipe' : 'pay-btn-room');
+                 const state = paymentMethod === method ? ' pay-btn-active' : ' pay-btn-inactive';
+                 return (
+                   <button
+                     key={method}
+                     onClick={() => selectPaymentMethod(method as any)}
+                     className={base + state}
+                   >
+                     {method === 'ecocash' ? 'EcoCash' : method === 'swipe' ? 'Swipe' : method === 'room-charge' ? 'Room Charge' : method.charAt(0).toUpperCase() + method.slice(1)}
+                   </button>
+                 );
+               })}
+             </div>
+           </div>
 
           {/* City Ledger account selection */}
           {paymentMethod === 'city-ledger' && (
