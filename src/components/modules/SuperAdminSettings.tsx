@@ -10,15 +10,19 @@ import pmsAuthDb, { AccessLog } from '@/lib/pmsAuthDb';
 import { adminPermissionFixService } from '@/lib/adminPermissionFixService';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { useSettings } from '@/hooks/useSettings';
+import { format } from 'date-fns';
 
 const SuperAdminSettings: React.FC = () => {
   const { user } = useAuth();
+  const { updateSetting } = useSettings();
   const [code, setCode] = React.useState('');
   const [confirm, setConfirm] = React.useState('');
   const [msg, setMsg] = React.useState('');
   const [err, setErr] = React.useState('');
-  const [meta, setMeta] = React.useState(() => __meta.getSuperAdminMeta());
-  const allowed = canAccessTransactionClearing(user?.role || '');
+  const meta = React.useMemo(() => __meta.getSuperAdminMeta(), []);
+  const isSuperUser = user?.username?.toLowerCase() === 'admin';
+  const allowed = isSuperUser && canAccessTransactionClearing(user?.role || '');
 
   const validFormat = /^[A-Za-z0-9!@#$%^&*()_+\-={}:;"'<>?,.]{16,}$/.test(code);
   const matching = code && confirm && code === confirm;
@@ -315,6 +319,40 @@ const SuperAdminSettings: React.FC = () => {
     } finally { setBackupBusy(false) }
   }
 
+  // ================================
+  // License Expiry Management
+  // ================================
+  const [licenseExpiry, setLicenseExpiry] = React.useState('');
+  const [expiryMsg, setExpiryMsg] = React.useState('');
+  const [expiryErr, setExpiryErr] = React.useState('');
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const val = await pmsAuthDb.getAppSetting('license_expiry');
+        if (val) setLicenseExpiry(val);
+      } catch { }
+    })();
+  }, []);
+
+  const saveLicenseExpiry = async () => {
+    setExpiryMsg(''); setExpiryErr('');
+    try {
+      if (!licenseExpiry) {
+        setExpiryErr('Please select a date and time.');
+        return;
+      }
+      const ok = await updateSetting('license_expiry' as any, licenseExpiry);
+      if (ok) {
+        setExpiryMsg('License expiry deadline updated successfully.');
+      } else {
+        setExpiryErr('Failed to update license expiry.');
+      }
+    } catch (e: any) {
+      setExpiryErr(e?.message || 'Failed to update license expiry.');
+    }
+  };
+
   if (!allowed) {
     return (
       <div className="p-6">
@@ -346,6 +384,39 @@ const SuperAdminSettings: React.FC = () => {
         <div className="mt-3 flex items-center gap-2">
           <Button onClick={save} className="bg-blue-600 text-white hover:bg-blue-700" disabled={!validFormat || !matching}>Save Code</Button>
           <Button variant="outline" onClick={() => { setCode(''); setConfirm(''); setErr(''); setMsg(''); }}>Reset</Button>
+        </div>
+      </div>
+
+      {/* License Expiry Management */}
+      <div className="bg-white p-4 rounded shadow max-w-2xl mt-6 border-l-4 border-red-500">
+        <h3 className="text-xl font-semibold mb-2 flex items-center gap-2 text-red-700">
+          ⚠️ License Expiry Management
+        </h3>
+        <p className="text-sm text-gray-600 mb-4">
+          Set the deadline for license fee payment. This will trigger the system-wide terminal warning banner.
+        </p>
+        {expiryMsg && (<div className="p-3 mb-3 rounded bg-green-50 text-green-700">{expiryMsg}</div>)}
+        {expiryErr && (<div className="p-3 mb-3 rounded bg-red-50 text-red-700">{expiryErr}</div>)}
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+          <div className="space-y-2">
+            <Label htmlFor="expiry-date">Lockout Deadline (Date & Time)</Label>
+            <Input 
+              id="expiry-date" 
+              type="datetime-local" 
+              value={licenseExpiry} 
+              onChange={(e) => setLicenseExpiry(e.target.value)} 
+            />
+          </div>
+          <Button 
+            onClick={saveLicenseExpiry} 
+            className="bg-red-600 text-white hover:bg-red-700"
+          >
+            Update Lockout Deadline
+          </Button>
+        </div>
+        <div className="text-xs text-gray-500 mt-4 italic">
+          Note: This setting is only visible to the system super-administrator. Setting this date will update the countdown on all terminal login interfaces.
         </div>
       </div>
 
