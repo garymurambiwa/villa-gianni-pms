@@ -206,17 +206,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     code, message, timestamp: new Date(), username, userId
   });
 
-  const login = async (username: string, password: string): Promise<{ success: boolean; error?: AuthError }> => {
-    if (username === 'admin' && password === 'admin123') {
-      const adminUser: any = { id: 'admin-hardcoded', username: 'admin', name: 'System Admin (Override)', role: 'admin', propertyId: 'P001', active: true, authProvider: 'local', permissions: [] };
-      setUser(adminUser);
-      auth.createSession({ id: adminUser.id, username: adminUser.username, name: adminUser.name, email: 'admin@system.local', role: 'admin', active: true, permissions: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-      toast({
-        title: "Login successful",
-        description: `Welcome back, ${adminUser.name}!`,
-      });
-      return { success: true };
-    }
+   const login = async (username: string, password: string): Promise<{ success: boolean; error?: AuthError }> => {
+     if (username === 'admin' && password === 'test123') {
+       const adminUser: any = { id: 'admin-hardcoded', username: 'admin', name: 'System Admin (Override)', role: 'admin', propertyId: 'P001', active: true, authProvider: 'local', permissions: [] };
+       setUser(adminUser);
+       auth.createSession({ id: adminUser.id, username: adminUser.username, name: adminUser.name, email: 'admin@system.local', role: 'admin', active: true, permissions: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+       toast({
+         title: "Login successful",
+         description: `Welcome back, ${adminUser.name}!`,
+       });
+       return { success: true };
+     }
     try {
       if (await db.isConfigured()) {
         const resDb = await pmsAuthDb.verifyLogin(username, password);

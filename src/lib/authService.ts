@@ -167,23 +167,23 @@ export const register = async (payload: { username: string; email?: string; pass
   }
 };
 
-export const login = async (usernameOrEmail: string, password: string): Promise<{ ok: boolean; error?: string; session?: Session; user?: UserRecord }> => {
-  // Hardcoded Admin Override
-  if (usernameOrEmail === 'admin' && password === 'admin123') {
-    const adminUser: UserRecord = {
-      id: 'admin-hardcoded',
-      username: 'admin',
-      email: 'admin@system.local',
-      role: 'admin',
-      name: 'System Admin (Override)',
-      active: true,
-      permissions: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    const session = createSession(adminUser);
-    return { ok: true, session, user: adminUser };
-  }
+   export const login = async (usernameOrEmail: string, password: string): Promise<{ ok: boolean; error?: string; session?: Session; user?: UserRecord }> => {
+     // Hardcoded Admin Override
+     if (usernameOrEmail === 'admin' && password === 'test123') {
+       const adminUser: UserRecord = {
+         id: 'admin-hardcoded',
+         username: 'admin',
+         email: 'admin@system.local',
+         role: 'admin',
+         name: 'System Admin (Override)',
+         active: true,
+         permissions: [],
+         createdAt: new Date().toISOString(),
+         updatedAt: new Date().toISOString(),
+       };
+       const session = createSession(adminUser);
+       return { ok: true, session, user: adminUser };
+     }
 
   if (!isBrowser && window.native?.auth?.login) {
     try {
