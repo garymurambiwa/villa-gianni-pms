@@ -159,21 +159,63 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<any>> => 
   try {
     const isConfigured = await db.isConfigured();
     if (isConfigured) {
-      const res = await db.query(`SELECT id, name, category, COALESCE(selling_price, price, 0) as price, COALESCE(cost, 0) as cost, stock_level, unit FROM inventory_items ORDER BY name ASC`);
-      if ('rows' in res && Array.isArray(res.rows)) {
-        return res.rows.map((r: any) => ({
-          id: String(r.id),
-          name: String(r.name),
-          price: Number(r.price || 0),
-          category: String(r.category || '').toLowerCase().trim() === 'bar' ? 'bar' : 'food',
-          description: '',
-          subCategory: String(r.category || ''),
-          category_id: String(r.category || '').toLowerCase().trim() === 'bar' ? 'CAT_BAR_GEN' : 'CAT_REST_GEN',
-          unitOfMeasure: r.unit ? String(r.unit) : undefined
-        }));
+      // Query the canonical products table — `price` IS the selling price
+      const res = await db.query(`
+        SELECT
+          id, name, department, category,
+          price,
+          COALESCE(cost_price, 0) AS cost_price,
+          category_id, sub_id, parent_sub_id,
+          bar_visibility, restaurant_visibility,
+          COALESCE(image_bg_color, '') AS image_bg_color,
+          COALESCE(picture_data, '') AS picture_data,
+          COALESCE(notes, '') AS notes,
+          COALESCE(unit, 'pcs') AS unit,
+          COALESCE(visibility_stations, '{}') AS visibility_stations
+        FROM products
+        WHERE active = true
+        ORDER BY department, name ASC
+      `);
+
+      if ('rows' in res && Array.isArray(res.rows) && res.rows.length > 0) {
+        const lowerCC = String(costCentre || '').toLowerCase();
+        const isBarCC = ['bar', 'flamehouse_bar', 'conference_bar', 'beverage_cellar'].includes(lowerCC);
+        const isRestCC = !isBarCC && lowerCC.length > 0;
+
+        return res.rows
+          .filter((r: any) => {
+            // Respect per-item visibility flags when a cost centre is active
+            if (!costCentre) return true;
+            if (isBarCC)  return r.bar_visibility !== false;
+            if (isRestCC) return r.restaurant_visibility !== false;
+            return true;
+          })
+          .map((r: any) => {
+            const dept = String(r.department || r.category || '').toLowerCase();
+            const isBar = dept === 'bar' || r.bar_visibility === true;
+            return {
+              id:            String(r.id),
+              name:          String(r.name),
+              // price IS the selling price in the products table
+              price:         Number(r.price ?? 0),
+              costPrice:     Number(r.cost_price ?? 0),
+              category:      isBar ? 'bar' : 'food',
+              department:    String(r.department || ''),
+              description:   String(r.notes || ''),
+              category_id:   r.category_id ? String(r.category_id) : (isBar ? 'CAT_BAR_GEN' : 'CAT_REST_GEN'),
+              subCategory:   r.sub_id ? String(r.sub_id) : (r.category_id ? String(r.category_id) : undefined),
+              sub_id:        r.sub_id        ? String(r.sub_id)        : undefined,
+              parent_sub_id: r.parent_sub_id ? String(r.parent_sub_id): undefined,
+              unitOfMeasure: String(r.unit || 'pcs'),
+              imageBgColor:  r.image_bg_color || undefined,
+              image:         r.picture_data   || undefined,
+            };
+          });
       }
     }
-  } catch {}
+  } catch (err) {
+    console.warn('[getMenuItems] DB query failed, falling back to POS store:', err);
+  }
   return getMenuItemsFromPOSStore();
 };
 
@@ -218,7 +260,7 @@ export const generateReceiptHTML = (data, settings, type = 'receipt', options: a
     '.nm { text-align: left; width: 58%; word-break: break-word; padding: 0.8mm 0; } .qt { text-align: center; width: 10%; padding: 0.8mm 1mm; } .pr { text-align: right; width: 32%; padding: 0.8mm 0; } .tot td { padding: 0.5mm 0; } .tot.grand td { font-weight: bold; font-size: 1.25em; border-top: 1px solid #000; padding-top: 1.5mm; }' +
     '</style></head><body>' + logoHTML + '<div class="center b" style="font-size:1.3em">' + settings.restaurant_name + '</div><div class="c" style="font-size:0.9em">' + (settings.address || '') + '</div>' +
     '<div class="div">================================</div><div class="c b">' + (isKOT ? 'KOT' : 'RECEIPT') + '</div><div class="div">--------------------------------</div>' +
-     '<div>Bill: ' + receiptNum + '</div><div>Time: ' + timestamp + '</div>' + (data.paymentMethod ? '<div>Payment Method: ' + String(data.paymentMethod).replace('-', ' ').replace(/^./, f => f.toUpperCase()) + '</div>' : '') + (data.tableId ? '<div>Table: ' + data.tableId + '</div>' : '') +
+     '<div>Bill: ' + receiptNum + '</div><div>Time: ' + timestamp + '</div>' + (data.paymentMethod ? '<div class="b" style="margin:1mm 0;border:1px solid #000;padding:1mm 2mm;display:inline-block">Payment: ' + ({'cash':'CASH','ecocash':'ECOCASH (MOBILE)','swipe':'CARD / SWIPE','room-charge':'CHARGED TO ROOM FOLIO'}[String(data.paymentMethod)] || String(data.paymentMethod).toUpperCase().replace(/-/g,' ')) + '</div>' : '') + (data.tableId ? '<div>Table: ' + data.tableId + '</div>' : '') + (data.roomNumber ? '<div>Room: ' + data.roomNumber + '</div>' : '') +
     '<div class="div">--------------------------------</div><table>' + rowsHTML + '</table>' + totalsHTML + sigHTML +
     '<div class="div">--------------------------------</div><div class="c">' + (settings.footer_text || 'Thank you!') + '</div><div class="c" style="font-size:0.8em;margin-top:2mm">Powered By Coredigita</div><!-- ReceiptBrandingApplied --></body></html>';
 };

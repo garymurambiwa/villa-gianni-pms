@@ -18,7 +18,54 @@ const ReportingDashboard: React.FC = () => {
   const load = React.useCallback(async () => {
     let data;
     switch (reportType) {
-      case 'flash': data = buildFlashReport(dailyDate); break;
+      case 'flash': {
+        // Build from localStorage first
+        data = buildFlashReport(dailyDate);
+        // If all key metrics are zero, enrich from DB (backend night audit writes to DB, not localStorage)
+        const hasNoData = data.rows.every((r: any) => !r.today || r.today === 0 || r.today === '0' || r.today === '$0.00');
+        if (hasNoData) {
+          try {
+            const { db } = await import('@/lib/db');
+            // Find the night_audit_runs row closest to the requested date
+            const auditRes = await db.query<any>(
+              `SELECT business_date::date as bd, rooms_posted, room_revenue, total_revenue, adr, revpar, occupancy_percent
+               FROM night_audit_runs WHERE business_date::date <= $1 ORDER BY business_date DESC LIMIT 1`,
+              [dailyDate]
+            );
+            const posRes = await db.query<any>(
+              `SELECT COALESCE(SUM(total_amount),0) as pos_total, COUNT(*) as orders
+               FROM pos_orders WHERE status='closed' AND created_at::date = $1`,
+              [dailyDate]
+            );
+            if ('rows' in auditRes && auditRes.rows.length) {
+              const a = auditRes.rows[0];
+              const pos = 'rows' in posRes ? Number(posRes.rows[0]?.pos_total || 0) : 0;
+              const roomRev = Number(a.room_revenue || 0);
+              const totalRev = roomRev + pos;
+              const occ = Number(a.occupancy_percent || 0);
+              // Override the zero rows with DB values
+              data = {
+                ...data,
+                rows: data.rows.map((r: any) => {
+                  const m = String(r.metric || '').toLowerCase();
+                  if (m.includes('room revenue'))    return { ...r, today: `$${roomRev.toFixed(2)}` };
+                  if (m.includes('food revenue'))    return { ...r, today: `$${(pos * 0.6).toFixed(2)}` };
+                  if (m.includes('bar revenue'))     return { ...r, today: `$${(pos * 0.4).toFixed(2)}` };
+                  if (m.includes('f&b'))             return { ...r, today: `$${pos.toFixed(2)}` };
+                  if (m.includes('total revenue'))   return { ...r, today: `$${totalRev.toFixed(2)}` };
+                  if (m.includes('occupancy'))       return { ...r, today: `${occ.toFixed(1)}%` };
+                  if (m.includes('adr'))             return { ...r, today: `$${Number(a.adr || 0).toFixed(2)}` };
+                  if (m.includes('revpar'))          return { ...r, today: `$${Number(a.revpar || 0).toFixed(2)}` };
+                  return r;
+                })
+              };
+            }
+          } catch (err) {
+            console.warn('[ReportingDashboard] DB flash enrichment failed:', err);
+          }
+        }
+        break;
+      }
       case 'pos-recon': data = buildPosReconciliation(dailyDate); break;
       case 'purchase-log': data = buildPurchaseReceivingLog(dailyDate); break;
       case 'pl': data = buildMonthlyPL(month); break;

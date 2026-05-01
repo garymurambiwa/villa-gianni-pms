@@ -424,6 +424,15 @@ try {
   console.error('❌ Failed to load system routes:', error.message);
 }
 
+// Night Audit API + SSE routes
+try {
+  const { router: nightAuditRoutes } = require('./routes/nightAuditApi.cjs');
+  console.log('🌙 Registering night audit routes at /api/night-audit');
+  app.use('/api/night-audit', nightAuditRoutes);
+} catch (error) {
+  console.error('❌ Failed to load night audit routes:', error.message);
+}
+
 // Catch-all handler: serve React app for client-side routing
 app.use((req, res, next) => {
   // Skip API routes
@@ -438,6 +447,61 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT} (listening on all interfaces)`);
     console.log(`📊 Database URL: ${process.env.DATABASE_URL ? 'Configured' : 'Missing (Check .env)'}`);
     console.log(`🌐 Server ready at http://localhost:${PORT}`);
+
+    // Bootstrap: ensure system_configs has business_date and schedule entries,
+    // then start the nightly scheduler
+    const runner = require('./services/nightAuditRunner.cjs');
+    const dbMod  = require('./db-web.cjs');
+
+    (async () => {
+      // ── Auto-create critical POS/FO tables if absent ────────────────────────
+      await dbMod.query(`
+        CREATE TABLE IF NOT EXISTS table_status (
+          table_id    TEXT PRIMARY KEY,
+          status      TEXT NOT NULL DEFAULT 'open',
+          last_update TIMESTAMPTZ DEFAULT NOW(),
+          cost_center TEXT
+        )
+      `);
+      // Seed 12 default tables if none exist
+      const tblCheck = await dbMod.query(`SELECT COUNT(*) as c FROM table_status`);
+      if (tblCheck.ok && Number(tblCheck.rows[0]?.c) === 0) {
+        const inserts = Array.from({ length: 12 }, (_, i) =>
+          `INSERT INTO table_status (table_id, status) VALUES ('t${i+1}', 'open') ON CONFLICT DO NOTHING`
+        );
+        for (const sql of inserts) await dbMod.query(sql);
+        console.log('🪑 Seeded 12 default POS tables');
+      }
+
+      await dbMod.query(`
+        ALTER TABLE products
+          ADD COLUMN IF NOT EXISTS bar_visibility        BOOLEAN DEFAULT true,
+          ADD COLUMN IF NOT EXISTS restaurant_visibility BOOLEAN DEFAULT true
+      `);
+
+      // Auto-create system_configs rows if absent
+      await dbMod.query(`
+        INSERT INTO system_configs (key, value, description, updated_at, updated_by)
+        VALUES
+          ('night_audit_schedule',
+           '{"enabled":true,"hour":21,"minute":0,"timezone":"Africa/Harare"}'::jsonb,
+           'Auto night audit schedule', NOW(), 'system'),
+          ('night_audit_lock',
+           '{"locked":false}'::jsonb,
+           'Night audit system lock', NOW(), 'system'),
+          ('business_date',
+           json_build_object('date', to_char(CURRENT_DATE,'YYYY-MM-DD'), 'rolled_at', NOW()::text)::jsonb,
+           'Current hotel business date', NOW(), 'system')
+        ON CONFLICT (key) DO NOTHING
+      `);
+
+      const schedule = await runner.getSystemConfig('night_audit_schedule',
+        { enabled: true, hour: 21, minute: 0, timezone: 'Africa/Harare' });
+      if (schedule.enabled !== false) {
+        runner.startScheduler(schedule.hour, schedule.minute, schedule.timezone);
+        console.log(`⏰ Night audit scheduler active — runs at ${String(schedule.hour).padStart(2,'0')}:${String(schedule.minute).padStart(2,'0')} ${schedule.timezone}`);
+      }
+    })().catch(console.error);
 });
 
 server.on('error', (error) => {

@@ -814,32 +814,29 @@ export const PosSettings: React.FC = () => {
   };
   const tabAnchors: Record<'admin' | 'menu' | 'stock' | 'purchasing', Array<{ id: string; label: string }>> = {
     admin: [
-      { id: 'receipt-branding', label: 'Receipt Branding & Contact Info' },
-      { id: 'user-management', label: 'POS User Management' },
-      { id: 'shift-reporting', label: 'Shift & Activity Reports' },
-      { id: 'pos-reporting-tools', label: 'POS Reporting Tools' },
-      { id: 'data-migration', label: 'Data Migration' },
-      { id: 'category-gaps', label: 'Category Gaps' },
-      { id: 'station-management', label: 'Station Management (Cost Centres)' },
-      { id: 'pos-user-rights', label: 'POS User Rights Management' },
+      { id: 'receipt-branding',  label: '🖨 Receipt Branding' },
+      { id: 'station-management', label: '🏪 Cost Centres / Stations' },
+      { id: 'user-management',   label: '👤 POS Users' },
+      { id: 'pos-user-rights',   label: '🔐 User Rights & PIN' },
+      { id: 'shift-reporting',   label: '📊 Shift Reports' },
+      { id: 'pos-reporting-tools', label: '📈 Reporting Tools' },
+      { id: 'category-gaps',     label: '⚠ Category Gaps' },
+      { id: 'data-migration',    label: '🔄 Data Migration' },
     ],
     menu: [
-      { id: 'menu-categories', label: 'Menu Categories' },
-      { id: 'sub-categories', label: 'Sub-Categories' },
-      { id: 'cocktail-engineering', label: 'Cocktail Engineering' },
+      { id: 'menu-categories',    label: '🏷 Menu Categories' },
+      { id: 'sub-categories',     label: '🗂 Sub-Categories' },
+      { id: 'cocktail-engineering', label: '🍹 Cocktail Engineering' },
     ],
     stock: [
-      { id: 'stock-list', label: 'Stock List' },
-      { id: 'stock-controls', label: 'Stock Management Controls' },
-      { id: 'inventory-control', label: 'Inventory Control' },
-      { id: 'stock-level-monitoring', label: 'Stock Level Monitoring' },
-      { id: 'printing-quick-updates', label: 'Print/Quick Updates' },
-      { id: 'adjust-stock-quantities', label: 'Adjust Stock Quantities' },
-      { id: 'unit-management', label: 'Unit of Measure Management' },
+      { id: 'stock-list',           label: '📦 Stock List' },
+      { id: 'inventory-control',    label: '🔍 Inventory Control' },
+      { id: 'printing-quick-updates', label: '🖨 Print / Quick Count' },
+      { id: 'adjust-stock-quantities', label: '± Adjust Quantities' },
+      { id: 'unit-management',      label: '📏 Units of Measure' },
     ],
     purchasing: [
-      { id: 'purchasing-config', label: 'Purchasing Configuration' },
-      { id: 'suppliers', label: 'Suppliers' },
+      { id: 'suppliers', label: '🏢 Suppliers' },
     ],
   };
 
@@ -904,6 +901,7 @@ export const PosSettings: React.FC = () => {
   const [inventoryCategory, setInventoryCategory] = React.useState<'kitchen' | 'cellar' | ''>('');
 
   const [sellingPrice, setSellingPrice] = React.useState<number>(0);
+  const [costPrice, setCostPrice] = React.useState<number>(0);
   const [costCenter, setCostCenter] = React.useState<'bar' | 'restaurant' | ''>('');
   const [categoryId, setCategoryId] = React.useState<string>('');
   const [subId, setSubId] = React.useState<string>('none');
@@ -980,9 +978,9 @@ export const PosSettings: React.FC = () => {
     }
   }, [stockOpen, focusField]);
 
-  const gpAmount = React.useMemo(() => 0, []);
-  const gpPercent = React.useMemo(() => 0, []);
-  const computedCOS = React.useMemo(() => 0, []);
+  const gpAmount   = React.useMemo(() => Math.max(0, sellingPrice - costPrice), [sellingPrice, costPrice]);
+  const gpPercent  = React.useMemo(() => sellingPrice > 0 ? (gpAmount / sellingPrice) * 100 : 0, [gpAmount, sellingPrice]);
+  const computedCOS = React.useMemo(() => sellingPrice > 0 ? (costPrice / sellingPrice) * 100 : 0, [costPrice, sellingPrice]);
 
   React.useEffect(() => {
     try {
@@ -1060,6 +1058,7 @@ export const PosSettings: React.FC = () => {
      setQtyInStock(0);
      setInventoryCategory('');
      setSellingPrice(0);
+     setCostPrice(0);
      setCostCenter('');
      setCategoryId('');
      setSubId('none');
@@ -1233,6 +1232,8 @@ export const PosSettings: React.FC = () => {
       qtyInStock,
       unitOfMeasure,
       sellingPrice: Number(sellingPrice.toFixed(2)),
+      costPrice:    Number(costPrice.toFixed(2)),
+      cost_price:   Number(costPrice.toFixed(2)),
       costCenter,
       // FIX: Include type field for proper department handling in sync
       type: department,
@@ -1241,9 +1242,9 @@ export const PosSettings: React.FC = () => {
       visibility: { bar: effectiveBarVisible, restaurant: effectiveRestaurantVisible },
       bar_visibility: effectiveBarVisible,
       restaurant_visibility: effectiveRestaurantVisible,
-      cosPercent: computedCOS,
-      gpAmount,
-      gpPercent,
+      cosPercent: Number(computedCOS.toFixed(2)),
+      gpAmount:   Number(gpAmount.toFixed(2)),
+      gpPercent:  Number(gpPercent.toFixed(2)),
       category_id: categoryId || null,
       sub_id: subId && subId !== 'none' ? subId : null,
       pictureName: pictureFile?.name || null,
@@ -1304,6 +1305,7 @@ export const PosSettings: React.FC = () => {
     setQtyReceived(Number(it.qtyReceived) || 0);
     setQtyInStock(Number(it.qtyInStock) || 0);
     setSellingPrice(Number(it.sellingPrice) || 0);
+    setCostPrice(Number(it.costPrice ?? it.cost_price ?? 0));
     setCostCenter(it.costCenter || '');
     setCategoryId(String(it.category_id || ''));
     setSubId(String(it.sub_id || 'none'));
@@ -1940,15 +1942,56 @@ export const PosSettings: React.FC = () => {
               </div>
 
 
-              <div>
-                <label className="text-xs">Selling price</label>
-                <Input id="sellingPrice" type="number" min={0} step="0.01" value={sellingPrice} onChange={(e) => setSellingPrice(Number(e.target.value))} />
-                {errors.sellingPrice && <div className="text-xs text-red-600 mt-1">{errors.sellingPrice}</div>}
-              </div>
+              {/* ── Pricing block ── */}
+              <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3 p-3 rounded-lg border border-gray-200 bg-gray-50">
+                <div>
+                  <label className="text-xs font-semibold text-purple-700">
+                    Selling Price <span className="text-[10px] font-normal text-purple-500">(shown on POS)</span>
+                  </label>
+                  <Input
+                    id="sellingPrice"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={sellingPrice}
+                    onChange={(e) => setSellingPrice(Number(e.target.value))}
+                    className="border-purple-300 focus:ring-purple-400 mt-1"
+                  />
+                  {errors.sellingPrice && <div className="text-xs text-red-600 mt-1">{errors.sellingPrice}</div>}
+                </div>
 
-              <div>
-                <label className="text-xs">COS (Cost of Sales) %</label>
-                <Input id="cosPercent" type="number" readOnly value={computedCOS} />
+                <div>
+                  <label className="text-xs font-semibold text-gray-600">
+                    Cost Price <span className="text-[10px] font-normal text-gray-400">optional · internal only</span>
+                  </label>
+                  <Input
+                    id="costPrice"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="0.00 (optional)"
+                    value={costPrice || ''}
+                    onChange={(e) => setCostPrice(e.target.value === '' ? 0 : Number(e.target.value))}
+                    className="border-gray-300 mt-1"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-green-700">
+                    GP% <span className="text-[10px] font-normal text-green-500">(auto-calculated)</span>
+                  </label>
+                  <Input
+                    type="number"
+                    readOnly
+                    value={Number(gpPercent.toFixed(1))}
+                    className="bg-green-50 border-green-200 text-green-800 font-semibold mt-1"
+                  />
+                  {sellingPrice > 0 && costPrice > 0 && (
+                    <div className="text-[10px] text-gray-500 mt-1">
+                      Margin: ${gpAmount.toFixed(2)} &nbsp;·&nbsp; COS: {computedCOS.toFixed(1)}%
+                    </div>
+                  )}
+                </div>
               </div>
               <div>
                 <label className="text-xs">Picture upload</label>
@@ -1996,9 +2039,6 @@ export const PosSettings: React.FC = () => {
                 <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional notes" />
               </div>
 
-              <div className="md:col-span-2">
-                <div className="text-sm text-gray-700">GP: <span className="font-semibold">{gpAmount.toFixed(2)}</span> ({gpPercent.toFixed(2)}%)</div>
-              </div>
             </div>
           </div>
 
@@ -2345,16 +2385,7 @@ export const PosSettings: React.FC = () => {
         </Section>
       )}
 
-      {activeTab === 'stock' && activeSectionId === 'stock-controls' && (
-        <Section id="stock-controls" title="Stock Management Controls">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Input placeholder="Item SKU" />
-            <Input placeholder="Adjustment (+/-)" type="number" />
-            <Textarea placeholder="Reason / Notes" />
-          </div>
-          <Button className="bg-indigo-600 text-white hover:bg-indigo-700" onClick={() => log('STOCK_ADJUST')}>Apply Adjustment</Button>
-        </Section>
-      )}
+{/* stock-controls section removed — functionality merged into adjust-stock-quantities */}
 
       {/* Unit of Measure Management */}
       {activeTab === 'stock' && activeSectionId === 'unit-management' && (
@@ -2802,70 +2833,80 @@ export const PosSettings: React.FC = () => {
             )}
 
             {/* Printing and Quick Updates */}
-            {activeTab === 'stock' && (
+            {activeTab === 'stock' && activeSectionId === 'printing-quick-updates' && (
               <div id="printing-quick-updates" className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div className="p-3 border rounded">
                   <div className="font-semibold mb-2 text-sm">Print Stock Sheet</div>
-                  <Button variant="outline" onClick={() => {
+                  <Button variant="outline" onClick={async () => {
                     try {
-                      const raw = localStorage.getItem('corepms_pos_items');
-                      const items = raw ? JSON.parse(raw) : [];
-                      const rows = items.map((it: any) => `<tr><td>${it.name}</td><td>${Number(it.qtyInStock || 0)}</td><td>${Number(it.sellingPrice || 0).toFixed(2)}</td></tr>`).join('');
-                      const html = `<!doctype html><html><head><title>Stock Sheet</title></head><body><h2>Stock Sheet</h2><table border="1" cellspacing="0" cellpadding="4"><thead><tr><th>Name</th><th>Qty</th><th>Price</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
-                      const blob = new Blob([html], { type: 'text/html' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = `stock_sheet_${new Date().toISOString().slice(0, 10)}.html`;
-                      a.click();
-                      URL.revokeObjectURL(url);
+                      const { db: dbLib } = await import('@/lib/db');
+                      const res = await dbLib.query(
+                        `SELECT name, department, price, cost_price, stock_level, unit
+                         FROM products WHERE active = true ORDER BY department, name`
+                      );
+                      const dbItems = ('rows' in res && Array.isArray(res.rows)) ? res.rows : [];
+                      const rows = dbItems.map((it: any) =>
+                        `<tr><td>${it.name}</td><td>${it.department||''}</td><td>${Number(it.stock_level||0)}</td><td>${it.unit||''}</td><td>$${Number(it.price||0).toFixed(2)}</td><td>$${Number(it.cost_price||0).toFixed(2)}</td></tr>`
+                      ).join('');
+                      const html = `<!doctype html><html><head><title>Stock Sheet — ${new Date().toLocaleDateString()}</title><style>body{font-family:Arial;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px;font-size:12px}th{background:#f3f4f6}h2{margin-bottom:12px}</style></head><body><h2>Stock Sheet — ${new Date().toLocaleDateString()}</h2><table><thead><tr><th>Item</th><th>Dept</th><th>On Hand</th><th>Unit</th><th>Sell Price</th><th>Cost Price</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+                      const win = window.open('', '_blank');
+                      if (win) { win.document.write(html); win.document.close(); win.print(); }
                       log('STOCK_SHEET_PRINT');
                     } catch (err) {
-                      alert('Failed to prepare stock sheet');
+                      alert('Failed to prepare stock sheet: ' + String(err));
                     }
-                  }}>Download Stock Sheet</Button>
+                  }}>🖨 Print Stock Sheet</Button>
                 </div>
                 <div className="p-3 border rounded">
                   <div className="font-semibold mb-2 text-sm">Quick Stock Count</div>
-                  <Input id="quickCountName" placeholder="Item name" />
+                  <p className="text-xs text-gray-500 mb-2">Set the exact on-hand quantity for an item (replaces current value).</p>
+                  <Input id="quickCountName" placeholder="Item name (exact)" />
                   <Input id="quickCountQty" type="number" min={0} placeholder="New quantity" className="mt-1" />
-                  <Button className="mt-2" onClick={() => {
+                  <Button className="mt-2" onClick={async () => {
                     try {
-                      const name = (document.getElementById('quickCountName') as HTMLInputElement)?.value || '';
-                      const qty = Number((document.getElementById('quickCountQty') as HTMLInputElement)?.value || 0);
-                      const raw = localStorage.getItem('corepms_pos_items');
-                      const list = raw ? JSON.parse(raw) : [];
-                      const next = list.map((it: any) => String(it.name || '').toLowerCase() === String(name).toLowerCase() ? { ...it, qtyInStock: qty } : it);
-                      localStorage.setItem('corepms_pos_items', JSON.stringify(next));
-                      setItems(next);
+                      const name = (document.getElementById('quickCountName') as HTMLInputElement)?.value?.trim() || '';
+                      const qty  = Number((document.getElementById('quickCountQty') as HTMLInputElement)?.value || 0);
+                      if (!name) { toast({ title: 'Enter item name', variant: 'destructive' }); return; }
+                      const { db: dbLib } = await import('@/lib/db');
+                      const r = await dbLib.query(
+                        `UPDATE products SET stock_level = $1, updated_at = NOW()
+                         WHERE LOWER(name) = LOWER($2) RETURNING id, name, stock_level`,
+                        [qty, name]
+                      );
+                      const updated = ('rows' in r && r.rows.length) ? r.rows.length : 0;
+                      if (!updated) { toast({ title: 'Item not found', description: `No item matching "${name}"`, variant: 'destructive' }); return; }
+                      toast({ title: 'Stock updated', description: `${name} set to ${qty}` });
                       log('STOCK_COUNT_UPDATE', { name, qty });
                     } catch (err) {
-                      alert('Failed to update stock count');
+                      toast({ title: 'Failed', description: String(err), variant: 'destructive' });
                     }
-                  }}>Apply Count</Button>
+                  }}>Set Count</Button>
                 </div>
                 <div id="adjust-stock-quantities" className="p-3 border rounded">
-                  <div className="font-semibold mb-2 text-sm">Quick Inventory Update</div>
-                  <Input id="quickUpdateName" placeholder="Item name" />
-                  <Input id="quickUpdateDelta" type="number" placeholder="± Quantity" className="mt-1" />
-                  <Button className="mt-2" onClick={() => {
+                  <div className="font-semibold mb-2 text-sm">Adjust Quantity (±)</div>
+                  <p className="text-xs text-gray-500 mb-2">Add or subtract from current stock level.</p>
+                  <Input id="quickUpdateName" placeholder="Item name (exact)" />
+                  <Input id="quickUpdateDelta" type="number" placeholder="e.g. +5 or -3" className="mt-1" />
+                  <Button className="mt-2" onClick={async () => {
                     try {
-                      const name = (document.getElementById('quickUpdateName') as HTMLInputElement)?.value || '';
+                      const name  = (document.getElementById('quickUpdateName') as HTMLInputElement)?.value?.trim() || '';
                       const delta = Number((document.getElementById('quickUpdateDelta') as HTMLInputElement)?.value || 0);
-                      const raw = localStorage.getItem('corepms_pos_items');
-                      const list = raw ? JSON.parse(raw) : [];
-                      const next = list.map((it: any) => {
-                        if (String(it.name || '').toLowerCase() !== String(name).toLowerCase()) return it;
-                        const updated = Math.max(0, Number(it.qtyInStock || 0) + delta);
-                        return { ...it, qtyInStock: updated };
-                      });
-                      localStorage.setItem('corepms_pos_items', JSON.stringify(next));
-                      setItems(next);
+                      if (!name) { toast({ title: 'Enter item name', variant: 'destructive' }); return; }
+                      const { db: dbLib } = await import('@/lib/db');
+                      const r = await dbLib.query(
+                        `UPDATE products SET stock_level = GREATEST(0, stock_level + $1), updated_at = NOW()
+                         WHERE LOWER(name) = LOWER($2) RETURNING id, name, stock_level`,
+                        [delta, name]
+                      );
+                      const updated = ('rows' in r && r.rows.length) ? r.rows.length : 0;
+                      if (!updated) { toast({ title: 'Item not found', description: `No item matching "${name}"`, variant: 'destructive' }); return; }
+                      const newQty = ('rows' in r) ? r.rows[0]?.stock_level : '?';
+                      toast({ title: 'Stock adjusted', description: `${name} → ${newQty}` });
                       log('INVENTORY_QUICK_UPDATE', { name, delta });
                     } catch (err) {
-                      alert('Failed to update inventory');
+                      toast({ title: 'Failed', description: String(err), variant: 'destructive' });
                     }
-                  }}>Apply Update</Button>
+                  }}>Apply Adjustment</Button>
                 </div>
               </div>
             )}
@@ -2989,40 +3030,9 @@ export const PosSettings: React.FC = () => {
         </Section>
       )}
 
-      {activeTab === 'purchasing' && (
-        <Section id="purchasing-config" title="Purchasing System Configuration">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Input
-              placeholder="Vendor Name"
-              value={vendorName}
-              onChange={(e) => setVendorName(e.target.value)}
-            />
-            <Input
-              placeholder="Order Terms"
-              value={vendorTerms}
-              onChange={(e) => setVendorTerms(e.target.value)}
-            />
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={handleAddVendor}>Add Vendor</Button>
-            <Button variant="outline" onClick={() => log('PURCHASE_CONFIG_UPDATE')}>Save Settings</Button>
-          </div>
-        </Section>
-      )}
+{/* purchasing-config stub removed — vendor management is in the Suppliers section */}
 
-      {activeTab === 'stock' && (
-        <Section id="stock-level-monitoring" title="Stock Level Monitoring">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Input placeholder="Item SKU" />
-            <Input placeholder="New Level" type="number" />
-            <Input placeholder="Threshold" type="number" />
-          </div>
-          <div className="flex gap-2">
-            <Button className="bg-orange-600 text-white hover:bg-orange-700" onClick={() => log('STOCK_SET_LEVEL')}>Set Level</Button>
-            <Button variant="outline" onClick={() => log('STOCK_REALTIME_ADJUST')}>Real-time Adjust</Button>
-          </div>
-        </Section>
-      )}
+{/* stock-level-monitoring removed — stock levels are managed in the Stock List section */}
 
       {activeTab === 'menu' && (
         <Section id="cocktail-engineering" title="Cocktail Engineering">

@@ -291,11 +291,11 @@ export const InventoryV11VarianceReport: React.FC = () => {
                              <div className="text-xs text-gray-500">{line.item_id}</div>
                            </div>
                          </td>
-                         <td className="px-4 py-2 text-right">{line.theoretical_qty?.toFixed(2) || '0.00'}</td>
-                         <td className="px-4 py-2 text-right">{line.physical_qty?.toFixed(2) || '0.00'}</td>
-                         <td className="px-4 py-2 text-right font-medium">{line.variance_qty?.toFixed(2) || '0.00'}</td>
-                         <td className="px-4 py-2 text-right font-medium">{line.variance_percentage?.toFixed(2) || '0.00'}%</td>
-                         <td className="px-4 py-2 text-right font-medium">${line.variance_value?.toFixed(2) || '0.00'}</td>
+                         <td className="px-4 py-2 text-right">{Number(line.theoretical_qty || 0).toFixed(2)}</td>
+                         <td className="px-4 py-2 text-right">{Number(line.physical_qty || 0).toFixed(2)}</td>
+                         <td className="px-4 py-2 text-right font-medium">{Number(line.variance_qty || 0).toFixed(2)}</td>
+                         <td className="px-4 py-2 text-right font-medium">{Number(line.variance_percentage || 0).toFixed(2)}%</td>
+                         <td className="px-4 py-2 text-right font-medium">${Number(line.variance_value || 0).toFixed(2)}</td>
                          <td className="px-4 py-2 text-center">{getAlertIcon(line.alert_level)}</td>
                        </tr>
                      ))}

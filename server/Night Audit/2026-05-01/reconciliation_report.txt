@@ -1,0 +1,68 @@
+════════════════════════════════════════════════════════════
+  VILLA GIANNI  –  NIGHT AUDIT RECONCILIATION
+  Business Date : 2026-05-01
+  Generated     : 1/5/2026, 05:34:54
+════════════════════════════════════════════════════════════
+
+REVENUE SUMMARY
+────────────────────────────────────────────────────────────
+  Room Revenue        : $390.00
+  Tax Revenue         : $50.87
+  F&B / POS Revenue   : $2.50
+  ──────────────────────────────────────────────
+  TOTAL REVENUE       : $392.50
+
+FOLIO RECONCILIATION
+────────────────────────────────────────────────────────────
+  Folio Charges Total : $480.00
+  Rooms Posted        : 5
+
+AUDIT TRAIL
+────────────────────────────────────────────────────────────
+  Started At          : 2026-05-01T03:34:25.551Z
+  Completed At        : 2026-05-01T03:34:54.973Z
+  Run By              : NIGHT_AUDIT_SYSTEM (Automated)
+  Next Business Date  : 2026-05-02
+
+PROCESS LOG
+────────────────────────────────────────────────────────────
+  [2026-05-01T03:34:25.551Z] 
+  [2026-05-01T03:34:25.551Z] ════════════════════════════════════════════════════
+  [2026-05-01T03:34:25.551Z]   NIGHT AUDIT STARTED  –  Triggered by: manual_trigger
+  [2026-05-01T03:34:25.551Z] ════════════════════════════════════════════════════
+  [2026-05-01T03:34:26.198Z]   Business date: 2026-05-01
+  [2026-05-01T03:34:26.541Z] 🔒 System lock acquired for business date: 2026-05-01
+  [2026-05-01T03:34:27.172Z]   ↳ [10%] Closing open POS shifts
+  [2026-05-01T03:34:27.173Z]   Closing open POS shifts...
+  [2026-05-01T03:34:28.150Z]     Closed shift #3 (Unknown)
+  [2026-05-01T03:34:28.471Z]     Closed shift #1 (unknown)
+  [2026-05-01T03:34:28.793Z]     Closed shift #2 (unknown)
+  [2026-05-01T03:34:29.125Z]     Closed shift #6 (Main Restaurant)
+  [2026-05-01T03:34:29.456Z]     Closed shift #8 (Main Restaurant)
+  [2026-05-01T03:34:29.783Z]     Closed shift #9 (Main Restaurant)
+  [2026-05-01T03:34:30.110Z]     Closed shift #10 (Main Restaurant)
+  [2026-05-01T03:34:30.543Z]     Closed shift #11 (Main Restaurant)
+  [2026-05-01T03:34:30.886Z]     Closed shift #12 (Main Restaurant)
+  [2026-05-01T03:34:31.231Z]     Closed shift #13 (Main Restaurant)
+  [2026-05-01T03:34:31.566Z]     Closed shift #14 (Main Restaurant)
+  [2026-05-01T03:34:31.884Z]     Closed shift #15 (Main Restaurant)
+  [2026-05-01T03:34:32.211Z]     Closed shift #6 (Unknown)
+  [2026-05-01T03:34:32.859Z]   ↳ [20%] Voiding stale POS orders
+  [2026-05-01T03:34:33.834Z]   ↳ [35%] Posting room charges
+  [2026-05-01T03:34:33.835Z]   Posting room charges...
+  [2026-05-01T03:34:35.841Z]     Posted Room 114: GIRAFF DIGITAL MEDIA @ $30 ($26.09 + $3.91 tax)
+  [2026-05-01T03:34:37.471Z]     Posted Room 107: NEGREA OCTAVIAN @ $90 ($78.26 + $11.74 tax)
+  [2026-05-01T03:34:39.069Z]     Posted Room 111: A.D ROYAL KAAK @ $90 ($78.26 + $11.74 tax)
+  [2026-05-01T03:34:40.731Z]     Posted Room 102: MICHEL SCHWART BAKERS INN @ $90 ($78.26 + $11.74 tax)
+  [2026-05-01T03:34:42.361Z]     Posted Room 105: ROY ERWIN VAN BRAKEL BAKERS INN @ $90 ($78.26 + $11.74 tax)
+  [2026-05-01T03:34:43.016Z]   ↳ [50%] Aggregating POS revenue
+  [2026-05-01T03:34:44.044Z]   ↳ [60%] Processing city ledger transfers
+  [2026-05-01T03:34:48.323Z]   ↳ [70%] Reconciling totals
+  [2026-05-01T03:34:49.912Z]   ↳ [80%] Recording audit run to database
+  [2026-05-01T03:34:54.017Z]   ↳ [88%] Rolling over business date
+  [2026-05-01T03:34:54.337Z]   Business date rolled: 2026-05-01 → 2026-05-02
+  [2026-05-01T03:34:54.957Z]   ↳ [94%] Writing report files
+
+════════════════════════════════════════════════════════════
+  END OF RECONCILIATION REPORT
+════════════════════════════════════════════════════════════

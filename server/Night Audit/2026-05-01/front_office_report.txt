@@ -1,0 +1,51 @@
+════════════════════════════════════════════════════════════
+  VILLA GIANNI  –  FRONT OFFICE NIGHT AUDIT REPORT
+  Business Date : 2026-05-01
+  Generated     : 1/5/2026, 05:34:54
+════════════════════════════════════════════════════════════
+
+ROOM OCCUPANCY
+────────────────────────────────────────────────────────────
+  Occupied Rooms   : 5
+  Available Rooms  : 13
+  Occupancy %      : 38.5%
+
+ROOM REVENUE
+────────────────────────────────────────────────────────────
+  Room Revenue     : $390.00
+  Tax Revenue      : $50.87
+  ADR              : $78.00
+  RevPAR           : $30.00
+
+ROOM CHARGES POSTED
+────────────────────────────────────────────────────────────
+  Room 114  | GIRAFF DIGITAL MEDIA           | $30.00
+  Room 107  | NEGREA OCTAVIAN                | $90.00
+  Room 111  | A.D ROYAL KAAK                 | $90.00
+  Room 102  | MICHEL SCHWART BAKERS INN      | $90.00
+  Room 105  | ROY ERWIN VAN BRAKEL BAKERS INN | $90.00
+
+CITY LEDGER TRANSFERS
+────────────────────────────────────────────────────────────
+  Transfers        : 0
+  Total Amount     : $0.00
+
+SHIFT SUMMARY
+────────────────────────────────────────────────────────────
+  Shift #3 (Unknown) – CLOSED
+  Shift #1 (unknown) – CLOSED
+  Shift #2 (unknown) – CLOSED
+  Shift #6 (Main Restaurant) – CLOSED
+  Shift #8 (Main Restaurant) – CLOSED
+  Shift #9 (Main Restaurant) – CLOSED
+  Shift #10 (Main Restaurant) – CLOSED
+  Shift #11 (Main Restaurant) – CLOSED
+  Shift #12 (Main Restaurant) – CLOSED
+  Shift #13 (Main Restaurant) – CLOSED
+  Shift #14 (Main Restaurant) – CLOSED
+  Shift #15 (Main Restaurant) – CLOSED
+  Shift #6 (Unknown) – CLOSED
+
+════════════════════════════════════════════════════════════
+  END OF FRONT OFFICE REPORT
+════════════════════════════════════════════════════════════

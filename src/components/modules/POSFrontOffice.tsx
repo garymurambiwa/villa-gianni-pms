@@ -40,7 +40,7 @@ export const POSFrontOffice: React.FC = () => {
   }, !!activeShift && !!costCentre && !isLocked);
 
   const [mountLoading, setMountLoading] = useState<boolean>(false);
-  const [tables, setTables] = useState<Array<{ id: string; number: number; status: 'available' | 'occupied' | 'suspended'; currentBill?: any }>>(
+  const [tables, setTables] = useState<Array<{ id: string; number: number; status: 'available' | 'occupied' | 'suspended'; currentBill?: any; cost_center?: string }>>(
     Array.from({ length: 12 }).map((_, idx) => ({ id: `t${idx + 1}`, number: idx + 1, status: 'available' }))
   );
   const [orderModal, setOrderModal] = useState<{ tableId: string; open: boolean } | null>(null);
@@ -280,11 +280,48 @@ export const POSFrontOffice: React.FC = () => {
      }));
    }, [menuItemsFromQuery]);
 
+  // Load tables dynamically from DB, auto-create table_status rows if missing
   useEffect(() => {
-    // Clear potentially stale localStorage on mount to ensure clean slate if needed
-    // But we need to keep 'corepms_pos_table_states' until we process it.
-    // Instead, let's just log.
     console.log('[POS] Front Office Mounted');
+    const loadTablesFromDB = async () => {
+      try {
+        // Ensure table_status table exists
+        await db.query(`
+          CREATE TABLE IF NOT EXISTS table_status (
+            table_id   TEXT PRIMARY KEY,
+            status     TEXT NOT NULL DEFAULT 'open',
+            last_update TIMESTAMPTZ DEFAULT NOW(),
+            cost_center TEXT
+          )
+        `);
+
+        // Pull existing rows
+        const res = await db.query(
+          `SELECT table_id, status, cost_center FROM table_status ORDER BY table_id`
+        );
+        if (!('rows' in res) || !Array.isArray(res.rows) || res.rows.length === 0) {
+          // No tables in DB yet — seed from current state (12 default)
+          const defaultTables = Array.from({ length: 12 }, (_, i) => `t${i + 1}`);
+          for (const tid of defaultTables) {
+            await db.query(
+              `INSERT INTO table_status (table_id, status) VALUES ($1, 'open') ON CONFLICT DO NOTHING`,
+              [tid]
+            );
+          }
+          return; // table state will be picked up by localStorage restore below
+        }
+
+        setTables(res.rows.map((r: any) => ({
+          id:          String(r.table_id),
+          number:      parseInt(String(r.table_id).replace(/\D/g, ''), 10) || 0,
+          status:      r.status === 'occupied' ? 'occupied' : 'available',
+          cost_center: r.cost_center || undefined,
+        })));
+      } catch (err) {
+        console.warn('[POS] Could not load tables from DB, using defaults:', err);
+      }
+    };
+    loadTablesFromDB();
   }, []);
 
   // Persist and restore controls

@@ -650,24 +650,49 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                     </div>
                   </div>
 
-                  <div className="mt-2">
-                    <div className="text-xs text-gray-700 mb-1">Preparation Level</div>
-                    <div className="flex flex-wrap gap-2">
-                      {(['rare', 'medium-rare', 'medium', 'medium-well', 'well-done', 'n/a'] as const).map(opt => (
-                        <button
-                          key={opt}
-                          type="button"
-                          className={`px-2 py-1 rounded border text-xs ${item.preparation_level === opt ? 'bg-purple-600 text-white border-purple-600' : 'bg-white hover:bg-muted/50'}`}
-                          onClick={() => {
-                            setItems(prev => prev.map(i => i.menuItem.id === item.menuItem.id ? { ...i, preparation_level: opt } : i))
-                          }}
-                          aria-pressed={item.preparation_level === opt ? "true" : "false"}
-                        >
-                          {opt.replace('-', ' ')}
-                        </button>
-                      ))}
+                  {item.menuItem.category === 'bar' ? (
+                    /* ── Beverage: serving instruction quick-chips ── */
+                    <div className="mt-2">
+                      <div className="text-xs text-gray-500 mb-1">Serving instruction (optional)</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(['With Ice', 'No Ice', 'Neat', 'On The Rocks', 'Chilled', 'Room Temp', 'Straight Up'] as const).map(chip => {
+                          const active = item.manual_notes === chip;
+                          return (
+                            <button
+                              key={chip}
+                              type="button"
+                              className={`px-2 py-1 rounded-full border text-xs transition-all ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
+                              onClick={() => setItems(prev => prev.map(i =>
+                                i.menuItem.id === item.menuItem.id
+                                  ? { ...i, manual_notes: active ? '' : chip }
+                                  : i
+                              ))}
+                            >
+                              {chip}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    /* ── Food: preparation level buttons ── */
+                    <div className="mt-2">
+                      <div className="text-xs text-gray-700 mb-1">Preparation Level</div>
+                      <div className="flex flex-wrap gap-2">
+                        {(['rare', 'medium-rare', 'medium', 'medium-well', 'well-done', 'n/a'] as const).map(opt => (
+                          <button
+                            key={opt}
+                            type="button"
+                            className={`px-2 py-1 rounded border text-xs ${item.preparation_level === opt ? 'bg-purple-600 text-white border-purple-600' : 'bg-white hover:bg-muted/50'}`}
+                            onClick={() => setItems(prev => prev.map(i => i.menuItem.id === item.menuItem.id ? { ...i, preparation_level: opt } : i))}
+                            aria-pressed={item.preparation_level === opt ? "true" : "false"}
+                          >
+                            {opt.replace('-', ' ')}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="mt-3">
                     <button
@@ -778,27 +803,42 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 placeholder="e.g., Grilled Chicken"
               />
             </div>
-            <div>
-              <Label>Price</Label>
-              <Input
-                type="number"
-                value={quickAddPrice}
-                onChange={(e) => setQuickAddPrice(e.target.value)}
-                placeholder="0.00"
-                step="0.01"
-              />
-            </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Cost Price</Label>
+                <Label>Selling Price <span className="text-purple-600 font-bold">(shown on POS)</span></Label>
+                <Input
+                  type="number"
+                  value={quickAddPrice}
+                  onChange={(e) => setQuickAddPrice(e.target.value)}
+                  placeholder="0.00"
+                  step="0.01"
+                  className="border-purple-300 focus:ring-purple-500"
+                />
+              </div>
+              <div>
+                <Label className="text-gray-500">Cost Price <span className="text-[10px] text-gray-400">(internal / hidden from POS)</span></Label>
                 <Input
                   type="number"
                   value={quickAddCostPrice}
                   onChange={(e) => setQuickAddCostPrice(e.target.value)}
                   placeholder="0.00"
                   step="0.01"
+                  className="border-gray-200"
                 />
               </div>
+            </div>
+            {quickAddPrice && quickAddCostPrice && Number(quickAddPrice) > 0 && (
+              <div className="flex items-center gap-3 p-2 rounded bg-gray-50 border text-sm">
+                <span className="text-gray-500">GP:</span>
+                <span className="font-bold text-green-700">
+                  {(((Number(quickAddPrice) - Number(quickAddCostPrice)) / Number(quickAddPrice)) * 100).toFixed(1)}%
+                </span>
+                <span className="text-gray-400 text-xs">
+                  (${(Number(quickAddPrice) - Number(quickAddCostPrice)).toFixed(2)} margin per unit)
+                </span>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Unit</Label>
                 <Select value={quickAddUnit} onValueChange={setQuickAddUnit}>
@@ -816,8 +856,6 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Category</Label>
                 <Select value={quickAddCategory} onValueChange={setQuickAddCategory}>
@@ -921,32 +959,34 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <Label>Selling Price</Label>
+                  <Label>Selling Price <span className="text-purple-600 font-bold text-[10px]">shown on POS</span></Label>
                   <Input
                     type="number"
                     value={editItemPrice}
                     onChange={(e) => setEditItemPrice(e.target.value)}
                     step="0.01"
                     placeholder="0.00"
+                    className="border-purple-300 focus:ring-purple-500"
                   />
                 </div>
                 <div>
-                  <Label>Cost Price</Label>
+                  <Label className="text-gray-500">Cost Price <span className="text-[10px] text-gray-400">internal only</span></Label>
                   <Input
                     type="number"
                     value={editItemCost}
                     onChange={(e) => setEditItemCost(e.target.value)}
                     step="0.01"
                     placeholder="0.00"
+                    className="border-gray-200"
                   />
                 </div>
                 <div>
-                  <Label>GP%</Label>
+                  <Label className="text-green-700">GP%</Label>
                   <Input
                     type="number"
-                    value={editItemPrice && editItemCost ? Number(((Number(editItemPrice) - Number(editItemCost)) / Number(editItemPrice) * 100).toFixed(2)) : 0}
+                    value={editItemPrice && editItemCost ? Number(((Number(editItemPrice) - Number(editItemCost)) / Number(editItemPrice) * 100).toFixed(1)) : 0}
                     disabled
-                    className="bg-gray-100"
+                    className="bg-green-50 border-green-200 text-green-800 font-semibold"
                   />
                 </div>
               </div>

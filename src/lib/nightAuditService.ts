@@ -276,6 +276,19 @@ export const rolloverBusinessDate = () => {
   next.setDate(next.getDate() + 1);
   const nextISO = next.toISOString().slice(0,10);
   writeJSON('corepms_business_date', nextISO);
+
+  // Sync new business date to backend so the scheduler stays in sync
+  fetch('http://localhost:3001/api/db/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sql: `INSERT INTO system_configs (key, value, description, updated_at, updated_by)
+            VALUES ('business_date', $1::jsonb, 'Current hotel business date', NOW(), 'frontend_rollover')
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      params: [JSON.stringify({ date: nextISO, rolled_at: new Date().toISOString() })]
+    })
+  }).catch(() => {}); // non-blocking — best-effort
+
   return { previous: prevDate, next: nextISO };
 };
 
@@ -296,11 +309,18 @@ export const generateReportsBundle = (ctx: NightAuditContext) => {
   const occupied = ctx.rooms.filter((r: any) => r.status === 'OC' || r.status === 'OD').length;
   const totalRooms = ctx.rooms.length;
   const availableRooms = ctx.rooms.filter((r: any) => r.status !== 'OOO' && r.status !== 'OOS').length;
-  
+
   const occupancy = availableRooms ? ((occupied / availableRooms) * 100) : 0;
-  
-  const roomRevenue = (ctx.folioCharges || []).filter((c: any) => c.category === 'Room').reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
-  const fbRevenue = (ctx.folioCharges || []).filter((c: any) => c.category === 'F&B').reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
+
+  // Only count charges for today's business date to avoid cumulative inflation
+  const businessDate = readJSON<string>('corepms_business_date', todayISO());
+  const todaysCharges = (ctx.folioCharges || []).filter((c: any) => {
+    const d = c.date || c.business_date || c.posting_date || '';
+    return d.startsWith(businessDate);
+  });
+
+  const roomRevenue = todaysCharges.filter((c: any) => c.category === 'Room').reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
+  const fbRevenue = todaysCharges.filter((c: any) => c.category === 'F&B').reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
   const totalRevenue = roomRevenue + fbRevenue;
   
   const avgDailyRate = occupied ? (roomRevenue / occupied) : 0;
@@ -335,8 +355,13 @@ export const generateReportsBundle = (ctx: NightAuditContext) => {
 };
 
 export const reconcileTotals = (ctx: NightAuditContext) => {
-  // Folio totals
-  const folioTotal = (ctx.folioCharges || []).reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
+  // Folio totals — only today's business date to avoid cumulative inflation
+  const bizDate = readJSON<string>('corepms_business_date', todayISO());
+  const todayCharges = (ctx.folioCharges || []).filter((c: any) => {
+    const d = c.date || c.business_date || c.posting_date || '';
+    return d.startsWith(bizDate);
+  });
+  const folioTotal = todayCharges.reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
   // Shift sales totals (ended + active)
   const ended = readJSON<any[]>('corepms_endedShifts', []);
   const active = readJSON<any | null>('corepms_activeShift', null);

@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/components/ui/use-toast';
-import { AlertTriangle, CheckCircle, Info, AlertCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Info, AlertCircle, Moon, FileText } from 'lucide-react';
+import NightAuditReports from './NightAuditReports';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +25,8 @@ const NightAudit: React.FC = () => {
   const { rooms, guests, folioCharges, addFolioCharge, refreshData } = useData();
   const { toast } = useToast();
 
+  const [activeTab, setActiveTab] = React.useState<'audit' | 'reports'>('audit');
+
   const [busy, setBusy] = React.useState(false);
   const [validationIssues, setValidationIssues] = React.useState<string[]>([]);
   const [validationWarnings, setValidationWarnings] = React.useState<string[]>([]);
@@ -31,7 +34,7 @@ const NightAudit: React.FC = () => {
   const [lastRun, setLastRun] = React.useState<any | null>(null);
   const [lastReports, setLastReports] = React.useState<any | null>(null);
   const [currentRecon, setCurrentRecon] = React.useState<any | null>(null);
-  
+
   // Auto-reconciliation options
   const [autoReconcile, setAutoReconcile] = React.useState(true);
   const [forceShiftClosure, setForceShiftClosure] = React.useState(false);
@@ -225,10 +228,44 @@ const NightAudit: React.FC = () => {
 
   return (
     <div className="p-6 space-y-6">
+      {/* Header + tabs */}
       <div className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b shadow-sm px-6 -mx-6 py-3">
-        <h2 className="text-2xl font-bold">Night Audit</h2>
-        <p className="text-sm text-gray-600">End-of-day closing, reports, and audit tools</p>
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-2xl font-bold">Night Audit</h2>
+            <p className="text-sm text-gray-600">End-of-day closing, reports, and audit tools</p>
+          </div>
+        </div>
+        {/* Tab bar */}
+        <div className="flex gap-1">
+          {([
+            { id: 'audit',   label: 'Audit & Close',  icon: <Moon size={14} /> },
+            { id: 'reports', label: 'Audit Reports',   icon: <FileText size={14} /> },
+          ] as const).map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '6px 16px', borderRadius: '6px 6px 0 0',
+                border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                background: activeTab === tab.id ? '#0f172a' : 'transparent',
+                color:      activeTab === tab.id ? '#fff'    : '#64748b',
+                transition: 'all 0.15s',
+              }}>
+              {tab.icon}{tab.label}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {/* Reports tab */}
+      {activeTab === 'reports' && (
+        <div style={{ minHeight: 600 }}>
+          <NightAuditReports />
+        </div>
+      )}
+
+      {/* Audit tab — original content below, hidden when reports tab active */}
+      {activeTab === 'audit' && <>
 
       {/* End-of-Day Processing */}
       <section className="bg-white rounded-xl shadow p-4">
@@ -656,6 +693,7 @@ const NightAudit: React.FC = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </>}
     </div>
   );
 };

@@ -51,6 +51,9 @@ interface ShiftContextType {
 const ShiftContext = createContext<ShiftContextType | undefined>(undefined);
 
 export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Capture user at context level — never call hooks inside functions
+  const { user } = useAuth();
+
   // Normalize a Shift object to ensure backward compatibility with older stored shapes
   const normalizeShift = (s: any): Shift => {
     const txs = Array.isArray(s?.transactions) ? s.transactions : [];
@@ -209,11 +212,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
    const addTransaction = (method: PaymentMethod, amount: number, reference?: string): ShiftTransaction | null => {
-     if (!activeShift) {
-       // Auto-start a shift if none exists for simplicity
-       startShift(0, 'Auto-start', 'System', 'Unknown').catch(console.error);
-     }
-     const { user } = useAuth(); // Get user info from auth context
+     if (!activeShift) return null; // No shift — caller must start one first
      const tx: ShiftTransaction = {
        id: `SFTX_${Date.now()}`,
        method,
@@ -221,12 +220,29 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
        reference,
        createdAt: new Date().toISOString(),
        userId: user?.id,
-       userName: user?.name
+       userName: user?.name || user?.username
      };
+
      setActiveShift(prev => {
-       if (!prev) return null; // shouldn't happen
+       if (!prev) return null;
        const next = { ...prev, transactions: [...prev.transactions, tx] };
        persist(next);
+
+       // Sync running totals to pos_shifts in DB (non-blocking)
+       const allTx = next.transactions.filter(t => !t.voided);
+       const totalSales  = allTx.reduce((s, t) => s + t.amount, 0);
+       const totalCash   = allTx.filter(t => t.method === 'cash').reduce((s, t) => s + t.amount, 0);
+       const totalCard   = allTx.filter(t => t.method === 'swipe').reduce((s, t) => s + t.amount, 0);
+       const totalEco    = allTx.filter(t => t.method === 'ecocash').reduce((s, t) => s + t.amount, 0);
+       const totalRoom   = allTx.filter(t => t.method === 'room-charge').reduce((s, t) => s + t.amount, 0);
+       pmsAuthDb.updateShiftTotals(prev.id, {
+         total_sales:  totalSales,
+         total_cash:   totalCash,
+         total_card:   totalCard + totalEco,
+         total_room:   totalRoom,
+         tx_count:     allTx.length,
+       }).catch(e => console.warn('[ShiftContext] DB total sync failed:', e));
+
        return next;
      });
      return tx;

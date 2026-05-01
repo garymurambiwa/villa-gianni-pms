@@ -1,0 +1,177 @@
+{
+  "businessDate": "2026-05-01",
+  "generatedAt": "2026-05-01T03:34:54.975Z",
+  "nextDate": "2026-05-02",
+  "startedAt": "2026-05-01T03:34:25.551Z",
+  "roomRevenue": 390,
+  "taxRevenue": 50.870000000000005,
+  "totalRevenue": 392.5,
+  "roomsPosted": 5,
+  "charges": [
+    {
+      "room": "114",
+      "guest": "GIRAFF DIGITAL MEDIA",
+      "rate": 30,
+      "base": 26.09,
+      "tax": 3.91,
+      "folioId": "da113dbf-3f1e-4f85-be75-4ea018d22546"
+    },
+    {
+      "room": "107",
+      "guest": "NEGREA OCTAVIAN",
+      "rate": 90,
+      "base": 78.26,
+      "tax": 11.74,
+      "folioId": "83447611-a8b5-4fae-9fc8-32afdcddc5df"
+    },
+    {
+      "room": "111",
+      "guest": "A.D ROYAL KAAK",
+      "rate": 90,
+      "base": 78.26,
+      "tax": 11.74,
+      "folioId": "08a5eb8a-4da4-44bf-a2b3-9ffd04a08396"
+    },
+    {
+      "room": "102",
+      "guest": "MICHEL SCHWART BAKERS INN",
+      "rate": 90,
+      "base": 78.26,
+      "tax": 11.74,
+      "folioId": "654d78bc-88ea-4633-926f-9e00cdf87b1a"
+    },
+    {
+      "room": "105",
+      "guest": "ROY ERWIN VAN BRAKEL BAKERS INN",
+      "rate": 90,
+      "base": 78.26,
+      "tax": 11.74,
+      "folioId": "fe796962-c791-4b08-af34-620e184d570e"
+    }
+  ],
+  "occupiedRooms": 5,
+  "availableRooms": 13,
+  "occupancyPct": 38.46153846153847,
+  "adr": 78,
+  "revpar": 30,
+  "posTotal": 2.5,
+  "posByOutlet": {
+    "Main Restaurant": 2.5
+  },
+  "cityLedgerCount": 0,
+  "cityLedgerAmount": 0,
+  "closedShifts": [
+    {
+      "id": "9013566f-3a95-4a2c-80d6-e394bf128d04",
+      "outlet": "Unknown",
+      "shift_number": 3
+    },
+    {
+      "id": "dd341133-da2d-4cf1-be1c-03cb00fdf568",
+      "outlet": "unknown",
+      "shift_number": 1
+    },
+    {
+      "id": "47f1dc2a-dc45-4ddc-a291-7291523f745b",
+      "outlet": "unknown",
+      "shift_number": 2
+    },
+    {
+      "id": "8c65baf0-ac27-4552-b4e9-9a5f73cab742",
+      "outlet": "Main Restaurant",
+      "shift_number": 6
+    },
+    {
+      "id": "31d827b6-472c-4b39-b3d1-d1a27f93e3e0",
+      "outlet": "Main Restaurant",
+      "shift_number": 8
+    },
+    {
+      "id": "0a1a4888-7e7d-42d8-9c66-ace86e0e7e04",
+      "outlet": "Main Restaurant",
+      "shift_number": 9
+    },
+    {
+      "id": "93699efb-a1ac-473f-ad2b-65a6edadce40",
+      "outlet": "Main Restaurant",
+      "shift_number": 10
+    },
+    {
+      "id": "9b65c160-ff59-4cb8-b894-137682d6880e",
+      "outlet": "Main Restaurant",
+      "shift_number": 11
+    },
+    {
+      "id": "bf0f5097-8faf-4272-9f80-1788db57459d",
+      "outlet": "Main Restaurant",
+      "shift_number": 12
+    },
+    {
+      "id": "7e672655-7338-4b05-8c1d-71a18d587ebe",
+      "outlet": "Main Restaurant",
+      "shift_number": 13
+    },
+    {
+      "id": "3847e825-56a5-4075-8596-132ba178e613",
+      "outlet": "Main Restaurant",
+      "shift_number": 14
+    },
+    {
+      "id": "321df1c2-4b31-4da6-93a7-46e460c93d5c",
+      "outlet": "Main Restaurant",
+      "shift_number": 15
+    },
+    {
+      "id": "9f357bab-6d96-4f92-b27a-10f2f4eebb3c",
+      "outlet": "Unknown",
+      "shift_number": 6
+    }
+  ],
+  "recon": {
+    "folioTotal": 480,
+    "shiftTotal": 0,
+    "posRevenue": 2.5,
+    "roomRevenue": 390,
+    "totalRevenue": 482.5,
+    "variance": 2.5,
+    "ok": false
+  },
+  "logLines": [
+    "[2026-05-01T03:34:25.551Z] ",
+    "[2026-05-01T03:34:25.551Z] ════════════════════════════════════════════════════",
+    "[2026-05-01T03:34:25.551Z]   NIGHT AUDIT STARTED  –  Triggered by: manual_trigger",
+    "[2026-05-01T03:34:25.551Z] ════════════════════════════════════════════════════",
+    "[2026-05-01T03:34:26.198Z]   Business date: 2026-05-01",
+    "[2026-05-01T03:34:26.541Z] 🔒 System lock acquired for business date: 2026-05-01",
+    "[2026-05-01T03:34:27.172Z]   ↳ [10%] Closing open POS shifts",
+    "[2026-05-01T03:34:27.173Z]   Closing open POS shifts...",
+    "[2026-05-01T03:34:28.150Z]     Closed shift #3 (Unknown)",
+    "[2026-05-01T03:34:28.471Z]     Closed shift #1 (unknown)",
+    "[2026-05-01T03:34:28.793Z]     Closed shift #2 (unknown)",
+    "[2026-05-01T03:34:29.125Z]     Closed shift #6 (Main Restaurant)",
+    "[2026-05-01T03:34:29.456Z]     Closed shift #8 (Main Restaurant)",
+    "[2026-05-01T03:34:29.783Z]     Closed shift #9 (Main Restaurant)",
+    "[2026-05-01T03:34:30.110Z]     Closed shift #10 (Main Restaurant)",
+    "[2026-05-01T03:34:30.543Z]     Closed shift #11 (Main Restaurant)",
+    "[2026-05-01T03:34:30.886Z]     Closed shift #12 (Main Restaurant)",
+    "[2026-05-01T03:34:31.231Z]     Closed shift #13 (Main Restaurant)",
+    "[2026-05-01T03:34:31.566Z]     Closed shift #14 (Main Restaurant)",
+    "[2026-05-01T03:34:31.884Z]     Closed shift #15 (Main Restaurant)",
+    "[2026-05-01T03:34:32.211Z]     Closed shift #6 (Unknown)",
+    "[2026-05-01T03:34:32.859Z]   ↳ [20%] Voiding stale POS orders",
+    "[2026-05-01T03:34:33.834Z]   ↳ [35%] Posting room charges",
+    "[2026-05-01T03:34:33.835Z]   Posting room charges...",
+    "[2026-05-01T03:34:35.841Z]     Posted Room 114: GIRAFF DIGITAL MEDIA @ $30 ($26.09 + $3.91 tax)",
+    "[2026-05-01T03:34:37.471Z]     Posted Room 107: NEGREA OCTAVIAN @ $90 ($78.26 + $11.74 tax)",
+    "[2026-05-01T03:34:39.069Z]     Posted Room 111: A.D ROYAL KAAK @ $90 ($78.26 + $11.74 tax)",
+    "[2026-05-01T03:34:40.731Z]     Posted Room 102: MICHEL SCHWART BAKERS INN @ $90 ($78.26 + $11.74 tax)",
+    "[2026-05-01T03:34:42.361Z]     Posted Room 105: ROY ERWIN VAN BRAKEL BAKERS INN @ $90 ($78.26 + $11.74 tax)",
+    "[2026-05-01T03:34:43.016Z]   ↳ [50%] Aggregating POS revenue",
+    "[2026-05-01T03:34:44.044Z]   ↳ [60%] Processing city ledger transfers",
+    "[2026-05-01T03:34:48.323Z]   ↳ [70%] Reconciling totals",
+    "[2026-05-01T03:34:49.912Z]   ↳ [80%] Recording audit run to database",
+    "[2026-05-01T03:34:54.017Z]   ↳ [88%] Rolling over business date",
+    "[2026-05-01T03:34:54.337Z]   Business date rolled: 2026-05-01 → 2026-05-02",
+    "[2026-05-01T03:34:54.957Z]   ↳ [94%] Writing report files"
+  ]
+}

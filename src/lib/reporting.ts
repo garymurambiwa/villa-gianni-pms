@@ -75,9 +75,10 @@ export const buildFlashReport = (forDate?: string) => {
 
   // Get detailed F&B breakdown from folio charges
   const folioCharges = readJSON<any[]>('corepms_folioCharges', []);
-  const businessDate = forDate || getBusinessDate();
+  // FIXED: use `date` (last audit date) not `getBusinessDate()` (already rolled forward)
+  const businessDate = date;
 
-  // Filter charges for the current business date
+  // Filter charges for the last completed business date
   const todaysCharges = folioCharges.filter((c: any) =>
     c.date === businessDate ||
     (c.business_date && c.business_date === businessDate)

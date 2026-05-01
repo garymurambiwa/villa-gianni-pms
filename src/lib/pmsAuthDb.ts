@@ -851,6 +851,33 @@ export const pmsAuthDb = {
     }
   },
 
+  async updateShiftTotals(shiftId: string, totals: {
+    total_sales: number; total_cash: number; total_card: number;
+    total_room: number; tx_count: number;
+  }): Promise<{ ok: boolean; error?: string }> {
+    try {
+      // Add columns if they don't exist yet (idempotent)
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_sales  NUMERIC DEFAULT 0`);
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_cash   NUMERIC DEFAULT 0`);
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_card   NUMERIC DEFAULT 0`);
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_room   NUMERIC DEFAULT 0`);
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS tx_count     INTEGER DEFAULT 0`);
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS updated_at   TIMESTAMPTZ DEFAULT NOW()`);
+      const res = await db.query(
+        `UPDATE pos_shifts
+         SET total_sales = ?, total_cash = ?, total_card = ?, total_room = ?,
+             tx_count = ?, updated_at = NOW()
+         WHERE id = ?`,
+        [totals.total_sales, totals.total_cash, totals.total_card,
+         totals.total_room, totals.tx_count, shiftId]
+      );
+      if ('error' in res) return { ok: false, error: res.error };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message };
+    }
+  },
+
   async endShift(shiftId: string, closingBalance: number): Promise<{ ok: boolean; error?: string }> {
     try {
       const res = await db.query(

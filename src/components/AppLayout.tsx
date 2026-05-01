@@ -9,6 +9,7 @@ import { Reservations } from './modules/Reservations';
 import { Rooms } from './modules/Rooms';
 import { CityLedger } from './modules/CityLedger';
 import { Inventory } from './modules/Inventory';
+import InventoryHub from './modules/InventoryHub';
 import { PriceManagement } from './modules/PriceManagement';
 import { Reports } from './modules/Reports';
 import { Users } from './modules/Users';
@@ -76,6 +77,7 @@ import InventoryV11GRNForm from './modules/InventoryV11GRNForm';
 import InventoryV11Transfer from './modules/InventoryV11Transfer';
 import InventoryV11RecipeBuilder from './modules/InventoryV11RecipeBuilder';
 import InventoryV11VarianceReport from './modules/InventoryV11VarianceReport';
+import NightAuditLockOverlay from './NightAuditLockOverlay';
 
 const AppLayout: React.FC = () => {
   const { user } = useAuth();
@@ -392,7 +394,11 @@ const AppLayout: React.FC = () => {
       }
       case 'inventory': {
         return canAccessInventoryManagement(user?.role)
-          ? <Inventory />
+          ? (
+            <ErrorBoundary fallbackTitle="Inventory Error" fallbackMessage="Please reload or contact support.">
+              <InventoryHub />
+            </ErrorBoundary>
+          )
           : renderAccessDenied('You do not have permission to access Inventory.', 'dashboard', 'Back to Dashboard');
       }
       case 'inventory-v11': {
@@ -557,6 +563,8 @@ const AppLayout: React.FC = () => {
 
   return (
     <HotkeysProvider>
+      {/* Night Audit full-screen lock overlay — renders on top of everything */}
+      <NightAuditLockOverlay />
       <ActiveModuleSync mod={activeModule} />
       <div className="flex flex-col md:flex-row h-screen bg-gray-100">
         <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} />

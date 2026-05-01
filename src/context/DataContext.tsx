@@ -3024,6 +3024,19 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
       await ensurePosTables(); // Ensure POS tables
       await ensureUserTables(); // Initialize user tables as well
 
+      // Sync business date from DB → localStorage so backend auto-audit rollover is reflected
+      try {
+        const bdRes = await db.query(`SELECT value FROM system_configs WHERE key = 'business_date'`);
+        if (bdRes.ok && bdRes.rows.length && bdRes.rows[0].value?.date) {
+          const dbDate = bdRes.rows[0].value.date as string;
+          const localDate = localStorage.getItem('corepms_business_date');
+          if (localDate !== dbDate) {
+            localStorage.setItem('corepms_business_date', JSON.stringify(dbDate));
+            console.log('[DataContext] Business date synced from DB:', dbDate);
+          }
+        }
+      } catch {}
+
       // CRITICAL: Load all data from database and sync to localStorage
       // This includes products with category_id mapping for POS visibility
       await loadAllData();

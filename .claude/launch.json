@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Villa Gianni PMS Frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 8081
+    },
+    {
+      "name": "Villa Gianni PMS Backend",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/index.cjs"],
+      "port": 3001
+    }
+  ]
+}

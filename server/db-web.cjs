@@ -15,6 +15,8 @@ async function getPgPool(config) {
     const poolConfig = {
         connectionString: connectionString,
         connectionTimeoutMillis: 90000,
+        idleTimeoutMillis: 10000,
+        max: 3,
         // SSL required for most cloud Postgres providers (except local)
         ssl: connectionString.includes('localhost') ? false : { rejectUnauthorized: false }
     };
@@ -31,15 +33,25 @@ async function getPgPool(config) {
 }
 
 // Retry helper
-async function withRetry(fn, retries = 3, delay = 1000) {
+async function withRetry(fn, retries = 3, delay = 1500) {
     for (let i = 0; i < retries; i++) {
         try {
             return await fn();
         } catch (e) {
             if (i === retries - 1) throw e;
-            const isNetworkError = e.code === 'PROTOCOL_CONNECTION_LOST' || e.code === 'ECONNRESET' || e.code === 'ETIMEDOUT';
-            if (!isNetworkError && !e.message.includes('deadlock')) throw e;
-            await new Promise(res => setTimeout(res, delay));
+            const msg = e.message || '';
+            const isNetworkError =
+                e.code === 'PROTOCOL_CONNECTION_LOST' ||
+                e.code === 'ECONNRESET' ||
+                e.code === 'ETIMEDOUT' ||
+                msg.includes('Connection terminated') ||
+                msg.includes('Authentication timed out') ||
+                msg.includes('Connection terminated unexpectedly') ||
+                msg.includes('connect ETIMEDOUT') ||
+                msg.includes('deadlock');
+            if (!isNetworkError) throw e;
+            console.warn(`[db] Retrying (attempt ${i + 1}/${retries}) after: ${msg}`);
+            await new Promise(res => setTimeout(res, delay * (i + 1)));
         }
     }
 }

@@ -177,13 +177,23 @@ router.post('/grn/:id/post', async (req, res) => {
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [randomUUID(), line.item_id, grn.destination_location_id, 'GRN', grn.grn_number, line.qty_received, baseUomId, line.unit_cost, line.line_total, posted_by, 'INVENTORY_ASSET', new Date()]
       );
+
+      // Update weighted average cost on inv_items
+      await client.query(
+        `UPDATE public.inv_items SET
+           last_cost_price   = $1,
+           average_cost      = $1,
+           updated_at        = NOW()
+         WHERE id = $2`,
+        [line.unit_cost, line.item_id]
+      );
     }
 
     // Update GRN status
-      await client.query(
-        `UPDATE public.inv_grn_headers SET status = $1, posted_by = $2, posted_at = $3 WHERE id = $4`,
-        ['posted', posted_by, new Date(), id]
-      );
+    await client.query(
+      `UPDATE public.inv_grn_headers SET status = $1, posted_by = $2, posted_at = $3 WHERE id = $4`,
+      ['posted', posted_by, new Date(), id]
+    );
 
     await client.query('COMMIT');
     res.json({ ok: true, message: `GRN ${grn.grn_number} posted successfully` });
@@ -334,6 +344,29 @@ router.post('/transfer/:id/approve', async (req, res) => {
       `UPDATE public.inv_transfer_headers SET status = 'approved', approved_by = $1, approved_at = $2 WHERE id = $3`,
       [approved_by, new Date(), id]
     );
+
+    // ── Sync POS product visibility based on destination outlet ────────────
+    const destLoc = await client.query(
+      `SELECT name, location_type FROM public.inv_locations WHERE id = $1`, [transfer.destination_location_id]
+    );
+    if (destLoc.rows.length) {
+      const { name: locName, location_type } = destLoc.rows[0];
+      if (location_type === 'Outlet') {
+        const isBar        = /bar/i.test(locName);
+        const isRestaurant = /restaurant|kitchen|room.service/i.test(locName);
+        const itemIds = linesRes.rows.map(l => l.item_id);
+        for (const itemId of itemIds) {
+          await client.query(`
+            UPDATE public.products SET
+              bar_visibility        = CASE WHEN $2 THEN true ELSE bar_visibility END,
+              restaurant_visibility = CASE WHEN $3 THEN true ELSE restaurant_visibility END,
+              active                = true,
+              updated_at            = NOW()
+            WHERE id = $1
+          `, [itemId, isBar, isRestaurant]);
+        }
+      }
+    }
 
     await client.query('COMMIT');
     res.json({ ok: true, message: `Transfer ${transfer.transfer_number} approved` });
@@ -647,13 +680,22 @@ router.get('/items', async (req, res) => {
 
     let query = `
       SELECT
-        i.id,
-        i.name,
-        i.category,
-        '' as sku,
-        '' as barcode,
-        u.code as base_uom_symbol,
-        i.weighted_avg_cost
+        i.id, i.name, i.category, i.sub_category,
+        COALESCE(i.sku, '') AS sku,
+        COALESCE(i.barcode, '') AS barcode,
+        i.base_uom_id,
+        u.code AS base_uom_code,
+        u.name AS base_uom_name,
+        COALESCE(i.weighted_avg_cost, 0) AS weighted_avg_cost,
+        COALESCE(i.last_cost_price, 0)   AS last_cost_price,
+        COALESCE(i.average_cost, 0)      AS average_cost,
+        i.default_wastage_pct,
+        i.reorder_level, i.par_level,
+        i.expiry_tracking,
+        i.default_location_id,
+        i.supplier_id,
+        i.media_url, i.notes,
+        i.is_active, i.inserted_at, i.updated_at
       FROM public.inv_items i
       LEFT JOIN public.inv_uom_definitions u ON i.base_uom_id = u.id
       WHERE i.is_active = true
@@ -693,6 +735,309 @@ router.get('/items', async (req, res) => {
       message: error.message
     });
   }
+});
+
+
+// ============================================================================
+// ITEM MASTER — create / update / delete
+// ============================================================================
+
+/** POST /api/v1/inventory/items  — create or upsert an item */
+router.post('/items', async (req, res) => {
+  const {
+    id, name, category, sub_category, base_uom_id, sku, barcode,
+    last_cost_price, selling_price, expiry_tracking, default_location_id, supplier_id,
+    media_url, notes, par_level, reorder_level, default_wastage_pct
+  } = req.body;
+  if (!name) return res.status(400).json({ ok: false, error: 'name is required' });
+
+  try {
+    const itemId = id || randomUUID();
+    // Auto-generate SKU if not provided
+    const skuVal = sku || null;
+
+    const r = await pool.query(`
+      INSERT INTO public.inv_items
+        (id, name, category, sub_category, base_uom_id, sku, barcode,
+         last_cost_price, weighted_avg_cost, average_cost,
+         expiry_tracking, default_location_id, supplier_id,
+         media_url, notes, par_level, reorder_level, default_wastage_pct,
+         is_active, inserted_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$8,$9,$10,$11,$12,$13,$14,$15,$16,true,NOW(),NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        name               = EXCLUDED.name,
+        category           = EXCLUDED.category,
+        sub_category       = EXCLUDED.sub_category,
+        base_uom_id        = EXCLUDED.base_uom_id,
+        sku                = COALESCE(EXCLUDED.sku, public.inv_items.sku),
+        barcode            = EXCLUDED.barcode,
+        last_cost_price    = EXCLUDED.last_cost_price,
+        expiry_tracking    = EXCLUDED.expiry_tracking,
+        default_location_id= EXCLUDED.default_location_id,
+        supplier_id        = EXCLUDED.supplier_id,
+        media_url          = EXCLUDED.media_url,
+        notes              = EXCLUDED.notes,
+        par_level          = EXCLUDED.par_level,
+        reorder_level      = EXCLUDED.reorder_level,
+        default_wastage_pct= EXCLUDED.default_wastage_pct,
+        updated_at         = NOW()
+      RETURNING *
+    `, [itemId, name, category||'Food', sub_category||null, base_uom_id||'uom_unit',
+        skuVal, barcode||null, Number(last_cost_price||0),
+        !!expiry_tracking, default_location_id||null, supplier_id||null,
+        media_url||null, notes||null, Number(par_level||0), Number(reorder_level||0),
+        Number(default_wastage_pct||0)]);
+
+    const item = r.rows[0];
+
+    // ── Sync to products table so item appears in POS ─────────────────────
+    // category drives department; sub_category maps to products.category
+    const isBeverage = String(category || '').toLowerCase().includes('beverage')
+                    || String(category || '').toLowerCase().includes('bar')
+                    || String(category || '').toLowerCase().includes('cellar');
+    const dept       = isBeverage ? 'Bar' : 'Restaurant';
+    const uomRes     = await pool.query(`SELECT code FROM public.inv_uom_definitions WHERE id=$1`, [base_uom_id||'uom_unit']);
+    const uomCode    = uomRes.rows[0]?.code || 'units';
+
+    await pool.query(`
+      INSERT INTO public.products
+        (id, name, category, department, price, cost_price, stock_level, unit,
+         active, visibility, bar_visibility, restaurant_visibility,
+         category_id, notes, picture_data, inserted_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,0,$7,true,'{}',false,false,$8,$9,$10,NOW(),NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        name                 = EXCLUDED.name,
+        department           = EXCLUDED.department,
+        category             = EXCLUDED.category,
+        price                = CASE WHEN EXCLUDED.price > 0 THEN EXCLUDED.price ELSE products.price END,
+        cost_price           = EXCLUDED.cost_price,
+        unit                 = EXCLUDED.unit,
+        notes                = EXCLUDED.notes,
+        picture_data         = EXCLUDED.picture_data,
+        updated_at           = NOW()
+    `, [item.id, name, sub_category || (isBeverage ? 'bar' : 'restaurant'), dept,
+        Number(selling_price || 0), Number(last_cost_price || 0), uomCode,
+        sub_category || null, notes || null, media_url || null]);
+
+    res.json({ ok: true, data: item });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/** PUT /api/v1/inventory/items/:id — full update */
+router.put('/items/:id', async (req, res) => {
+  req.body.id = req.params.id;
+  // reuse POST logic (upsert)
+  return router.handle({ ...req, method: 'POST', url: '/items' }, res, () => {});
+});
+
+/** DELETE /api/v1/inventory/items/:id — soft-delete */
+router.delete('/items/:id', async (req, res) => {
+  try {
+    await pool.query(`UPDATE public.inv_items SET is_active=false, updated_at=NOW() WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+// ============================================================================
+// LOCATIONS
+// ============================================================================
+router.get('/locations', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, name, location_type, parent_location_id, is_active
+       FROM public.inv_locations WHERE is_active=true ORDER BY location_type, name`
+    );
+    res.json({ ok: true, data: r.rows });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+// ============================================================================
+// UOM DEFINITIONS
+// ============================================================================
+router.get('/uom', async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT id, code, name, category FROM public.inv_uom_definitions ORDER BY category, name`);
+    res.json({ ok: true, data: r.rows });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+// ============================================================================
+// PHYSICAL COUNT (for variance reports)
+// ============================================================================
+
+/** POST /api/v1/inventory/physical-count — open a new physical count session */
+router.post('/physical-count', async (req, res) => {
+  const { location_id, count_date, counted_by } = req.body;
+  if (!location_id) return res.status(400).json({ ok: false, error: 'location_id required' });
+  try {
+    const r = await pool.query(
+      `INSERT INTO public.inv_physical_counts (id, location_id, count_date, status, counted_by, inserted_at, updated_at)
+       VALUES ($1,$2,$3,'draft',$4,NOW(),NOW()) RETURNING *`,
+      [randomUUID(), location_id, count_date || new Date().toISOString().slice(0,10), counted_by||'system']
+    );
+    res.json({ ok: true, data: r.rows[0] });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+/** GET /api/v1/inventory/physical-count — list counts */
+router.get('/physical-count', async (req, res) => {
+  const { location_id, status } = req.query;
+  try {
+    let sql = `SELECT pc.*, l.name AS location_name FROM public.inv_physical_counts pc
+               LEFT JOIN public.inv_locations l ON l.id = pc.location_id WHERE 1=1`;
+    const params = [];
+    if (location_id) { sql += ` AND pc.location_id=$${++params.length}`; params.push(location_id); }
+    if (status)      { sql += ` AND pc.status=$${++params.length}`;      params.push(status); }
+    sql += ' ORDER BY pc.inserted_at DESC LIMIT 50';
+    const r = await pool.query(sql, params);
+    res.json({ ok: true, data: r.rows });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+/** POST /api/v1/inventory/physical-count/:id/lines — save count lines */
+router.post('/physical-count/:id/lines', async (req, res) => {
+  const { id } = req.params;
+  const { lines } = req.body; // [{item_id, physical_qty, uom_id, notes}]
+  if (!Array.isArray(lines)) return res.status(400).json({ ok: false, error: 'lines[] required' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM public.inv_physical_count_lines WHERE count_id=$1`, [id]);
+    for (const l of lines) {
+      await client.query(
+        `INSERT INTO public.inv_physical_count_lines (id, count_id, item_id, physical_qty, uom_id, notes, inserted_at)
+         VALUES ($1,$2,$3,$4,$5,$6,NOW())`,
+        [randomUUID(), id, l.item_id, Number(l.physical_qty||0), l.uom_id||null, l.notes||null]
+      );
+    }
+    await client.query(`UPDATE public.inv_physical_counts SET status='submitted', updated_at=NOW() WHERE id=$1`, [id]);
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ ok: false, error: err.message });
+  } finally { client.release(); }
+});
+
+// ============================================================================
+// VARIANCE REPORT — generate from physical count vs ledger theoretical
+// ============================================================================
+router.post('/variance/generate', async (req, res) => {
+  const { location_id, period_start, period_end, generated_by, physical_count_id } = req.body;
+  if (!location_id || !period_start || !period_end)
+    return res.status(400).json({ ok: false, error: 'location_id, period_start, period_end required' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Theoretical qty = opening stock + GRNs - transfers out + transfers in - POS depletions
+    const theoreticalRes = await client.query(`
+      SELECT
+        item_id,
+        SUM(CASE WHEN ledger_type IN ('GRN','TRANSFER_IN','ADJUSTMENT_IN') THEN quantity_change
+                 WHEN ledger_type IN ('TRANSFER_OUT','SALE_DEPLETION','WASTE','ADJUSTMENT_OUT') THEN -quantity_change
+                 ELSE 0 END) AS theoretical_qty,
+        AVG(cost_per_unit) AS avg_cost
+      FROM public.inv_stock_ledger
+      WHERE location_id = $1
+        AND inserted_at BETWEEN $2 AND $3::date + interval '1 day'
+      GROUP BY item_id
+    `, [location_id, period_start, period_end]);
+
+    // Physical counts (if count session provided)
+    const physicalMap = {};
+    if (physical_count_id) {
+      const physRes = await client.query(
+        `SELECT item_id, physical_qty FROM public.inv_physical_count_lines WHERE count_id=$1`, [physical_count_id]
+      );
+      for (const row of physRes.rows) physicalMap[row.item_id] = Number(row.physical_qty);
+    }
+
+    // Report number
+    const numRes = await client.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(report_number FROM 5) AS INTEGER)),0)+1 AS n FROM public.inv_variance_reports`
+    );
+    const reportNum = 'VAR-' + String(numRes.rows[0].n).padStart(4,'0');
+
+    let okCount=0, warnCount=0, critCount=0;
+    const lines = [];
+
+    for (const row of theoreticalRes.rows) {
+      const theoretical = Number(row.theoretical_qty || 0);
+      const physical    = physicalMap[row.item_id] ?? theoretical; // if no count, assume matches
+      const variance    = physical - theoretical;
+      const variancePct = theoretical !== 0 ? Math.abs(variance / theoretical * 100) : 0;
+      const cost        = Number(row.avg_cost || 0);
+      const varianceVal = Math.abs(variance) * cost;
+
+      let alert = 'ok';
+      if (variancePct >= 5)      { alert = 'critical'; critCount++; }
+      else if (variancePct >= 2) { alert = 'warning';  warnCount++; }
+      else                       { okCount++; }
+
+      lines.push({ item_id: row.item_id, theoretical, physical, variance, variancePct, varianceVal, alert, cost });
+    }
+
+    const reportId = randomUUID();
+    await client.query(`
+      INSERT INTO public.inv_variance_reports
+        (id, report_number, location_id, period_start, period_end, generated_by,
+         ok_count, warning_count, critical_count, inserted_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
+      [reportId, reportNum, location_id, period_start, period_end, generated_by||'system',
+       okCount, warnCount, critCount]
+    );
+
+    for (const l of lines) {
+      await client.query(`
+        INSERT INTO public.inv_variance_lines
+          (id, variance_report_id, item_id, theoretical_qty, physical_qty,
+           variance_qty, variance_percentage, alert_level, item_cost, variance_value, inserted_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
+        [randomUUID(), reportId, l.item_id, l.theoretical, l.physical,
+         l.variance, l.variancePct, l.alert, l.cost, l.varianceVal]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, data: { id: reportId, report_number: reportNum, ok_count: okCount, warning_count: warnCount, critical_count: critCount, lines } });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ ok: false, error: err.message });
+  } finally { client.release(); }
+});
+
+// ============================================================================
+// STOCK BALANCE with location name (enhanced)
+// ============================================================================
+router.get('/stock-summary', async (req, res) => {
+  const { location_id } = req.query;
+  try {
+    let sql = `
+      SELECT
+        sl.item_id,
+        i.name, i.category, i.sku,
+        COALESCE(i.weighted_avg_cost,0) AS unit_cost,
+        SUM(CASE WHEN sl.ledger_type IN ('GRN','TRANSFER_IN','ADJUSTMENT_IN') THEN sl.quantity_change
+                 ELSE -sl.quantity_change END) AS qty_on_hand,
+        u.code AS uom,
+        l.name AS location_name
+      FROM public.inv_stock_ledger sl
+      JOIN public.inv_items i ON i.id = sl.item_id
+      JOIN public.inv_locations l ON l.id = sl.location_id
+      LEFT JOIN public.inv_uom_definitions u ON u.id = i.base_uom_id
+      WHERE i.is_active = true`;
+    const params = [];
+    if (location_id) { sql += ` AND sl.location_id=$1`; params.push(location_id); }
+    sql += ` GROUP BY sl.item_id,i.name,i.category,i.sku,i.weighted_avg_cost,u.code,l.name
+             HAVING SUM(CASE WHEN sl.ledger_type IN ('GRN','TRANSFER_IN','ADJUSTMENT_IN') THEN sl.quantity_change ELSE -sl.quantity_change END) > 0
+             ORDER BY l.name, i.category, i.name`;
+    const r = await pool.query(sql, params);
+    res.json({ ok: true, data: r.rows });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
 module.exports = router;

@@ -332,22 +332,48 @@ export const Reports: React.FC = () => {
 
   const occupiedRooms = rooms.filter(r => r.status === 'OC' || r.status === 'OD').length;
   const availableRooms = rooms.filter(r => r.status !== 'OOO' && r.status !== 'OOS').length;
-  const totalRevenue = guests.reduce((sum, g) => sum + g.folioBalance, 0);
-  const roomRevenue = folioCharges.filter(c => c.category === 'Room').reduce((sum, c) => sum + c.amount, 0);
-  const fbRevenue = folioCharges.filter(c => c.category === 'F&B').reduce((sum, c) => sum + c.amount, 0);
-  // Handle division by zero to prevent $Infinity display
-    const avgDailyRate = occupiedRooms > 0 ? roomRevenue / occupiedRooms : 0;
-  
-  let revPAR = 0;
-  try {
-    if (availableRooms > 0 && !isNaN(roomRevenue)) {
-      revPAR = roomRevenue / availableRooms;
-    } else {
-      console.warn('RevPAR calc skipped: No available rooms or invalid revenue');
-    }
-  } catch (err) {
-    console.error('RevPAR calculation error:', err);
-  }
+
+  // ── DB-sourced KPI metrics (last completed night audit + today's live POS) ─
+  const [dbKpi, setDbKpi] = React.useState({ roomRevenue: 0, fbRevenue: 0, posRevenue: 0, adr: 0, revpar: 0, auditDate: '' });
+
+  React.useEffect(() => {
+    const loadKpi = async () => {
+      try {
+        const { db } = await import('@/lib/db');
+        // Last completed night audit
+        const auditRes = await db.query<any>(
+          `SELECT business_date, room_revenue, total_revenue, adr, revpar FROM night_audit_runs ORDER BY business_date DESC LIMIT 1`
+        );
+        const audit = 'rows' in auditRes ? auditRes.rows[0] : null;
+
+        // Today's closed POS orders
+        const posRes = await db.query<any>(
+          `SELECT COALESCE(SUM(total_amount),0) AS pos_total FROM pos_orders WHERE status='closed' AND created_at::date = CURRENT_DATE`
+        );
+        const posTotal = Number('rows' in posRes ? posRes.rows[0]?.pos_total : 0);
+
+        if (audit) {
+          setDbKpi({
+            roomRevenue: Number(audit.room_revenue || 0),
+            fbRevenue: posTotal,
+            posRevenue: posTotal,
+            adr:    Number(audit.adr    || 0),
+            revpar: Number(audit.revpar || 0),
+            auditDate: audit.business_date ? String(audit.business_date).slice(0, 10) : '',
+          });
+        }
+      } catch (err) {
+        console.warn('[Reports] KPI DB query failed:', err);
+      }
+    };
+    loadKpi();
+  }, []);
+
+  const roomRevenue  = dbKpi.roomRevenue;
+  const fbRevenue    = dbKpi.fbRevenue;
+  const totalRevenue = roomRevenue + fbRevenue;
+  const avgDailyRate = dbKpi.adr  || (occupiedRooms > 0 ? roomRevenue / occupiedRooms : 0);
+  let revPAR         = dbKpi.revpar || (availableRooms > 0 ? roomRevenue / availableRooms : 0);
 
   return (
     <div className="p-6">
@@ -383,20 +409,31 @@ export const Reports: React.FC = () => {
             <h3 className="text-xl font-bold text-gray-800 mb-4">Reporting Suite</h3>
             <ReportingDashboard />
           </div>
+          {dbKpi.auditDate && (
+            <div className="flex items-center gap-2 text-xs text-gray-400 -mb-2">
+              <span>📊 KPIs from last completed night audit:</span>
+              <span className="font-semibold text-gray-600">{dbKpi.auditDate}</span>
+              <span>· F&amp;B from today's live POS orders</span>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-blue-500">
               <p className="text-gray-600 text-sm font-medium mb-2">Occupancy Rate</p>
               <p className="text-4xl font-bold text-blue-600">
-                {((occupiedRooms / rooms.length) * 100).toFixed(1)}%
+                {rooms.length > 0 ? ((occupiedRooms / rooms.length) * 100).toFixed(1) : '0.0'}%
               </p>
+              <p className="text-xs text-gray-400 mt-1">{occupiedRooms} of {rooms.length} rooms</p>
             </div>
             <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-green-500">
               <p className="text-gray-600 text-sm font-medium mb-2">Total Revenue</p>
               <p className="text-4xl font-bold text-green-600">${totalRevenue.toFixed(2)}</p>
+              <p className="text-xs text-gray-400 mt-1">Rooms + F&amp;B</p>
             </div>
             <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-purple-500">
               <p className="text-gray-600 text-sm font-medium mb-2">ADR</p>
               <p className="text-4xl font-bold text-purple-600">${avgDailyRate.toFixed(2)}</p>
+              <p className="text-xs text-gray-400 mt-1">RevPAR: ${revPAR.toFixed(2)}</p>
             </div>
           </div>
 
@@ -404,17 +441,26 @@ export const Reports: React.FC = () => {
             <h3 className="text-xl font-bold text-gray-800 mb-4">Revenue Breakdown</h3>
             <div className="space-y-4">
               <div className="flex justify-between items-center p-4 bg-blue-50 rounded-lg">
-                <span className="font-medium text-gray-700">Room Revenue</span>
+                <div>
+                  <span className="font-medium text-gray-700">Room Revenue</span>
+                  <p className="text-xs text-gray-400">From last night audit</p>
+                </div>
                 <span className="text-2xl font-bold text-blue-600">${roomRevenue.toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center p-4 bg-green-50 rounded-lg">
-                <span className="font-medium text-gray-700">F&B Revenue</span>
+                <div>
+                  <span className="font-medium text-gray-700">F&amp;B / POS Revenue</span>
+                  <p className="text-xs text-gray-400">Today's closed POS orders</p>
+                </div>
                 <span className="text-2xl font-bold text-green-600">${fbRevenue.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between items-center p-4 bg-purple-50 rounded-lg">
-                <span className="font-medium text-gray-700">Other Revenue</span>
-                <span className="text-2xl font-bold text-purple-600">
-                  ${(totalRevenue - roomRevenue - fbRevenue).toFixed(2)}
+              <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+                <div>
+                  <span className="font-medium text-gray-700">Outstanding Folios</span>
+                  <p className="text-xs text-gray-400">Open guest balances (not yet checked out)</p>
+                </div>
+                <span className="text-2xl font-bold text-gray-600">
+                  ${guests.reduce((s, g) => s + (g.folioBalance || 0), 0).toFixed(2)}
                 </span>
               </div>
             </div>
