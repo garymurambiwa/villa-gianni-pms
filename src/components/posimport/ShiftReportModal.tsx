@@ -24,7 +24,7 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({ open, onClos
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-blue-50 p-4 rounded">
               <div className="text-sm text-gray-600">Total Sales</div>
-              <div className="text-2xl font-bold">${reading.total_sales.toFixed(2)}</div>
+              <div className="text-2xl font-bold">${Number(reading.total_sales || 0).toFixed(2)}</div>
             </div>
             <div className="bg-green-50 p-4 rounded">
               <div className="text-sm text-gray-600">Transactions</div>

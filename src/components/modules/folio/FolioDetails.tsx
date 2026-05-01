@@ -191,7 +191,7 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
             </div>
             <div className="flex justify-between text-base font-semibold border-t border-blue-200 pt-2 mt-2">
               <span className="text-blue-700">Account Balance:</span>
-              <span className="text-blue-700">${balanceSummary.balance.toFixed(2)}</span>
+              <span className="text-blue-700">${Number(balanceSummary.balance || 0).toFixed(2)}</span>
             </div>
           </div>
         </div>
@@ -285,7 +285,7 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
                   </TableCell>
                   <TableCell className="capitalize">{transaction.type}</TableCell>
                   <TableCell className="text-right">
-                    ${transaction.amount.toFixed(2)}
+                    ${Number(transaction.amount || 0).toFixed(2)}
                   </TableCell>
                   <TableCell>
                     {!transaction.voidedBy && (
@@ -333,7 +333,7 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
                 </div>
                 <div>
                   <Label>Amount</Label>
-                  <div>${selectedTransaction.amount.toFixed(2)}</div>
+                  <div>${Number(selectedTransaction.amount || 0).toFixed(2)}</div>
                 </div>
               </div>
               

@@ -1528,8 +1528,8 @@ const VendorManagement: React.FC = () => {
                                 <TableCell>{expense.category}</TableCell>
                                 <TableCell>{expense.quantity}</TableCell>
                                 <TableCell>${expense.unit_cost.toFixed(2)}</TableCell>
-                                <TableCell>${expense.total_cost.toFixed(2)}</TableCell>
-                                <TableCell>${expense.tax_amount.toFixed(2)}</TableCell>
+                                <TableCell>${Number(expense.total_cost || 0).toFixed(2)}</TableCell>
+                                <TableCell>${Number(expense.tax_amount || 0).toFixed(2)}</TableCell>
                                 <TableCell>
                                   {(() => {
                                     try {
@@ -1596,7 +1596,7 @@ const VendorManagement: React.FC = () => {
                                               <td className="px-2 py-1 text-sm">{item.description}</td>
                                               <td className="px-2 py-1 text-sm">{item.quantity}</td>
                                               <td className="px-2 py-1 text-sm">${item.unit_cost.toFixed(2)}</td>
-                                              <td className="px-2 py-1 text-sm">${(item.quantity * item.unit_cost).toFixed(2)}</td>
+                                              <td className="px-2 py-1 text-sm">${(Number(item.quantity || 0) * Number(item.unit_cost || 0)).toFixed(2)}</td>
                                               <td className="px-2 py-1 text-sm">{item.department}</td>
                                               <td className="px-2 py-1 text-sm">{item.category}</td>
                                             </tr>
@@ -1688,7 +1688,7 @@ const VendorManagement: React.FC = () => {
                     <TableRow key={payment.id}>
                       <TableCell>{payment.id}</TableCell>
                       <TableCell>{payment.vendor_name}</TableCell>
-                      <TableCell>${payment.amount_paid.toFixed(2)}</TableCell>
+                      <TableCell>${Number(payment.amount_paid || 0).toFixed(2)}</TableCell>
                       <TableCell>{typeof payment.payment_date === 'string' ? payment.payment_date : new Date(payment.payment_date).toISOString().split('T')[0]}</TableCell>
                       <TableCell>{payment.payment_method}</TableCell>
                       <TableCell>{payment.reference_number}</TableCell>

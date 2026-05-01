@@ -1509,7 +1509,7 @@ export const FrontOffice: React.FC = () => {
                       return (
                         <TableRow key={c.id}>
                           <TableCell>{g?.name || c.guestId}</TableCell>
-                          <TableCell>${c.amount.toFixed(2)}</TableCell>
+                          <TableCell>${Number(c.amount || 0).toFixed(2)}</TableCell>
                           <TableCell>{c.code || '-'}</TableCell>
                           <TableCell>
                             {(() => {

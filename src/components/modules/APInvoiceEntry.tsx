@@ -15,7 +15,7 @@ const APInvoiceEntry: React.FC = () => {
   const [message, setMessage] = React.useState<{ type: 'success'|'error'; text: string }|null>(null);
 
   const allocatedTotal = React.useMemo(()=> lines.reduce((s,l)=> s + Number(l.line_amount || 0), 0), [lines]);
-  const balanced = Number(header.total_amount.toFixed(2)) === Number(allocatedTotal.toFixed(2));
+  const balanced = Number(Number(header.total_amount || 0).toFixed(2)) === Number(allocatedTotal.toFixed(2));
   const formValid = header.vendor_id && header.invoice_number && balanced && lines.length>0;
 
   const onHeaderChange: React.ChangeEventHandler<HTMLInputElement | HTMLSelectElement> = (e) => {
@@ -88,7 +88,7 @@ const APInvoiceEntry: React.FC = () => {
           <h3 className="text-lg font-semibold mb-3">GL & Cost Center Allocation</h3>
           <div className={`p-3 mb-3 rounded flex items-center justify-between ${balanced ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
             <div>Allocation Status: <span className="font-bold">{balanced ? 'BALANCED' : 'UNBALANCED'}</span></div>
-            <div className="text-sm">Total: ${header.total_amount.toFixed(2)} · Allocated: ${allocatedTotal.toFixed(2)} · Remaining: ${(header.total_amount - allocatedTotal).toFixed(2)}</div>
+            <div className="text-sm">Total: ${Number(header.total_amount || 0).toFixed(2)} · Allocated: ${allocatedTotal.toFixed(2)} · Remaining: ${(header.total_amount - allocatedTotal).toFixed(2)}</div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

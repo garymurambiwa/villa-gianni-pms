@@ -250,7 +250,7 @@ const FolioManagement: React.FC = () => {
                   {guests.find(g => g.id === selectedFolio.guestId)?.name}
                 </CardTitle>
                 <CardDescription>
-                  Folio #{selectedFolio.id} | Balance: ${(computedBalance ? computedBalance.total : selectedFolio.balance).toFixed(2)}
+                  Folio #{selectedFolio.id} | Balance: ${(computedBalance ? computedBalance.total : Number(selectedFolio.balance || 0)).toFixed(2)}
                 </CardDescription>
               </CardHeader>
               <CardContent>

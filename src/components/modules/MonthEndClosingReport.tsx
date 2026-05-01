@@ -133,9 +133,9 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
       'Transfers Out': item.transfers_out,
       'Sales Consumption': item.sales_consumption,
       'Wastage Loss': item.wastage_loss,
-      'Closing Inventory': item.closing_inventory.toFixed(2),
-      'Variance': item.variance.toFixed(2),
-      'Variance %': item.variance_percentage.toFixed(2)
+      'Closing Inventory': Number(item.closing_inventory || 0).toFixed(2),
+      'Variance': Number(item.variance || 0).toFixed(2),
+      'Variance %': Number(item.variance_percentage || 0).toFixed(2)
     }));
 
     const csvString = [
@@ -230,7 +230,7 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
               {formatCurrency(monthSummary.totalVariance)}
             </div>
             <p className="text-xs text-muted-foreground">
-              {monthSummary.variancePercentage.toFixed(1)}% variance
+              {Number(monthSummary.variancePercentage || 0).toFixed(1)}% variance
             </p>
           </CardContent>
         </Card>
@@ -282,7 +282,7 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
                         {formatCurrency(item.variance)}
                       </TableCell>
                       <TableCell className={`text-right ${Math.abs(item.variance_percentage) > 5 ? 'text-red-600' : 'text-green-600'}`}>
-                        {item.variance_percentage.toFixed(1)}%
+                        {Number(item.variance_percentage || 0).toFixed(1)}%
                       </TableCell>
                       <TableCell>
                         <Badge variant={Math.abs(item.variance_percentage) > 5 ? 'destructive' : 'default'}>
@@ -305,7 +305,7 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
                       {formatCurrency(monthSummary.totalVariance)}
                     </TableCell>
                     <TableCell className={`text-right ${Math.abs(monthSummary.variancePercentage) > 5 ? 'text-red-600' : 'text-green-600'}`}>
-                      {monthSummary.variancePercentage.toFixed(1)}%
+                      {Number(monthSummary.variancePercentage || 0).toFixed(1)}%
                     </TableCell>
                     <TableCell>
                       <Badge variant={Math.abs(monthSummary.variancePercentage) > 5 ? 'destructive' : 'default'}>

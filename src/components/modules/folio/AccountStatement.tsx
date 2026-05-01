@@ -151,7 +151,7 @@ const AccountStatement: React.FC<AccountStatementProps> = ({ folio, guests }) =>
           ${t.description}${t.voidedBy ? ' <span style="color:#ef4444">(Voided)</span>' : ''}
         </td>
         <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-transform:capitalize">${t.type}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">$${t.amount.toFixed(2)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">$${Number(t.amount || 0).toFixed(2)}</td>
         <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right">$${t.runningBalance.toFixed(2)}</td>
       </tr>
     `).join('');
@@ -196,7 +196,7 @@ const AccountStatement: React.FC<AccountStatementProps> = ({ folio, guests }) =>
           <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:10pt"><span style="color:#4a4a4a">Total Charges</span><span style="font-weight:600">$${totals.charges.toFixed(2)}</span></div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:10pt"><span style="color:#4a4a4a">Total Payments</span><span style="font-weight:600">-$${totals.payments.toFixed(2)}</span></div>
           ${totals.adjustments !== 0 ? `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:10pt"><span style="color:#4a4a4a">Adjustments</span><span style="font-weight:600">$${totals.adjustments.toFixed(2)}</span></div>` : ''}
-          <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:12pt;font-weight:700;border-top:1px solid #e5e7eb;margin-top:8px"><span>Account Balance</span><span style="color:#0073e6">$${totals.balance.toFixed(2)}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:12pt;font-weight:700;border-top:1px solid #e5e7eb;margin-top:8px"><span>Account Balance</span><span style="color:#0073e6">$${Number(totals.balance || 0).toFixed(2)}</span></div>
         </div>
         
         <div style="text-align:center;font-size:8pt;color:#6b7280;margin-top:24px;padding-top:12px;border-top:1px solid #e5e7eb">
@@ -309,7 +309,7 @@ const AccountStatement: React.FC<AccountStatementProps> = ({ folio, guests }) =>
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-xs font-medium text-indigo-600 uppercase tracking-wide">Account Balance</div>
-                <div className="text-2xl font-bold text-indigo-700">${totals.balance.toFixed(2)}</div>
+                <div className="text-2xl font-bold text-indigo-700">${Number(totals.balance || 0).toFixed(2)}</div>
               </div>
               <div className="w-10 h-10 rounded-full bg-indigo-200 flex items-center justify-center">
                 <CreditCard className="w-5 h-5 text-indigo-700" />
@@ -414,7 +414,7 @@ const AccountStatement: React.FC<AccountStatementProps> = ({ folio, guests }) =>
                       transaction.type === 'charge' ? 'text-gray-900' : 
                       'text-amber-600'
                     }`}>
-                      {transaction.type === 'payment' ? '-' : ''}${transaction.amount.toFixed(2)}
+                      {transaction.type === 'payment' ? '-' : ''}${Number(transaction.amount || 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">
                       ${transaction.runningBalance.toFixed(2)}
@@ -452,7 +452,7 @@ const AccountStatement: React.FC<AccountStatementProps> = ({ folio, guests }) =>
               footer={
                 <tr className="bg-gray-100 font-semibold">
                   <td colSpan={3} className="px-4 py-2 text-right">Account Balance:</td>
-                  <td colSpan={2} className="px-4 py-2 text-right text-blue-600">${totals.balance.toFixed(2)}</td>
+                  <td colSpan={2} className="px-4 py-2 text-right text-blue-600">${Number(totals.balance || 0).toFixed(2)}</td>
                 </tr>
               }
             >
@@ -464,7 +464,7 @@ const AccountStatement: React.FC<AccountStatementProps> = ({ folio, guests }) =>
                     {t.voidedBy && <span className="text-red-500 ml-2">(Voided)</span>}
                   </td>
                   <td className="px-3 py-2 border-b border-gray-200 capitalize">{t.type}</td>
-                  <td className="px-3 py-2 border-b border-gray-200 text-right">${t.amount.toFixed(2)}</td>
+                  <td className="px-3 py-2 border-b border-gray-200 text-right">${Number(t.amount || 0).toFixed(2)}</td>
                   <td className="px-3 py-2 border-b border-gray-200 text-right font-medium">${t.runningBalance.toFixed(2)}</td>
                 </tr>
               ))}
@@ -475,7 +475,7 @@ const AccountStatement: React.FC<AccountStatementProps> = ({ folio, guests }) =>
                 { label: 'Total Charges', value: `$${totals.charges.toFixed(2)}` },
                 { label: 'Total Payments', value: `-$${totals.payments.toFixed(2)}` },
                 ...(totals.adjustments !== 0 ? [{ label: 'Adjustments', value: `$${totals.adjustments.toFixed(2)}` }] : []),
-                { label: 'Account Balance', value: `$${totals.balance.toFixed(2)}`, isTotal: true },
+                { label: 'Account Balance', value: `$${Number(totals.balance || 0).toFixed(2)}`, isTotal: true },
               ]}
             />
           </ReportLayout>

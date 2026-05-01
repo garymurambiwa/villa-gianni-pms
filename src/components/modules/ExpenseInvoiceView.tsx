@@ -241,7 +241,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                 is_credit_note: true,
                 parent_expense_id: creditTarget.id,
             });
-            toast({ title: 'Credit Note Created', description: `$${creditForm.amount.toFixed(2)} credited against ${creditTarget.reference_number}` });
+            toast({ title: 'Credit Note Created', description: `$${Number(creditForm.amount || 0).toFixed(2)} credited against ${creditTarget.reference_number}` });
         } catch (err: any) {
             toast({ title: 'Error', description: err.message || 'Failed to create credit note', variant: 'destructive' });
         }

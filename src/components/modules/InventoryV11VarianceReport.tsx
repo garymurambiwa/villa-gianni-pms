@@ -251,7 +251,7 @@ export const InventoryV11VarianceReport: React.FC = () => {
               <CardContent className="pt-6">
                 <div className="text-center">
                   <div className="text-3xl font-bold" style={{ color: '#1D9E75' }}>
-                    ${report.total_variance_value?.toFixed(2) || '0.00'}
+                    ${Number(report.total_variance_value || 0).toFixed(2) || '0.00'}
                   </div>
                   <p className="text-xs text-gray-500 mt-1">Total Value</p>
                 </div>

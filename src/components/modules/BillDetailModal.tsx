@@ -241,7 +241,7 @@ export const BillDetailModal: React.FC<Props> = ({ group, open, onClose, onVoidE
 
   <div class="totals">
     <div class="totals-row"><span>Subtotal</span><span>${fmtAmt(group.totalAmount)}</span></div>
-    ${taxTotal > 0 ? `<div class="totals-row"><span>VAT (${group.lines[0]?.tax_rate?.toFixed(1)}%)</span><span>${fmtAmt(taxTotal)}</span></div>` : ''}
+    ${taxTotal > 0 ? `<div class="totals-row"><span>VAT (${group.lines[0]?.Number(group.lines[0]?.tax_rate || 0).toFixed(1)}%)</span><span>${fmtAmt(taxTotal)}</span></div>` : ''}
     ${group.creditNotes.length > 0 ? `<div class="totals-row" style="color:#b91c1c"><span>Credits</span><span>-${fmtAmt(Math.abs(creditTotal))}</span></div>` : ''}
     <div class="totals-row net"><span>Net Total</span><span>${fmtAmt(group.netAmount)}</span></div>
   </div>
@@ -371,7 +371,7 @@ export const BillDetailModal: React.FC<Props> = ({ group, open, onClose, onVoidE
             </div>
             {taxTotal > 0 && (
               <div className="flex justify-between text-gray-600">
-                <span>VAT ({group.lines[0]?.tax_rate?.toFixed(1)}%)</span>
+                <span>VAT ({group.lines[0]?.Number(group.lines[0]?.tax_rate || 0).toFixed(1)}%)</span>
                 <span>{formatCurrency(taxTotal)}</span>
               </div>
             )}

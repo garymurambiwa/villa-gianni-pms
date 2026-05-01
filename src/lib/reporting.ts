@@ -816,7 +816,7 @@ export const buildVendorPaymentSummary = (from: string, to: string) => {
       vendor,
       payments: data.count,
       methods: Array.from(data.methods).join(', '),
-      totalPaid: data.total.toFixed(2),
+      totalPaid: Number(data.total || 0).toFixed(2),
     }));
 
   const grandTotal = Object.values(byVendor).reduce((s, d) => s + d.total, 0);
@@ -851,7 +851,7 @@ export const buildExpensesByDepartment = (from: string, to: string) => {
         department: dept,
         category: '— ALL —',
         count: data.count,
-        total: data.total.toFixed(2),
+        total: Number(data.total || 0).toFixed(2),
         pct: grandTotal > 0 ? ((data.total / grandTotal) * 100).toFixed(1) + '%' : '0%',
       };
       const catRows = Object.entries(data.categories).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => ({

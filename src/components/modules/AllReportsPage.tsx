@@ -241,7 +241,7 @@ export const AllReportsPage: React.FC = () => {
                   <td className="p-2 font-medium">{r.name}</td>
                   <td className="p-2 text-gray-600">{r.description}</td>
                   <td className="p-2 text-right">{metrics.count}</td>
-                  <td className="p-2 text-right">${metrics.total.toFixed(2)}</td>
+                  <td className="p-2 text-right">${Number(metrics.total || 0).toFixed(2)}</td>
                   <td className="p-2">
                     <div className="flex items-center gap-2">
                       <Button variant="outline" onClick={() => quickPrint(r.key)} className="hover:bg-gray-100 active:scale-[0.99]">Quick Print</Button>

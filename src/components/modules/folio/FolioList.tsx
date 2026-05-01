@@ -30,7 +30,7 @@ const FolioList: React.FC<FolioListProps> = ({ folios, guests, onSelect, selecte
                 <div>
                   <div className="font-medium">{guest?.name || "Unknown Guest"}</div>
                   <div className="text-sm text-muted-foreground">Room {folio.roomNumber}</div>
-                  <div className="text-sm">Balance: ${folio.balance.toFixed(2)}</div>
+                  <div className="text-sm">Balance: ${Number(folio.balance || 0).toFixed(2)}</div>
                 </div>
               </Button>
             );

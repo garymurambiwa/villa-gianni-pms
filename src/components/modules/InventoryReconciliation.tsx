@@ -527,10 +527,10 @@ export const InventoryReconciliation: React.FC = () => {
                             {period.status}
                           </Badge>
                         </TableCell>
-                        <TableCell>${period.opening_stock_value?.toFixed(2)}</TableCell>
-                        <TableCell>${period.received_value?.toFixed(2)}</TableCell>
-                        <TableCell className={period.variance_value ? (period.variance_value < 0 ? 'text-red-600' : 'text-green-600') : ''}>
-                          ${period.variance_value?.toFixed(2) || '0.00'}
+                        <TableCell>${Number(period.opening_stock_value || 0).toFixed(2)}</TableCell>
+                        <TableCell>${Number(period.received_value || 0).toFixed(2)}</TableCell>
+                        <TableCell className={Number(period.variance_value || 0) ? (Number(period.variance_value) < 0 ? 'text-red-600' : 'text-green-600') : ''}>
+                          ${Number(period.variance_value || 0).toFixed(2)}
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-2">
@@ -606,7 +606,7 @@ export const InventoryReconciliation: React.FC = () => {
                         <TableCell>{tx.transaction_number}</TableCell>
                         <TableCell>{tx.department}</TableCell>
                         <TableCell>{tx.total_quantity}</TableCell>
-                        <TableCell>${tx.total_value?.toFixed(2)}</TableCell>
+                        <TableCell>${Number(tx.total_value || 0).toFixed(2)}</TableCell>
                         <TableCell>{tx.supplier_name || '-'}</TableCell>
                       </TableRow>
                     ))
@@ -628,20 +628,20 @@ export const InventoryReconciliation: React.FC = () => {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="p-4 bg-gray-50 rounded-lg">
                       <div className="text-sm text-gray-600">Opening Stock</div>
-                      <div className="text-xl font-bold">${selectedPeriod.opening_stock_value?.toFixed(2)}</div>
+                      <div className="text-xl font-bold">${Number(selectedPeriod.opening_stock_value || 0).toFixed(2)}</div>
                     </div>
                     <div className="p-4 bg-gray-50 rounded-lg">
                       <div className="text-sm text-gray-600">Received</div>
-                      <div className="text-xl font-bold">${selectedPeriod.received_value?.toFixed(2)}</div>
+                      <div className="text-xl font-bold">${Number(selectedPeriod.received_value || 0).toFixed(2)}</div>
                     </div>
                     <div className="p-4 bg-gray-50 rounded-lg">
                       <div className="text-sm text-gray-600">Expected</div>
-                      <div className="text-xl font-bold">${(selectedPeriod.opening_stock_value + selectedPeriod.received_value)?.toFixed(2)}</div>
+                      <div className="text-xl font-bold">${(Number(selectedPeriod.opening_stock_value || 0) + Number(selectedPeriod.received_value || 0)).toFixed(2)}</div>
                     </div>
                     <div className="p-4 bg-gray-50 rounded-lg">
                       <div className="text-sm text-gray-600">Variance</div>
-                      <div className={`text-xl font-bold ${selectedPeriod.variance_value && selectedPeriod.variance_value < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        ${selectedPeriod.variance_value?.toFixed(2) || '0.00'}
+                      <div className={`text-xl font-bold ${Number(selectedPeriod.variance_value || 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        ${Number(selectedPeriod.variance_value || 0).toFixed(2)}
                       </div>
                     </div>
                   </div>
@@ -668,7 +668,7 @@ export const InventoryReconciliation: React.FC = () => {
                           </TableRow>
                           <TableRow>
                             <TableCell>COGS</TableCell>
-                            <TableCell className="text-right">${selectedPeriod.kitchen_cogs?.toFixed(2)}</TableCell>
+                            <TableCell className="text-right">${Number(selectedPeriod.kitchen_cogs || 0).toFixed(2)}</TableCell>
                           </TableRow>
                         </TableBody>
                       </Table>
@@ -687,7 +687,7 @@ export const InventoryReconciliation: React.FC = () => {
                           </TableRow>
                           <TableRow>
                             <TableCell>COGS</TableCell>
-                            <TableCell className="text-right">${selectedPeriod.cellar_cogs?.toFixed(2)}</TableCell>
+                            <TableCell className="text-right">${Number(selectedPeriod.cellar_cogs || 0).toFixed(2)}</TableCell>
                           </TableRow>
                         </TableBody>
                       </Table>

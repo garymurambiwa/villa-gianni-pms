@@ -135,7 +135,7 @@ const TransactionClearingAdmin: React.FC = () => {
         </div>
         <div className="bg-white p-4 rounded shadow">
           <div className="text-sm text-gray-600">Total Amount</div>
-          <div className="text-2xl font-bold">${summary.total.toFixed(2)}</div>
+          <div className="text-2xl font-bold">${Number(summary.total || 0).toFixed(2)}</div>
         </div>
         <div className="bg-white p-4 rounded shadow">
           <div className="text-sm text-gray-600">By Method</div>
@@ -163,7 +163,7 @@ const TransactionClearingAdmin: React.FC = () => {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white w-full max-w-md rounded-xl shadow-xl p-6">
             <h4 className="text-lg font-semibold mb-2">Confirm Clearing</h4>
-            <p className="text-sm text-gray-700 mb-4">You are about to permanently remove <strong>{summary.count}</strong> transactions totaling <strong>${summary.total.toFixed(2)}</strong>. This action cannot be undone.</p>
+            <p className="text-sm text-gray-700 mb-4">You are about to permanently remove <strong>{summary.count}</strong> transactions totaling <strong>${Number(summary.total || 0).toFixed(2)}</strong>. This action cannot be undone.</p>
             {confirmErr && (<div className="p-2 mb-3 rounded bg-yellow-50 text-yellow-700 text-sm">{confirmErr}</div>)}
             <div className="flex items-center gap-2 justify-end">
               <Button variant="outline" onClick={()=> setConfirmOpen(false)}>Cancel</Button>

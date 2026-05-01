@@ -451,7 +451,7 @@ export const GLAccounting: React.FC = () => {
                   <td className="p-2">{r.date}</td>
                   <td className="p-2">{vendorsList.find(v=>v.id===r.vendorId)?.name || r.vendorId}</td>
                   <td className="p-2">{r.invoiceRef}</td>
-                  <td className="p-2 text-right">${r.amount.toFixed(2)}</td>
+                  <td className="p-2 text-right">${Number(r.amount || 0).toFixed(2)}</td>
                   <td className="p-2">{r.glAccountId}</td>
                   <td className="p-2">{r.costCenter}</td>
                   <td className="p-2">{r.status}</td>
@@ -553,7 +553,7 @@ export const GLAccounting: React.FC = () => {
               <thead><tr><th className="p-2">Bucket</th><th className="p-2">Date</th><th className="p-2">Vendor</th><th className="p-2">Invoice</th><th className="p-2 text-right">Amount</th><th className="p-2">Days</th></tr></thead>
               <tbody>
                 {(()=>{ const ag = apAging; const row = (e:any,b:string)=> (
-                  <tr key={e.id}><td className="p-2">{b}</td><td className="p-2">{e.date}</td><td className="p-2">{vendorsList.find(v=>v.id===e.vendorId)?.name || e.vendorId}</td><td className="p-2">{e.invoiceRef}</td><td className="p-2 text-right">${e.amount.toFixed(2)}</td><td className="p-2">{Math.floor((new Date(range.to).getTime() - new Date(e.date).getTime())/(1000*60*60*24))}</td></tr>
+                  <tr key={e.id}><td className="p-2">{b}</td><td className="p-2">{e.date}</td><td className="p-2">{vendorsList.find(v=>v.id===e.vendorId)?.name || e.vendorId}</td><td className="p-2">{e.invoiceRef}</td><td className="p-2 text-right">${Number(e.amount || 0).toFixed(2)}</td><td className="p-2">{Math.floor((new Date(range.to).getTime() - new Date(e.date).getTime())/(1000*60*60*24))}</td></tr>
                 ); return [
                   ...(ag.current || []).map((e: any)=> row(e,'Current')),
                   ...(ag.d1_30 || []).map((e: any)=> row(e,'1–30')),
@@ -577,7 +577,7 @@ export const GLAccounting: React.FC = () => {
               <thead><tr><th className="p-2 text-left">Cost Center</th><th className="p-2 text-right">Total</th></tr></thead>
               <tbody>
                 {deptBreakdown.map(r => (
-                  <tr key={r.costCenter}><td className="p-2">{r.costCenter}</td><td className="p-2 text-right">$ {r.total.toFixed(2)}</td></tr>
+                  <tr key={r.costCenter}><td className="p-2">{r.costCenter}</td><td className="p-2 text-right">$ {Number(r.total || 0).toFixed(2)}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -599,17 +599,17 @@ export const GLAccounting: React.FC = () => {
                         {['Rooms','F&B','Administration','Sales & Marketing'].map(d=> <option key={d}>{d}</option>)}
                       </select>
                     </div>
-                    <div>Revenue: <span className="font-semibold">$ {rep.revenue.toFixed(2)}</span> {bud?.revenue ? <span className="text-xs text-gray-600">(Budget $ {bud.revenue.toFixed(2)})</span> : null}</div>
+                    <div>Revenue: <span className="font-semibold">$ {Number(rep.revenue || 0).toFixed(2)}</span> {bud?.revenue ? <span className="text-xs text-gray-600">(Budget $ {Number(bud.revenue || 0).toFixed(2)})</span> : null}</div>
                     <div className="mt-2">Departmental Expenses:</div>
-                    {rep.departmentalExpenses.map((e:any)=> <div key={e.costCenter} className="flex justify-between"><span>{e.costCenter}</span><span>$ {e.amount.toFixed(2)} {bud?.costCenters?.[e.costCenter] ? <span className="text-xs text-gray-600">(Budget $ {bud.costCenters[e.costCenter].toFixed(2)})</span> : null}</span></div>)}
+                    {rep.departmentalExpenses.map((e:any)=> <div key={e.costCenter} className="flex justify-between"><span>{e.costCenter}</span><span>$ {Number(e.amount || 0).toFixed(2)} {bud?.costCenters?.[e.costCenter] ? <span className="text-xs text-gray-600">(Budget $ {bud.costCenters[e.costCenter].toFixed(2)})</span> : null}</span></div>)}
                     <div className="mt-2">Departmental Profit: <span className="font-semibold">$ {rep.departmentalProfit.toFixed(2)}</span></div>
                     <div className="mt-2">Undistributed Expenses:</div>
-                    {rep.undistributedExpenses.map((e:any)=> <div key={e.costCenter} className="flex justify-between"><span>{e.costCenter}</span><span>$ {e.amount.toFixed(2)}</span></div>)}
+                    {rep.undistributedExpenses.map((e:any)=> <div key={e.costCenter} className="flex justify-between"><span>{e.costCenter}</span><span>$ {Number(e.amount || 0).toFixed(2)}</span></div>)}
                     <div className="mt-2">GOP: <span className="font-semibold">$ {rep.GOP.toFixed(2)}</span></div>
                   </div>
                   <div className="border rounded p-3">
                     <div className="font-semibold mb-1">YTD vs Budget vs Prior Year</div>
-                    <div>YTD Revenue: $ {rep.ytd.revenue.toFixed(2)}</div>
+                    <div>YTD Revenue: $ {Number(rep.ytd?.revenue || 0).toFixed(2)}</div>
                     <div>YTD Dept Expenses: $ {rep.ytd.deptExpenses.toFixed(2)}</div>
                     <div>YTD Undistributed: $ {rep.ytd.undistributed.toFixed(2)}</div>
                     <div>YTD GOP: $ {rep.ytd.GOP.toFixed(2)}</div>
@@ -674,14 +674,14 @@ export const GLAccounting: React.FC = () => {
                   <tbody>
                     {rows.map(r=> (
                       <tr key={r.accountId}>
-                        <td className="p-2">{r.accountId}</td><td className="p-2 text-right">$ {r.total.toFixed(2)}</td>
+                        <td className="p-2">{r.accountId}</td><td className="p-2 text-right">$ {Number(r.total || 0).toFixed(2)}</td>
                         <td className="p-2">
                           <details>
                             <summary className="cursor-pointer text-xs">View</summary>
                             <table className="w-full text-xs mt-2">
                               <thead><tr><th className="p-1">Date</th><th className="p-1">Entry</th><th className="p-1">Ref</th><th className="p-1 text-right">Amount</th><th className="p-1">Description</th></tr></thead>
                               <tbody>
-                                {r.lines.map(l=> (<tr key={l.entryId+String(l.amount)}><td className="p-1">{l.date}</td><td className="p-1">{l.entryId}</td><td className="p-1">{l.reference||'—'}</td><td className="p-1 text-right">$ {l.amount.toFixed(2)}</td><td className="p-1">{l.description||'—'}</td></tr>))}
+                                {r.lines.map(l=> (<tr key={l.entryId+String(l.amount)}><td className="p-1">{l.date}</td><td className="p-1">{l.entryId}</td><td className="p-1">{l.reference||'—'}</td><td className="p-1 text-right">$ {Number(l.amount || 0).toFixed(2)}</td><td className="p-1">{l.description||'—'}</td></tr>))}
                               </tbody>
                             </table>
                           </details>
@@ -709,7 +709,7 @@ export const GLAccounting: React.FC = () => {
                     <td className="p-2">{r.date}</td>
                     <td className="p-2">{vendorsList.find(v=>v.id===r.vendorId)?.name || r.vendorId}</td>
                     <td className="p-2">{r.invoiceRef}</td>
-                    <td className="p-2 text-right">${r.amount.toFixed(2)}</td>
+                    <td className="p-2 text-right">${Number(r.amount || 0).toFixed(2)}</td>
                     <td className="p-2">
                       <Input placeholder="Add comment" value={commentDraft[r.id]||''} onChange={(e)=>setCommentDraft(d=>({ ...d, [r.id]: e.target.value }))} />
                     </td>
@@ -743,13 +743,13 @@ export const GLAccounting: React.FC = () => {
             <div className="overflow-x-auto">
               <table className="text-sm w-full">
                 <thead><tr><th className="p-2 text-left">Account</th><th className="p-2 text-right">Debit</th><th className="p-2 text-right">Credit</th><th className="p-2 text-right">Balance</th></tr></thead>
-                <tbody>{tb.map(r => (<tr key={r.accountId}><td className="p-2">{r.accountId} - {r.name}</td><td className="p-2 text-right">$ {r.debit.toFixed(2)}</td><td className="p-2 text-right">$ {r.credit.toFixed(2)}</td><td className="p-2 text-right">$ {r.balance.toFixed(2)}</td></tr>))}</tbody>
+                <tbody>{tb.map(r => (<tr key={r.accountId}><td className="p-2">{r.accountId} - {r.name}</td><td className="p-2 text-right">$ {Number(r.debit || 0).toFixed(2)}</td><td className="p-2 text-right">$ {Number(r.credit || 0).toFixed(2)}</td><td className="p-2 text-right">$ {Number(r.balance || 0).toFixed(2)}</td></tr>))}</tbody>
               </table>
             </div>
           </div>
           <div className="border rounded p-3">
             <div className="font-semibold mb-1">Profit & Loss (USALI)</div>
-            <div className="text-sm">Revenue: <span className="font-semibold">$ {pl.revenue.toFixed(2)}</span></div>
+            <div className="text-sm">Revenue: <span className="font-semibold">$ {Number(pl.revenue || 0).toFixed(2)}</span></div>
             <div className="text-sm">Expenses: <span className="font-semibold">$ {pl.expense.toFixed(2)}</span></div>
             <div className="text-sm">Net Income: <span className="font-semibold">$ {pl.netIncome.toFixed(2)}</span></div>
           </div>

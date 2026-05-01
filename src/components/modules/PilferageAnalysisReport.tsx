@@ -125,8 +125,8 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
       'Expected Qty': item.expected_qty,
       'Actual Qty': item.actual_qty,
       'Variance Qty': item.variance_qty,
-      'Variance %': item.variance_percentage.toFixed(2),
-      'Variance Value': item.variance_value.toFixed(2),
+      'Variance %': Number(item.variance_percentage || 0).toFixed(2),
+      'Variance Value': Number(item.variance_value || 0).toFixed(2),
       'Risk Level': item.risk_level,
       'Last Count Date': item.last_count_date
     }));
@@ -281,7 +281,7 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
                         -{item.variance_qty}
                       </TableCell>
                       <TableCell className="text-right font-medium">
-                        {item.variance_percentage.toFixed(1)}%
+                        {Number(item.variance_percentage || 0).toFixed(1)}%
                       </TableCell>
                       <TableCell className="text-right font-medium">
                         {formatCurrency(item.variance_value)}

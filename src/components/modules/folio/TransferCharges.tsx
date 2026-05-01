@@ -166,7 +166,7 @@ const TransferCharges: React.FC<TransferChargesProps> = ({ sourceFolio, availabl
                     <SelectLabel>City Ledger Accounts</SelectLabel>
                     {cityLedger.map(acc => (
                       <SelectItem key={`cl-${acc.id}`} value={`cl:${acc.id}`}>
-                        City Ledger: {acc.name} (Bal ${acc.balance.toFixed(2)})
+                        City Ledger: {acc.name} (Bal ${Number(acc.balance || 0).toFixed(2)})
                       </SelectItem>
                     ))}
                   </SelectGroup>
@@ -205,7 +205,7 @@ const TransferCharges: React.FC<TransferChargesProps> = ({ sourceFolio, availabl
                 <TableCell>{transaction.description}</TableCell>
                 <TableCell>{transaction.type}</TableCell>
                 <TableCell className="text-right">
-                  ${transaction.amount.toFixed(2)}
+                  ${Number(transaction.amount || 0).toFixed(2)}
                 </TableCell>
               </TableRow>
             ))

@@ -520,7 +520,7 @@ const NightAudit: React.FC = () => {
               <div className="p-3 border rounded">
                 <div className="text-xs text-gray-500">Variance</div>
                 <div className={`text-xl font-semibold ${lastRun.reconciliation.hasVariance ? 'text-amber-600' : 'text-green-600'}`}>
-                  ${lastRun.reconciliation.totalVariance?.toFixed(2) || '0.00'}
+                  ${Number(lastRun.reconciliation.totalVariance || 0).toFixed(2) || '0.00'}
                 </div>
                 {lastRun.reconciliation.hasVariance && (
                   <div className="text-xs text-amber-600">Auto-reconciled</div>
@@ -544,7 +544,7 @@ const NightAudit: React.FC = () => {
                         <tr className="hover:bg-gray-50 cursor-pointer">
                           <td className="px-3 py-2">Folio vs Shift</td>
                           <td className="px-3 py-2 text-right text-red-600 font-mono">
-                            ${lastRun.reconciliation.varianceFolioVsShift.toFixed(2)}
+                            ${Number(lastRun.reconciliation.varianceFolioVsShift || 0).toFixed(2)}
                           </td>
                           <td className="px-3 py-2 text-gray-500">
                             {lastRun.autoReconcile ? 'Auto-Corrected' : 'Pending'}
@@ -555,7 +555,7 @@ const NightAudit: React.FC = () => {
                         <tr className="hover:bg-gray-50 cursor-pointer">
                           <td className="px-3 py-2">Folio vs Postings</td>
                           <td className="px-3 py-2 text-right text-red-600 font-mono">
-                            ${lastRun.reconciliation.varianceFolioVsPostings.toFixed(2)}
+                            ${Number(lastRun.reconciliation.varianceFolioVsPostings || 0).toFixed(2)}
                           </td>
                           <td className="px-3 py-2 text-gray-500">
                             {lastRun.autoReconcile ? 'Auto-Corrected' : 'Pending'}

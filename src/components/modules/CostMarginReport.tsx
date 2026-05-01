@@ -98,14 +98,14 @@ export const CostMarginReport: React.FC<CostMarginReportProps> = () => {
       'Item Name': item.item_name,
       'SKU': item.sku,
       'Category': item.category,
-      'Cost Price': item.cost_price.toFixed(2),
+      'Cost Price': Number(item.cost_price || 0).toFixed(2),
       'Selling Price': item.selling_price.toFixed(2),
       'Margin %': item.margin_percentage.toFixed(2),
       'Margin Amount': item.margin_amount.toFixed(2),
       'Total Sold': item.total_sold,
-      'Total Revenue': item.total_revenue.toFixed(2),
-      'Total Cost': item.total_cost.toFixed(2),
-      'Total Profit': item.total_profit.toFixed(2)
+      'Total Revenue': Number(item.total_revenue || 0).toFixed(2),
+      'Total Cost': Number(item.total_cost || 0).toFixed(2),
+      'Total Profit': Number(item.total_profit || 0).toFixed(2)
     }));
 
     const csvString = [
