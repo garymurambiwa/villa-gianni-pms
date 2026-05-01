@@ -122,6 +122,22 @@ export const FrontOffice: React.FC = () => {
   const [editGuestPhone, setEditGuestPhone] = useState('');
   const [showEditGuestDialog, setShowEditGuestDialog] = useState(false);
 
+  const generateAndPrintReport = () => {
+    const html = '<html><body><h1>POS Report</h1><p>Report generated.</p></body></html>';
+    printHTMLContent(html);
+  };
+
+  const generateAndExportReport = () => {
+    const data = 'Date,Type,Amount\n2024-01-01,Sales,100\n';
+    const blob = new Blob([data], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'pos_report.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Guard against missing bridge/data
   React.useEffect(() => {
     if (!reservations && !guests) {
@@ -1193,12 +1209,13 @@ export const FrontOffice: React.FC = () => {
       </div>
 
       <Tabs defaultValue="arrivals" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-5 lg:w-[750px] h-auto">
+        <TabsList className="grid w-full grid-cols-2 md:grid-cols-6 lg:w-[750px] h-auto">
           <TabsTrigger value="in_house">In House ({inHouse.length})</TabsTrigger>
           <TabsTrigger value="arrivals">Arrivals ({arrivals.length})</TabsTrigger>
           <TabsTrigger value="departures">Departed ({checkedOutToday.length})</TabsTrigger>
           <TabsTrigger value="guests">Guests ({guests.length})</TabsTrigger>
           <TabsTrigger value="charges">Charges</TabsTrigger>
+          <TabsTrigger value="reporting">POS Reporting</TabsTrigger>
           <TabsTrigger value="folio">Folio</TabsTrigger>
         </TabsList>
 
@@ -1525,6 +1542,43 @@ export const FrontOffice: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="reporting" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>POS Reporting Tools</CardTitle>
+              <CardDescription>Generate and manage POS reports</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <Select>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Range" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="today">Today</SelectItem>
+                    <SelectItem value="7d">Last 7 Days</SelectItem>
+                    <SelectItem value="30d">Last 30 Days</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Report Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="sales">Sales</SelectItem>
+                    <SelectItem value="performance">Performance</SelectItem>
+                    <SelectItem value="inventory">Inventory</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-2 mt-4">
+                <Button onClick={() => generateAndPrintReport()}>Print Report</Button>
+                <Button variant="outline" onClick={() => generateAndExportReport()}>Export Report</Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

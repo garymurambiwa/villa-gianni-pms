@@ -4,7 +4,7 @@ import 'react-simple-keyboard/build/css/index.css';
 import './VirtualKeyboard.css';
 
 // Inputs that should NOT trigger the keyboard
-const SKIP_TYPES = new Set(['file', 'checkbox', 'radio', 'submit', 'button', 'image', 'range', 'color', 'password']);
+const SKIP_TYPES = new Set(['file', 'checkbox', 'radio', 'submit', 'button', 'image', 'range', 'color']);
 // CSS class to opt-out of keyboard on a specific input
 const OPT_OUT_CLASS = 'no-vkb';
 

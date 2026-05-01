@@ -18,6 +18,7 @@ import SystemSettings from './modules/SystemSettings';
 import { RoomAvailabilityGrid } from './modules/RoomAvailabilityGrid';
 import ErrorBoundary from './ErrorBoundary';
 import LoadingSpinner from './ui/LoadingSpinner';
+import LicenseWarningBanner from './ui/LicenseWarningBanner';
 import { Button } from './ui/button';
 
 // Lazy-load POSFrontOffice with a retry mechanism for chunk load failures (common after deployment)
@@ -565,6 +566,7 @@ const AppLayout: React.FC = () => {
     <HotkeysProvider>
       {/* Night Audit full-screen lock overlay — renders on top of everything */}
       <NightAuditLockOverlay />
+      <LicenseWarningBanner />
       <ActiveModuleSync mod={activeModule} />
       <div className="flex flex-col md:flex-row h-screen bg-gray-100">
         <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} />

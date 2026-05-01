@@ -304,8 +304,8 @@ export const POSFrontOffice: React.FC = () => {
           const defaultTables = Array.from({ length: 12 }, (_, i) => `t${i + 1}`);
           for (const tid of defaultTables) {
             await db.query(
-              `INSERT INTO table_status (table_id, status) VALUES ($1, 'open') ON CONFLICT DO NOTHING`,
-              [tid]
+              `INSERT INTO table_status (table_id, status, cost_center) VALUES ($1, 'open', $2) ON CONFLICT DO NOTHING`,
+              [tid, cc || 'Main Restaurant']
             );
           }
           return; // table state will be picked up by localStorage restore below
