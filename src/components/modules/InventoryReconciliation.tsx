@@ -103,6 +103,7 @@ export const InventoryReconciliation: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const [showBatchReconDialog, setShowBatchReconDialog] = useState(false);
+  const [showNewPeriodDialog, setShowNewPeriodDialog] = useState(false);
   const [batchData, setBatchData] = useState<Record<string, { physicalQty: number }>>({});
   
   const [newPeriod, setNewPeriod] = useState({
