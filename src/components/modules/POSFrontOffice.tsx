@@ -967,14 +967,15 @@ export const POSFrontOffice: React.FC = () => {
                     const items = Array.isArray(currentBill.items)
                       ? currentBill.items.map((i: any) => ({ name: i.menuItem.name, quantity: i.quantity, price: i.menuItem.price, subtotal: i.subtotal }))
                       : [];
-                    const html = generateReceiptHTML({
-                      id: currentBill.id,
-                      items,
-                      total: currentBill.total,
-                      customerName: currentBill.customerName,
-                      roomNumber: currentBill.roomNumber,
-                      tableId: activeTableId || currentBill.tableId
-                    }, (() => { const b = readReceiptBranding(); return { restaurant_name: b.restaurant_name || 'Property', address: b.address || '', phone: b.phone || '', email: b.email || '', tax_rate: Number(b.tax_rate ?? 0), show_tax_breakdown: true, paper_size: (b.paper_size as any) || '80mm', logo_url: b.logo_url, show_logo: b.show_logo, header_text: b.header_text, footer_text: b.footer_text, promotional_message: b.promotional_message }; })(), 'receipt', { includeSignature: false, showTaxBreakdown: true, serverName: user?.name });
+                     const html = generateReceiptHTML({
+                       id: currentBill.id,
+                       items,
+                       total: currentBill.total,
+                       customerName: currentBill.customerName,
+                       roomNumber: currentBill.roomNumber,
+                       tableId: activeTableId || currentBill.tableId,
+                       paymentMethod: currentBill.paymentMethod
+                     }, (() => { const b = readReceiptBranding(); return { restaurant_name: b.restaurant_name || 'Property', address: b.address || '', phone: b.phone || '', email: b.email || '', tax_rate: Number(b.tax_rate ?? 0), show_tax_breakdown: true, paper_size: (b.paper_size as any) || '80mm', logo_url: b.logo_url, show_logo: b.show_logo, header_text: b.header_text, footer_text: b.footer_text, promotional_message: b.promotional_message }; })(), 'receipt', { includeSignature: false, showTaxBreakdown: true, serverName: user?.name });
                     printDocument(html, `Bill-${currentBill.id}`);
                     setPrintOpen(false);
                   }}>Print</Button>

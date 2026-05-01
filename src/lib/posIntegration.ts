@@ -18,6 +18,7 @@ export interface Bill {
   customerName?: string;
   roomNumber?: string;
   tableId?: string;
+  paymentMethod?: 'cash' | 'card' | 'room-charge';
 }
 
 export interface ReceiptSettings {
@@ -217,7 +218,7 @@ export const generateReceiptHTML = (data, settings, type = 'receipt', options: a
     '.nm { text-align: left; width: 58%; word-break: break-word; padding: 0.8mm 0; } .qt { text-align: center; width: 10%; padding: 0.8mm 1mm; } .pr { text-align: right; width: 32%; padding: 0.8mm 0; } .tot td { padding: 0.5mm 0; } .tot.grand td { font-weight: bold; font-size: 1.25em; border-top: 1px solid #000; padding-top: 1.5mm; }' +
     '</style></head><body>' + logoHTML + '<div class="center b" style="font-size:1.3em">' + settings.restaurant_name + '</div><div class="c" style="font-size:0.9em">' + (settings.address || '') + '</div>' +
     '<div class="div">================================</div><div class="c b">' + (isKOT ? 'KOT' : 'RECEIPT') + '</div><div class="div">--------------------------------</div>' +
-    '<div>Bill: ' + receiptNum + '</div><div>Time: ' + timestamp + '</div>' + (data.tableId ? '<div>Table: ' + data.tableId + '</div>' : '') +
+     '<div>Bill: ' + receiptNum + '</div><div>Time: ' + timestamp + '</div>' + (data.paymentMethod ? '<div>Payment Method: ' + String(data.paymentMethod).replace('-', ' ').replace(/^./, f => f.toUpperCase()) + '</div>' : '') + (data.tableId ? '<div>Table: ' + data.tableId + '</div>' : '') +
     '<div class="div">--------------------------------</div><table>' + rowsHTML + '</table>' + totalsHTML + sigHTML +
     '<div class="div">--------------------------------</div><div class="c">' + (settings.footer_text || 'Thank you!') + '</div><div class="c" style="font-size:0.8em;margin-top:2mm">Powered By Coredigita</div><!-- ReceiptBrandingApplied --></body></html>';
 };

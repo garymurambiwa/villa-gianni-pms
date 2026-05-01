@@ -1054,25 +1054,24 @@ export const PosSettings: React.FC = () => {
     return 'none';
   }, []);
 
-  const resetForm = () => {
-    setItemName('');
-    setQtyReceived(0);
-    setQtyInStock(0);
-    setCostPrice(0);
-    setInventoryCategory('');
-    setSellingPrice(0);
-    setCostCenter('');
-    setCategoryId('');
-    setSubId('none');
-    setBarVisible(false);
-    setRestaurantVisible(false);
-    setCosPercent(0);
-    setPictureFile(null);
-    setPicturePreview('');
-    setNotes('');
-    setErrors({});
-    setEditingId(null);
-  };
+   const resetForm = () => {
+     setItemName('');
+     setQtyReceived(0);
+     setQtyInStock(0);
+     setInventoryCategory('');
+     setSellingPrice(0);
+     setCostCenter('');
+     setCategoryId('');
+     setSubId('none');
+     setBarVisible(false);
+     setRestaurantVisible(false);
+     setCosPercent(0);
+     setPictureFile(null);
+     setPicturePreview('');
+     setNotes('');
+     setErrors({});
+     setEditingId(null);
+   };
 
   // Use inventory from DataContext instead of localStorage
   const { inventory, refreshData } = useData();

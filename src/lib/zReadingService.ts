@@ -181,16 +181,24 @@ export const generateZReadingHTML = (
       <tr><td>Room Charge</td><td class="r">${formatCurrency(zReading.room_charge_payments)}</td></tr>
     </tbody>
   </table>
-  ${shift.voidedTransactions.length > 0 ? `
-  <div class="div">--------------------------------</div>
-  <div class="b">Voided Transactions</div>
-  <table>
-    <tbody>
-      ${shift.voidedTransactions.map(tx => `<tr><td class="nm">${new Date(tx.voidedAt || tx.createdAt).toLocaleTimeString()}</td><td class="qt">${tx.method.toUpperCase()}</td><td class="pr">${formatCurrency(tx.amount)}</td></tr>`).join('')}
-    </tbody>
-  </table>
-  <div>Total Voided: ${formatCurrency(shift.voidedTransactions.reduce((sum, tx) => sum + tx.amount, 0))}</div>
-  ` : ''}
+   ${shift.voidedTransactions.length > 0 ? `
+   <div class="div">--------------------------------</div>
+   <div class="b">Voided Transactions</div>
+   <table>
+     <thead>
+       <tr>
+         <th class="nm">Time</th>
+         <th class="qt">Method</th>
+         <th class="qt">User</th>
+         <th class="pr">Amount</th>
+       </tr>
+     </thead>
+     <tbody>
+       ${shift.voidedTransactions.map(tx => `<tr><td class="nm">${new Date(tx.voidedAt || tx.createdAt).toLocaleTimeString()}</td><td class="qt">${tx.method.toUpperCase()}</td><td class="qt">${tx.userName ? tx.userName.substring(0,1).toUpperCase() : '?'}</td><td class="pr">${formatCurrency(tx.amount)}</td></tr>`).join('')}
+     </tbody>
+   </table>
+   <div>Total Voided: ${formatCurrency(shift.voidedTransactions.reduce((sum, tx) => sum + tx.amount, 0))}</div>
+   ` : ''}
   <div class="div">--------------------------------</div>
   <div class="b c">Cash Reconciliation</div>
   <table>
@@ -202,14 +210,22 @@ export const generateZReadingHTML = (
       <tr><td>Difference</td><td class="r" style="color: ${(zReading.report_data?.cashDifference || 0) >= 0 ? '#000' : '#000'}">${formatCurrency(zReading.report_data?.cashDifference || 0)}</td></tr>
     </tbody>
   </table>
-  <div class="div">--------------------------------</div>
-  <div class="b">Transactions</div>
-  <table>
-    <tbody>
-      ${shift.transactions.slice(0, 20).map(tx => `<tr><td class="nm">${new Date(tx.createdAt).toLocaleTimeString()}</td><td class="qt">${tx.method.toUpperCase()}</td><td class="pr">${formatCurrency(tx.amount)}</td></tr>`).join('')}
-    </tbody>
-  </table>
-  ${shift.transactions.length > 20 ? `<div>... and ${shift.transactions.length - 20} more</div>` : ''}
+   <div class="div">--------------------------------</div>
+   <div class="b">Transactions</div>
+   <table>
+     <thead>
+       <tr>
+         <th class="nm">Time</th>
+         <th class="qt">Method</th>
+         <th class="qt">User</th>
+         <th class="pr">Amount</th>
+       </tr>
+     </thead>
+     <tbody>
+       ${shift.transactions.slice(0, 20).map(tx => `<tr><td class="nm">${new Date(tx.createdAt).toLocaleTimeString()}</td><td class="qt">${tx.method.toUpperCase()}</td><td class="qt">${tx.userName ? tx.userName.substring(0,1).toUpperCase() : '?'}</td><td class="pr">${formatCurrency(tx.amount)}</td></tr>`).join('')}
+     </tbody>
+   </table>
+   ${shift.transactions.length > 20 ? `<div>... and ${shift.transactions.length - 20} more</div>` : ''}
   <div class="div">--------------------------------</div>
   <div class="ft">
     ${settings?.footer_text ? `<div>${settings.footer_text}</div>` : '<div>Thank you!</div>'}

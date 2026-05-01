@@ -269,14 +269,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       taxLines = calc.lines.map(l => ({ name: l.name, amount: l.amount }))
       total = calc.total
     } catch {}
-    const receiptHTML = generateReceiptHTML(
-      {
-        ...bill,
-        items: itemsSafe,
-        customerName: customerName || bill.customerName,
-        roomNumber: roomNumber || bill.roomNumber,
-        total
-      },
+     const receiptHTML = generateReceiptHTML(
+       {
+         ...bill,
+         items: itemsSafe,
+         customerName: customerName || bill.customerName,
+         roomNumber: roomNumber || bill.roomNumber,
+         total,
+         paymentMethod
+       },
       effectiveSettings,
       'receipt',
       {
@@ -397,11 +398,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           totalMain = calcMain.total
         } catch {}
         const receiptHTML = generateReceiptHTML(
-          { ...bill, customerName: paymentMethod === 'room-charge' ? customerName : undefined, roomNumber: paymentMethod === 'room-charge' ? roomNumber : undefined, total: totalMain },
-          effectiveSettings,
-          paymentMethod === 'room-charge' ? 'folio' : 'receipt',
-          { includeSignature: paymentMethod === 'room-charge', showTaxBreakdown: effectiveSettings.show_tax_breakdown, serverName: currentUser?.name, taxLines: taxLinesMain, subtotalOverride: subMain, totalOverride: totalMain }
-        );
+           { ...bill, customerName: paymentMethod === 'room-charge' ? customerName : undefined, roomNumber: paymentMethod === 'room-charge' ? roomNumber : undefined, total: totalMain, paymentMethod },
+           effectiveSettings,
+           paymentMethod === 'room-charge' ? 'folio' : 'receipt',
+           { includeSignature: paymentMethod === 'room-charge', showTaxBreakdown: effectiveSettings.show_tax_breakdown, serverName: currentUser?.name, taxLines: taxLinesMain, subtotalOverride: subMain, totalOverride: totalMain }
+         );
         printDocument(receiptHTML, `Receipt-${bill.id}`);
         if (splits.length) {
           for (let idx = 0; idx < splits.length; idx++) {
@@ -412,7 +413,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               const calcSplit = await calculateTaxBreakdown(subSplit)
               taxLinesSplit = calcSplit.lines.map(l => ({ name: l.name, amount: l.amount }))
             } catch {}
-            const html = generateReceiptHTML({ ...bill, total: s.amount }, effectiveSettings, 'receipt', { showTaxBreakdown: effectiveSettings.show_tax_breakdown, serverName: currentUser?.name, taxLines: taxLinesSplit, subtotalOverride: subSplit, totalOverride: s.amount });
+             const html = generateReceiptHTML({ ...bill, total: s.amount, paymentMethod }, effectiveSettings, 'receipt', { showTaxBreakdown: effectiveSettings.show_tax_breakdown, serverName: currentUser?.name, taxLines: taxLinesSplit, subtotalOverride: subSplit, totalOverride: s.amount });
             printDocument(html, `Split-${idx+1}-${bill.id}`);
           }
         }

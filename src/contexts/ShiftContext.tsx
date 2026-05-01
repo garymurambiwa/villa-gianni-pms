@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useMemo, useState, useEffect } from 'react';
 import { ShiftReading } from '../types';
 import pmsAuthDb from '../lib/pmsAuthDb';
+import { useAuth } from '@/context/AuthContext';
 
 export type PaymentMethod = 'cash' | 'ecocash' | 'swipe' | 'room-charge';
 
@@ -10,6 +11,8 @@ export interface ShiftTransaction {
   amount: number;
   reference?: string; // e.g., BILL id
   createdAt: string; // ISO
+  userId?: string;
+  userName?: string;
   voided?: boolean;
   voidedAt?: string;
   voidReason?: string;
@@ -205,26 +208,29 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const addTransaction = (method: PaymentMethod, amount: number, reference?: string): ShiftTransaction | null => {
-    if (!activeShift) {
-      // Auto-start a shift if none exists for simplicity
-      startShift(0, 'Auto-start', 'System', 'Unknown').catch(console.error);
-    }
-    const tx: ShiftTransaction = {
-      id: `SFTX_${Date.now()}`,
-      method,
-      amount: Number(amount.toFixed(2)),
-      reference,
-      createdAt: new Date().toISOString()
-    };
-    setActiveShift(prev => {
-      if (!prev) return null; // shouldn't happen
-      const next = { ...prev, transactions: [...prev.transactions, tx] };
-      persist(next);
-      return next;
-    });
-    return tx;
-  };
+   const addTransaction = (method: PaymentMethod, amount: number, reference?: string): ShiftTransaction | null => {
+     if (!activeShift) {
+       // Auto-start a shift if none exists for simplicity
+       startShift(0, 'Auto-start', 'System', 'Unknown').catch(console.error);
+     }
+     const { user } = useAuth(); // Get user info from auth context
+     const tx: ShiftTransaction = {
+       id: `SFTX_${Date.now()}`,
+       method,
+       amount: Number(amount.toFixed(2)),
+       reference,
+       createdAt: new Date().toISOString(),
+       userId: user?.id,
+       userName: user?.name
+     };
+     setActiveShift(prev => {
+       if (!prev) return null; // shouldn't happen
+       const next = { ...prev, transactions: [...prev.transactions, tx] };
+       persist(next);
+       return next;
+     });
+     return tx;
+   };
 
   const voidTransaction = (transactionId: string, reason: string): boolean => {
     if (!activeShift) return false;
@@ -254,25 +260,25 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return true;
   };
 
-  const getTotals = (): { cash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number } => {
-    if (!activeShift) return { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0 };
-    const txs = Array.isArray(activeShift.transactions) ? activeShift.transactions : [];
-    const voidedTxs = Array.isArray(activeShift.voidedTransactions) ? activeShift.voidedTransactions : [];
+   const getTotals = (): { cash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number } => {
+     if (!activeShift) return { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0 };
+     const txs = Array.isArray(activeShift.transactions) ? activeShift.transactions : [];
+     const voidedTxs = Array.isArray(activeShift.voidedTransactions) ? activeShift.voidedTransactions : [];
 
-    const totals = txs.reduce((acc, t) => {
-      if (t.method === 'cash') acc.cash += t.amount;
-      else if (t.method === 'card') acc.card += t.amount;
-      else if (t.method === 'room-charge') acc.roomCharge += t.amount;
-      acc.count += 1;
-      return acc;
-    }, { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0 });
+     const totals = txs.reduce((acc, t) => {
+       if (t.method === 'cash') acc.cash += t.amount;
+       else if (t.method === 'ecocash' || t.method === 'swipe') acc.card += t.amount;
+       else if (t.method === 'room-charge') acc.roomCharge += t.amount;
+       acc.count += 1;
+       return acc;
+     }, { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0 });
 
-    // Add voided transaction totals
-    totals.voidedCount = voidedTxs.length;
-    totals.voidedAmount = voidedTxs.reduce((sum, tx) => sum + tx.amount, 0);
+     // Add voided transaction totals
+     totals.voidedCount = voidedTxs.length;
+     totals.voidedAmount = voidedTxs.reduce((sum, tx) => sum + tx.amount, 0);
 
-    return totals;
-  };
+     return totals;
+   };
 
   const getEndedShifts = (): Shift[] => endedShifts;
   const clearEndedShifts = (): void => {
