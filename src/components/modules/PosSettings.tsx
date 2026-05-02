@@ -690,6 +690,9 @@ const UserManagementPanel: React.FC = () => {
 const ShiftReportingPanel: React.FC = () => {
   const [shifts, setShifts] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(false);
+  const [selectedShift, setSelectedShift] = React.useState<string | null>(preselectedShift);
+  const [shiftData, setShiftData] = React.useState<any | null>(null);
+  const [reportLoading, setReportLoading] = React.useState(false);
 
   React.useEffect(() => {
     setLoading(true);
@@ -698,6 +701,53 @@ const ShiftReportingPanel: React.FC = () => {
       setLoading(false);
     });
   }, []);
+
+  const fetchShiftReport = async (shiftId: string) => {
+    if (!shiftId) return;
+    setReportLoading(true);
+    try {
+      // Fetch detailed shift data including transactions
+      const shiftRes = await db.query(
+        `SELECT * FROM pos_shifts WHERE id = ?`,
+        [shiftId]
+      );
+      
+      const transactionsRes = await db.query(
+        `SELECT * FROM pos_transactions WHERE shift_id = ? ORDER BY created_at`,
+        [shiftId]
+      );
+      
+      const itemsRes = await db.query(
+        `SELECT * FROM pos_shift_items WHERE shift_id = ?`,
+        [shiftId]
+      );
+      
+      const summary = {
+        shift: shiftRes.rows?.[0] || null,
+        transactions: transactionsRes.rows || [],
+        items: itemsRes.rows || [],
+        totals: {
+          sales: transactionsRes.rows?.reduce((sum, t) => sum + Number(t.amount || 0), 0) || 0,
+          cash: transactionsRes.rows?.reduce((sum, t) => sum + Number(t.cash_amount || 0), 0) || 0,
+          card: transactionsRes.rows?.reduce((sum, t) => sum + Number(t.card_amount || 0), 0) || 0,
+          room: transactionsRes.rows?.reduce((sum, t) => sum + Number(t.room_charge || 0), 0) || 0
+        }
+      };
+      
+      setShiftData(summary);
+    } catch (err) {
+      console.error('Failed to fetch shift report:', err);
+      toast({ title: 'Error', description: 'Failed to load shift data', variant: 'destructive' });
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (selectedShift) {
+      fetchShiftReport(selectedShift);
+    }
+  }, [selectedShift]);
 
   return (
     <div className="space-y-4">
@@ -731,13 +781,102 @@ const ShiftReportingPanel: React.FC = () => {
                   {s.status === 'open' ? `In: $${Number(s.start_balance).toFixed(2)}` : `Out: $${Number(s.end_balance || 0).toFixed(2)}`}
                 </td>
                 <td className="p-2 text-right">
-                  <Button variant="ghost" size="sm">Report</Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setSelectedShift(s.id)}
+                    disabled={reportLoading && selectedShift === s.id}
+                  >
+                    {reportLoading && selectedShift === s.id ? 'Loading...' : 'Report'}
+                  </Button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      
+      {shiftData && !reportLoading && (
+        <div className="mt-6 p-4 border rounded">
+          <div className="text-lg font-semibold mb-4">Shift Report: #{shiftData.shift?.id?.slice(-6) || 'Unknown'}</div>
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <div className="text-sm font-medium text-gray-500">Shift Details</div>
+              <table className="w-full text-sm space-y-2">
+                <tr><td className="p-1">Date:</td><td className="p-1 text-right">{new Date(shiftData.shift?.start_time).toLocaleDateString()}</td></tr>
+                <tr><td className="p-1">User:</td><td className="p-1 text-right">{shiftData.shift?.user_name || 'Unknown'}</td></tr>
+                <tr><td className="p-1">Status:</td><td className="p-1 text-right">{shiftData.shift?.status || 'Unknown'}</td></tr>
+                <tr><td className="p-1">Opened:</td><td className="p-1 text-right">{new Date(shiftData.shift?.start_time).toLocaleTimeString()}</td></tr>
+                <tr><td className="p-1">Closed:</td><td className="p-1 text-right">{shiftData.shift?.end_time ? new Date(shiftData.shift?.end_time).toLocaleTimeString() : 'Open'}</td></tr>
+              </table>
+            </div>
+            <div>
+              <div className="text-sm font-medium text-gray-500">Financial Summary</div>
+              <table className="w-full text-sm space-y-2">
+                <tr><td className="p-1">Total Sales:</td><td className="p-1 text-right font-bold">{formatCurrency(shiftData.totals.sales)}</td></tr>
+                <tr><td className="p-1">Cash:</td><td className="p-1 text-right">{formatCurrency(shiftData.totals.cash)}</td></tr>
+                <tr><td className="p-1">Card:</td><td className="p-1 text-right">{formatCurrency(shiftData.totals.card)}</td></tr>
+                <tr><td className="p-1">Room Charges:</td><td className="p-1 text-right">{formatCurrency(shiftData.totals.room)}</td></tr>
+                <tr><td className="p-1">Transaction Count:</td><td className="p-1 text-right">{shiftData.transactions.length}</td></tr>
+              </table>
+            </div>
+          </div>
+          
+          {shiftData.transactions.length > 0 && (
+            <div className="mb-4">
+              <div className="text-sm font-medium text-gray-500 mb-2">Transactions</div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="p-2 text-left">Time</th>
+                    <th className="p-2">Type</th>
+                    <th className="p-2">Amount</th>
+                    <th className="p-2">Method</th>
+                    <th className="p-2">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shiftData.transactions.map((t, i) => (
+                    <tr key={i} className="border-t">
+                      <td className="p-2">{new Date(t.created_at).toLocaleTimeString()}</td>
+                      <td className="p-2">{t.transaction_type || 'Unknown'}</td>
+                      <td className="p-2 text-right">{formatCurrency(Number(t.amount || 0))}</td>
+                      <td className="p-2">{t.payment_method || 'Unknown'}</td>
+                      <td className="p-2">{t.description || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          
+          {shiftData.items.length > 0 && (
+            <div className="mb-4">
+              <div className="text-sm font-medium text-gray-500 mb-2">Item Sales</div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="p-2 text-left">Item</th>
+                    <th className="p-2 text-center">Qty</th>
+                    <th className="p-2 text-right">Price</th>
+                    <th className="p-2 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shiftData.items.map((item, i) => (
+                    <tr key={i} className="border-t">
+                      <td className="p-2">{item.name || 'Unknown Item'}</td>
+                      <td className="p-2 text-center">{item.quantity || 0}</td>
+                      <td className="p-2 text-right">{formatCurrency(Number(item.price || 0))}</td>
+                      <td className="p-2 text-right">{formatCurrency(Number(item.quantity || 0) * Number(item.price || 0))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -747,6 +886,7 @@ export const PosSettings: React.FC = () => {
   const { toast } = useToast();
   const isManager = canManagePOS(user?.role);
   const isAdminRole = isAdmin(user?.role);
+  const [preselectedShift, setPreselectedShift] = React.useState<string | null>(null);
   const logSettingsError = (step: string, error: any, ctx?: any) => {
     try {
       const entry = { step, error: String((error && (error.message || error)) || 'Unknown'), ctx, at: new Date().toISOString() };
@@ -856,9 +996,14 @@ export const PosSettings: React.FC = () => {
       const init = (q === 'admin' || q === 'menu' || q === 'stock' || q === 'purchasing') ? (q as any) : (stored as any) || 'admin';
       setActiveTab(init);
       const anchor = String(params.get('anchor') || '').trim();
+      const shiftId = String(params.get('shift') || '').trim();
       const anchors = tabAnchors[init];
       const fallback = anchors.length ? anchors[0].id : '';
       setActiveSectionId(anchor || fallback);
+      // Preselect shift if specified in URL and we're in the shift reporting section
+      if (init === 'admin' && anchor === 'shift-reporting' && shiftId) {
+        setPreselectedShift(shiftId);
+      }
     } catch { }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
