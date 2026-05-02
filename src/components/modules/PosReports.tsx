@@ -238,37 +238,56 @@ export const PosReports: React.FC = () => {
 
         const processedBills = [];
         
-        if(!('error' in billsRes)) {
-          (billsRes.rows || []).forEach((row: any) => {
-            processedBills.push({
-              ...row,
-              id: row.id,
-              outlet: row.outlet || 'Restaurant',
-              opened_at: row.opened_at,
-              items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
-              total_amount: Number(row.total_amount || 0),
-              is_voided: !!row.is_voided,
-              staff: row.opened_by || 'System',
-              shift_id: row.shift_id
-            });
-          });
-        }
+if(!('error' in billsRes)) {
+  (billsRes.rows || []).forEach((row: any) => {
+    processedBills.push({
+      ...row,
+      id: row.id,
+      outlet: row.outlet || 'Restaurant',
+      opened_at: row.opened_at,
+      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      total_amount: Number(row.total_amount || 0),
+      is_voided: !!row.is_voided,
+      staff: row.opened_by || 'System',
+      shift_id: row.shift_id,
+      payment_method: row.payment_method || null
+    });
+  });
+}
 
-        if(!('error' in ordersRes)) {
-          (ordersRes.rows || []).forEach((row: any) => {
-            processedBills.push({
-              ...row,
-              id: row.id,
-              outlet: row.cost_center || 'Restaurant',
-              opened_at: row.created_at, // Map created_at to opened_at
-              items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
-              total_amount: Number(row.total_amount || 0),
-              is_voided: false, // Orders table doesn't have voided flag usually
-              staff: 'System', // Orders table doesn't have staff usually
-              shift_id: row.shift_id
-            });
-          });
-        }
+if(!('error' in ordersRes)) {
+  (ordersRes.rows || []).forEach((row: any) => {
+    processedBills.push({
+      ...row,
+      id: row.id,
+      outlet: row.cost_center || 'Restaurant',
+      opened_at: row.created_at, // Map created_at to opened_at
+      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      total_amount: Number(row.total_amount || 0),
+      is_voided: false, // Orders table doesn't have voided flag usually
+      staff: 'System', // Orders table doesn't have staff usually
+      shift_id: row.shift_id,
+      payment_method: row.payment_method || null
+    });
+  });
+}
+
+if(!('error' in ordersRes)) {
+  (ordersRes.rows || []).forEach((row: any) => {
+    processedBills.push({
+      ...row,
+      id: row.id,
+      outlet: row.cost_center || 'Restaurant',
+      opened_at: row.created_at, // Map created_at to opened_at
+      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      total_amount: Number(row.total_amount || 0),
+      is_voided: false, // Orders table doesn't have voided flag usually
+      staff: 'System', // Orders table doesn't have staff usually
+      shift_id: row.shift_id,
+      payment_method: row.payment_method || null
+    });
+  });
+}
         setDbPosBills(processedBills);
 
         // Fetch GRNs
