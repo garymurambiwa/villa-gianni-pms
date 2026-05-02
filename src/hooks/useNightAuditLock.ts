@@ -16,7 +16,7 @@ const INITIAL: NightAuditLockState = {
   lastResult:   null,
 };
 
-const API_BASE = 'http://localhost:3001';
+const API_BASE = '';
 
 export function useNightAuditLock() {
   const [state, setState] = useState<NightAuditLockState>(INITIAL);

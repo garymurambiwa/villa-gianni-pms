@@ -147,7 +147,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Initialize WebSocket connection for real-time price sync
   const initializePriceSync = React.useCallback(() => {
     try {
-      const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/v1/prices/sync`;
+      // Determine backend host: In dev, Vite runs on port 8081 while backend is on 3001.
+      // Use the backend server's host for WebSocket to bypass Vite proxy (which only handles HTTP).
+      const isDev = import.meta.env.DEV;
+      const backendHost = isDev ? 'localhost:3001' : window.location.host;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${backendHost}/api/v1/prices/sync`;
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {

@@ -406,6 +406,15 @@ app.post('/api/reports/load-historical', async (req, res) => {
     }
 });
 
+// Price Management routes (with WebSocket real-time sync)
+try {
+  const pricesRoutes = require('./routes/prices.cjs');
+  console.log('💰 Registering price routes at /api/v1/prices');
+  app.use('/api/v1/prices', pricesRoutes);
+} catch (error) {
+  console.error('❌ Failed to load price routes:', error.message);
+}
+
 // Temporary: Add the inventory routes
 try {
   const inventoryV11Routes = require('./routes/inventory-v11.cjs');

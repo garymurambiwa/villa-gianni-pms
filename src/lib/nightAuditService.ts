@@ -278,7 +278,7 @@ export const rolloverBusinessDate = () => {
   writeJSON('corepms_business_date', nextISO);
 
   // Sync new business date to backend so the scheduler stays in sync
-  fetch('http://localhost:3001/api/db/query', {
+   fetch('/api/db/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
