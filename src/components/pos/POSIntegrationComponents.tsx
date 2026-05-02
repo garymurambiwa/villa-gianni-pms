@@ -1140,8 +1140,8 @@ export const BillSummary: React.FC<BillSummaryProps> = ({
         </CardTitle>
         {(bill.customerName || bill.roomNumber) && (
           <div className="text-sm text-gray-600">
-            {bill.customerName && <div>Guest: {bill.customerName}</div>}
-            {bill.roomNumber && <div>Room: {bill.roomNumber}</div>}
+            {bill.customerName && <div>Guest: {String(bill.customerName)}</div>}
+            {bill.roomNumber && <div>Room: {String(bill.roomNumber)}</div>}
           </div>
         )}
       </CardHeader>
@@ -1151,14 +1151,14 @@ export const BillSummary: React.FC<BillSummaryProps> = ({
             {bill.items.map((item, index) => (
               <div key={index} className="flex justify-between items-center py-2 border-b">
                 <div className="flex-1">
-                  <div className="font-medium">{item.name}</div>
+                  <div className="font-medium">{String(item.name)}</div>
                   {('preparation_level' in item || 'manual_notes' in item) && (
                     <div className="text-xs italic text-gray-500">
                       {String((item as any).preparation_level || '')}{(item as any).preparation_level && (item as any).manual_notes ? ' • ' : ''}{String((item as any).manual_notes || '')}
                     </div>
                   )}
                   {item.category && (
-                    <div className="text-xs text-gray-500">{item.category}</div>
+                    <div className="text-xs text-gray-500">{String(item.category)}</div>
                   )}
                 </div>
                 <div className="text-center px-4">

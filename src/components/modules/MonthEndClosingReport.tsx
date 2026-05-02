@@ -270,7 +270,7 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
                 <TableBody>
                   {closingData.map((item, idx) => (
                     <TableRow key={idx}>
-                      <TableCell className="font-medium">{item.category}</TableCell>
+                      <TableCell className="font-medium">{String(item.category)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(item.opening_inventory)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(item.purchases_received)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(item.transfers_in)}</TableCell>

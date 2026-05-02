@@ -54,9 +54,9 @@ const VoidsReportView: React.FC<{ voidsRows: any[] }> = ({ voidsRows }) => {
           <tbody>
             {filtered.map((v, i) => (
               <tr key={i}>
-                <td className="p-2">{new Date(v.voided_at || v.timestamp).toLocaleString()}</td>
+                <td className="p-2">{String(new Date(v.voided_at || v.timestamp).toLocaleString())}</td>
                 <td className="p-2">VOID</td>
-                <td className="p-2">{formatDetailsText(v.items || v.details)}</td>
+                <td className="p-2">{String(formatDetailsText(v.items || v.details))}</td>
               </tr>
             ))}
             {!filtered.length && (<tr><td className="p-2 text-center" colSpan={3}>No voids found.</td></tr>)}
@@ -77,10 +77,10 @@ const StockMovementReportView: React.FC<{ movementRows: any[] }> = ({ movementRo
           <tbody>
             {movementRows.map((m, i) => (
               <tr key={i}>
-                <td className="p-2">{new Date(m.inserted_at).toLocaleString()}</td>
+                <td className="p-2">{String(new Date(m.inserted_at).toLocaleString())}</td>
                 <td className="p-2">DEPLETION</td>
-                <td className="p-2">{m.name || m.item_id}</td>
-                <td className="p-2">{m.delta}</td>
+                <td className="p-2">{String(m.name || m.item_id)}</td>
+                <td className="p-2">{String(m.delta)}</td>
               </tr>
             ))}
             {!movementRows.length && (<tr><td className="p-2 text-center" colSpan={4}>No movements in range.</td></tr>)}
@@ -138,7 +138,14 @@ const GoodsReceivedReportView: React.FC<{ rangeText: string; grnRows: any[] }> =
         <table className="ds-table">
           <thead><tr><th className="p-2 text-left">GRN Number</th><th className="p-2">Date</th><th className="p-2">Supplier</th><th className="p-2 text-right">Value</th></tr></thead>
           <tbody>
-             {grvFiltered.map((r, i) => (<tr key={i}><td className="p-2">{r.grn_number}</td><td className="p-2">{new Date(r.inserted_at).toLocaleDateString()}</td><td className="p-2">{r.supplier_name}</td><td className="p-2 text-right">{formatCurrency(Number(r.total_value || 0))}</td></tr>))}
+             {grvFiltered.map((r, i) => (
+               <tr key={i} className="border-b hover:bg-gray-50">
+                 <td className="p-2">{String(r.grn_number)}</td>
+                 <td className="p-2">{String(new Date(r.inserted_at).toLocaleDateString())}</td>
+                 <td className="p-2">{String(r.supplier_name)}</td>
+                 <td className="p-2 text-right">{formatCurrency(Number(r.total_value || 0))}</td>
+               </tr>
+             ))}
           </tbody>
         </table>
       </div>
@@ -181,12 +188,12 @@ const ItemSalesReportView: React.FC<{ itemsRows: any[] }> = ({ itemsRows }) => {
           <tbody>
             {sorted.map((r, i) => (
               <tr key={i}>
-                <td className="p-2 font-medium">{r.name}</td>
-                <td className="p-2 text-right">{r.qty}</td>
+                <td className="p-2 font-medium">{String(r.name)}</td>
+                <td className="p-2 text-right">{String(r.qty)}</td>
                 <td className="p-2 text-right">{formatCurrency(r.revenue)}</td>
                 <td className="p-2 text-right text-red-600">{formatCurrency(r.cost)}</td>
                 <td className="p-2 text-right font-bold text-green-600">{formatCurrency(r.profit)}</td>
-                <td className="p-2 text-right">{r.revenue ? ((r.profit / r.revenue) * 100).toFixed(1) : 0}%</td>
+                <td className="p-2 text-right">{String(r.revenue ? ((r.profit / r.revenue) * 100).toFixed(1) : 0)}%</td>
               </tr>
             ))}
             {!sorted.length && (<tr><td className="p-2 text-center" colSpan={6}>No item sales found.</td></tr>)}
@@ -527,7 +534,12 @@ if(!('error' in ordersRes)) {
           <table className="ds-table">
             <thead><tr><th>Method</th><th className="right">Total Expected</th></tr></thead>
             <tbody>
-              {paymentSummary.map(p => (<tr key={p.method}><td>{p.method}</td><td className="right font-bold">{formatCurrency(p.total)}</td></tr>))}
+              {paymentSummary.map(p => (
+                <tr key={p.method} className="border-b">
+                  <td>{String(p.method)}</td>
+                  <td className="right font-bold">{formatCurrency(p.total)}</td>
+                </tr>
+              ))}
               {paymentSummary.length === 0 && <tr><td colSpan={2} className="text-center p-4">No payments recorded</td></tr>}
             </tbody>
           </table>
@@ -545,7 +557,13 @@ if(!('error' in ordersRes)) {
           <table className="ds-table">
             <thead><tr><th>Staff Member (Opened By)</th><th className="right">Total Bills Handled</th><th className="right">Total Sales Captured</th></tr></thead>
             <tbody>
-              {staffSummary.map(([staff, data]) => (<tr key={staff}><td>{staff}</td><td className="right">{data.bills}</td><td className="right font-bold">{formatCurrency(data.totalSales)}</td></tr>))}
+              {staffSummary.map(([staff, data]) => (
+                <tr key={staff} className="border-b">
+                  <td>{String(staff)}</td>
+                  <td className="right">{String(data.bills)}</td>
+                  <td className="right font-bold">{formatCurrency(data.totalSales)}</td>
+                </tr>
+              ))}
               {staffSummary.length === 0 && <tr><td colSpan={3} className="text-center p-4">No staff sales recorded</td></tr>}
             </tbody>
           </table>
@@ -560,7 +578,14 @@ if(!('error' in ordersRes)) {
               <div className="font-semibold bg-gray-50 p-1">{cat}</div>
               <table className="ds-table">
                 <tbody>
-                  {rows.map((r, i) => (<tr key={i}><td className="text-xs">{new Date(r.ts).toLocaleString()}</td><td>{r.desc}</td><td className="right">{r.qty}</td><td className="right">{formatCurrency(r.total)}</td></tr>))}
+                  {rows.map((r, i) => (
+                    <tr key={i} className="border-b hover:bg-gray-50">
+                      <td className="text-xs">{String(new Date(r.ts).toLocaleString())}</td>
+                      <td>{String(r.desc)}</td>
+                      <td className="right">{String(r.qty)}</td>
+                      <td className="right">{formatCurrency(r.total)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -572,7 +597,15 @@ if(!('error' in ordersRes)) {
       {!loading && selectedReport === 'cocktail-usage' && (
         <table className="ds-table">
           <thead><tr><th>Ingredient</th><th>Unit</th><th className="right">Used</th></tr></thead>
-          <tbody>{cocktailUsageData.usageRows.map((r, i) => (<tr key={i}><td>{r.name}</td><td>{r.unit}</td><td className="right">{r.used.toFixed(2)}</td></tr>))}</tbody>
+          <tbody>
+            {cocktailUsageData.usageRows.map((r, i) => (
+              <tr key={i} className="border-b">
+                <td>{String(r.name)}</td>
+                <td>{String(r.unit)}</td>
+                <td className="right">{String(r.used.toFixed(2))}</td>
+              </tr>
+            ))}
+          </tbody>
         </table>
       )}
 

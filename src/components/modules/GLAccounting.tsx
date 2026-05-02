@@ -169,12 +169,12 @@ export const GLAccounting: React.FC = () => {
               };
               return (
                 <tr key={a.id}>
-                  <td className="p-2">{a.id}</td>
+                  <td className="p-2">{String(a.id)}</td>
                   <td className="p-2">
                     {isEditing ? (
                       <Input value={draft.name} onChange={(e)=> setPendingEdits(p=> ({ ...p, [a.id]: { ...p[a.id], name: e.target.value } }))} />
                     ) : (
-                      a.name
+                      String(a.name)
                     )}
                     {isEditing && (()=>{ const err = validateDraft(); return err ? <div className="text-xs text-red-700 mt-1">{err}</div> : null; })()}
                   </td>
@@ -184,7 +184,7 @@ export const GLAccounting: React.FC = () => {
                         {(['Asset','Liability','Equity','Revenue','Expense'] as const).map(c=> <option key={c} value={c}>{c}</option>)}
                       </select>
                     ) : (
-                      a.category
+                      String(a.category)
                     )}
                   </td>
                   <td className="p-2">
@@ -198,7 +198,7 @@ export const GLAccounting: React.FC = () => {
                         <span>—</span>
                       )
                     ) : (
-                      a.department || '—'
+                      String(a.department || '—')
                     )}
                   </td>
                   <td className="p-2">
@@ -681,7 +681,7 @@ export const GLAccounting: React.FC = () => {
                             <table className="w-full text-xs mt-2">
                               <thead><tr><th className="p-1">Date</th><th className="p-1">Entry</th><th className="p-1">Ref</th><th className="p-1 text-right">Amount</th><th className="p-1">Description</th></tr></thead>
                               <tbody>
-                                {r.lines.map(l=> (<tr key={l.entryId+String(l.amount)}><td className="p-1">{l.date}</td><td className="p-1">{l.entryId}</td><td className="p-1">{l.reference||'—'}</td><td className="p-1 text-right">$ {Number(l.amount || 0).toFixed(2)}</td><td className="p-1">{l.description||'—'}</td></tr>))}
+                                {r.lines.map(l=> (<tr key={l.entryId+String(l.amount)}><td className="p-1">{String(l.date)}</td><td className="p-1">{String(l.entryId)}</td><td className="p-1">{String(l.reference||'—')}</td><td className="p-1 text-right">$ {Number(l.amount || 0).toFixed(2)}</td><td className="p-1">{String(l.description||'—')}</td></tr>))}
                               </tbody>
                             </table>
                           </details>

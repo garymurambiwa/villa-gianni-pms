@@ -248,9 +248,9 @@ export const CostMarginReport: React.FC<CostMarginReportProps> = () => {
                 <TableBody>
                   {marginData.map((item, idx) => (
                     <TableRow key={idx}>
-                      <TableCell className="font-medium">{item.item_name}</TableCell>
-                      <TableCell>{item.sku}</TableCell>
-                      <TableCell>{item.category}</TableCell>
+                      <TableCell className="font-medium">{String(item.item_name)}</TableCell>
+                      <TableCell>{String(item.sku)}</TableCell>
+                      <TableCell>{String(item.category)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(item.cost_price)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(item.selling_price)}</TableCell>
                       <TableCell className="text-right">

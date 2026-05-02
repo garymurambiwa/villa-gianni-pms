@@ -440,6 +440,29 @@ export const Reports: React.FC = () => {
           <div className="bg-white rounded-xl shadow-lg p-6">
             <h3 className="text-xl font-bold text-gray-800 mb-4">Revenue Breakdown</h3>
             <div className="space-y-4">
+              {recon && (
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center p-3 bg-white rounded border">
+                    <span className="text-gray-600">POS Sales (Total)</span>
+                    <span className="font-bold text-lg">{String(formatCurrency(recon.posTotal))}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-3 bg-white rounded border">
+                    <span className="text-gray-600">Folio Charges (Posted)</span>
+                    <span className="font-bold text-lg text-blue-600">{String(formatCurrency(recon.folioTotal))}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-3 bg-white rounded border">
+                    <span className="text-gray-600">Discrepancy</span>
+                    <span className={`font-bold text-lg ${Math.abs(recon.discrepancy) > 1 ? 'text-red-600' : 'text-green-600'}`}>
+                      {String(formatCurrency(recon.discrepancy))}
+                    </span>
+                  </div>
+                  {Math.abs(recon.discrepancy) > 0.01 && (
+                    <div className="p-3 bg-red-50 text-red-800 rounded text-sm border border-red-100">
+                      <strong>Action Required:</strong> Discrepancy detected between POS sales and folio postings. Please audit individual guest bills before proceeding.
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex justify-between items-center p-4 bg-blue-50 rounded-lg">
                 <div>
                   <span className="font-medium text-gray-700">Room Revenue</span>

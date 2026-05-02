@@ -238,8 +238,8 @@ export const AllReportsPage: React.FC = () => {
             <tbody>
               {rows.map(r => (
                 <tr key={r.key} className="border-b hover:bg-gray-50">
-                  <td className="p-2 font-medium">{r.name}</td>
-                  <td className="p-2 text-gray-600">{r.description}</td>
+                  <td className="p-2 font-medium">{String(r.name)}</td>
+                  <td className="p-2 text-gray-600">{String(r.description)}</td>
                   <td className="p-2 text-right">{metrics.count}</td>
                   <td className="p-2 text-right">${Number(metrics.total || 0).toFixed(2)}</td>
                   <td className="p-2">

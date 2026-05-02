@@ -582,9 +582,9 @@ export const POS: React.FC = () => {
                             className={`border-b transition-colors ${isScrolling ? '' : 'hover:bg-gray-50'}`}
                             style={{ height: TX_ROW_HEIGHT }}
                           >
-                            <td className="py-2 pr-4 pl-2">{new Date(tx.createdAt).toLocaleString()}</td>
-                            <td className="py-2 pr-4">{tx.method}</td>
-                            <td className="py-2 pr-4">{tx.reference || ''}</td>
+                            <td className="py-2 pr-4 pl-2">{String(new Date(tx.createdAt).toLocaleString())}</td>
+                            <td className="py-2 pr-4">{String(tx.method)}</td>
+                            <td className="py-2 pr-4">{String(tx.reference || '')}</td>
                             <td className="py-2 pr-4 text-right">{formatCurrency(tx.amount)}</td>
                           </tr>
                         ));
