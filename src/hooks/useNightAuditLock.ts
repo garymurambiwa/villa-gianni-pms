@@ -61,8 +61,6 @@ export function useNightAuditLock() {
       try {
         const d = JSON.parse(e.data);
         setState({ locked: false, step: 'complete', progress: 100, businessDate: null, lastResult: d.last_result });
-        // Brief pause so user sees 100% before clearing
-        setTimeout(() => setState(INITIAL), 4000);
       } catch {}
     };
 
@@ -70,7 +68,6 @@ export function useNightAuditLock() {
       try {
         const d = JSON.parse(e.data);
         setState(s => ({ ...s, locked: false, step: 'complete', progress: 100, lastResult: d }));
-        setTimeout(() => setState(INITIAL), 4000);
       } catch {}
     };
 
@@ -84,6 +81,16 @@ export function useNightAuditLock() {
       esRef.current = null;
     };
   }, []);
+
+  // Centralized cleanup: if we are in 'complete' state and unlocked, clear it after 4s
+  useEffect(() => {
+    if (state.step === 'complete' && !state.locked) {
+      const timer = setTimeout(() => {
+        setState(INITIAL);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [state.step, state.locked]);
 
   return state;
 }

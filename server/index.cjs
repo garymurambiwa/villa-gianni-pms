@@ -9,6 +9,7 @@ const db = require('./db-web.cjs');
 try { require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }) } catch { }
 
 const app = express();
+const wsInstance = require('express-ws')(app);
 const PORT = process.env.PORT || 3001;
 
 // Minimal middleware

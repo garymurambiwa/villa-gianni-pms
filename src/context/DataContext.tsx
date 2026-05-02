@@ -225,12 +225,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ws.onclose = () => {
         console.log('[PriceSync] Disconnected from real-time price sync');
         setPriceSyncWs(null);
-        // Attempt to reconnect after 5 seconds
-        setTimeout(() => initializePriceSync(), 5000);
+        // Attempt to reconnect after 10 seconds to reduce spam during outages
+        setTimeout(() => initializePriceSync(), 10000);
       };
 
       ws.onerror = (error) => {
-        console.error('[PriceSync] WebSocket error:', error);
+        // Only log full error if not already disconnected to reduce spam
+        if (ws.readyState === WebSocket.OPEN) {
+          console.error('[PriceSync] WebSocket error:', error);
+        }
       };
 
     } catch (error) {
