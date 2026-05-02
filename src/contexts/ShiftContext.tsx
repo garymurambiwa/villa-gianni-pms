@@ -16,6 +16,7 @@ export interface ShiftTransaction {
   voided?: boolean;
   voidedAt?: string;
   voidReason?: string;
+  outlet?: 'bar' | 'restaurant';
 }
 
 export interface Shift {
@@ -37,9 +38,9 @@ interface ShiftContextType {
   activeShift: Shift | null;
   startShift: (openingCash: number, notes?: string, userId?: string, stationId?: string) => Promise<void>;
   endShift: (closingCash?: number) => Promise<{ success: boolean; zReading?: ShiftReading; error?: string }>;
-  addTransaction: (method: PaymentMethod, amount: number, reference?: string) => ShiftTransaction | null;
+  addTransaction: (method: PaymentMethod, amount: number, reference?: string, outlet?: 'bar' | 'restaurant') => ShiftTransaction | null;
   voidTransaction: (transactionId: string, reason: string) => boolean;
-  getTotals: () => { cash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number };
+  getTotals: () => { cash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number };
   getEndedShifts: () => Shift[];
   clearEndedShifts: () => void;
   clearActiveShift: () => void;
@@ -211,13 +212,14 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-   const addTransaction = (method: PaymentMethod, amount: number, reference?: string): ShiftTransaction | null => {
+   const addTransaction = (method: PaymentMethod, amount: number, reference?: string, outlet?: 'bar' | 'restaurant'): ShiftTransaction | null => {
      if (!activeShift) return null; // No shift — caller must start one first
      const tx: ShiftTransaction = {
        id: `SFTX_${Date.now()}`,
        method,
        amount: Number(amount.toFixed(2)),
        reference,
+       outlet,
        createdAt: new Date().toISOString(),
        userId: user?.id,
        userName: user?.name || user?.username
@@ -276,8 +278,8 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return true;
   };
 
-   const getTotals = (): { cash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number } => {
-     if (!activeShift) return { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0 };
+   const getTotals = (): { cash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number } => {
+     if (!activeShift) return { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0, barSales: 0, restaurantSales: 0 };
      const txs = Array.isArray(activeShift.transactions) ? activeShift.transactions : [];
      const voidedTxs = Array.isArray(activeShift.voidedTransactions) ? activeShift.voidedTransactions : [];
 
@@ -285,9 +287,13 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
        if (t.method === 'cash') acc.cash += t.amount;
        else if (t.method === 'ecocash' || t.method === 'swipe') acc.card += t.amount;
        else if (t.method === 'room-charge') acc.roomCharge += t.amount;
+       
+       if (t.outlet === 'bar') acc.barSales += t.amount;
+       else acc.restaurantSales += t.amount;
+       
        acc.count += 1;
        return acc;
-     }, { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0 });
+     }, { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0, barSales: 0, restaurantSales: 0 });
 
      // Add voided transaction totals
      totals.voidedCount = voidedTxs.length;
@@ -320,8 +326,8 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       shift_id: activeShift.id,
       total_sales: totalSales,
       total_transactions: totals.count,
-      bar_sales: totalSales * 0.4, // Mock split
-      restaurant_sales: totalSales * 0.6, // Mock split
+      bar_sales: totals.barSales,
+      restaurant_sales: totals.restaurantSales,
       cash_payments: totals.cash,
       card_payments: totals.card,
       room_charge_payments: totals.roomCharge,
@@ -344,8 +350,8 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       shift_id: activeShift.id,
       total_sales: totalSales,
       total_transactions: totals.count,
-      bar_sales: totalSales * 0.4, // Mock split
-      restaurant_sales: totalSales * 0.6, // Mock split
+      bar_sales: totals.barSales,
+      restaurant_sales: totals.restaurantSales,
       cash_payments: totals.cash,
       card_payments: totals.card,
       room_charge_payments: totals.roomCharge,

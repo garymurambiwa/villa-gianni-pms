@@ -217,8 +217,8 @@ export const PosReports: React.FC = () => {
   const [dbGrns, setDbGrns] = React.useState<any[]>([]);
   const [dbMovements, setDbMovements] = React.useState<any[]>([]);
 
-  React.useEffect(() => {
-    const fetchData = async () => {
+  const fetchData = React.useCallback(async () => {
+
       setLoading(true);
       try {
         const isConfigured = await db.isConfigured();
@@ -271,61 +271,43 @@ if(!('error' in ordersRes)) {
     });
   });
 }
+      setDbPosBills(processedBills);
 
-if(!('error' in ordersRes)) {
-  (ordersRes.rows || []).forEach((row: any) => {
-    processedBills.push({
-      ...row,
-      id: row.id,
-      outlet: row.cost_center || 'Restaurant',
-      opened_at: row.created_at, // Map created_at to opened_at
-      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
-      total_amount: Number(row.total_amount || 0),
-      is_voided: false, // Orders table doesn't have voided flag usually
-      staff: 'System', // Orders table doesn't have staff usually
-      shift_id: row.shift_id,
-      payment_method: row.payment_method || null
-    });
-  });
-}
-        setDbPosBills(processedBills);
+      // Fetch GRNs
+      const grnsRes = await db.query(
+        `SELECT * FROM inv_grn_headers WHERE DATE(inserted_at) >= $1 AND DATE(inserted_at) <= $2`,
+        [range.start, range.end]
+      );
+      if(!('error' in grnsRes)) setDbGrns(grnsRes.rows || []);
 
-        // Fetch GRNs
-        const grnsRes = await db.query(
-          `SELECT * FROM inv_grn_headers WHERE DATE(inserted_at) >= $1 AND DATE(inserted_at) <= $2`,
-          [range.start, range.end]
-        );
-        if(!('error' in grnsRes)) setDbGrns(grnsRes.rows || []);
-
-        // Fetch Movements from New Stock Ledger (v11)
-        const movRes = await db.query(
-          `SELECT l.*, i.name FROM inv_stock_ledger l 
-           LEFT JOIN inv_items i ON l.item_id = i.id 
-           WHERE DATE(l.inserted_at) >= $1 AND DATE(l.inserted_at) <= $2`,
-          [range.start, range.end]
-        );
-        if(!('error' in movRes)) {
-          // Normalize v11 ledger to old movement format for UI
-          const normalizedMovs = (movRes.rows || []).map((l: any) => ({
-            ...l,
-            delta: l.quantity_change,
-            inserted_at: l.inserted_at
-          }));
-          setDbMovements(normalizedMovs);
-        }
-
-        // Fetch items from New Inventory (v11)
-        const invRes = await db.query(`SELECT id, name, weighted_avg_cost as cost FROM inv_items`);
-        if(!('error' in invRes)) setDbInventoryItems(invRes.rows || []);
-
-      } catch (err) {
-        console.error('Failed to fetch report data from DB', err);
-      } finally {
-        setLoading(false);
+      // Fetch Movements from New Stock Ledger (v11)
+      const movRes = await db.query(
+        `SELECT l.*, i.name FROM inv_stock_ledger l 
+         LEFT JOIN inv_items i ON l.item_id = i.id 
+         WHERE DATE(l.inserted_at) >= $1 AND DATE(l.inserted_at) <= $2`,
+        [range.start, range.end]
+      );
+      if(!('error' in movRes)) {
+        // Normalize v11 ledger to old movement format for UI
+        const normalizedMovs = (movRes.rows || []).map((l: any) => ({
+          ...l,
+          delta: l.quantity_change,
+          inserted_at: l.inserted_at
+        }));
+        setDbMovements(normalizedMovs);
       }
-    };
-    fetchData();
+
+      // Fetch items from New Inventory (v11)
+      const invRes = await db.query(`SELECT id, name, weighted_avg_cost as cost FROM inv_items`);
+      if(!('error' in invRes)) setDbInventoryItems(invRes.rows || []);
+
+    } catch (err) {
+      console.error('Failed to fetch report data from DB', err);
+    } finally {
+      setLoading(false);
+    }
   }, [range]);
+
 
   const itemIndexByName = React.useMemo(() => {
     const map = new Map<string, any>();
@@ -445,7 +427,7 @@ if(!('error' in ordersRes)) {
     return groups;
   }, [nonVoidedBills]);
 
-  React.useEffect(() => {
+  const fetchCocktailUsage = React.useCallback(async () => {
     const fetchUsage = async () => {
       try {
         const u = await cocktailEng.listUsageInRange(range.start, range.end) || [];
@@ -465,6 +447,11 @@ if(!('error' in ordersRes)) {
     };
     fetchUsage();
   }, [range]);
+
+  React.useEffect(() => {
+    fetchData();
+    fetchCocktailUsage();
+  }, [fetchData, fetchCocktailUsage]);
 
 
   if (!isManager) return <div className="p-6 text-center">Manager Access Required</div>;
@@ -496,8 +483,29 @@ if(!('error' in ordersRes)) {
             <SelectContent><SelectItem value="all">All</SelectItem>{availableShifts.map((s: any) => (<SelectItem key={String(s)} value={String(s)}>{String(s)}</SelectItem>))}</SelectContent>
           </Select>
         </div>
+        <div className="flex gap-2 ml-auto no-print">
+          <Button variant="outline" size="sm" onClick={() => fetchData()} disabled={loading}>
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+          <Button size="sm" onClick={() => window.print()}>
+            <Printer className="w-4 h-4 mr-2" />
+            Print
+          </Button>
+        </div>
       </div>
       
+      <style>{`
+        @media print {
+          .no-print { display: none !important; }
+          body { background: white !important; }
+          .ds-card { border: none !important; box-shadow: none !important; padding: 0 !important; }
+          .ds-table { border-collapse: collapse !important; width: 100% !important; }
+          .ds-table th, .ds-table td { border: 1px solid #ddd !important; padding: 8px !important; }
+          thead { display: table-header-group; }
+          tr { page-break-inside: avoid; }
+        }
+      `}</style>
       {loading && <div className="py-8 text-center text-gray-500">Loading Database Records...</div>}
       
       {!loading && selectedReport === 'x-summary' && (

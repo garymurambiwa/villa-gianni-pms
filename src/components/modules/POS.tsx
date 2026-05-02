@@ -154,29 +154,7 @@ export const POS: React.FC = () => {
     setCart(prev => prev.filter((_, i) => i !== index));
   };
 
-  const subtotal = useMemo(() => cart.reduce((sum, c) => sum + (c.item.price * c.qty), 0), [cart]);
-  // Tax is 0 by default — selling prices are already final (tax-inclusive).
-  // If tax is required, configure it via Receipt Settings per outlet.
-  const taxRate = 0;
-  const tax = useMemo(() => subtotal * taxRate, [subtotal]);
-  const total = useMemo(() => subtotal + tax, [subtotal, tax]);
 
-  const bill = useMemo(() => ({
-    id: `BILL_${Date.now()}`,
-    items: cart.map(c => ({
-      id: c.item.id,
-      name: c.item.name,
-      quantity: c.qty,
-      price: c.item.price,
-      subtotal: c.item.price * c.qty
-    })),
-    subtotal,
-    tax,
-    total,
-    createdAt: new Date().toISOString(),
-    customerName: customerName || undefined,
-    roomNumber: roomNumber || undefined
-  }), [cart, subtotal, tax, total, customerName, roomNumber]);
 
   // Get outlet-specific receipt settings based on active category
   const receiptSettings = useMemo(() => {
@@ -205,6 +183,28 @@ export const POS: React.FC = () => {
       };
     }
   }, [activeCategory]);
+ 
+  const total = useMemo(() => cart.reduce((sum, c) => sum + (c.item.price * c.qty), 0), [cart]);
+  const taxRate = receiptSettings?.tax_rate || 0;
+  const tax = useMemo(() => total * (taxRate / (100 + taxRate)), [total, taxRate]);
+  const subtotal = useMemo(() => total - tax, [total, tax]);
+ 
+  const bill = useMemo(() => ({
+    id: `BILL_${Date.now()}`,
+    items: cart.map(c => ({
+      id: c.item.id,
+      name: c.item.name,
+      quantity: c.qty,
+      price: c.item.price,
+      subtotal: c.item.price * c.qty
+    })),
+    subtotal,
+    tax,
+    total,
+    createdAt: new Date().toISOString(),
+    customerName: customerName || undefined,
+    roomNumber: roomNumber || undefined
+  }), [cart, subtotal, tax, total, customerName, roomNumber]);
 
   const openPayment = () => {
     if (cart.length === 0) {
@@ -255,7 +255,7 @@ export const POS: React.FC = () => {
 
     // Log transaction to Shift totals
     try {
-      addTransaction(paymentData.paymentMethod, Number(total.toFixed(2)), bill.id);
+      addTransaction(paymentData.paymentMethod, Number(total.toFixed(2)), bill.id, activeCategory);
     } catch (err) {
       console.warn('Shift logging failed:', err);
     }

@@ -22,6 +22,8 @@ export interface ZReadingData {
     count: number;
     voidedCount: number;
     voidedAmount: number;
+    barSales?: number;
+    restaurantSales?: number;
   };
   closingCash?: number;
   outlet?: OutletType;
@@ -64,8 +66,8 @@ export const generateZReading = (data: ZReadingData): ShiftReading => {
     outlet: outlet,
     total_sales: totalSales,
     total_transactions: totals.count,
-    bar_sales: totalSales * 0.4,
-    restaurant_sales: totalSales * 0.6,
+    bar_sales: totals.barSales || 0,
+    restaurant_sales: totals.restaurantSales || 0,
     cash_payments: totals.cash,
     card_payments: totals.card,
     room_charge_payments: totals.roomCharge,
