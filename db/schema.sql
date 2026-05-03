@@ -952,6 +952,126 @@ CREATE INDEX IF NOT EXISTS cocktail_usage_ts_idx ON public.cocktail_usage(timest
 --   updated_at TIMESTAMPTZ
 -- );
 
+-- ============================================================================
+-- UNIFIED PRODUCTS TABLE (POS + Inventory source of truth)
+-- Replaces the split menu_items + inventory_items for POS management
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.products (
+  id VARCHAR(255) PRIMARY KEY,
+  name text NOT NULL,
+  category text NOT NULL DEFAULT 'general',
+  department text NOT NULL DEFAULT 'Restaurant',
+  price numeric(12,2) NOT NULL DEFAULT 0,
+  cost_price numeric(12,2) NOT NULL DEFAULT 0,
+  stock_level numeric(12,4) NOT NULL DEFAULT 0,
+  unit text NOT NULL DEFAULT 'units',
+  active boolean NOT NULL DEFAULT true,
+  visibility jsonb DEFAULT '{"bar": true, "restaurant": true}'::jsonb,
+  bar_visibility boolean NOT NULL DEFAULT true,
+  restaurant_visibility boolean NOT NULL DEFAULT true,
+  is_stock_item boolean NOT NULL DEFAULT true,
+  category_id VARCHAR(255),
+  sub_id VARCHAR(255),
+  parent_sub_id VARCHAR(255),
+  notes text,
+  barcodes jsonb DEFAULT '[]'::jsonb,
+  cos_percent numeric(5,2) DEFAULT 0,
+  gp_percent numeric(5,2) DEFAULT 0,
+  gp_amount numeric(12,2) DEFAULT 0,
+  qty_received numeric(12,4) DEFAULT 0,
+  image_bg_color text,
+  picture_data text,
+  reorder_level numeric(12,4) DEFAULT 0,
+  inserted_at timestamptz NOT NULL DEFAULT NOW(),
+  updated_at timestamptz NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_products_category ON public.products(category);
+CREATE INDEX IF NOT EXISTS idx_products_department ON public.products(department);
+CREATE INDEX IF NOT EXISTS idx_products_active ON public.products(active);
+CREATE INDEX IF NOT EXISTS idx_products_is_stock ON public.products(is_stock_item);
+CREATE INDEX IF NOT EXISTS idx_products_bar_vis ON public.products(bar_visibility);
+CREATE INDEX IF NOT EXISTS idx_products_rest_vis ON public.products(restaurant_visibility);
+CREATE INDEX IF NOT EXISTS idx_products_name ON public.products(name);
+
+-- Auto-update trigger for products
+DROP TRIGGER IF EXISTS update_products_updated_at ON public.products;
+CREATE TRIGGER update_products_updated_at
+  BEFORE UPDATE ON public.products
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================================
+-- VENDOR EXPENSES & PAYMENTS (persistent expense tracking)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.vendor_expenses (
+  id VARCHAR(255) PRIMARY KEY,
+  vendor_id VARCHAR(255),
+  vendor_name text NOT NULL,
+  expense_date date NOT NULL DEFAULT CURRENT_DATE,
+  description text NOT NULL,
+  category text NOT NULL DEFAULT 'General',
+  department text NOT NULL DEFAULT 'Administration',
+  quantity numeric(12,4) NOT NULL DEFAULT 1,
+  unit_cost numeric(12,2) NOT NULL DEFAULT 0,
+  tax_rate numeric(5,2) NOT NULL DEFAULT 0,
+  tax_amount numeric(12,2) NOT NULL DEFAULT 0,
+  total_cost numeric(12,2) NOT NULL DEFAULT 0,
+  reference_number text,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'paid', 'cleared', 'voided')),
+  gl_account_id text,
+  business_date date NOT NULL DEFAULT CURRENT_DATE,
+  created_by text,
+  approved_by text,
+  approved_at timestamptz,
+  notes text,
+  inserted_at timestamptz NOT NULL DEFAULT NOW(),
+  updated_at timestamptz NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.vendor_payments (
+  id VARCHAR(255) PRIMARY KEY,
+  vendor_id VARCHAR(255),
+  vendor_name text NOT NULL,
+  expense_id VARCHAR(255) REFERENCES public.vendor_expenses(id) ON DELETE SET NULL,
+  payment_date date NOT NULL DEFAULT CURRENT_DATE,
+  amount_paid numeric(12,2) NOT NULL DEFAULT 0,
+  payment_method text NOT NULL DEFAULT 'Cash',
+  reference_number text,
+  bank_reference text,
+  notes text,
+  created_by text,
+  inserted_at timestamptz NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_vendor_expenses_date ON public.vendor_expenses(expense_date);
+CREATE INDEX IF NOT EXISTS idx_vendor_expenses_vendor ON public.vendor_expenses(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_vendor_expenses_status ON public.vendor_expenses(status);
+CREATE INDEX IF NOT EXISTS idx_vendor_expenses_dept ON public.vendor_expenses(department);
+CREATE INDEX IF NOT EXISTS idx_vendor_payments_date ON public.vendor_payments(payment_date);
+CREATE INDEX IF NOT EXISTS idx_vendor_payments_vendor ON public.vendor_payments(vendor_id);
+
+-- ============================================================================
+-- POS ORDERS EXTENDED COLUMNS
+-- Ensures pos_orders supports shift_id and other fields used by reporting
+-- ============================================================================
+
+ALTER TABLE IF EXISTS public.pos_orders ADD COLUMN IF NOT EXISTS shift_id text;
+ALTER TABLE IF EXISTS public.pos_orders ADD COLUMN IF NOT EXISTS outlet text DEFAULT 'Restaurant';
+ALTER TABLE IF EXISTS public.pos_orders ADD COLUMN IF NOT EXISTS opened_by text;
+ALTER TABLE IF EXISTS public.pos_orders ADD COLUMN IF NOT EXISTS closed_by text;
+ALTER TABLE IF EXISTS public.pos_orders ADD COLUMN IF NOT EXISTS payment_method text;
+ALTER TABLE IF EXISTS public.pos_orders ADD COLUMN IF NOT EXISTS business_date date DEFAULT CURRENT_DATE;
+ALTER TABLE IF EXISTS public.pos_orders ADD COLUMN IF NOT EXISTS table_number text;
+ALTER TABLE IF EXISTS public.pos_orders ADD COLUMN IF NOT EXISTS guest_id text;
+ALTER TABLE IF EXISTS public.pos_orders ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_pos_orders_shift ON public.pos_orders(shift_id);
+CREATE INDEX IF NOT EXISTS idx_pos_orders_date ON public.pos_orders(created_at);
+CREATE INDEX IF NOT EXISTS idx_pos_orders_business_date ON public.pos_orders(business_date);
+CREATE INDEX IF NOT EXISTS idx_pos_orders_status ON public.pos_orders(status);
+
 CREATE TABLE IF NOT EXISTS public.z_readings (
   id VARCHAR(255) PRIMARY KEY,
   reading_number INTEGER NOT NULL,

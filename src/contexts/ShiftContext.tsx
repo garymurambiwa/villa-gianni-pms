@@ -149,39 +149,114 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!dbRes.ok) console.warn('Database endShift failed:', dbRes.error);
 
       // Import Z reading service functions
-      const { generateZReading, printZReading, logZReadingAudit, storeZReading } = await import('../lib/zReadingService');
-      
+      const { generateZReading, printZReading, logZReadingAudit, storeZReading, getNextZReadingNumber } = await import('../lib/zReadingService');
+
       const totals = getTotals();
-      const ended: Shift = { 
-        ...activeShift, 
+      const ended: Shift = {
+        ...activeShift,
         endedAt: new Date().toISOString(),
         closingCash,
         status: 'closed'
       };
 
-      // Generate Z reading
-      const zReading = generateZReading({
-        shift: ended,
-        totals,
-        closingCash
-      });
+      // IMPORTANT: Fetch the next reading number BEFORE generating the Z-reading
+      // so the slip prints the correct number (not 0).
+      const nextReadingNumber = await getNextZReadingNumber();
+
+      // Generate Z reading with correct reading number
+      const zReading = generateZReading(
+        {
+          shift: ended,
+          totals,
+          closingCash
+        },
+        nextReadingNumber
+      );
 
       // Update shift with Z reading ID
       ended.zReadingId = zReading.id;
 
+      // --- GL POSTING: Post daily POS revenue to General Ledger ---
+      try {
+        const gl = await import('../lib/glAccounting');
+        const businessDate = new Date().toISOString().slice(0, 10);
+        const mappings = gl.getMappings();
+        const totalSales = totals.cash + totals.card + totals.roomCharge;
+
+        if (totalSales > 0 && (mappings.FB_REVENUE || mappings.CASH || mappings.CARD)) {
+          // Read tax rate from system config
+          let taxRate = 0;
+          try {
+            const taxConfig = JSON.parse(localStorage.getItem('corepms_tax_config') || '{}');
+            taxRate = Number(taxConfig.pos_tax_rate || taxConfig.default_rate || 0);
+          } catch { /* use 0 */ }
+
+          const taxCollected = taxRate > 0
+            ? parseFloat((totalSales * (taxRate / (100 + taxRate))).toFixed(2))
+            : 0;
+          const netRevenue = parseFloat((totalSales - taxCollected).toFixed(2));
+
+          const lines: import('../lib/glAccounting').GLPostingLine[] = [];
+
+          // Debit asset accounts (Cash, Card)
+          if (totals.cash > 0 && mappings.CASH) {
+            lines.push({ accountId: mappings.CASH, description: 'Cash POS Sales', debit: totals.cash, credit: 0 });
+          }
+          if (totals.card > 0 && mappings.CARD) {
+            lines.push({ accountId: mappings.CARD, description: 'Card POS Sales', debit: totals.card, credit: 0 });
+          }
+          if (totals.roomCharge > 0 && mappings.ROOM_CHARGE) {
+            lines.push({ accountId: mappings.ROOM_CHARGE, description: 'Room Charge POS', debit: totals.roomCharge, credit: 0 });
+          }
+
+          // Credit revenue account
+          if (netRevenue > 0 && mappings.FB_REVENUE) {
+            lines.push({ accountId: mappings.FB_REVENUE, description: `F&B Revenue — Shift ${ended.id}`, debit: 0, credit: netRevenue });
+          } else if (totalSales > 0 && mappings.FB_REVENUE) {
+            lines.push({ accountId: mappings.FB_REVENUE, description: `F&B Revenue — Shift ${ended.id}`, debit: 0, credit: totalSales });
+          }
+
+          // Credit tax liability account
+          if (taxCollected > 0 && mappings.TAX) {
+            lines.push({ accountId: mappings.TAX, description: 'Tax Collected on POS', debit: 0, credit: taxCollected });
+          }
+
+          if (lines.length >= 2) {
+            gl.postJournalEntry({
+              id: `GLJE_POS_${ended.id}_${Date.now()}`,
+              date: businessDate,
+              lines,
+              reference: `Shift Close — ${ended.id} — Z#${nextReadingNumber}`,
+              attachments: { shiftId: ended.id, userId: ended.openedBy, userName: ended.userName }
+            });
+          }
+        }
+      } catch (glErr) {
+        console.warn('[ShiftContext] GL posting failed (non-fatal):', glErr);
+      }
+
       // Attempt to print Z reading
       const printResult = await printZReading(zReading, ended);
-      
+
       // Log audit trail regardless of print success
       logZReadingAudit(zReading, ended, printResult);
-      
-      // Store Z reading
+
+      // Store Z reading in DB (and localStorage fallback)
       storeZReading(zReading);
       setZReadings(prev => {
         const next = [zReading, ...prev];
         localStorage.setItem('corepms_zReadings', JSON.stringify(next));
         return next;
       });
+
+      // Persist shift totals to localStorage for reports
+      try {
+        const existingTotals = JSON.parse(localStorage.getItem('corepms_shift_totals') || '{"cash":0,"card":0}');
+        localStorage.setItem('corepms_shift_totals', JSON.stringify({
+          cash: (existingTotals.cash || 0) + totals.cash,
+          card: (existingTotals.card || 0) + totals.card
+        }));
+      } catch { /* non-fatal */ }
 
       // Store ended shift
       setEndedShifts(prev => {
@@ -195,19 +270,19 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       persist(null);
 
       if (!printResult.success) {
-        return { 
-          success: true, 
-          zReading, 
-          error: `Shift closed successfully but printing failed: ${printResult.error}` 
+        return {
+          success: true,
+          zReading,
+          error: `Shift closed successfully but printing failed: ${printResult.error}`
         };
       }
 
       return { success: true, zReading };
     } catch (error) {
       console.error('Failed to end shift:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error occurred' 
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
       };
     }
   };

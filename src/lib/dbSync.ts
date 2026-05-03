@@ -337,14 +337,17 @@ export async function bulkDeleteProductsFromDb(itemIds: string[]): Promise<SyncR
     if (!isConfigured) return { success: true, synced: 0 };
     if (!itemIds.length) return { success: true, synced: 0 };
 
-    console.log(`[dbSync] Bulk deleting ${itemIds.length} products from DB...`);
+    console.log(`[dbSync] Bulk deleting ${itemIds.length} products from DB (atomic)...`);
 
-    const operations: { sql: string; params: any[] }[] = [];
-    itemIds.forEach(id => {
-      operations.push({ sql: `DELETE FROM products WHERE id = $1`, params: [id] });
-      operations.push({ sql: `DELETE FROM inventory_items WHERE id = $1`, params: [id] });
-      operations.push({ sql: `DELETE FROM menu_items WHERE id = $1`, params: [id] });
-    });
+    // Use array-based WHERE IN clause for efficiency — single statement per table
+    // instead of N individual deletes. This is atomic via transaction.
+    const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(', ');
+
+    const operations: { sql: string; params: any[] }[] = [
+      { sql: `DELETE FROM products WHERE id IN (${placeholders})`, params: itemIds },
+      { sql: `DELETE FROM inventory_items WHERE id IN (${placeholders})`, params: itemIds },
+      { sql: `DELETE FROM menu_items WHERE id IN (${placeholders})`, params: itemIds },
+    ];
 
     const result = await db.transaction(operations);
     if (!result.ok) throw new Error((result as any).error || 'Bulk delete transaction failed');
@@ -370,49 +373,62 @@ export async function deletePosItemsFromDb(itemIds: string[]): Promise<SyncResul
  * Sync a single menu item to the database (Updated to use products table)
  */
 export async function syncMenuItemToDb(item: MenuItemRecord): Promise<SyncResult> {
-  // Bridge to new syncProductToDb
-  // We need to fetch existing product first to preserve stock/cost if possible, 
-  // or just upsert blindly since syncProductToDb handles upsert and partial updates via COALESCE logic if we had it,
-  // but here syncProductToDb does a full replace on conflict for fields provided.
-  // Actually, syncProductToDb replaced fields. We should try to read existing if we want to be safe, 
-  // but for now let's map what we have.
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
 
-  const product: ProductRecord = {
-    id: item.id,
-    name: item.name,
-    category: item.category,
-    department: item.department || item.category || 'Restaurant', // Preserve actual department
-    price: item.price,
-    active: item.active !== false,
-    cost_price: item.cost_price || 0,
-    stock_level: 0, // Menu items don't usually have stock, but we need to provide something. 
-    // Issue: If we pass 0, we might overwrite existing stock.
-    // Solution: We should probably fetch the existing product first 
-    // OR update syncProductToDb to use dynamic building of SET clause...
-    // For now, let's just assume if it's a menu sync, we might not want to touch stock?
-    // But syncProductToDb expects a full record.
+    // SAFE: Use a partial UPDATE that does NOT touch stock_level.
+    // This prevents a price/name change from zeroing out existing stock.
+    const sql = `
+      INSERT INTO products (
+        id, name, category, department, price, cost_price, active, visibility,
+        bar_visibility, restaurant_visibility, is_stock_item, category_id, sub_id,
+        unit, inserted_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'units', NOW(), NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        category = EXCLUDED.category,
+        department = EXCLUDED.department,
+        price = EXCLUDED.price,
+        cost_price = EXCLUDED.cost_price,
+        active = EXCLUDED.active,
+        visibility = EXCLUDED.visibility,
+        bar_visibility = EXCLUDED.bar_visibility,
+        restaurant_visibility = EXCLUDED.restaurant_visibility,
+        category_id = COALESCE(EXCLUDED.category_id, products.category_id),
+        sub_id = COALESCE(EXCLUDED.sub_id, products.sub_id),
+        updated_at = NOW()
+        -- NOTE: stock_level intentionally NOT updated here to prevent data loss
+    `;
 
-    // To do this right without reading, we'd need a partial update function.
-    // For this migration, let's implement a 'partialSyncProduct' or just update logical flow.
-    // Simpler approach: Map what we know. If it's a menu item, stock is likely not managed here.
-    // But if we overwrite stock with 0, that's bad.
+    const vis = item.visibility || {};
+    const visJson = typeof vis === 'string' ? vis : JSON.stringify(vis);
+    const visObj = typeof vis === 'string' ? JSON.parse(vis) : vis;
 
-    // Let's rely on the fact that syncPosItemToDb calls BOTH menu and inventory syncs.
-    // But standalone updates might be an issue.
-    // Let's modify syncProductToDb to treat undefined/nulls as "do not update" if possible? 
-    // The current SQL does `stock_level = EXCLUDED.stock_level`, which takes the value passed.
+    const params = [
+      item.id,
+      item.name,
+      item.category,
+      item.department || 'Restaurant',
+      item.price || 0,
+      item.cost_price || 0,
+      item.active !== false,
+      visJson,
+      visObj.bar !== false,      // bar_visibility
+      visObj.restaurant !== false, // restaurant_visibility
+      false,                     // is_stock_item = false for menu-only items
+      item.category_id || null,
+      item.sub_id || null,
+    ];
 
-    // SAFE FIX: Read before write is best pattern for partial updates without dynamic SQL.
-    unit: 'units',
-    is_stock_item: false,
-    visibility: JSON.stringify(item.visibility || {})
-  };
+    const result = await db.query(sql, params);
+    if ('error' in result) return { success: false, error: (result as any).error };
 
-  // However, since we are moving to a unified system, we should encourage using syncPosItemToDb (which has both info)
-  // or syncProductToDb directly.
-  // For legacy compatibility, let's try to pass the fields we have.
-
-  return syncProductToDb(product);
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    console.error('[dbSync] syncMenuItemToDb error:', err?.message || err);
+    return { success: false, error: err?.message || String(err) };
+  }
 }
 
 
@@ -504,20 +520,28 @@ export async function syncAllMenuItemsToDb(): Promise<SyncResult> {
  * Sync a single inventory item to the database (Updated to use products table)
  */
 export async function syncInventoryItemToDb(item: InventoryItemRecord): Promise<SyncResult> {
-  // Bridge to new syncProductToDb
+  // Bridge to unified products table.
+  // IMPORTANT: item.price = selling price, item.cost_price = cost price.
+  // Both must be mapped correctly to avoid wrong GP calculations.
+
+  const vis = item.visibility || { bar: true, restaurant: true };
+  const visJson = JSON.stringify(vis);
 
   const product: ProductRecord = {
     id: item.id,
     name: item.name,
     category: item.category,
-    department: (item as any).department || 'Restaurant', // Preserve actual department if provided
-    price: item.price,
-    active: true, // Inventory items usually active if they exist
-    cost_price: item.cost_price || 0,
-    stock_level: Number(item.stock_level),
+    department: (item as any).department || 'Restaurant',
+    price: item.price || 0,                        // selling price
+    cost_price: item.cost_price || item.price || 0, // cost price (use price as fallback for backward compat)
+    active: true,
+    stock_level: Number(item.stock_level ?? 0),
     unit: item.unit || 'units',
     is_stock_item: true,
-    visibility: JSON.stringify(item.visibility || {})
+    visibility: visJson,
+    bar_visibility: vis.bar !== false,
+    restaurant_visibility: vis.restaurant !== false,
+    reorder_level: (item as any).reorder_level || 0
   };
 
   return syncProductToDb(product);

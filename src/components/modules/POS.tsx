@@ -43,31 +43,60 @@ export const POS: React.FC = () => {
   const { guests, recordFolioCharge, removeFolioCharge, inventory } = useData();
   const { activeShift, startShift, endShift, getTotals, addTransaction, generateXReading } = useShift();
 
-  // Transform inventory to POS Menu Items
+  // Allow showing out-of-stock items (hidden by default but togglable)
+  const [showOutOfStock, setShowOutOfStock] = React.useState<boolean>(false);
+
+  // Transform inventory to POS Menu Items — dynamic from DB/DataContext
   const menuItems: MenuItem[] = useMemo(() => {
-    console.log('[POS] Inventory raw:', inventory?.length, inventory?.[0]);
     const items = (inventory || [])
-      .filter((i: InventoryItem) => i.selling_price && Number(i.selling_price) > 0)
-      .map((i: InventoryItem) => {
-        // Priority: costCenter is the most reliable field (explicitly set by user)
+      .filter((i: InventoryItem) => {
+        // Must have a positive selling price
+        if (!i.selling_price || Number(i.selling_price) <= 0) return false;
+
+        // Determine category first
         const costCenter = String(i.costCenter || '').toLowerCase();
-        // Fallback: check category/department/type fields for bar-related keywords
         const rawCat = String(i.category || i.department || i.type || '').toLowerCase();
         const isBar =
-          costCenter === 'bar' ||
-          costCenter.includes('bar') ||
-          rawCat === 'bar' ||
-          rawCat.includes('bar') ||
-          rawCat.includes('beverage') ||
-          rawCat.includes('cocktail') ||
-          rawCat.includes('beer') ||
-          rawCat.includes('wine') ||
-          rawCat.includes('cider') ||
-          rawCat.includes('liquor') ||
-          rawCat.includes('spirit') ||
-          rawCat.includes('drink') ||
+          costCenter === 'bar' || costCenter.includes('bar') ||
+          rawCat === 'bar' || rawCat.includes('bar') ||
+          rawCat.includes('beverage') || rawCat.includes('cocktail') ||
+          rawCat.includes('beer') || rawCat.includes('wine') ||
+          rawCat.includes('cider') || rawCat.includes('liquor') ||
+          rawCat.includes('spirit') || rawCat.includes('drink') ||
           rawCat.includes('alcohol');
+
+        // Check visibility field — respect manual overrides from StockTab
+        const vis: any = typeof i.visibility === 'string'
+          ? (() => { try { return JSON.parse(i.visibility); } catch { return {}; } })()
+          : (i.visibility || {});
+
+        // If item has explicit visibility settings, enforce them per outlet
+        if (Object.keys(vis).length > 0) {
+          if (isBar && vis.bar === false) return false;
+          if (!isBar && vis.restaurant === false) return false;
+        }
+
+        // Also check bar_visibility / restaurant_visibility fields (DB columns)
+        if (isBar && (i as any).bar_visibility === false) return false;
+        if (!isBar && (i as any).restaurant_visibility === false) return false;
+
+        return true;
+      })
+      .map((i: InventoryItem) => {
+        const costCenter = String(i.costCenter || '').toLowerCase();
+        const rawCat = String(i.category || i.department || i.type || '').toLowerCase();
+        const isBar =
+          costCenter === 'bar' || costCenter.includes('bar') ||
+          rawCat === 'bar' || rawCat.includes('bar') ||
+          rawCat.includes('beverage') || rawCat.includes('cocktail') ||
+          rawCat.includes('beer') || rawCat.includes('wine') ||
+          rawCat.includes('cider') || rawCat.includes('liquor') ||
+          rawCat.includes('spirit') || rawCat.includes('drink') ||
+          rawCat.includes('alcohol');
+
         const category: 'bar' | 'restaurant' = isBar ? 'bar' : 'restaurant';
+        const qtyInStock = Number(i.qtyInStock ?? i.stock_level ?? 0);
+
         return {
           id: i.id,
           name: i.name,
@@ -75,10 +104,10 @@ export const POS: React.FC = () => {
           category,
           category_id: i.category_id,
           sub_id: i.sub_id,
-          qtyInStock: i.qtyInStock ?? i.stock_level ?? 0,
+          qtyInStock,
         };
       });
-    console.log('[POS] MenuItems processed:', items.length, 'bar:', items.filter(m => m.category === 'bar').length, 'restaurant:', items.filter(m => m.category === 'restaurant').length);
+
     return items;
   }, [inventory]);
 
@@ -397,32 +426,67 @@ export const POS: React.FC = () => {
             ))}
           </div>
 
+          {/* Out-of-stock toggle */}
+          <div className="flex items-center gap-2 mb-2 text-xs text-gray-500">
+            <label className="flex items-center gap-1 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showOutOfStock}
+                onChange={e => setShowOutOfStock(e.target.checked)}
+                className="w-3 h-3"
+              />
+              Show out-of-stock items
+            </label>
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-4">
             {menuItems
               .filter(m => m.category === activeCategory)
               .filter(m => activeSubCategoryId === 'all' || m.category_id === activeSubCategoryId || m.sub_id === activeSubCategoryId)
-              .map(item => (
-                <button
-                  key={item.id}
-                  onClick={() => addToCart(item)}
-                  className="bg-white hover:bg-blue-50 p-2 sm:p-4 rounded-xl border-2 border-gray-100 hover:border-blue-200 transition-all shadow-sm flex flex-col items-start text-left relative overflow-hidden group"
-                >
-                  <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <div className="bg-blue-600 text-white p-0.5 rounded-full">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                    </div>
-                  </div>
-                  <p className="font-bold text-gray-800 mb-1 line-clamp-2 leading-tight h-8 text-xs sm:text-sm">{item.name}</p>
-                  <div className="flex justify-between items-end w-full mt-auto">
-                    <p className="text-sm sm:text-lg font-bold text-blue-600">{formatCurrency(item.price)}</p>
-                    {item.qtyInStock !== undefined && (
-                      <span className={`text-[9px] sm:text-[10px] px-1 py-0.5 rounded font-medium ${item.qtyInStock <= 5 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                        {item.qtyInStock}
-                      </span>
+              .filter(m => showOutOfStock || m.qtyInStock === undefined || m.qtyInStock > 0)
+              .map(item => {
+                const isOutOfStock = item.qtyInStock !== undefined && item.qtyInStock <= 0;
+                const isLowStock = item.qtyInStock !== undefined && item.qtyInStock > 0 && item.qtyInStock <= 5;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => !isOutOfStock && addToCart(item)}
+                    disabled={isOutOfStock}
+                    className={`p-2 sm:p-4 rounded-xl border-2 transition-all shadow-sm flex flex-col items-start text-left relative overflow-hidden group
+                      ${isOutOfStock
+                        ? 'bg-gray-100 border-gray-200 opacity-60 cursor-not-allowed'
+                        : 'bg-white hover:bg-blue-50 border-gray-100 hover:border-blue-200 cursor-pointer'
+                      }`}
+                  >
+                    {isOutOfStock && (
+                      <div className="absolute inset-0 flex items-center justify-center z-10">
+                        <span className="bg-red-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full rotate-[-15deg]">OUT OF STOCK</span>
+                      </div>
                     )}
-                  </div>
-                </button>
-              ))}
+                    {!isOutOfStock && (
+                      <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="bg-blue-600 text-white p-0.5 rounded-full">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        </div>
+                      </div>
+                    )}
+                    <p className={`font-bold mb-1 line-clamp-2 leading-tight h-8 text-xs sm:text-sm ${isOutOfStock ? 'text-gray-400' : 'text-gray-800'}`}>
+                      {item.name}
+                    </p>
+                    <div className="flex justify-between items-end w-full mt-auto">
+                      <p className={`text-sm sm:text-lg font-bold ${isOutOfStock ? 'text-gray-400' : 'text-blue-600'}`}>
+                        {formatCurrency(item.price)}
+                      </p>
+                      {item.qtyInStock !== undefined && (
+                        <span className={`text-[9px] sm:text-[10px] px-1 py-0.5 rounded font-medium
+                          ${isOutOfStock ? 'bg-red-100 text-red-600' : isLowStock ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-600'}`}>
+                          {isOutOfStock ? '0' : item.qtyInStock}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
           </div>
         </div>
 

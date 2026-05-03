@@ -351,10 +351,26 @@ export const buildFlashReport = async (forDate?: string) => {
   const finalLastYearFoodRevenue = lastYearFoodRevenue + lastYearRemainingFbRevenue;
   const finalLastYearBarRevenue = lastYearBarRevenue;
 
-  // Calculate last year's departmental expenses
-  const lastYearDeptExpenses = lastYearBundle ?
-    (lastYearBundle.roomRevenue + lastYearBundle.fbRevenue) * 0.35 :
-    0;
+  // Calculate last year's departmental expenses from GL ledger for that date
+  // No hardcoded heuristics — return 0 if no real data found for last year
+  const lastYearDeptExpenses = (() => {
+    if (!lastYearBundle) return 0;
+    try {
+      const lastYearLedger = gl.getLedger().filter(e => e.date === lastYearDate);
+      const accs = gl.getAccounts();
+      const expTotal = lastYearLedger
+        .flatMap(e => e.lines)
+        .filter(l => { const acc = accs.find(a => a.id === l.accountId); return acc?.category === 'Expense'; })
+        .reduce((s, l) => s + (l.debit || 0), 0);
+      if (expTotal > 0) return expTotal;
+    } catch { /* fall through */ }
+    // Fallback: check dated expense cache in localStorage
+    try {
+      const storedYoy = readJSON<number>(`corepms_dept_expenses_total_${lastYearDate}`, 0);
+      if (storedYoy > 0) return storedYoy;
+    } catch { /* ignore */ }
+    return 0; // Unknown — report as 0, not a fabricated estimate
+  })();
 
   // Calculate total departmental expenses from GL ledger
   // These are now populated real-time when vendor expenses are created

@@ -175,31 +175,128 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
       </div>
 
       {/* Bulk actions */}
-      <div className="ds-toolbar text-xs overflow-x-auto pb-1">
+      <div className="ds-toolbar text-xs overflow-x-auto pb-1 flex flex-wrap gap-1">
         <Button variant="outline" className="ds-button-compact" onClick={() => {
           const ids = Array.from(selectedIds);
           if (!ids.length) return;
-          if (confirm(`Are you sure you want to delete ${ids.length} items?`)) {
+          if (confirm(`Are you sure you want to delete ${ids.length} item(s)? This cannot be undone.`)) {
             if (onBulkDelete) {
               onBulkDelete(ids);
             } else {
-              // Fallback if no bulk handler provided
               ids.forEach(id => onDeleteItem?.(id));
             }
             setSelectedIds(new Set());
+            setAllItems(prev => prev.filter((it: any) => !ids.includes(it.id)));
           }
         }}>Delete Selected</Button>
+
+        {/* Bar visibility controls */}
         <Button variant="outline" className="ds-button-compact" onClick={() => {
           const ids = Array.from(selectedIds); if (!ids.length) return;
-          const next = allItems.map((it: any) => ids.includes(it.id) ? { ...it, visibility: { ...(it.visibility || {}), bar: true } } : it);
+          const updates = { bar: true };
+          const next = allItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), bar: true }, bar_visibility: true }
+            : it);
           setAllItems(next);
-        }}>Set Bar Visible</Button>
+          if (onBulkSetVisibility) onBulkSetVisibility(ids, updates);
+          else {
+            // Persist locally and to DB via dbSync
+            import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+              ids.forEach(id => {
+                const item = allItems.find((it: any) => it.id === id);
+                if (item) {
+                  const vis = { bar: true, restaurant: item.visibility?.restaurant !== false };
+                  fixItemVisibility(id, item.costCenter || 'restaurant', vis);
+                }
+              });
+            });
+          }
+          // Persist to localStorage
+          const storedItems = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+          const updated = storedItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), bar: true } } : it);
+          localStorage.setItem('corepms_pos_items', JSON.stringify(updated));
+        }}>✓ Bar Visible</Button>
+
         <Button variant="outline" className="ds-button-compact" onClick={() => {
           const ids = Array.from(selectedIds); if (!ids.length) return;
-          const next = allItems.map((it: any) => ids.includes(it.id) ? { ...it, visibility: { ...(it.visibility || {}), restaurant: true } } : it);
+          const updates = { bar: false };
+          const next = allItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), bar: false }, bar_visibility: false }
+            : it);
           setAllItems(next);
-        }}>Set Restaurant Visible</Button>
-        <div className="text-xs text-gray-600 ml-2 whitespace-nowrap">Selected: {selectedIds.size}</div>
+          if (onBulkSetVisibility) onBulkSetVisibility(ids, updates);
+          else {
+            import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+              ids.forEach(id => {
+                const item = allItems.find((it: any) => it.id === id);
+                if (item) {
+                  const vis = { bar: false, restaurant: item.visibility?.restaurant !== false };
+                  fixItemVisibility(id, item.costCenter || 'restaurant', vis);
+                }
+              });
+            });
+          }
+          const storedItems = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+          const updated = storedItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), bar: false } } : it);
+          localStorage.setItem('corepms_pos_items', JSON.stringify(updated));
+        }}>✗ Bar Hidden</Button>
+
+        {/* Restaurant visibility controls */}
+        <Button variant="outline" className="ds-button-compact" onClick={() => {
+          const ids = Array.from(selectedIds); if (!ids.length) return;
+          const updates = { restaurant: true };
+          const next = allItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), restaurant: true }, restaurant_visibility: true }
+            : it);
+          setAllItems(next);
+          if (onBulkSetVisibility) onBulkSetVisibility(ids, updates);
+          else {
+            import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+              ids.forEach(id => {
+                const item = allItems.find((it: any) => it.id === id);
+                if (item) {
+                  const vis = { bar: item.visibility?.bar !== false, restaurant: true };
+                  fixItemVisibility(id, item.costCenter || 'restaurant', vis);
+                }
+              });
+            });
+          }
+          const storedItems = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+          const updated = storedItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), restaurant: true } } : it);
+          localStorage.setItem('corepms_pos_items', JSON.stringify(updated));
+        }}>✓ Restaurant Visible</Button>
+
+        <Button variant="outline" className="ds-button-compact" onClick={() => {
+          const ids = Array.from(selectedIds); if (!ids.length) return;
+          const updates = { restaurant: false };
+          const next = allItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), restaurant: false }, restaurant_visibility: false }
+            : it);
+          setAllItems(next);
+          if (onBulkSetVisibility) onBulkSetVisibility(ids, updates);
+          else {
+            import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+              ids.forEach(id => {
+                const item = allItems.find((it: any) => it.id === id);
+                if (item) {
+                  const vis = { bar: item.visibility?.bar !== false, restaurant: false };
+                  fixItemVisibility(id, item.costCenter || 'restaurant', vis);
+                }
+              });
+            });
+          }
+          const storedItems = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+          const updated = storedItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), restaurant: false } } : it);
+          localStorage.setItem('corepms_pos_items', JSON.stringify(updated));
+        }}>✗ Restaurant Hidden</Button>
+
+        <div className="text-xs text-gray-500 ml-2 whitespace-nowrap self-center">
+          {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select items to bulk-edit'}
+        </div>
       </div>
 
       {loading && (<div role="status" aria-live="polite" className="text-xs text-gray-600">Filtering…</div>)}
@@ -247,8 +344,63 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
                     )}
                   </td>
                   <td className="hide-on-mobile">
-                    <span className="text-[10px] bg-gray-100 rounded px-1.5 py-0.5 mr-1">B:{it.visibility?.bar ? 'Y' : 'N'}</span>
-                    <span className="text-[10px] bg-gray-100 rounded px-1.5 py-0.5">R:{it.visibility?.restaurant ? 'Y' : 'N'}</span>
+                    <div className="flex gap-1 flex-wrap">
+                      {/* Bar visibility toggle */}
+                      <button
+                        onClick={() => {
+                          const newBarVis = !((it.visibility?.bar !== false) && it.bar_visibility !== false);
+                          const next = allItems.map((item: any) => item.id === it.id
+                            ? { ...item, visibility: { ...(item.visibility || {}), bar: newBarVis }, bar_visibility: newBarVis }
+                            : item);
+                          setAllItems(next);
+                          cacheRef.current.clear();
+                          // Persist to DB and localStorage
+                          import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+                            const vis = { bar: newBarVis, restaurant: it.visibility?.restaurant !== false };
+                            fixItemVisibility(it.id, it.costCenter || 'restaurant', vis);
+                          });
+                          const stored = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+                          localStorage.setItem('corepms_pos_items', JSON.stringify(
+                            stored.map((s: any) => s.id === it.id ? { ...s, visibility: { ...(s.visibility || {}), bar: newBarVis } } : s)
+                          ));
+                        }}
+                        title={`Toggle Bar visibility (currently ${it.visibility?.bar !== false ? 'visible' : 'hidden'})`}
+                        className={`text-[9px] px-1.5 py-0.5 rounded font-medium border transition-colors ${
+                          it.visibility?.bar !== false && it.bar_visibility !== false
+                            ? 'bg-blue-100 text-blue-700 border-blue-300'
+                            : 'bg-gray-100 text-gray-400 border-gray-300 line-through'
+                        }`}
+                      >
+                        Bar
+                      </button>
+                      {/* Restaurant visibility toggle */}
+                      <button
+                        onClick={() => {
+                          const newRestVis = !((it.visibility?.restaurant !== false) && it.restaurant_visibility !== false);
+                          const next = allItems.map((item: any) => item.id === it.id
+                            ? { ...item, visibility: { ...(item.visibility || {}), restaurant: newRestVis }, restaurant_visibility: newRestVis }
+                            : item);
+                          setAllItems(next);
+                          cacheRef.current.clear();
+                          import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+                            const vis = { bar: it.visibility?.bar !== false, restaurant: newRestVis };
+                            fixItemVisibility(it.id, it.costCenter || 'restaurant', vis);
+                          });
+                          const stored = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+                          localStorage.setItem('corepms_pos_items', JSON.stringify(
+                            stored.map((s: any) => s.id === it.id ? { ...s, visibility: { ...(s.visibility || {}), restaurant: newRestVis } } : s)
+                          ));
+                        }}
+                        title={`Toggle Restaurant visibility (currently ${it.visibility?.restaurant !== false ? 'visible' : 'hidden'})`}
+                        className={`text-[9px] px-1.5 py-0.5 rounded font-medium border transition-colors ${
+                          it.visibility?.restaurant !== false && it.restaurant_visibility !== false
+                            ? 'bg-green-100 text-green-700 border-green-300'
+                            : 'bg-gray-100 text-gray-400 border-gray-300 line-through'
+                        }`}
+                      >
+                        Rest
+                      </button>
+                    </div>
                   </td>
                   <td>
                     <div className="flex gap-1 justify-center flex-wrap min-w-[100px] sm:min-w-0">

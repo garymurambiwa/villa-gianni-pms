@@ -113,6 +113,350 @@ app.get('/api/setup/init-db', async (req, res) => {
 });
 
 
+// ─── PRODUCT CRUD API ─────────────────────────────────────────────────────────
+// These provide structured, validated endpoints for POS item management
+// instead of raw SQL passthrough via /api/db/query
+
+// GET /api/products — list all products
+app.get('/api/products', async (req, res) => {
+    try {
+        const { department, active, category } = req.query;
+        let sql = 'SELECT * FROM products WHERE 1=1';
+        const params = [];
+        if (department) { sql += ' AND LOWER(department) = LOWER(?)'; params.push(department); }
+        if (active !== undefined) { sql += ' AND active = ?'; params.push(active === 'true'); }
+        if (category) { sql += ' AND LOWER(category) = LOWER(?)'; params.push(category); }
+        sql += ' ORDER BY name ASC';
+        const result = await db.query(sql, params);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/products/:id
+app.get('/api/products/:id', async (req, res) => {
+    try {
+        const result = await db.query('SELECT * FROM products WHERE id = ?', [req.params.id]);
+        if (!result.rows || result.rows.length === 0) return res.status(404).json({ ok: false, error: 'Product not found' });
+        res.json({ ok: true, row: result.rows[0] });
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/products — create or upsert product
+app.post('/api/products', async (req, res) => {
+    const { id, name, category, department, price, cost_price, stock_level, unit, active,
+            visibility, bar_visibility, restaurant_visibility, is_stock_item,
+            category_id, sub_id, notes, barcodes } = req.body;
+    if (!id || !name) return res.status(400).json({ ok: false, error: 'id and name are required' });
+    try {
+        const visJson = visibility ? (typeof visibility === 'string' ? visibility : JSON.stringify(visibility)) : '{"bar":true,"restaurant":true}';
+        const barVis = bar_visibility !== undefined ? bar_visibility : true;
+        const restVis = restaurant_visibility !== undefined ? restaurant_visibility : true;
+        const result = await db.query(`
+            INSERT INTO products (id, name, category, department, price, cost_price, stock_level, unit,
+                active, visibility, bar_visibility, restaurant_visibility, is_stock_item,
+                category_id, sub_id, notes, barcodes, inserted_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name, category = EXCLUDED.category, department = EXCLUDED.department,
+                price = EXCLUDED.price, cost_price = EXCLUDED.cost_price,
+                stock_level = EXCLUDED.stock_level, unit = EXCLUDED.unit, active = EXCLUDED.active,
+                visibility = EXCLUDED.visibility, bar_visibility = EXCLUDED.bar_visibility,
+                restaurant_visibility = EXCLUDED.restaurant_visibility,
+                is_stock_item = EXCLUDED.is_stock_item,
+                category_id = COALESCE(EXCLUDED.category_id, products.category_id),
+                sub_id = COALESCE(EXCLUDED.sub_id, products.sub_id),
+                notes = EXCLUDED.notes, barcodes = EXCLUDED.barcodes, updated_at = NOW()
+        `, [id, name, category || 'general', department || 'Restaurant',
+            Number(price || 0), Number(cost_price || 0), Number(stock_level || 0),
+            unit || 'units', active !== false, visJson, barVis, restVis,
+            is_stock_item !== false, category_id || null, sub_id || null,
+            notes || null, barcodes ? JSON.stringify(barcodes) : '[]']);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// PUT /api/products/:id — partial update (does NOT overwrite stock_level unless provided)
+app.put('/api/products/:id', async (req, res) => {
+    const { id } = req.params;
+    const allowed = ['name','category','department','price','cost_price','stock_level','unit',
+                     'active','visibility','bar_visibility','restaurant_visibility','is_stock_item',
+                     'category_id','sub_id','notes','barcodes','cos_percent','gp_percent','gp_amount',
+                     'image_bg_color','picture_data','reorder_level'];
+    const fields = []; const values = [];
+    for (const f of allowed) {
+        if (req.body[f] !== undefined) {
+            if (f === 'visibility' && typeof req.body[f] !== 'string') {
+                fields.push(`${f} = ?`); values.push(JSON.stringify(req.body[f]));
+            } else if (f === 'barcodes' && typeof req.body[f] !== 'string') {
+                fields.push(`${f} = ?`); values.push(JSON.stringify(req.body[f]));
+            } else {
+                fields.push(`${f} = ?`); values.push(req.body[f]);
+            }
+        }
+    }
+    if (!fields.length) return res.status(400).json({ ok: false, error: 'No updatable fields provided' });
+    values.push(id);
+    try {
+        const result = await db.query(`UPDATE products SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`, values);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// DELETE /api/products/:id — atomic delete from all product tables
+app.delete('/api/products/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await db.transaction([
+            { sql: 'DELETE FROM products WHERE id = ?', params: [id] },
+            { sql: 'DELETE FROM inventory_items WHERE id = ?', params: [id] },
+            { sql: 'DELETE FROM menu_items WHERE id = ?', params: [id] },
+        ]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// DELETE /api/products — bulk delete
+app.delete('/api/products', async (req, res) => {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ ok: false, error: 'ids array required' });
+    try {
+        const ph = ids.map(() => '?').join(',');
+        const result = await db.transaction([
+            { sql: `DELETE FROM products WHERE id IN (${ph})`, params: ids },
+            { sql: `DELETE FROM inventory_items WHERE id IN (${ph})`, params: ids },
+            { sql: `DELETE FROM menu_items WHERE id IN (${ph})`, params: ids },
+        ]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// PUT /api/products/visibility — bulk update visibility
+app.put('/api/products/visibility', async (req, res) => {
+    const { ids, bar, restaurant } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ ok: false, error: 'ids array required' });
+    try {
+        const ph = ids.map(() => '?').join(',');
+        const updateFields = [];
+        const params = [];
+        if (bar !== undefined) { updateFields.push('bar_visibility = ?'); params.push(bar); }
+        if (restaurant !== undefined) { updateFields.push('restaurant_visibility = ?'); params.push(restaurant); }
+        if (!updateFields.length) return res.status(400).json({ ok: false, error: 'bar or restaurant value required' });
+        params.push(...ids);
+        const result = await db.query(
+            `UPDATE products SET ${updateFields.join(', ')}, updated_at = NOW() WHERE id IN (${ph})`,
+            params
+        );
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/products/stock — get current stock levels
+app.get('/api/products/stock', async (req, res) => {
+    try {
+        const result = await db.query('SELECT id, name, stock_level, reorder_level, unit FROM products WHERE is_stock_item = true ORDER BY name');
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// PATCH /api/products/:id/stock — update stock level only (inventory deduction)
+app.patch('/api/products/:id/stock', async (req, res) => {
+    const { id } = req.params;
+    const { delta, reason, user_id } = req.body; // delta = +/- quantity change
+    if (delta === undefined || isNaN(Number(delta))) return res.status(400).json({ ok: false, error: 'delta required' });
+    try {
+        const ops = [
+            {
+                sql: 'UPDATE products SET stock_level = GREATEST(0, stock_level + ?), updated_at = NOW() WHERE id = ?',
+                params: [Number(delta), id]
+            },
+            {
+                sql: `INSERT INTO inventory_movements (id, item_id, delta, reason, user_id, inserted_at)
+                      VALUES (gen_random_uuid()::text, ?, ?, ?, ?, NOW())`,
+                params: [id, Number(delta), reason || 'POS sale', user_id || 'system']
+            }
+        ];
+        const result = await db.transaction(ops);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// ─── POS SHIFT MANAGEMENT API ─────────────────────────────────────────────────
+
+// GET /api/pos/shifts — list shifts
+app.get('/api/pos/shifts', async (req, res) => {
+    try {
+        const { date, status } = req.query;
+        let sql = 'SELECT * FROM pos_shifts WHERE 1=1';
+        const params = [];
+        if (date) { sql += ' AND business_date = ?'; params.push(date); }
+        if (status) { sql += ' AND status = ?'; params.push(status); }
+        sql += ' ORDER BY opened_at DESC LIMIT 100';
+        const result = await db.query(sql, params);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/pos/shifts/active — get active shift for a user
+app.get('/api/pos/shifts/active', async (req, res) => {
+    try {
+        const { user_id } = req.query;
+        let sql = "SELECT * FROM pos_shifts WHERE status = 'open'";
+        const params = [];
+        if (user_id) { sql += ' AND opened_by = ?'; params.push(user_id); }
+        sql += ' ORDER BY opened_at DESC LIMIT 1';
+        const result = await db.query(sql, params);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/pos/shifts — start a shift
+app.post('/api/pos/shifts', async (req, res) => {
+    const { id, opened_by, opening_cash, outlet, station_id } = req.body;
+    if (!id || !opened_by) return res.status(400).json({ ok: false, error: 'id and opened_by required' });
+    try {
+        // Enforce one open shift per user
+        const existing = await db.query(
+            "SELECT id FROM pos_shifts WHERE opened_by = ? AND status = 'open' LIMIT 1",
+            [opened_by]
+        );
+        if (existing.rows && existing.rows.length > 0) {
+            return res.status(409).json({ ok: false, error: 'User already has an open shift', existing_id: existing.rows[0].id });
+        }
+        const shiftNum = await db.query('SELECT COALESCE(MAX(shift_number),0)+1 as next FROM pos_shifts WHERE business_date = CURRENT_DATE');
+        const nextNum = shiftNum.rows?.[0]?.next || 1;
+        const result = await db.query(`
+            INSERT INTO pos_shifts (id, outlet, shift_number, business_date, opened_by, opening_cash, status, inserted_at, updated_at)
+            VALUES (?, ?, ?, CURRENT_DATE, ?, ?, 'open', NOW(), NOW())
+        `, [id, outlet || 'Restaurant', nextNum, opened_by, Number(opening_cash || 0)]);
+        res.json({ ...result, shift_number: nextNum });
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// PUT /api/pos/shifts/:id/close — close a shift
+app.put('/api/pos/shifts/:id/close', async (req, res) => {
+    const { id } = req.params;
+    const { closing_cash, closed_by, total_sales, total_cash, total_card, total_room_charge,
+            total_voids, transaction_count, void_count, z_reading_number } = req.body;
+    try {
+        const expected = await db.query('SELECT opening_cash FROM pos_shifts WHERE id = ?', [id]);
+        const openingCash = expected.rows?.[0]?.opening_cash || 0;
+        const cashVariance = closing_cash !== undefined ? Number(closing_cash) - (Number(openingCash) + Number(total_cash || 0)) : 0;
+        const result = await db.query(`
+            UPDATE pos_shifts SET
+                status = 'closed', closed_at = NOW(), closed_by = ?,
+                closing_cash = ?, expected_cash = ?, cash_variance = ?,
+                total_sales = ?, total_cash = ?, total_card = ?,
+                total_room_charge = ?, total_voids = ?,
+                transaction_count = ?, void_count = ?,
+                z_reading_number = ?, updated_at = NOW()
+            WHERE id = ?
+        `, [closed_by, Number(closing_cash || 0),
+            Number(openingCash) + Number(total_cash || 0), cashVariance,
+            Number(total_sales || 0), Number(total_cash || 0), Number(total_card || 0),
+            Number(total_room_charge || 0), Number(total_voids || 0),
+            Number(transaction_count || 0), Number(void_count || 0),
+            z_reading_number || null, id]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// PUT /api/pos/shifts/:id/totals — update running totals
+app.put('/api/pos/shifts/:id/totals', async (req, res) => {
+    const { id } = req.params;
+    const { total_sales, total_cash, total_card, total_room_charge, tx_count } = req.body;
+    try {
+        const result = await db.query(`
+            UPDATE pos_shifts SET
+                total_sales = ?, total_cash = ?, total_card = ?,
+                total_room_charge = ?, transaction_count = ?, updated_at = NOW()
+            WHERE id = ? AND status = 'open'
+        `, [Number(total_sales || 0), Number(total_cash || 0), Number(total_card || 0),
+            Number(total_room_charge || 0), Number(tx_count || 0), id]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/pos/orders — save a POS order/bill
+app.post('/api/pos/orders', async (req, res) => {
+    const { id, items, total_amount, status, outlet, shift_id, payment_method,
+            business_date, table_number, guest_id, opened_by, closed_by } = req.body;
+    if (!id || !total_amount === undefined) return res.status(400).json({ ok: false, error: 'id required' });
+    try {
+        const result = await db.query(`
+            INSERT INTO pos_orders (id, items, total_amount, status, outlet, shift_id,
+                payment_method, business_date, table_number, guest_id, opened_by, closed_by, updated_at, created_at)
+            VALUES (?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                items = EXCLUDED.items, total_amount = EXCLUDED.total_amount,
+                status = EXCLUDED.status, payment_method = EXCLUDED.payment_method,
+                closed_by = EXCLUDED.closed_by, updated_at = NOW()
+        `, [id, JSON.stringify(items || []), Number(total_amount || 0),
+            status || 'open', outlet || 'Restaurant', shift_id || null,
+            payment_method || null, business_date || new Date().toISOString().slice(0,10),
+            table_number || null, guest_id || null,
+            opened_by || null, closed_by || null]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/pos/reports/daily — daily POS summary by date
+app.get('/api/pos/reports/daily', async (req, res) => {
+    try {
+        const { date } = req.query;
+        const reportDate = date || new Date().toISOString().slice(0, 10);
+        const result = await db.query(`
+            SELECT
+                COUNT(*) as order_count,
+                SUM(total_amount) as gross_sales,
+                outlet,
+                payment_method
+            FROM pos_orders
+            WHERE status = 'closed' AND business_date = ?
+            GROUP BY outlet, payment_method
+            ORDER BY outlet, payment_method
+        `, [reportDate]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/printer/status — printer health check
+app.get('/api/printer/status', (req, res) => {
+    // Browser print is always available. Real thermal printers would need a different check.
+    res.json({ connected: true, method: 'browser', lastCheck: new Date().toISOString() });
+});
+
 // ─── Inventory Reconciliation API Endpoints ─────────────────────────────────────
 
 // GET /api/inventory/periods

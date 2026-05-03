@@ -380,7 +380,7 @@ export const Reports: React.FC = () => {
       {(reportType === 'night-audit' || reportType === 'gl') && (
         <BackToAccountingButton />
       )}
-      <h2 className="text-3xl font-bold text-gray-800 mb-6">Reports & Analytics</h2>
+      <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-800 mb-4 sm:mb-6">Reports &amp; Analytics</h2>
       
       <div className="bg-blue-600 rounded-xl shadow-lg p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
@@ -417,7 +417,7 @@ export const Reports: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-blue-500">
               <p className="text-gray-600 text-sm font-medium mb-2">Occupancy Rate</p>
               <p className="text-4xl font-bold text-blue-600">
