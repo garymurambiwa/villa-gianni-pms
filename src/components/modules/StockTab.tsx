@@ -136,43 +136,47 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
     <div className="space-y-3" aria-labelledby="stock-tab-title">
       <div id="stock-tab-title" className="ds-subheader">Stock List</div>
       <div className="ds-toolbar" role="toolbar" aria-label="Stock filters">
-        <Input aria-label="Search by name" placeholder="Search name" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="w-48" />
-        <Select value={center} onValueChange={(v) => { setCenter(v as any); setPage(1); }}>
-          <SelectTrigger className="w-36"><SelectValue placeholder="Center" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="bar">Bar</SelectItem>
-            <SelectItem value="restaurant">Restaurant</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={severity} onValueChange={(v) => { setSeverity(v as any); setPage(1); }}>
-          <SelectTrigger className="w-40"><SelectValue placeholder="Severity" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All severity</SelectItem>
-            <SelectItem value="low">Low</SelectItem>
-            <SelectItem value="medium">Medium</SelectItem>
-            <SelectItem value="high">High</SelectItem>
-          </SelectContent>
-        </Select>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" aria-label="Attention only" checked={attentionOnly} onChange={(e) => { setAttentionOnly(e.target.checked); setPage(1); }} />
-          Attention only
-        </label>
-        <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
-          <SelectTrigger className="w-28"><SelectValue placeholder="Page size" /></SelectTrigger>
-          <SelectContent>
-            {[25, 50, 100].map(n => (<SelectItem key={n} value={String(n)}>{n}/page</SelectItem>))}
-          </SelectContent>
-        </Select>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={virtualize} onChange={(e) => setVirtualize(e.target.checked)} aria-label="Enable virtualization" />
-          Virtualize
-        </label>
+        <div className="flex flex-wrap gap-2 w-full">
+          <Input aria-label="Search by name" placeholder="Search name" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="ds-input-compact w-full sm:w-48" />
+          <Select value={center} onValueChange={(v) => { setCenter(v as any); setPage(1); }}>
+            <SelectTrigger className="ds-select-compact w-full sm:w-36"><SelectValue placeholder="Center" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="bar">Bar</SelectItem>
+              <SelectItem value="restaurant">Restaurant</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={severity} onValueChange={(v) => { setSeverity(v as any); setPage(1); }}>
+            <SelectTrigger className="ds-select-compact w-full sm:w-40"><SelectValue placeholder="Severity" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All severity</SelectItem>
+              <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="flex items-center gap-4 w-full sm:w-auto">
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" aria-label="Attention only" checked={attentionOnly} onChange={(e) => { setAttentionOnly(e.target.checked); setPage(1); }} />
+              Attention
+            </label>
+            <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+              <SelectTrigger className="ds-select-compact w-24"><SelectValue placeholder="Page size" /></SelectTrigger>
+              <SelectContent>
+                {[25, 50, 100].map(n => (<SelectItem key={n} value={String(n)}>{n}/page</SelectItem>))}
+              </SelectContent>
+            </Select>
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={virtualize} onChange={(e) => setVirtualize(e.target.checked)} aria-label="Enable virtualization" />
+              Virtualize
+            </label>
+          </div>
+        </div>
       </div>
 
       {/* Bulk actions */}
-      <div className="ds-toolbar text-sm">
-        <Button variant="outline" onClick={() => {
+      <div className="ds-toolbar text-xs overflow-x-auto pb-1">
+        <Button variant="outline" className="ds-button-compact" onClick={() => {
           const ids = Array.from(selectedIds);
           if (!ids.length) return;
           // Delete selected locally
@@ -180,17 +184,17 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
           setAllItems(next);
           setSelectedIds(new Set());
         }}>Delete Selected</Button>
-        <Button variant="outline" onClick={() => {
+        <Button variant="outline" className="ds-button-compact" onClick={() => {
           const ids = Array.from(selectedIds); if (!ids.length) return;
           const next = allItems.map((it: any) => ids.includes(it.id) ? { ...it, visibility: { ...(it.visibility || {}), bar: true } } : it);
           setAllItems(next);
         }}>Set Bar Visible</Button>
-        <Button variant="outline" onClick={() => {
+        <Button variant="outline" className="ds-button-compact" onClick={() => {
           const ids = Array.from(selectedIds); if (!ids.length) return;
           const next = allItems.map((it: any) => ids.includes(it.id) ? { ...it, visibility: { ...(it.visibility || {}), restaurant: true } } : it);
           setAllItems(next);
         }}>Set Restaurant Visible</Button>
-        <div className="text-xs text-gray-600 ml-2">Selected: {selectedIds.size}</div>
+        <div className="text-xs text-gray-600 ml-2 whitespace-nowrap">Selected: {selectedIds.size}</div>
       </div>
 
       {loading && (<div role="status" aria-live="polite" className="text-xs text-gray-600">Filtering…</div>)}
@@ -204,11 +208,11 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
                 else setSelectedIds(new Set());
               }} /></th>
               <th scope="col" className="text-left">Name</th>
-              <th scope="col">Center</th>
+              <th scope="col" className="hide-on-mobile">Center</th>
               <th scope="col" className="text-right">Price</th>
-              <th scope="col" className="text-right">GP%</th>
+              <th scope="col" className="text-right hide-on-mobile">GP%</th>
               <th scope="col">Issues</th>
-              <th scope="col">Visibility</th>
+              <th scope="col" className="hide-on-mobile">Visibility</th>
               <th scope="col">Actions</th>
             </tr>
           </thead>
@@ -226,26 +230,26 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
                     if (e.target.checked) next.add(it.id); else next.delete(it.id);
                     setSelectedIds(next);
                   }} aria-label={`Select ${it.name}`} /></td>
-                  <td className="text-left">{it.name}</td>
-                  <td className="capitalize">{it.costCenter || '—'}</td>
-                  <td className="text-right">${Number(it.sellingPrice || 0).toFixed(2)}</td>
-                  <td className="text-right">{gp}%</td>
+                  <td className="text-left font-medium">{it.name}</td>
+                  <td className="capitalize hide-on-mobile">{it.costCenter || '—'}</td>
+                  <td className="text-right font-mono">${Number(it.sellingPrice || 0).toFixed(2)}</td>
+                  <td className="text-right font-mono hide-on-mobile">{gp}%</td>
                   <td>
                     {issues.length ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-red-700 bg-red-100 px-2 py-1 rounded" aria-label={`${issues.length} issues`}>{issues.length} issues</span>
+                      <span className="inline-flex items-center gap-1 text-[10px] sm:text-xs text-red-700 bg-red-100 px-2 py-0.5 rounded" aria-label={`${issues.length} issues`}>{issues.length}</span>
                     ) : (
-                      <span className="text-xs text-green-700 bg-green-100 px-2 py-1 rounded" aria-label="OK">OK</span>
+                      <span className="text-[10px] sm:text-xs text-green-700 bg-green-100 px-2 py-0.5 rounded" aria-label="OK">OK</span>
                     )}
                   </td>
-                  <td>
-                    <span className="text-xs bg-gray-200 rounded px-2 py-1 mr-1">Bar: {it.visibility?.bar ? 'Yes' : 'No'}</span>
-                    <span className="text-xs bg-gray-200 rounded px-2 py-1">Restaurant: {it.visibility?.restaurant ? 'Yes' : 'No'}</span>
+                  <td className="hide-on-mobile">
+                    <span className="text-[10px] bg-gray-100 rounded px-1.5 py-0.5 mr-1">B:{it.visibility?.bar ? 'Y' : 'N'}</span>
+                    <span className="text-[10px] bg-gray-100 rounded px-1.5 py-0.5">R:{it.visibility?.restaurant ? 'Y' : 'N'}</span>
                   </td>
                   <td>
-                    <div className="flex gap-2">
-                      {canEdit && (<Button variant="outline" onClick={() => onEditItem?.(it)} aria-label={`Edit ${it.name}`}>Edit</Button>)}
-                      {canFix && (<Button variant="secondary" onClick={() => onFixItem?.(it)} aria-label={`Fix ${it.name}`}>Fix</Button>)}
-                      {canDelete && (<Button variant="destructive" onClick={() => onDeleteItem?.(it.id)} aria-label={`Delete ${it.name}`}>Delete</Button>)}
+                    <div className="flex gap-1 flex-wrap">
+                      {canEdit && (<Button variant="outline" className="ds-button-compact" onClick={() => onEditItem?.(it)} aria-label={`Edit ${it.name}`}>Edit</Button>)}
+                      {canFix && (<Button variant="secondary" className="ds-button-compact" onClick={() => onFixItem?.(it)} aria-label={`Fix ${it.name}`}>Fix</Button>)}
+                      {canDelete && (<Button variant="destructive" className="ds-button-compact" onClick={() => onDeleteItem?.(it.id)} aria-label={`Delete ${it.name}`}>Del</Button>)}
                     </div>
                   </td>
                 </tr>

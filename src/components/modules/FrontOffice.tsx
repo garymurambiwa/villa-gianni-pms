@@ -1198,18 +1198,18 @@ export const FrontOffice: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex items-center space-x-2 bg-white p-4 rounded-lg shadow-sm border">
-        <Search className="h-5 w-5 text-gray-400" />
+      <div className="flex items-center space-x-2 bg-white p-2 sm:p-4 rounded-lg shadow-sm border">
+        <Search className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400" />
         <Input
           placeholder="Search guest name or reservation ID..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="flex-1 border-none shadow-none focus-visible:ring-0"
+          className="flex-1 border-none shadow-none focus-visible:ring-0 ds-input-compact sm:h-10 sm:text-sm"
         />
       </div>
 
       <Tabs defaultValue="arrivals" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-6 lg:w-[750px] h-auto">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-6 lg:grid-cols-7 h-auto p-1 bg-muted">
           <TabsTrigger value="in_house">In House ({inHouse.length})</TabsTrigger>
           <TabsTrigger value="arrivals">Arrivals ({arrivals.length})</TabsTrigger>
           <TabsTrigger value="departures">Departed ({checkedOutToday.length})</TabsTrigger>

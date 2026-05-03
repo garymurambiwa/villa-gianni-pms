@@ -160,7 +160,7 @@
 
   /* Table styling to match POS Settings typography and spacing */
   .ds-table {
-    @apply w-full text-sm;
+    @apply w-full text-sm border-collapse;
   }
 
   .ds-table thead tr {
@@ -168,10 +168,45 @@
   }
 
   .ds-table th {
-    @apply px-4 py-3 text-left font-semibold text-gray-700;
+    @apply px-4 py-3 text-left font-semibold text-gray-700 whitespace-nowrap;
   }
 
   .ds-table td {
-    @apply px-4 py-3 text-sm text-gray-800;
+    @apply px-4 py-3 text-sm text-gray-800 border-b border-gray-100;
+  }
+
+  /* Responsive Table Wrapper */
+  .ds-table-container {
+    @apply w-full overflow-x-auto rounded-lg border border-gray-200;
+  }
+
+  /* Compact form elements for dense data views */
+  .ds-input-compact {
+    @apply h-8 py-1 px-2 text-xs !important;
+  }
+
+  .ds-select-compact {
+    @apply h-8 py-0 px-2 text-xs !important;
+  }
+
+  .ds-button-compact {
+    @apply h-8 px-3 text-xs !important;
+  }
+
+  /* Intelligent Grid - adjusts automatically based on content width */
+  .ds-grid-responsive {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr));
+    gap: 1rem;
+  }
+
+  /* Stackable grid for mobile */
+  .ds-stack-mobile {
+    @apply flex flex-col md:flex-row gap-4;
+  }
+
+  /* Font visibility optimization */
+  .ds-text-responsive {
+    @apply text-xs sm:text-sm md:text-base;
   }
 }

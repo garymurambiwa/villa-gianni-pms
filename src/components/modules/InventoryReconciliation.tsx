@@ -353,15 +353,61 @@ export const InventoryReconciliation: React.FC = () => {
 
     try {
       for (const [productId, qty] of Object.entries(physicalCounts)) {
+        const physicalQty = Number(qty) || 0;
+        const today = new Date().toISOString().split('T')[0];
+
+        // Get product details to access current book quantity and cost
+        const productRes = await db.query(
+          'SELECT stock_level, cost_price FROM products WHERE id = ?',
+          [productId]
+        );
+        const product = ('rows' in productRes && productRes.rows?.[0]) || { stock_level: 0, cost_price: 0 };
+        const bookQty = Number(product.stock_level || 0);
+        const costPrice = Number(product.cost_price || 0);
+
+        // Calculate variance
+        const variance = physicalQty - bookQty;
+
+        // Fetch aggregated transaction sums for this period/product
+        const aggRes = await db.query(
+          `SELECT
+            COALESCE(SUM(CASE WHEN type = 'opening_balance' THEN quantity ELSE 0 END), 0) as opening_qty,
+            COALESCE(SUM(CASE WHEN type IN ('purchase', 'grv') THEN quantity ELSE 0 END), 0) as received_qty,
+            COALESCE(SUM(CASE WHEN type = 'usage' THEN quantity ELSE 0 END), 0) as usage_qty
+           FROM inventory_transactions
+           WHERE period_id = ? AND product_id = ?`,
+          [selectedPeriod.id, productId]
+        );
+        const agg = ('rows' in aggRes && aggRes.rows?.[0]) || { opening_qty: 0, received_qty: 0, usage_qty: 0 };
+        const openingQty = Number(agg.opening_qty || 0);
+        const receivedQty = Number(agg.received_qty || 0);
+        const usageQty = Number(agg.usage_qty || 0);
+
+        // Update product metadata
         await db.query(
           `UPDATE products SET last_inventory_period_id = ?, last_physical_qty = ?, last_physical_date = ? WHERE id = ?`,
-          [selectedPeriod.id, qty, new Date().toISOString().split('T')[0], productId]
+          [selectedPeriod.id, physicalQty, today, productId]
+        );
+
+        // Upsert inventory_snapshot with ON CONFLICT DO UPDATE
+        await db.query(
+          `INSERT INTO inventory_snapshots (period_id, product_id, physical_qty, variance, opening_qty, received_qty, system_usage_qty)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (period_id, product_id) DO UPDATE SET
+             physical_qty = excluded.physical_qty,
+             variance = excluded.variance,
+             opening_qty = excluded.opening_qty,
+             received_qty = excluded.received_qty,
+             system_usage_qty = excluded.system_usage_qty,
+             updated_at = NOW()`,
+          [selectedPeriod.id, productId, physicalQty, variance, openingQty, receivedQty, usageQty]
         );
       }
 
-      toast({ title: 'Physical counts saved' });
+      toast({ title: 'Physical counts saved successfully' });
     } catch (e: any) {
-      toast({ title: 'Failed to save counts', variant: 'destructive' });
+      console.error('Save physical counts error:', e);
+      toast({ title: 'Failed to save physical counts', description: e.message, variant: 'destructive' });
     }
   };
 

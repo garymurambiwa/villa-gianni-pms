@@ -236,23 +236,29 @@ export async function syncProductToDb(item: ProductRecord): Promise<SyncResult> 
 export async function deleteProductFromDb(itemId: string): Promise<SyncResult> {
   try {
     const isConfigured = await db.isConfigured();
-    if (!isConfigured) {
-      return { success: true, synced: 0 };
+    if (!isConfigured) return { success: true, synced: 0 };
+
+    console.log('[dbSync] Deleting product from DB (all tables):', itemId);
+
+    // Delete from all potential inventory-related tables to ensure consistency
+    const operations = [
+      { sql: `DELETE FROM products WHERE id = $1`, params: [itemId] },
+      { sql: `DELETE FROM inventory_items WHERE id = $1`, params: [itemId] },
+      { sql: `DELETE FROM menu_items WHERE id = $1`, params: [itemId] }
+    ];
+
+    const result = await db.transaction(operations);
+
+    if (!result.ok) {
+      throw new Error((result as any).error || 'Transaction failed');
     }
 
-    const sql = `DELETE FROM products WHERE id = $1`;
-    const result = await db.query(sql, [itemId]);
-
-    if ('error' in result) {
-      console.error('[dbSync] Product delete failed:', (result as any).error);
-      return { success: false, error: (result as any).error };
-    }
-
-    console.log('[dbSync] Product deleted from DB:', itemId);
+    console.log('[dbSync] Successfully deleted product from all tables:', itemId);
     return { success: true, synced: 1 };
   } catch (err: any) {
-    console.error('[dbSync] Product delete error:', err?.message || err);
-    return { success: false, error: err?.message || String(err) };
+    const msg = err?.message || String(err);
+    console.error('[dbSync] Delete product CRITICAL FAILURE:', msg, itemId);
+    return { success: false, error: msg };
   }
 }
 
@@ -897,6 +903,9 @@ export async function ensureTablesExist(): Promise<boolean> {
         category VARCHAR(50),
         stock_level NUMERIC NOT NULL DEFAULT 0,
         price NUMERIC(12,2) NOT NULL DEFAULT 0,
+        cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+        unit TEXT DEFAULT 'units',
+        visibility TEXT,
         inserted_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
@@ -974,11 +983,14 @@ export async function ensureTablesExist(): Promise<boolean> {
       console.warn('[dbSync] Failed to add updated_at column to menu_items:', e);
     }
 
-    // Ensure inventory_items table has updated_at column
+    // Ensure inventory_items table has expected columns
     try {
       await db.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();`);
+      await db.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS cost NUMERIC(12,2) DEFAULT 0;`);
+      await db.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS unit TEXT DEFAULT 'units';`);
+      await db.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS visibility TEXT;`);
     } catch (e) {
-      console.warn('[dbSync] Failed to add updated_at column to inventory_items:', e);
+      console.warn('[dbSync] Failed to patch inventory_items table:', e);
     }
 
     // Create app_users table if not exists (for Browser Auth)

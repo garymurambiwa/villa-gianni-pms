@@ -3058,33 +3058,41 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
   useEffect(() => {
     if (!user) return; // Don't load data if not logged in
 
-    loadAllData();
-    loadCityLedger();
-    loadVendors();
-    loadVendorExpenses();
-    loadVendorPayments();
-    loadLogs();
-
-    // Perform initial sync of localStorage data to database
-    // This ensures any items created while offline are synced
-    (async () => {
+    const startup = async () => {
       try {
+        // 1. First load fresh data from DB to clean up localStorage
+        console.log('[DataContext] Starting startup sequence...');
+        await loadAllData();
+        await Promise.all([
+          loadCityLedger(),
+          loadVendors(),
+          loadVendorExpenses(),
+          loadVendorPayments(),
+          loadLogs()
+        ]);
+
+        // 2. ONLY after local state is fresh from DB, perform sync of any new/offline items
+        // This prevents re-inserting items that were deleted in the DB but still in local storage
         await ensureTablesExist();
         const result = await performFullSync();
         if (result.synced && result.synced > 0) {
           console.log(`[DataContext] Initial sync completed: ${result.synced} items synced to database`);
+          // If sync pushed new items, reload one last time to be safe
+          await loadAllData();
+        }
+
+        // 3. Start real-time sync service
+        const syncService = initializeRealTimeSync();
+        if (syncService) {
+          syncService.start();
+          setIsRealTimeSyncActive(true);
         }
       } catch (err) {
-        console.warn('[DataContext] Initial sync failed:', err);
+        console.error('[DataContext] Startup sequence failed:', err);
       }
-    })();
+    };
 
-    // Initialize and start real-time sync service
-    const syncService = initializeRealTimeSync();
-    if (syncService) {
-      syncService.start();
-      setIsRealTimeSyncActive(true);
-    }
+    startup();
   }, [user, loadAllData, loadCityLedger, loadVendors, loadVendorExpenses, loadVendorPayments, loadLogs, initializeRealTimeSync]);
 
   return (
