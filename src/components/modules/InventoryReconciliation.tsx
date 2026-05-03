@@ -367,79 +367,35 @@ export const InventoryReconciliation: React.FC = () => {
      if (!selectedPeriod) return;
 
      try {
-       const kitchenProds = products.filter(p => p.department === 'Kitchen');
-       const cellarProds = products.filter(p => p.department === 'Cellar');
-       
-       // Physical counts
-       const physKitchen = kitchenProds.reduce((sum, p) => sum + (physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0)), 0);
-       const physCellar = cellarProds.reduce((sum, p) => sum + (physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0)), 0);
-       
-       // Calculate closing stock value using actual product cost prices
-       const kitchenClosingValue = kitchenProds.reduce((sum, p) => {
-         const physQty = physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0);
-         return sum + (physQty * (Number(p.cost_price) || 0));
-       }, 0);
-       
-       const cellarClosingValue = cellarProds.reduce((sum, p) => {
-         const physQty = physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0);
-         return sum + (physQty * (Number(p.cost_price) || 0));
-       }, 0);
-       
-       const closingVal = kitchenClosingValue + cellarClosingValue;
-       
-       // Calculate variance values: (physical_qty - book_qty) * cost_price
-       let totalVarianceVal = 0;
-       let kitchenVarVal = 0;
-       let cellarVarVal = 0;
-       
-       for (const product of [...kitchenProds, ...cellarProds]) {
-         const physQty = physicalCounts[product.id] ? Number(physicalCounts[product.id]) : (Number(product.last_physical_qty) || 0);
-         const bookQty = Number(product.stock_level || 0); // Current system quantity is expected
-         const varianceQty = physQty - bookQty;
-         const varianceVal = varianceQty * (Number(product.cost_price) || 0);
-         
-         totalVarianceVal += varianceVal;
-         if (product.department === 'Kitchen') kitchenVarVal += varianceVal;
-         else if (product.department === 'Cellar') cellarVarVal += varianceVal;
-       }
-       
-       const cogsVal = selectedPeriod.opening_stock_value + selectedPeriod.received_value - closingVal;
-       
-       // Use dedicated close endpoint which locks period
+       // Call server to close period; server will compute totals, create snapshots and adjustments
        const response = await fetch('/api/inventory/close', {
          method: 'POST',
          headers: { 'Content-Type': 'application/json' },
          body: JSON.stringify({
            period_id: selectedPeriod.id,
-           closing_stock_value: closingVal,
-           variance_value: totalVarianceVal,
-           cogs_value: cogsVal,
-           kitchen_cogs: kitchenVarVal,
-           cellar_cogs: cellarVarVal,
            closed_by: user?.name,
            closed_reason: closeReason
-           // is_locked and locked_at set by server
+           // manager_override will be sent automatically if zero-capture
          })
        });
        const data = await response.json();
        if (!response.ok || !data.ok) {
+         if (data.error === 'ZERO_CAPTURE') {
+           // Prompt user for override confirmation? For now just show error
+           toast({ title: 'Zero capture detected', description: 'No receipts found. Add manager_override or add receipts.', variant: 'destructive' });
+           return;
+         }
          throw new Error(data.error || 'Failed to close period');
        }
 
-       // Update product stock levels to physical counts (can use generic db)
-       for (const product of products) {
-         const newQty = physicalCounts[product.id] || product.last_physical_qty || product.stock_level;
-         await db.query(`UPDATE products SET stock_level = ? WHERE id = ?`, [newQty, product.id]);
-       }
-
-      toast({ title: 'Period closed successfully' });
-      setShowCloseDialog(false);
-      loadData();
-    } catch (e: any) {
-      console.error('Close period error:', e);
-      toast({ title: 'Failed to close period', variant: 'destructive' });
-    }
-  };
+       toast({ title: 'Period closed successfully', description: `Closing stock: $${Number(data.closing_stock_value || 0).toFixed(2)}` });
+       setShowCloseDialog(false);
+       loadData();
+     } catch (e: any) {
+       console.error('Close period error:', e);
+       toast({ title: 'Failed to close period', description: e.message, variant: 'destructive' });
+     }
+   };
 
    const addBackfill = async () => {
      if (!selectedPeriod || selectedProducts.size === 0) {
@@ -973,43 +929,25 @@ export const InventoryReconciliation: React.FC = () => {
                   return;
                 }
 
-                for (const [id, data] of entries) {
-                  const product = products.find(p => p.id === id);
-                  if (!product) continue;
+                // Prepare items array for batch endpoint
+                const items = entries.map(([id, data]) => ({
+                  product_id: id,
+                  physical_qty: data.physicalQty,
+                  cost_price: data.costPrice
+                }));
 
-                  // Build dynamic UPDATE for stock_level and/or cost_price
-                  const updates: string[] = [];
-                  const values: any[] = [];
-
-                  if (data.physicalQty !== undefined && data.physicalQty !== null) {
-                    updates.push('stock_level = ?');
-                    values.push(data.physicalQty);
-                  }
-                  if (data.costPrice !== undefined && data.costPrice !== null) {
-                    updates.push('cost_price = ?');
-                    values.push(data.costPrice);
-                  }
-
-                  if (updates.length > 0) {
-                    values.push(id);
-                    await db.query(
-                      `UPDATE products SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
-                      values
-                    );
-                  }
-
-                  // Log an inventory adjustment transaction
-                  // Determine cost to use: if costPrice provided use it, else product's current cost
-                  const useCost = (data.costPrice !== undefined && data.costPrice !== null) ? data.costPrice : (product.cost_price || 0);
-                  const totalValue = (data.physicalQty || 0) * useCost;
-
-                  await db.query(
-                    `INSERT INTO inventory_transactions 
-                     (transaction_type, transaction_number, transaction_date, department, total_quantity, total_value, created_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                    ['adjustment', `BATCH-${Date.now()}-${id.slice(0,8)}`, new Date().toISOString().split('T')[0],
-                     product?.department || 'Kitchen', data.physicalQty || 0, totalValue, user?.name]
-                  );
+                const response = await fetch('/api/inventory/batch-reconcile', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    period_id: selectedPeriod.id,
+                    user_id: user?.id,
+                    items
+                  })
+                });
+                const result = await response.json();
+                if (!response.ok || !result.ok) {
+                  throw new Error(result.error || 'Batch reconciliation failed');
                 }
 
                 toast({ title: 'Batch reconciliation saved successfully' });
