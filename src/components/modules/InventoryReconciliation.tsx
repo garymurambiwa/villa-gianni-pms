@@ -222,106 +222,129 @@ export const InventoryReconciliation: React.FC = () => {
     }
   };
 
-  const createPeriod = async () => {
-    if (!newPeriod.startDate || !newPeriod.endDate) {
-      toast({ title: 'Please select start and end dates', variant: 'destructive' });
-      return;
-    }
+   const createPeriod = async () => {
+     if (!newPeriod.startDate || !newPeriod.endDate) {
+       toast({ title: 'Please select start and end dates', variant: 'destructive' });
+       return;
+     }
 
-    try {
-      const existingRes = await db.query(
-        'SELECT id FROM inventory_periods WHERE period_year = ? AND period_month = ?',
-        [newPeriod.periodYear, newPeriod.periodMonth]
-      );
-      if ('rows' in existingRes && existingRes.rows.length > 0) {
-        toast({ title: 'Period already exists for this month', variant: 'destructive' });
-        return;
-      }
+     try {
+       const existingRes = await db.query(
+         'SELECT id FROM inventory_periods WHERE period_year = ? AND period_month = ?',
+         [newPeriod.periodYear, newPeriod.periodMonth]
+       );
+       if ('rows' in existingRes && existingRes.rows.length > 0) {
+         toast({ title: 'Period already exists for this month', variant: 'destructive' });
+         return;
+       }
 
-      let openingStockValue = 0;
-      if (!newPeriod.isInitial) {
-        const latestRes = await db.query(
-          'SELECT closing_stock_value FROM inventory_periods WHERE status IN (?, ?) ORDER BY period_year DESC, period_month DESC LIMIT 1',
-          ['closed', 'locked']
-        );
-        if ('rows' in latestRes && latestRes.rows.length > 0) {
-          openingStockValue = Number(latestRes.rows[0].closing_stock_value || 0);
-        }
-      } else {
-        const stockRes = await db.query(
-          `SELECT SUM(p.stock_level * p.cost_price) as total FROM products p WHERE p.is_stock_item = true`
-        );
-        if ('rows' in stockRes && stockRes.rows.length > 0) {
-          openingStockValue = Number(stockRes.rows[0].total || 0);
-        }
-      }
+       let openingStockValue = 0;
+       if (!newPeriod.isInitial) {
+         const latestRes = await db.query(
+           'SELECT closing_stock_value FROM inventory_periods WHERE status IN (?, ?) ORDER BY period_year DESC, period_month DESC LIMIT 1',
+           ['closed', 'locked']
+         );
+         if ('rows' in latestRes && latestRes.rows.length > 0) {
+           openingStockValue = Number(latestRes.rows[0].closing_stock_value || 0);
+         }
+       } else {
+         const stockRes = await db.query(
+           `SELECT SUM(p.stock_level * p.cost_price) as total FROM products p WHERE p.is_stock_item = true`
+         );
+         if ('rows' in stockRes && stockRes.rows.length > 0) {
+           openingStockValue = Number(stockRes.rows[0].total || 0);
+         }
+       }
 
-      const monthName = new Date(newPeriod.periodYear, newPeriod.periodMonth - 1).toLocaleString('default', { month: 'long' });
-      const periodName = `${monthName} ${newPeriod.periodYear}`;
+       const monthName = new Date(newPeriod.periodYear, newPeriod.periodMonth - 1).toLocaleString('default', { month: 'long' });
+       const periodName = `${monthName} ${newPeriod.periodYear}`;
 
-      const insertRes = await db.query(
-        `INSERT INTO inventory_periods (period_name, period_year, period_month, start_date, end_date, status, opening_stock_value, received_value, kitchen_cogs, cellar_cogs, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-        [periodName, newPeriod.periodYear, newPeriod.periodMonth, newPeriod.startDate, newPeriod.endDate, 'open', openingStockValue, 0, 0, 0, user?.name]
-      );
+       // Use dedicated endpoint with singleton protection
+       const response = await fetch('/api/inventory/periods', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           period_name: periodName,
+           period_year: newPeriod.periodYear,
+           period_month: newPeriod.periodMonth,
+           start_date: newPeriod.startDate,
+           end_date: newPeriod.endDate,
+           status: 'open',
+           opening_stock_value: openingStockValue,
+           created_by: user?.name
+         })
+       });
+       const data = await response.json();
+       if (!response.ok || !data.ok) {
+         throw new Error(data.error || 'Failed to create period');
+       }
+       const periodId = data.rows[0]?.id;
 
-      const periodId = (insertRes as any).rows[0].id;
+       // Audit log (can use generic db)
+       await db.query(
+         `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, is_historical_backfill)
+          VALUES (?, 'PERIOD_CREATED', ?, ?, false)`,
+         [periodId, user?.id, user?.name]
+       );
 
-      await db.query(
-        `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, is_historical_backfill)
-         VALUES (?, 'PERIOD_CREATED', ?, ?, false)`,
-        [periodId, user?.id, user?.name]
-      );
+       toast({ title: 'Inventory period created successfully' });
+       setShowNewPeriodDialog(false);
+       loadData();
+     } catch (e: any) {
+       console.error('Create period error:', e);
+       toast({ title: 'Failed to create period', variant: 'destructive' });
+     }
+   };
 
-      toast({ title: 'Inventory period created successfully' });
-      setShowNewPeriodDialog(false);
-      loadData();
-    } catch (e: any) {
-      console.error('Create period error:', e);
-      toast({ title: 'Failed to create period', variant: 'destructive' });
-    }
-  };
+   const openPeriod = async (periodId: string) => {
+     try {
+       const response = await fetch(`/api/inventory/periods/${periodId}`, {
+         method: 'PUT',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           status: 'open',
+           reopened_by: user?.name,
+           reopened_at: new Date().toISOString()
+         })
+       });
+       const data = await response.json();
+       if (!response.ok || !data.ok) {
+         throw new Error(data.error || 'Failed to open period');
+       }
 
-  const openPeriod = async (periodId: string) => {
-    try {
-      const openRes = await db.query("SELECT id FROM inventory_periods WHERE status = 'open'");
-      if ('rows' in openRes && openRes.rows.length > 0) {
-        toast({ title: 'Another period is already open', variant: 'destructive' });
-        return;
-      }
+       toast({ title: 'Period opened successfully' });
+       loadData();
+     } catch (e: any) {
+       toast({ title: 'Failed to open period', variant: 'destructive' });
+     }
+   };
 
-      await db.query(
-        `UPDATE inventory_periods SET status = 'open', reopened_at = NOW(), reopened_by = ? WHERE id = ?`,
-        [user?.name, periodId]
-      );
+   const startReconciliation = async (periodId: string) => {
+     try {
+       // Update status to reconciling via dedicated endpoint
+       const response = await fetch(`/api/inventory/periods/${periodId}`, {
+         method: 'PUT',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ status: 'reconciling' })
+       });
+       const data = await response.json();
+       if (!response.ok || !data.ok) {
+         throw new Error(data.error || 'Failed to start reconciliation');
+       }
 
-      toast({ title: 'Period opened successfully' });
-      loadData();
-    } catch (e: any) {
-      toast({ title: 'Failed to open period', variant: 'destructive' });
-    }
-  };
+       const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = ?', [periodId]);
+       if ('rows' in periodRes && periodRes.rows.length > 0) {
+         const period = periodRes.rows[0] as InventoryPeriod;
+         setSelectedPeriod(period);
+         await loadProducts(periodId);
+       }
 
-  const startReconciliation = async (periodId: string) => {
-    try {
-      await db.query(
-        `UPDATE inventory_periods SET status = 'reconciling' WHERE id = ?`,
-        [periodId]
-      );
-
-      const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = ?', [periodId]);
-      if ('rows' in periodRes && periodRes.rows.length > 0) {
-        const period = periodRes.rows[0] as InventoryPeriod;
-        setSelectedPeriod(period);
-        await loadProducts(periodId);
-      }
-
-      toast({ title: 'Reconciliation started' });
-      loadData();
-    } catch (e: any) {
-      toast({ title: 'Failed to start reconciliation', variant: 'destructive' });
-    }
-  };
+       toast({ title: 'Reconciliation started' });
+       loadData();
+     } catch (e: any) {
+       toast({ title: 'Failed to start reconciliation', variant: 'destructive' });
+     }
+   };
 
   const savePhysicalCounts = async () => {
     if (!selectedPeriod) return;
@@ -340,51 +363,74 @@ export const InventoryReconciliation: React.FC = () => {
     }
   };
 
-  const closePeriod = async () => {
-    if (!selectedPeriod) return;
+   const closePeriod = async () => {
+     if (!selectedPeriod) return;
 
-    try {
-      const kitchenProds = products.filter(p => p.department === 'Kitchen');
-      const cellarProds = products.filter(p => p.department === 'Cellar');
-      
-      const kitchenOp = kitchenProds.reduce((sum, p) => sum + (p.last_physical_qty || p.stock_level || 0), 0);
-      const cellarOp = cellarProds.reduce((sum, p) => sum + (p.last_physical_qty || p.stock_level || 0), 0);
-      
-      const kitchenRec = transactions
-        .filter(t => t.period_id === selectedPeriod.id && t.department === 'Kitchen')
-        .reduce((sum, t) => sum + t.total_quantity, 0);
-      const cellarRec = transactions
-        .filter(t => t.period_id === selectedPeriod.id && t.department === 'Cellar')
-        .reduce((sum, t) => sum + t.total_quantity, 0);
-      
-      const kitchenExp = kitchenOp + kitchenRec;
-      const cellarExp = cellarOp + cellarRec;
-      
-      const physKitchen = kitchenProds.reduce((sum, p) => sum + (physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0)), 0);
-      const physCellar = cellarProds.reduce((sum, p) => sum + (physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0)), 0);
-      
-      const kitchenVar = physKitchen - kitchenExp;
-      const cellarVar = physCellar - cellarExp;
-      
-      const kitchenVarVal = kitchenVar * 2.5;
-      const cellarVarVal = cellarVar * 4.0;
-      
-      const closingVal = (physKitchen + physCellar) * 3.0;
-      const cogsVal = selectedPeriod.opening_stock_value + selectedPeriod.received_value - closingVal;
-      
-      await db.query(
-        `UPDATE inventory_periods 
-         SET status = 'closed', closing_stock_value = ?, variance_value = ?, cogs_value = ?,
-             kitchen_cogs = ?, cellar_cogs = ?, closed_at = NOW(), closed_by = ?, closed_reason = ?
-         WHERE id = ?`,
-        [closingVal, kitchenVarVal + cellarVarVal, cogsVal, 
-         kitchenVarVal, cellarVarVal, user?.name, closeReason, selectedPeriod.id]
-      );
+     try {
+       const kitchenProds = products.filter(p => p.department === 'Kitchen');
+       const cellarProds = products.filter(p => p.department === 'Cellar');
+       
+       // Physical counts
+       const physKitchen = kitchenProds.reduce((sum, p) => sum + (physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0)), 0);
+       const physCellar = cellarProds.reduce((sum, p) => sum + (physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0)), 0);
+       
+       // Calculate closing stock value using actual product cost prices
+       const kitchenClosingValue = kitchenProds.reduce((sum, p) => {
+         const physQty = physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0);
+         return sum + (physQty * (Number(p.cost_price) || 0));
+       }, 0);
+       
+       const cellarClosingValue = cellarProds.reduce((sum, p) => {
+         const physQty = physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0);
+         return sum + (physQty * (Number(p.cost_price) || 0));
+       }, 0);
+       
+       const closingVal = kitchenClosingValue + cellarClosingValue;
+       
+       // Calculate variance values: (physical_qty - book_qty) * cost_price
+       let totalVarianceVal = 0;
+       let kitchenVarVal = 0;
+       let cellarVarVal = 0;
+       
+       for (const product of [...kitchenProds, ...cellarProds]) {
+         const physQty = physicalCounts[product.id] ? Number(physicalCounts[product.id]) : (Number(product.last_physical_qty) || 0);
+         const bookQty = Number(product.stock_level || 0); // Current system quantity is expected
+         const varianceQty = physQty - bookQty;
+         const varianceVal = varianceQty * (Number(product.cost_price) || 0);
+         
+         totalVarianceVal += varianceVal;
+         if (product.department === 'Kitchen') kitchenVarVal += varianceVal;
+         else if (product.department === 'Cellar') cellarVarVal += varianceVal;
+       }
+       
+       const cogsVal = selectedPeriod.opening_stock_value + selectedPeriod.received_value - closingVal;
+       
+       // Use dedicated close endpoint which locks period
+       const response = await fetch('/api/inventory/close', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           period_id: selectedPeriod.id,
+           closing_stock_value: closingVal,
+           variance_value: totalVarianceVal,
+           cogs_value: cogsVal,
+           kitchen_cogs: kitchenVarVal,
+           cellar_cogs: cellarVarVal,
+           closed_by: user?.name,
+           closed_reason: closeReason
+           // is_locked and locked_at set by server
+         })
+       });
+       const data = await response.json();
+       if (!response.ok || !data.ok) {
+         throw new Error(data.error || 'Failed to close period');
+       }
 
-      for (const product of products) {
-        const newQty = physicalCounts[product.id] || product.last_physical_qty || product.stock_level;
-        await db.query(`UPDATE products SET stock_level = ? WHERE id = ?`, [newQty, product.id]);
-      }
+       // Update product stock levels to physical counts (can use generic db)
+       for (const product of products) {
+         const newQty = physicalCounts[product.id] || product.last_physical_qty || product.stock_level;
+         await db.query(`UPDATE products SET stock_level = ? WHERE id = ?`, [newQty, product.id]);
+       }
 
       toast({ title: 'Period closed successfully' });
       setShowCloseDialog(false);
@@ -395,40 +441,49 @@ export const InventoryReconciliation: React.FC = () => {
     }
   };
 
-  const addBackfill = async () => {
-    if (!selectedPeriod || selectedProducts.size === 0) {
-      toast({ title: 'Please select products to backfill', variant: 'destructive' });
-      return;
-    }
+   const addBackfill = async () => {
+     if (!selectedPeriod || selectedProducts.size === 0) {
+       toast({ title: 'Please select products to backfill', variant: 'destructive' });
+       return;
+     }
 
-    try {
-      for (const productId of selectedProducts) {
-        const product = products.find(p => p.id === productId);
-        if (product && physicalCounts[productId]) {
-          const qty = parseFloat(String(physicalCounts[productId])) || 0;
-          
-          await db.query(
-            `INSERT INTO inventory_transactions 
-             (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, created_by, is_historical_backfill)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, true)`,
-            ['adjustment', `BF-${Date.now()}`, selectedPeriod.id, new Date().toISOString().split('T')[0],
-             product.department, qty, qty * product.cost_price, user?.name]
-          );
+     try {
+       for (const productId of selectedProducts) {
+         const product = products.find(p => p.id === productId);
+         if (product && physicalCounts[productId]) {
+           const qty = parseFloat(String(physicalCounts[productId])) || 0;
+           
+           // Use dedicated endpoint which also updates period received_value
+           const response = await fetch('/api/inventory/transactions', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({
+               transaction_type: 'grv',
+               transaction_number: `BF-${Date.now()}-${productId.slice(0,8)}`,
+               period_id: selectedPeriod.id,
+               transaction_date: new Date().toISOString().split('T')[0],
+               department: product.department,
+               total_quantity: qty,
+               total_value: qty * Number(product.cost_price || 0),
+               supplier_name: 'Historical Backfill',
+               created_by: user?.name,
+               is_historical_backfill: true
+             })
+           });
+           const data = await response.json();
+           if (!response.ok || !data.ok) {
+             console.error('Backfill transaction failed:', data.error);
+           }
+         }
+       }
 
-          await db.query(
-            `UPDATE inventory_periods SET received_value = received_value + ? WHERE id = ?`,
-            [qty * product.cost_price, selectedPeriod.id]
-          );
-        }
-      }
-
-      toast({ title: 'Backfill added successfully' });
-      setShowBackfillDialog(false);
-      loadData();
-    } catch (e: any) {
-      toast({ title: 'Failed to add backfill', variant: 'destructive' });
-    }
-  };
+       toast({ title: 'Backfill added successfully' });
+       setShowBackfillDialog(false);
+       loadData();
+     } catch (e: any) {
+       toast({ title: 'Failed to add backfill', variant: 'destructive' });
+     }
+   };
 
   const calculateVariance = (opening: number, received: number, physical: number) => {
     const expected = opening + received;

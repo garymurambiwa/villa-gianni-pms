@@ -134,6 +134,14 @@ app.post('/api/inventory/periods', async (req, res) => {
         return res.status(400).json({ ok: false, error: 'Missing required fields' });
     }
     try {
+        // Enforce: only one period may be open/reconciling at a time
+        const openCheck = await db.query(
+            "SELECT id FROM inventory_periods WHERE status IN ('open', 'reconciling') LIMIT 1"
+        );
+        if (openCheck.rows && openCheck.rows.length > 0) {
+            return res.status(409).json({ ok: false, error: 'Another period is already open or reconciling. Close it before creating a new one.' });
+        }
+
         const result = await db.query(
             `INSERT INTO inventory_periods (period_name, period_year, period_month, start_date, end_date, status, opening_stock_value, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -150,7 +158,7 @@ app.put('/api/inventory/periods/:id', async (req, res) => {
     const { id } = req.params;
     const fields = [];
     const values = [];
-    const allowedFields = ['period_name', 'status', 'closing_stock_value', 'variance_value', 'cogs_value', 'kitchen_cogs', 'cellar_cogs', 'closed_by', 'closed_reason'];
+    const allowedFields = ['period_name', 'status', 'closing_stock_value', 'variance_value', 'cogs_value', 'kitchen_cogs', 'cellar_cogs', 'closed_by', 'closed_reason', 'reopened_at', 'reopened_by', 'is_locked', 'locked_at', 'locked_by'];
     
     for (const field of allowedFields) {
         if (req.body[field] !== undefined) {
@@ -166,6 +174,18 @@ app.put('/api/inventory/periods/:id', async (req, res) => {
     values.push(id);
     
     try {
+        // If status is being changed to 'open' or 'reconciling', enforce singleton
+        const newStatus = req.body.status;
+        if (newStatus && ['open', 'reconciling'].includes(newStatus)) {
+            const existing = await db.query(
+                "SELECT id FROM inventory_periods WHERE status IN ('open', 'reconciling') AND id != ?",
+                [id]
+            );
+            if (existing.rows && existing.rows.length > 0) {
+                return res.status(409).json({ ok: false, error: 'Another period is already open or reconciling.' });
+            }
+        }
+        
         const result = await db.query(
             `UPDATE inventory_periods SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`,
             values
@@ -209,11 +229,36 @@ app.post('/api/inventory/transactions', async (req, res) => {
         return res.status(400).json({ ok: false, error: 'Missing required fields' });
     }
     try {
-        const result = await db.query(
-            `INSERT INTO inventory_transactions (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, supplier_name, created_by, is_historical_backfill)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [transaction_type, transaction_number, period_id, transaction_date, department, total_quantity || 0, total_value || 0, supplier_name, created_by, is_historical_backfill || false]
-        );
+        // Validate period exists and is not locked/closed
+        const periodCheck = await db.query('SELECT status, is_locked FROM inventory_periods WHERE id = ?', [period_id]);
+        if (!periodCheck.rows || periodCheck.rows.length === 0) {
+            return res.status(404).json({ ok: false, error: 'Period not found' });
+        }
+        const period = periodCheck.rows[0];
+        if (period.is_locked) {
+            return res.status(403).json({ ok: false, error: 'Period is locked. Cannot add transactions.' });
+        }
+        if (['closed', 'locked'].includes(period.status)) {
+            return res.status(403).json({ ok: false, error: `Period is ${period.status}. Cannot add transactions.` });
+        }
+
+        // Insert transaction and, if it's a receipt type, also bump period received_value atomically
+        const ops = [
+            {
+                sql: `INSERT INTO inventory_transactions (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, supplier_name, created_by, is_historical_backfill)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                params: [transaction_type, transaction_number, period_id, transaction_date, department, total_quantity || 0, total_value || 0, supplier_name, created_by, is_historical_backfill || false]
+            }
+        ];
+
+        if (['purchase', 'grv'].includes(transaction_type)) {
+            ops.push({
+                sql: `UPDATE inventory_periods SET received_value = COALESCE(received_value,0) + ? WHERE id = ?`,
+                params: [total_value || 0, period_id]
+            });
+        }
+
+        const result = await db.transaction(ops);
         res.json(result);
     } catch (e) {
         res.json({ ok: false, error: e.message });
@@ -258,13 +303,76 @@ app.post('/api/inventory/close', async (req, res) => {
             return res.status(404).json({ ok: false, error: 'Period not found' });
         }
         
+        const period = periodRes.rows[0];
+        
+        // Zero-capture detection: if no receipts and no transaction values, require manager override
+        const totalTxRes = await db.query(
+            `SELECT COALESCE(SUM(total_value),0) as total FROM inventory_transactions WHERE period_id = ? AND transaction_type IN ('purchase', 'grv')`,
+            [period_id]
+        );
+        const totalTx = (totalTxRes.rows && totalTxRes.rows[0] && totalTxRes.rows[0].total) || 0;
+        const receivedVal = (period.received_value || 0);
+        if (receivedVal === 0 && totalTx === 0 && !req.body.manager_override) {
+            return res.status(403).json({ ok: false, error: 'ZERO_CAPTURE', message: 'Period has no inventory receipts. Manager override required to close.' });
+        }
+        
         const result = await db.query(
             `UPDATE inventory_periods 
              SET status = 'closed', closing_stock_value = ?, variance_value = ?, cogs_value = ?, kitchen_cogs = ?, cellar_cogs = ?, closed_at = NOW(), closed_by = ?, closed_reason = ?, is_locked = true, locked_at = NOW()
              WHERE id = ?`,
             [closing_stock_value, variance_value, cogs_value, kitchen_cogs, cellar_cogs, closed_by, closed_reason, period_id]
         );
+        
+        // If overridden, create audit entry
+        if (receivedVal === 0 && totalTx === 0 && req.body.manager_override) {
+            await db.query(
+                `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, change_reason)
+                 VALUES (?, 'ZERO_CAPTURE_OVERRIDE', ?, ?, ?)`,
+                [period_id, closed_by, closed_by, 'Manager override: closed period with zero receipts']
+            );
+        }
+        
         res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/inventory/reopen
+app.post('/api/inventory/reopen', async (req, res) => {
+    const { period_id, reopened_by } = req.body;
+    if (!period_id) {
+        return res.status(400).json({ ok: false, error: 'Period ID required' });
+    }
+    try {
+        const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = ?', [period_id]);
+        if (!periodRes.rows || periodRes.rows.length === 0) {
+            return res.status(404).json({ ok: false, error: 'Period not found' });
+        }
+        const period = periodRes.rows[0];
+        // Only locked/closed periods can be reopened
+        if (!period.is_locked) {
+            return res.status(400).json({ ok: false, error: 'Period is not locked and cannot be reopened' });
+        }
+
+        const result = await db.query(
+            `UPDATE inventory_periods 
+             SET status = 'open', 
+                 closed_at = NULL, closed_by = NULL, closed_reason = NULL,
+                 is_locked = false, locked_at = NULL, locked_by = NULL,
+                 reopened_at = NOW(), reopened_by = ?
+             WHERE id = ?`,
+            [reopened_by, period_id]
+        );
+        
+        // Audit log for reopen
+        await db.query(
+            `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, change_reason)
+             VALUES (?, 'PERIOD_REOPENED', ?, ?, ?)`,
+            [period_id, reopened_by, reopened_by, 'Period reopened for correction']
+        );
+        
+        res.json({ ok: true, message: 'Period reopened successfully', result });
     } catch (e) {
         res.json({ ok: false, error: e.message });
     }

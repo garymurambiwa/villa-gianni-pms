@@ -189,14 +189,53 @@ router.post('/grn/:id/post', async (req, res) => {
       );
     }
 
-    // Update GRN status
-    await client.query(
-      `UPDATE public.inv_grn_headers SET status = $1, posted_by = $2, posted_at = $3 WHERE id = $4`,
-      ['posted', posted_by, new Date(), id]
-    );
+      // Update GRN status
+      await client.query(
+        `UPDATE public.inv_grn_headers SET status = $1, posted_by = $2, posted_at = $3 WHERE id = $4`,
+        ['posted', postedBy, new Date(), grnHeaderId]
+      );
+      
+      // ── Integrate with Inventory Reconciliation: Create inventory_transactions for active period ──
+      // Find the active period (open or reconciling) to which this GRN belongs (based on transaction_date)
+      const grnDate = new Date(grn.created_at).toISOString().split('T')[0];
+      const periodRes = await client.query(
+        `SELECT id FROM inventory_periods 
+         WHERE status IN ('open', 'reconciling') 
+           AND ? BETWEEN start_date AND end_date
+         LIMIT 1`,
+        [grnDate]
+      );
+      let periodId = null;
+      if (periodRes.rows && periodRes.rows.length > 0) {
+        periodId = periodRes.rows[0].id;
+      } else {
+        // No active period; will create inventory_transactions without period_id (reportable but not period‑aggregated)
+      }
+      
+      // Insert inventory_transactions for each GRN line
+      if (Array.isArray(lines) && lines.length > 0) {
+        for (const line of lines) {
+          const transaction_number = `GRN-${grn.grn_number}-L${line.line_number}`;
+          const total_value = (line.qty_received * line.unit_cost);
+          await client.query(
+            `INSERT INTO inventory_transactions 
+             (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, supplier_name, created_by, is_historical_backfill)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            ['grv', transaction_number, periodId, grnDate, 'Kitchen', line.qty_received, total_value, grn.supplier_name, postedBy, false]
+          );
+        }
+        // Also bump period received_value if period exists
+        if (periodId) {
+          const totalGrnValue = lines.reduce((sum, l) => sum + (l.qty_received * l.unit_cost), 0);
+          await client.query(
+            'UPDATE inventory_periods SET received_value = COALESCE(received_value,0) + ? WHERE id = ?',
+            [totalGrnValue, periodId]
+          );
+        }
+      }
 
-    await client.query('COMMIT');
-    res.json({ ok: true, message: `GRN ${grn.grn_number} posted successfully` });
+      await client.query('COMMIT');
+      res.json({ ok: true, message: `GRN ${grn.grn_number} posted successfully` });
   } catch (error) {
     await client.query('ROLLBACK');
     res.status(500).json({ ok: false, error: error.message });
