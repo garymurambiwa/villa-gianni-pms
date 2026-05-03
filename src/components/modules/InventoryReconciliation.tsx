@@ -105,7 +105,7 @@ export const InventoryReconciliation: React.FC = () => {
   const [showBatchReconDialog, setShowBatchReconDialog] = useState(false);
   const [showNewPeriodDialog, setShowNewPeriodDialog] = useState(false);
   const [showBackfillDialog, setShowBackfillDialog] = useState(false);
-  const [batchData, setBatchData] = useState<Record<string, { physicalQty: number }>>({});
+  const [batchData, setBatchData] = useState<Record<string, { physicalQty: number; costPrice?: number }>>({});
   
   const [newPeriod, setNewPeriod] = useState({
     periodYear: new Date().getFullYear(),
@@ -577,7 +577,8 @@ export const InventoryReconciliation: React.FC = () => {
                       <TableRow key={period.id}>
                         <TableCell className="font-medium">{period.period_name}</TableCell>
                         <TableCell>
-                          {period.start_date} - {period.end_date}
+                          {new Date(period.start_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} - {' '}
+                          {new Date(period.end_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                         </TableCell>
                         <TableCell>
                           <Badge className={getStatusColor(period.status)}>
@@ -658,7 +659,9 @@ export const InventoryReconciliation: React.FC = () => {
                   ) : (
                     transactions.map(tx => (
                       <TableRow key={tx.id}>
-                        <TableCell>{tx.transaction_date}</TableCell>
+                         <TableCell>
+                           {new Date(tx.transaction_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                         </TableCell>
                         <TableCell className="capitalize">{tx.transaction_type}</TableCell>
                         <TableCell>{tx.transaction_number}</TableCell>
                         <TableCell>{tx.department}</TableCell>
@@ -916,35 +919,48 @@ export const InventoryReconciliation: React.FC = () => {
           </DialogHeader>
           <div className="flex-1 overflow-y-auto py-4">
             <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Item Name</TableHead>
-                  <TableHead>Department</TableHead>
-                  <TableHead className="text-right">Current Stock</TableHead>
-                  <TableHead className="text-right w-32">Physical Qty</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {products.map(p => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium">{p.name}</TableCell>
-                    <TableCell>{p.department}</TableCell>
-                    <TableCell className="text-right">{p.stock_level}</TableCell>
-                    <TableCell>
-                      <Input
-                        type="number"
-                        className="text-right h-8"
-                        placeholder="0"
-                        value={batchData[p.id]?.physicalQty ?? ''}
-                        onChange={(e) => setBatchData(prev => ({
-                          ...prev,
-                          [p.id]: { ...prev[p.id], physicalQty: parseFloat(e.target.value) || 0 }
-                        }))}
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
+               <TableHeader>
+                 <TableRow>
+                   <TableHead>Item Name</TableHead>
+                   <TableHead>Department</TableHead>
+                   <TableHead className="text-right">Current Stock</TableHead>
+                   <TableHead className="text-right w-32">Physical Qty</TableHead>
+                   <TableHead className="text-right w-32">Unit Cost</TableHead>
+                 </TableRow>
+               </TableHeader>
+               <TableBody>
+                 {products.map(p => (
+                   <TableRow key={p.id}>
+                     <TableCell className="font-medium">{p.name}</TableCell>
+                     <TableCell>{p.department}</TableCell>
+                     <TableCell className="text-right">{p.stock_level}</TableCell>
+                     <TableCell>
+                       <Input
+                         type="number"
+                         className="text-right h-8"
+                         placeholder="0"
+                         value={batchData[p.id]?.physicalQty ?? ''}
+                         onChange={(e) => setBatchData(prev => ({
+                           ...prev,
+                           [p.id]: { ...(prev[p.id] || { physicalQty: 0 }), physicalQty: parseFloat(e.target.value) || 0 }
+                         }))}
+                       />
+                     </TableCell>
+                     <TableCell>
+                       <Input
+                         type="number"
+                         className="text-right h-8"
+                         placeholder={p.cost_price?.toString() ?? '0'}
+                         value={batchData[p.id]?.costPrice ?? ''}
+                         onChange={(e) => setBatchData(prev => ({
+                           ...prev,
+                           [p.id]: { ...(prev[p.id] || { physicalQty: 0 }), costPrice: parseFloat(e.target.value) || 0 }
+                         }))}
+                       />
+                     </TableCell>
+                   </TableRow>
+                 ))}
+               </TableBody>
             </Table>
           </div>
           <DialogFooter>
@@ -958,20 +974,41 @@ export const InventoryReconciliation: React.FC = () => {
                 }
 
                 for (const [id, data] of entries) {
-                  // Update product stock and cost
-                  await db.query(
-                    `UPDATE products SET stock_level = ?, updated_at = NOW() WHERE id = ?`,
-                    [data.physicalQty, id]
-                  );
-
-                  // Log transaction
                   const product = products.find(p => p.id === id);
+                  if (!product) continue;
+
+                  // Build dynamic UPDATE for stock_level and/or cost_price
+                  const updates: string[] = [];
+                  const values: any[] = [];
+
+                  if (data.physicalQty !== undefined && data.physicalQty !== null) {
+                    updates.push('stock_level = ?');
+                    values.push(data.physicalQty);
+                  }
+                  if (data.costPrice !== undefined && data.costPrice !== null) {
+                    updates.push('cost_price = ?');
+                    values.push(data.costPrice);
+                  }
+
+                  if (updates.length > 0) {
+                    values.push(id);
+                    await db.query(
+                      `UPDATE products SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
+                      values
+                    );
+                  }
+
+                  // Log an inventory adjustment transaction
+                  // Determine cost to use: if costPrice provided use it, else product's current cost
+                  const useCost = (data.costPrice !== undefined && data.costPrice !== null) ? data.costPrice : (product.cost_price || 0);
+                  const totalValue = (data.physicalQty || 0) * useCost;
+
                   await db.query(
                     `INSERT INTO inventory_transactions 
                      (transaction_type, transaction_number, transaction_date, department, total_quantity, total_value, created_by)
                      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                    ['adjustment', `BATCH-${Date.now()}`, new Date().toISOString().split('T')[0],
-                     product?.department || 'Kitchen', data.physicalQty, 0, user?.name]
+                    ['adjustment', `BATCH-${Date.now()}-${id.slice(0,8)}`, new Date().toISOString().split('T')[0],
+                     product?.department || 'Kitchen', data.physicalQty || 0, totalValue, user?.name]
                   );
                 }
 

@@ -198,6 +198,26 @@ class OfflineCache {
             };
         });
     }
+
+    async getPendingCount(): Promise<number> {
+        await this.init();
+
+        return new Promise((resolve, reject) => {
+            const transaction = this.db!.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const index = store.index('status');
+            const request = index.count('pending');
+
+            request.onsuccess = () => {
+                resolve(request.result);
+            };
+
+            request.onerror = () => {
+                console.error('[OfflineCache] Failed to count pending operations:', request.error);
+                reject(request.error);
+            };
+        });
+    }
 }
 
 export const offlineCache = new OfflineCache();
