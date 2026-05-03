@@ -319,32 +319,34 @@ export const InventoryReconciliation: React.FC = () => {
      }
    };
 
-   const startReconciliation = async (periodId: string) => {
-     try {
-       // Update status to reconciling via dedicated endpoint
-       const response = await fetch(`/api/inventory/periods/${periodId}`, {
-         method: 'PUT',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ status: 'reconciling' })
-       });
-       const data = await response.json();
-       if (!response.ok || !data.ok) {
-         throw new Error(data.error || 'Failed to start reconciliation');
-       }
+    const startReconciliation = async (periodId: string) => {
+      try {
+        // Update status to reconciling via dedicated endpoint
+        const response = await fetch(`/api/inventory/periods/${periodId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'reconciling' })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          const msg = data.error || 'Failed to start reconciliation';
+          throw new Error(msg);
+        }
 
-       const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = ?', [periodId]);
-       if ('rows' in periodRes && periodRes.rows.length > 0) {
-         const period = periodRes.rows[0] as InventoryPeriod;
-         setSelectedPeriod(period);
-         await loadProducts(periodId);
-       }
+        const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = ?', [periodId]);
+        if ('rows' in periodRes && periodRes.rows.length > 0) {
+          const period = periodRes.rows[0] as InventoryPeriod;
+          setSelectedPeriod(period);
+          await loadProducts(periodId);
+        }
 
-       toast({ title: 'Reconciliation started' });
-       loadData();
-     } catch (e: any) {
-       toast({ title: 'Failed to start reconciliation', variant: 'destructive' });
-     }
-   };
+        toast({ title: 'Reconciliation started' });
+        loadData();
+      } catch (e: any) {
+        console.error('Start reconciliation error:', e);
+        toast({ title: 'Failed to start reconciliation', description: e.message, variant: 'destructive' });
+      }
+    };
 
   const savePhysicalCounts = async () => {
     if (!selectedPeriod) return;
