@@ -10,116 +10,6 @@ import { refreshConfig as refreshRateConfig } from '@/lib/ratePlanService';
 import { useAuth } from './AuthContext';
 import gl from '@/lib/glAccounting';
 
-// Hardcoded prices for Baradzanwa instance only
-const baradzanwaPrices: Record<string, { sellingPrice: number; costPrice?: number }> = {
-  "1/4 Chicken": { sellingPrice: 4.00, costPrice: 1.52 },
-  "1/4 Chicken & Chips": { sellingPrice: 6.00, costPrice: 2.30 },
-  "Absolate Vodka": { sellingPrice: 3.00, costPrice: 1.19 },
-  "Amarula": { sellingPrice: 2.00, costPrice: 0.89 },
-  "Amstel Lager": { sellingPrice: 2.00, costPrice: 1.12 },
-  "Barcardi Dark Rum": { sellingPrice: 2.00, costPrice: 0.80 },
-  "Barcardi Gold Rum": { sellingPrice: 2.00, costPrice: 0.80 },
-  "Beef Burger": { sellingPrice: 8.00, costPrice: 2.50 },
-  "Belgravia Dry lemon": { sellingPrice: 2.50, costPrice: 1.15 },
-  "Belgravia Dry Lemon": { sellingPrice: 2.50, costPrice: 0.89 },
-  "Black Label Bottle": { sellingPrice: 2.00, costPrice: 1.00 },
-  "Bon Courage Cabernet Savignon": { sellingPrice: 25.00, costPrice: 8.95 },
-  "Braai ( Pork Chop & Tbone)": { sellingPrice: 5.00, costPrice: 2.41 },
-  "Braai (Chicken & Pork Chops)": { sellingPrice: 5.00, costPrice: 2.41 },
-  "Braai (Tbone and Sausage)": { sellingPrice: 5.00, costPrice: 2.41 },
-  "Bream Cutlets": { sellingPrice: 6.00, costPrice: 2.53 },
-  "Brutal Fruit Can": { sellingPrice: 2.50, costPrice: 0.97 },
-  "Captain Morgan Spiced Rum": { sellingPrice: 2.00, costPrice: 0.80 },
-  "Castle Lager": { sellingPrice: 2.00, costPrice: 1.00 },
-  "Castle Lite Can": { sellingPrice: 2.00, costPrice: 0.65 },
-  "Castle Pint": { sellingPrice: 2.00, costPrice: 0.56 },
-  "Coke": { sellingPrice: 1.00, costPrice: 0.43 },
-  "Coke Can": { sellingPrice: 1.00, costPrice: 0.46 },
-  "Coke Zero": { sellingPrice: 1.00, costPrice: 0.46 },
-  "Corona Extra": { sellingPrice: 3.00, costPrice: 1.12 },
-  "Creamsoda Can": { sellingPrice: 1.00, costPrice: 0.43 },
-  "Diemersfontein Shiraz": { sellingPrice: 30.00, costPrice: 9.47 },
-  "Fanta": { sellingPrice: 1.00, costPrice: 0.43 },
-  "Fanta can": { sellingPrice: 1.00, costPrice: 0.43 },
-  "Fanta Grape Can": { sellingPrice: 1.00, costPrice: 0.46 },
-  "Flyfish": { sellingPrice: 2.00, costPrice: 1.30 },
-  "Four Cousins Natuarl Sweet Rose": { sellingPrice: 20.00, costPrice: 5.60 },
-  "Four Cousins Rose": { sellingPrice: 20.00, costPrice: 5.60 },
-  "Four Cousins Sweet Red": { sellingPrice: 20.00, costPrice: 5.60 },
-  "Gango": { sellingPrice: 6.00, costPrice: 2.10 },
-  "Ginger Ale": { sellingPrice: 1.00, costPrice: 0.49 },
-  "Glen Carlou Pinot Noir": { sellingPrice: 40.00, costPrice: 14.24 },
-  "Glenfidich 12 yrs": { sellingPrice: 5.00, costPrice: 1.90 },
-  "Goat Meat": { sellingPrice: 6.00, costPrice: 2.38 },
-  "Golden Pilsner": { sellingPrice: 2.00, costPrice: 0.65 },
-  "Gordons Gin": { sellingPrice: 2.00, costPrice: 0.33 },
-  "Grants Whiskey": { sellingPrice: 2.00, costPrice: 0.52 },
-  "Hake Fillet": { sellingPrice: 10.00, costPrice: 3.00 },
-  "Hansa Pilsner": { sellingPrice: 2.00, costPrice: 1.30 },
-  "Heinken Origional": { sellingPrice: 3.00, costPrice: 1.15 },
-  "Heinken Silver": { sellingPrice: 3.00, costPrice: 1.35 },
-  "Hunters Dry": { sellingPrice: 2.00, costPrice: 0.90 },
-  "Hunters Gold": { sellingPrice: 2.00, costPrice: 0.90 },
-  "Inkara Merlot": { sellingPrice: 40.00, costPrice: 16.06 },
-  "Jagermeister": { sellingPrice: 2.00, costPrice: 0.95 },
-  "Jameson Irish Whiskey": { sellingPrice: 3.00, costPrice: 0.87 },
-  "JC Le Roux Le Domain": { sellingPrice: 25.00, costPrice: 5.42 },
-  "John Walker Black": { sellingPrice: 3.00, costPrice: 1.32 },
-  "John Walker Red": { sellingPrice: 2.00, costPrice: 0.64 },
-  "Juices": { sellingPrice: 5.00, costPrice: 1.96 },
-  "Klipdrft": { sellingPrice: 2.00, costPrice: 0.36 },
-  "Lemonade": { sellingPrice: 1.00, costPrice: 0.49 },
-  "Maguru NeMatumbu": { sellingPrice: 6.00, costPrice: 2.30 },
-  "Mapfunde (Sadza)": { sellingPrice: 3.00, costPrice: 0.30 },
-  "Mapfura Wine": { sellingPrice: 10.00, costPrice: 5.00 },
-  "Mazondo": { sellingPrice: 6.00, costPrice: 2.30 },
-  "Mhunga (Sadza)": { sellingPrice: 3.00, costPrice: 0.30 },
-  "Mineral Water  Bonaqua": { sellingPrice: 1.00, costPrice: 0.17 },
-  "Mineral Water Aquaclear": { sellingPrice: 1.00, costPrice: 0.13 },
-  "Minute Maid": { sellingPrice: 2.00, costPrice: 0.73 },
-  "Moet & Chandon Brut": { sellingPrice: 200.00, costPrice: 62.34 },
-  "Mupunga Une Dovi": { sellingPrice: 3.00, costPrice: 0.50 },
-  "Musoro Wemombe": { sellingPrice: 5.00, costPrice: 1.96 },
-  "Nederburg Cabernet Sauvignon": { sellingPrice: 25.00, costPrice: 5.46 },
-  "Nederburg Chadonnay": { sellingPrice: 20.00, costPrice: 5.92 },
-  "Nederburg Rose": { sellingPrice: 20.00, costPrice: 3.40 },
-  "Oxtail": { sellingPrice: 6.00, costPrice: 2.78 },
-  "Pinut Can": { sellingPrice: 1.00, costPrice: 0.46 },
-  "Plain Chips": { sellingPrice: 3.00, costPrice: 0.30 },
-  "Plain Rice": { sellingPrice: 1.00, costPrice: 0.20 },
-  "Pork Head": { sellingPrice: 5.00, costPrice: 1.20 },
-  "Potato Crispies Small": { sellingPrice: 1.00, costPrice: 0.43 },
-  "Roadrunner": { sellingPrice: 7.00, costPrice: 2.20 },
-  "Roasted Nuts - Tub 50g": { sellingPrice: 1.00, costPrice: 0.15 },
-  "Robertson Sweet Red": { sellingPrice: 20.00, costPrice: 5.50 },
-  "Sadza Plain White": { sellingPrice: 1.00, costPrice: 0.20 },
-  "Savanna Angry Lemon": { sellingPrice: 2.50, costPrice: 1.50 },
-  "Savanna Dry": { sellingPrice: 2.50, costPrice: 0.94 },
-  "Simonsig Pinotage": { sellingPrice: 30.00, costPrice: 10.28 },
-  "Sminorff Vodka": { sellingPrice: 2.00, costPrice: 0.26 },
-  "Soda Water": { sellingPrice: 1.00, costPrice: 0.57 },
-  "Southern Comfort Original": { sellingPrice: 2.00, costPrice: 0.58 },
-  "Sprite": { sellingPrice: 1.00, costPrice: 0.30 },
-  "Sprite Can": { sellingPrice: 1.00, costPrice: 0.46 },
-  "Stoney Ginger Beer": { sellingPrice: 1.00, costPrice: 0.46 },
-  "Strawbery Lips": { sellingPrice: 2.00, costPrice: 0.58 },
-  "Tanqueray Gin": { sellingPrice: 3.00, costPrice: 0.73 },
-  "The Game Reserve Melort": { sellingPrice: 50.00, costPrice: 7.13 },
-  "Tonic Water": { sellingPrice: 1.00, costPrice: 0.49 },
-  "Trotters": { sellingPrice: 6.00, costPrice: 2.21 },
-  "Tsuro": { sellingPrice: 6.00, costPrice: 2.10 },
-  "Veuve Clicquot": { sellingPrice: 200.00, costPrice: 69.00 },
-  "Viceroy": { sellingPrice: 2.00, costPrice: 0.30 },
-  "Wellington Brandy": { sellingPrice: 1.00, costPrice: 0.30 },
-  "Whitestone Gin": { sellingPrice: 2.00, costPrice: 1.24 },
-  "Whole Bream": { sellingPrice: 8.00, costPrice: 2.53 },
-  "Windhoek Draught": { sellingPrice: 3.00, costPrice: 1.56 },
-  "Windhoek Lager": { sellingPrice: 3.00, costPrice: 1.34 },
-  "Zambezi Can": { sellingPrice: 2.00, costPrice: 0.65 },
-  "Zinyenze": { sellingPrice: 6.00, costPrice: 2.25 },
-  "Zviyo (Sadza)": { sellingPrice: 3.00, costPrice: 0.30 }
-};
-
 const DataContext = createContext<any>(null);
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -147,8 +37,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Initialize WebSocket connection for real-time price sync
   const initializePriceSync = React.useCallback(() => {
     try {
-      // Determine backend host: In dev, Vite runs on port 8081 while backend is on 3001.
-      // Use the backend server's host for WebSocket to bypass Vite proxy (which only handles HTTP).
       const isDev = import.meta.env.DEV;
       const backendHost = isDev ? 'localhost:3001' : window.location.host;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -163,473 +51,82 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-
           if (message.type === 'PRICE_UPDATE') {
             const update = message.data;
-            console.log('[PriceSync] Received price update:', update);
-
-            // Update inventory in state
             setInventory(prev => prev.map(item =>
               item.id === update.itemId
-                ? {
-                    ...item,
-                    selling_price: update.newPrice,
-                    sellingPrice: update.newPrice,
-                    costPrice: update.newCostPrice,
-                    price: update.newPrice,
-                    cost_price: update.newCostPrice
-                  }
+                ? { ...item, sellingPrice: update.newPrice, costPrice: update.newCostPrice }
                 : item
             ));
-
-            // Update localStorage cache
-            const cached = localStorage.getItem('corepms_pos_items');
-            if (cached) {
-              try {
-                const items = JSON.parse(cached);
-                const updatedItems = items.map((item: any) =>
-                  item.id === update.itemId
-                    ? {
-                        ...item,
-                        selling_price: update.newPrice,
-                        sellingPrice: update.newPrice,
-                        costPrice: update.newCostPrice,
-                        price: update.newPrice,
-                        cost_price: update.newCostPrice
-                      }
-                    : item
-                );
-                localStorage.setItem('corepms_pos_items', JSON.stringify(updatedItems));
-                window.dispatchEvent(new Event('storage'));
-              } catch (e) {
-                console.warn('[PriceSync] Failed to update localStorage cache:', e);
-              }
-            }
-
-            // Show notification
-            toast({
-              title: "Price Updated",
-              description: `${update.itemName} price changed to €${update.newPrice.toFixed(2)}`,
-            });
-
-          } else if (message.type === 'CACHE_INVALIDATE') {
-            console.log('[PriceSync] Cache invalidation requested, reloading data');
-            // Reload all data to ensure consistency
             loadAllData();
           }
-        } catch (error) {
-          console.error('[PriceSync] Failed to process message:', error);
-        }
+        } catch (error) { console.error('[PriceSync] Failed to process message:', error); }
       };
 
       ws.onclose = () => {
-        console.log('[PriceSync] Disconnected from real-time price sync');
         setPriceSyncWs(null);
-        // Attempt to reconnect after 10 seconds to reduce spam during outages
         setTimeout(() => initializePriceSync(), 10000);
       };
-
-      ws.onerror = (error) => {
-        // Only log full error if not already disconnected to reduce spam
-        if (ws.readyState === WebSocket.OPEN) {
-          console.error('[PriceSync] WebSocket error:', error);
-        }
-      };
-
-    } catch (error) {
-      console.error('[PriceSync] Failed to initialize:', error);
-    }
+    } catch (error) { console.error('[PriceSync] Failed to initialize:', error); }
   }, []);
 
-  // Cleanup WebSocket on unmount
   useEffect(() => {
-    return () => {
-      if (priceSyncWs) {
-        priceSyncWs.close();
-      }
-    };
+    return () => { if (priceSyncWs) priceSyncWs.close(); };
   }, [priceSyncWs]);
 
   const loadAllData = React.useCallback(async () => {
     setLoading(true);
     try {
       // Load PMS Data
-      // Load rooms, filtering out soft-deleted ones.
-      // Fallback to unfiltered query if is_active column doesn't exist yet on older DBs.
-      let roomRes: any;
-      try {
-        roomRes = await db.query('SELECT * FROM rooms WHERE is_active IS DISTINCT FROM false ORDER BY number');
-        // Also ensure the column exists for future queries (safe ALTER IF NOT EXISTS)
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => { });
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => { });
-      } catch (_colErr) {
-        // Column doesn't exist yet — fall back to all rooms and add the column
-        roomRes = await db.query('SELECT * FROM rooms ORDER BY number');
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true').catch(() => { });
-        db.query('ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1').catch(() => { });
-      }
+      let roomRes = await db.query('SELECT * FROM rooms WHERE is_active IS DISTINCT FROM false ORDER BY number');
       if ('rows' in roomRes) {
-        const normalized = (roomRes.rows || []).map((r: any) => {
-          const s = String(r.status || '').toLowerCase();
-          const status = (s === 'vacant' || s === 'available') ? 'VC'
-            : (s === 'occupied') ? 'OCC'
-              : String(r.status || 'VC').toUpperCase();
-          return {
-            ...r,
-            number: String(r.number || ''),
-            type: String(r.type || ''),
-            status
-          };
-        });
-        setRooms(normalized);
-
-        // Prime the roomService cache
+        setRooms((roomRes.rows || []).map((r: any) => ({ ...r, status: String(r.status || 'VC').toUpperCase() })));
         await refreshRooms();
         await refreshRateConfig();
       }
 
-
-      // Load reservations with guest info and room info joined
-      const resRes = await db.query(`
-        SELECT r.*, g.full_name as guest_name, g.email as guest_email, g.phone as guest_phone,
-  rm.number as room_number
-        FROM reservations r
-        LEFT JOIN guests g ON r.guest_id = g.id
-        LEFT JOIN rooms rm ON r.room_id = rm.id
-  `);
-      let normalizedReservations: any[] = [];
+      const resRes = await db.query('SELECT r.*, g.full_name as guest_name FROM reservations r LEFT JOIN guests g ON r.guest_id = g.id');
       if ('rows' in resRes) {
-        // Normalize reservation data for UI compatibility
-        normalizedReservations = (resRes.rows || []).map((r: any) => {
-          // Normalize check-in date from database
-          let checkIn = '';
-          const rawCheckIn = r.check_in_date || r.checkIn;
-          if (rawCheckIn) {
-            // PostgreSQL DATE type returns 'YYYY-MM-DD' format
-            // Handle both string and Date object formats
-            if (typeof rawCheckIn === 'string') {
-              // If it's an ISO string with time, extract just the date part
-              // Hande both 'T' separated (ISO) and space separated (MySQL/PG)
-              if (rawCheckIn.includes('T')) {
-                checkIn = rawCheckIn.split('T')[0];
-              } else if (rawCheckIn.includes(' ')) {
-                checkIn = rawCheckIn.split(' ')[0];
-              } else {
-                checkIn = rawCheckIn;
-              }
-            } else if (rawCheckIn instanceof Date) {
-              // Format Date object to YYYY-MM-DD
-              const year = rawCheckIn.getFullYear();
-              const month = String(rawCheckIn.getMonth() + 1).padStart(2, '0');
-              const day = String(rawCheckIn.getDate()).padStart(2, '0');
-              checkIn = `${year}-${month}-${day}`;
-            } else {
-              checkIn = String(rawCheckIn);
-            }
-          }
-
-          // Normalize check-out date from database
-          let checkOut = '';
-          const rawCheckOut = r.check_out_date || r.checkOut;
-          if (rawCheckOut) {
-            if (typeof rawCheckOut === 'string') {
-              if (rawCheckOut.includes('T')) {
-                checkOut = rawCheckOut.split('T')[0];
-              } else if (rawCheckOut.includes(' ')) {
-                checkOut = rawCheckOut.split(' ')[0];
-              } else {
-                checkOut = rawCheckOut;
-              }
-            } else if (rawCheckOut instanceof Date) {
-              const year = rawCheckOut.getFullYear();
-              const month = String(rawCheckOut.getMonth() + 1).padStart(2, '0');
-              const day = String(rawCheckOut.getDate()).padStart(2, '0');
-              checkOut = `${year}-${month}-${day}`;
-            } else {
-              checkOut = String(rawCheckOut);
-            }
-          }
-
-          return {
-            ...r,
-            // Map database fields to UI expected fields
-            guestName: r.guest_name || r.guestName || 'Unknown Guest',
-            checkIn,
-            checkOut,
-            // Also keep the raw fields for compatibility
-            check_in_date: checkIn,
-            check_out_date: checkOut,
-            roomType: r.room_type || r.roomType || 'Standard',
-            roomNumber: r.room_number || null,
-            rate: Number(r.rate || 0),
-            adults: Number(r.adults || 1),
-            children: Number(r.children || 0),
-            status: r.status || 'confirmed',
-            idDocumentType: r.id_document_type || 'Passport',
-            nationalityCode: r.nationality_code || '',
-            nationalityName: r.nationality_name || '',
-            bookingSource: r.booking_source || '',
-            // Map source to originRegion for Dashboard revenue reporting
-            originRegion: r.source || r.booking_source || '',
-            partnerCode: r.partner_code || '',
-            utmSource: r.utm_source || '',
-            utmMedium: r.utm_medium || '',
-            utmCampaign: r.utm_campaign || '',
-            utmTerm: r.utm_term || '',
-            utmContent: r.utm_content || '',
-            paymentInfoSource: r.payment_info_source || '',
-            paymentVerified: !!r.payment_verified,
-            termsAccepted: !!r.terms_accepted,
-            packageCode: r.package_code || 'RO'
-          };
-        });
-
-        console.log('[DataContext] Loaded', normalizedReservations.length, 'reservations');
-        if (normalizedReservations.length > 0) {
-          console.log('[DataContext] Sample reservation:', {
-            id: normalizedReservations[0].id,
-            status: normalizedReservations[0].status,
-            checkIn: normalizedReservations[0].checkIn,
-            guestName: normalizedReservations[0].guestName
-          });
-        }
-
-        setReservations(normalizedReservations);
+        setReservations((resRes.rows || []).map((r: any) => ({ ...r, guestName: r.guest_name || 'Unknown' })));
       }
 
-      // Load folio charges from database instead of just localStorage
-      let loadedFolioCharges: any[] = [];
-      try {
-        const result = await loadFolioChargesFromDb();
-        if (result.success && result.charges) {
-          loadedFolioCharges = result.charges;
-          // Synchronize down to local storage for offline cases
-          localStorage.setItem('corepms_folioCharges', JSON.stringify(result.charges));
-        } else {
-          // Fallback to local storage
-          const rawCharges = localStorage.getItem('corepms_folioCharges');
-          loadedFolioCharges = rawCharges ? JSON.parse(rawCharges) : [];
-        }
-      } catch {
-        const rawCharges = localStorage.getItem('corepms_folioCharges');
-        loadedFolioCharges = rawCharges ? JSON.parse(rawCharges) : [];
-      }
-      setFolioCharges(loadedFolioCharges);
+      const chargesRes = await loadFolioChargesFromDb();
+      if (chargesRes.success) setFolioCharges(chargesRes.charges);
 
       const guestRes = await db.query('SELECT * FROM guests');
-      if ('rows' in guestRes) {
-        // Normalize guest data - map full_name to name for UI compatibility
-        // Also enrich with room info and dates from reservations
-        const normalizedGuests = (guestRes.rows || []).map((g: any) => {
-          // Find the most relevant reservation for this guest
-          // Priority 1: Currently checked-in
-          const checkedInRes = normalizedReservations.find(
-            (r: any) => r.guest_id === g.id && String(r.status || '').toLowerCase() === 'checked-in'
-          );
-
-          // Priority 2: Latest reservation (any status) to ensure we always have dates from the "booking form"
-          const allGuestRes = normalizedReservations
-            .filter((r: any) => r.guest_id === g.id)
-            .sort((a: any, b: any) => new Date(b.check_in_date || b.checkIn).getTime() - new Date(a.check_in_date || a.checkIn).getTime());
-          
-          const latestRes = checkedInRes || allGuestRes[0] || null;
-
-          // Calculate folio balance from actual folio charges
-          // Balance = sum of charges - sum of payments (excluding voided)
-          const guestCharges = loadedFolioCharges.filter((c: any) => c.guestId === g.id && !c.is_voided);
-          const totalCharges = guestCharges
-            .filter((c: any) => c.type === 'charge' || !c.type) // Default to charge if type not specified
-            .reduce((sum: number, c: any) => sum + Number(c.amount || 0), 0);
-          const totalPayments = guestCharges
-            .filter((c: any) => c.type === 'payment')
-            .reduce((sum: number, c: any) => sum + Math.abs(Number(c.amount || 0)), 0);
-          
-          // Compute true accounting balance
-          const computedBalance = Number((totalCharges - totalPayments).toFixed(2));
-
-          return {
-            ...g,
-            name: g.full_name || g.name || '',
-            full_name: g.full_name || g.name || '',
-            // Add room info from checked-in reservation
-            roomNumber: checkedInRes?.roomNumber || null,
-            reservationId: latestRes?.id || null,
-            // Use compute balance if any transactions exist, otherwise use rate as starting point for new check-ins
-            folioBalance: (guestCharges.length > 0) ? computedBalance : (latestRes?.rate || 0),
-            // Standardize field names for statement compatibility
-            checkIn: latestRes?.checkIn || null,
-            checkOut: latestRes?.checkOut || null,
-            checkInDate: latestRes?.checkIn || null,
-            checkOutDate: latestRes?.checkOut || null,
-            dailyRate: latestRes?.rate || 0
-          };
-        });
-        setGuests(normalizedGuests);
-      }
-
-      // Load POS Categories
-      try {
-        const { categories, subcategories } = await loadCategoriesFromDb();
-        if (categories.length > 0) {
-          menuCats.setCategories(categories as any);
-        }
-        if (subcategories.length > 0) {
-          menuCats.setSubcategories(subcategories as any);
-        }
-      } catch (err) {
-        console.warn('[DataContext] Failed to load POS categories from DB', err);
-      }
-
-      // Load POS & Inventory Data
-      const posRes = await db.query('SELECT * FROM pos_orders WHERE LOWER(status::text) = LOWER(?::text)', ['open']);
-      if ('rows' in posRes) {
-        const normalized = (posRes.rows || []).map((o: any) => {
-          let itemsArr: any[] = [];
-          try {
-            itemsArr = Array.isArray(o.items) ? o.items : JSON.parse(o.items || '[]');
-          } catch { itemsArr = []; }
-          const s = String(o.status || '').toLowerCase();
-          const status = s === 'open' ? 'OPEN' : s === 'closed' ? 'CLOSED' : String(o.status || '').toUpperCase();
-          return { ...o, items: itemsArr, status };
-        });
-        setPosOrders(normalized);
-      }
+      if ('rows' in guestRes) setGuests(guestRes.rows || []);
 
       const productsRes = await db.query('SELECT * FROM products ORDER BY name ASC');
       let mergedInventory: any[] = [];
-
-
-      if ('rows' in productsRes && Array.isArray(productsRes.rows)) {
-        mergedInventory = productsRes.rows.map((p: any) => {
-          // Parse visibility if stored as string JSON
-          let vis = p.visibility;
-          if (typeof vis === 'string') {
-            try { vis = JSON.parse(vis); } catch { vis = {}; }
-          }
-
-          // Derive category_id from department/category for POS filtering
-          // The Order Modal filters by category_id, so we must assign default categories
-          const rawCat = String(p.department || p.category || '').toLowerCase();
-          const costCenter = String(p.department || p.category || '').toLowerCase();
-          const isBar = costCenter.includes('bar') ||
-            rawCat.includes('bar') ||
-            rawCat.includes('beverage') ||
-            rawCat.includes('cocktail') ||
-            rawCat.includes('beer') ||
-            rawCat.includes('wine') ||
-            rawCat.includes('cider') ||
-            rawCat.includes('liquor') ||
-            rawCat.includes('spirit') ||
-            rawCat.includes('drink') ||
-            rawCat.includes('alcohol');
-
-          // CRITICAL: Preserve explicitly assigned category_id from database
-          // Only derive default category if category_id is null/undefined/empty
-          let derivedCategoryId = p.category_id;
-
-          // Only derive category if none explicitly set - preserve user assignments
-          if (!derivedCategoryId || derivedCategoryId === '' || derivedCategoryId === null) {
-            if (isBar) {
-              if (rawCat.includes('beverage') || rawCat.includes('cocktail') || rawCat.includes('drink') || rawCat.includes('water') || rawCat.includes('juice')) {
-                derivedCategoryId = 'CAT_BAR_BEV';
-              } else {
-                derivedCategoryId = 'CAT_BAR_GEN';
-              }
-            } else {
-              if (rawCat.includes('main') || rawCat.includes('entree') || rawCat.includes('mains')) {
-                derivedCategoryId = 'CAT_REST_MAIN';
-              } else if (rawCat.includes('dessert') || rawCat.includes('sweet') || rawCat.includes('pudding')) {
-                derivedCategoryId = 'CAT_REST_DESSERT';
-              } else {
-                // Default to General, not Mains — items without a category
-                // should not be assumed to be main courses
-                derivedCategoryId = 'CAT_REST_GEN';
-              }
-            }
-          }
-
-            // Check if this is Baradzanwa instance and override prices if needed
-            const isBaradzanwa = typeof window !== 'undefined' ? window.location.hostname.includes('baradzanwa') : false;
-            let sellingPriceValue = Number(p.price || 0);
-            let costPriceValue = undefined;
-
-            if (isBaradzanwa && baradzanwaPrices[p.name]) {
-              sellingPriceValue = baradzanwaPrices[p.name].sellingPrice;
-              costPriceValue = baradzanwaPrices[p.name].costPrice;
-            }
-           
-            return {
-              ...p,
-              // Map unified fields to legacy frontend expected fields
-              // Use only selling price
-              selling_price: sellingPriceValue,
-              sellingPrice: sellingPriceValue,
-              qtyInStock: Number(p.stock_level || 0),
-              // 'type' is used for filtering (bar/restaurant/etc)
-              type: p.department || p.category || 'restaurant',
-              costCenter: isBar ? 'bar' : 'restaurant', // Normalized cost center
-              // CRITICAL: category must match OrderModal's activeCategory type: 'food' | 'bar'
-              // OrderModal sets activeCategory='food' for Restaurant tab, 'bar' for Bar tab
-              // Then filters: m.category === activeCategory
-             category: isBar ? 'bar' : 'food',
-             subCategory: p.category || p.department || '', // For Order Modal filtering
-             active: p.active !== false,
-             visibility: vis,
-             isStockItem: p.is_stock_item,
-             // Map new extended fields (snake_case from DB -> camelCase for frontend)
-             category_id: derivedCategoryId,
-             sub_id: p.sub_id,
-             parent_sub_id: p.parent_sub_id,
-             notes: p.notes,
-             barcodes: p.barcodes ? (typeof p.barcodes === 'string' ? JSON.parse(p.barcodes) : p.barcodes) : [],
-             cosPercent: Number(p.cos_percent || 0),
-             gpPercent: Number(p.gp_percent || 0),
-             gpAmount: Number(p.gp_amount || 0),
-             qtyReceived: Number(p.qty_received || 0),
-             imageBgColor: p.image_bg_color,
-             pictureData: p.picture_data
-           };
-        });
-
-        console.log(`[DataContext] Loaded ${mergedInventory.length} products`);
+      if ('rows' in productsRes) {
+        mergedInventory = (productsRes.rows || []).map((p: any) => ({
+          ...p,
+          sellingPrice: Number(p.price || 0),
+          costPrice: Number(p.cost_price || 0),
+          qtyInStock: Number(p.stock_level || 0),
+          category: String(p.department || '').toLowerCase().includes('bar') ? 'bar' : 'food'
+        }));
         setInventory(mergedInventory);
-      } else {
-        setInventory([]);
       }
 
-      // Sync inventory to localStorage for POS offline usage
-      if (mergedInventory.length > 0) {
-        try {
-          localStorage.setItem('corepms_pos_items', JSON.stringify(mergedInventory));
-          window.dispatchEvent(new Event('storage')); // Notify listeners
-        } catch (e) {
-          console.warn('Failed to sync inventory to localStorage', e);
-        }
-      }
+      // Always update localStorage, even if empty
+      localStorage.setItem('corepms_pos_items', JSON.stringify(mergedInventory));
+      window.dispatchEvent(new Event('storage'));
 
-      // Load Folios metadata (payment methods etc)
-      try {
-        const folioRes = await db.query('SELECT * FROM folios');
-        if ('rows' in folioRes) {
-          setFolios(folioRes.rows || []);
-        }
-      } catch (err) {
-        console.warn('[DataContext] Failed to load folios metadata from DB', err);
-      }
+      const folioRes = await db.query('SELECT * FROM folios');
+      if ('rows' in folioRes) setFolios(folioRes.rows || []);
 
       setLastUpdateTs(Date.now());
       setDataError(null);
-
-      // Initialize real-time price sync for POS
       initializePriceSync();
 
     } catch (error: any) {
-      console.error("Failed to load data from MySQL:", error);
-      setDataError(error.message || "Failed to load database content");
+      console.error("Failed to load data:", error);
+      setDataError(error.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [initializePriceSync]);
 
   const loadUsers = React.useCallback(async () => {
     try {

@@ -77,11 +77,10 @@ export function useNightAuditLock() {
       try {
         const d = JSON.parse(e.data);
         const runDate = d.last_result?.businessDate || d.last_result?.business_date || d.business_date;
-        if (isAcknowledged(runDate)) {
-           setState(INITIAL);
-           return;
+        if (runDate) {
+           localStorage.setItem('corepms_na_ack', String(runDate));
         }
-        setState({ locked: false, step: 'complete', progress: 100, lastResult: d.last_result });
+        setState(INITIAL);
       } catch {}
     };
 
@@ -90,11 +89,10 @@ export function useNightAuditLock() {
         const d = JSON.parse(e.data);
         // Payload from nightAuditRunner summary: { businessDate, ... }
         const runDate = d.businessDate || d.business_date;
-        if (isAcknowledged(runDate)) {
-           setState(INITIAL);
-           return;
+        if (runDate) {
+           localStorage.setItem('corepms_na_ack', String(runDate));
         }
-        setState(s => ({ ...s, locked: false, step: 'complete', progress: 100, lastResult: d }));
+        setState(INITIAL);
       } catch {}
     };
 
@@ -109,21 +107,6 @@ export function useNightAuditLock() {
     };
   }, []);
 
-   // Centralized cleanup: if we are in 'complete' state and unlocked, clear it after 4s
-   useEffect(() => {
-     if (state.step === 'complete' && !state.locked) {
-       const timer = setTimeout(() => {
-         // Mark this specific audit run as acknowledged before clearing
-         const result = state.lastResult as any;
-         const runDate = result?.businessDate || result?.business_date;
-         if (runDate) {
-           localStorage.setItem('corepms_na_ack', String(runDate));
-         }
-         setState(INITIAL);
-       }, 4000);
-       return () => clearTimeout(timer);
-     }
-   }, [state.step, state.locked, state.lastResult]);
 
   return state;
 }

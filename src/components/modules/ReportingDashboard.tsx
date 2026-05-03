@@ -19,80 +19,123 @@ const ReportingDashboard: React.FC = () => {
     let data;
     switch (reportType) {
       case 'flash': {
-        // Build from localStorage first
-        data = buildFlashReport(dailyDate);
-        // If all key metrics are zero, enrich from DB (backend night audit writes to DB, not localStorage)
-        const hasNoData = data.rows.every((r: any) => !r.today || r.today === 0 || r.today === '0' || r.today === '$0.00');
-        if (hasNoData) {
-          try {
-            const { db } = await import('@/lib/db');
-            // Find the night_audit_runs row closest to the requested date
-            const auditRes = await db.query<any>(
-              `SELECT business_date::date as bd, rooms_posted, room_revenue, total_revenue, adr, revpar, occupancy_percent
-               FROM night_audit_runs WHERE business_date::date <= $1 ORDER BY business_date DESC LIMIT 1`,
-              [dailyDate]
-            );
-            const posRes = await db.query<any>(
-              `SELECT COALESCE(SUM(total_amount),0) as pos_total, COUNT(*) as orders
-               FROM pos_orders WHERE status='closed' AND created_at::date = $1`,
-              [dailyDate]
-            );
-            if ('rows' in auditRes && auditRes.rows.length) {
-              const a = auditRes.rows[0];
-              const pos = 'rows' in posRes ? Number(posRes.rows[0]?.pos_total || 0) : 0;
-              const roomRev = Number(a.room_revenue || 0);
-              const totalRev = roomRev + pos;
-              const occ = Number(a.occupancy_percent || 0);
-              // Override the zero rows with DB values
-              data = {
-                ...data,
-                rows: data.rows.map((r: any) => {
-                  const m = String(r.metric || '').toLowerCase();
-                  if (m.includes('room revenue'))    return { ...r, today: `$${roomRev.toFixed(2)}` };
-                  if (m.includes('food revenue'))    return { ...r, today: `$${(pos * 0.6).toFixed(2)}` };
-                  if (m.includes('bar revenue'))     return { ...r, today: `$${(pos * 0.4).toFixed(2)}` };
-                  if (m.includes('f&b'))             return { ...r, today: `$${pos.toFixed(2)}` };
-                  if (m.includes('total revenue'))   return { ...r, today: `$${totalRev.toFixed(2)}` };
-                  if (m.includes('occupancy'))       return { ...r, today: `${occ.toFixed(1)}%` };
-                  if (m.includes('adr'))             return { ...r, today: `$${Number(a.adr || 0).toFixed(2)}` };
-                  if (m.includes('revpar'))          return { ...r, today: `$${Number(a.revpar || 0).toFixed(2)}` };
-                  return r;
-                })
-              };
+        // Build base report structure
+        data = await buildFlashReport(dailyDate);
+        
+        try {
+          const { db } = await import('@/lib/db');
+          // Find the night_audit_runs row for the requested date or the latest one
+          const auditRes = await db.query<any>(
+            `SELECT business_date::date as bd, rooms_posted, room_revenue, total_revenue, adr, revpar, occupancy_percent
+             FROM night_audit_runs WHERE business_date::date = $1`,
+            [dailyDate]
+          );
+
+          // Get POS totals and category breakdown from the database
+          const posRes = await db.query<any>(
+            `SELECT items, total_amount FROM pos_orders WHERE status='closed' AND created_at::date = $1`,
+            [dailyDate]
+          );
+
+          const hasAudit = 'rows' in auditRes && auditRes.rows.length > 0;
+          const posOrders = 'rows' in posRes ? (posRes.rows || []) : [];
+          
+          let posTotal = 0;
+          let foodTotal = 0;
+          let barTotal = 0;
+          let otherTotal = 0;
+
+          posOrders.forEach((order: any) => {
+            const total = Number(order.total_amount || 0);
+            posTotal += total;
+
+            const items = typeof order.items === 'string' ? JSON.parse(order.items) : (order.items || []);
+            if (Array.isArray(items)) {
+              items.forEach((item: any) => {
+                const itemPrice = Number(item.price || item.menuItem?.price || 0);
+                const itemQty = Number(item.quantity || 1);
+                const itemAmt = itemPrice * itemQty;
+                
+                const name = String(item.name || item.menuItem?.name || '').toLowerCase();
+                const cat = String(item.category || item.menuItem?.category || '').toLowerCase();
+                
+                // Categorization logic
+                const isBar = cat.includes('bar') || cat.includes('beverage') || cat.includes('liquor') || 
+                              name.includes('beer') || name.includes('wine') || name.includes('spirit') || 
+                              name.includes('cocktail') || name.includes('drink');
+                
+                if (isBar) {
+                  barTotal += itemAmt;
+                } else {
+                  foodTotal += itemAmt;
+                }
+              });
+            } else {
+              // Fallback if items not listable
+              foodTotal += total;
             }
-          } catch (err) {
-            console.warn('[ReportingDashboard] DB flash enrichment failed:', err);
+          });
+
+          if (hasAudit || posTotal > 0) {
+            const a = hasAudit ? auditRes.rows[0] : { room_revenue: 0, occupancy_percent: 0, adr: 0, revpar: 0 };
+            const roomRev = Number(a.room_revenue || 0);
+            const totalRev = roomRev + posTotal;
+            const occ = Number(a.occupancy_percent || 0);
+
+            // Override the report rows with dynamic database values
+            data = {
+              ...data,
+              rows: data.rows.map((r: any) => {
+                const m = String(r.metric || '').toLowerCase();
+                if (m.includes('room revenue'))    return { ...r, today: `$${roomRev.toFixed(2)}` };
+                if (m.includes('food revenue'))    return { ...r, today: `$${foodTotal.toFixed(2)}` };
+                if (m.includes('bar revenue'))     return { ...r, today: `$${barTotal.toFixed(2)}` };
+                if (m.includes('f&b'))             return { ...r, today: `$${posTotal.toFixed(2)}` };
+                if (m.includes('total revenue'))   return { ...r, today: `$${totalRev.toFixed(2)}` };
+                if (m.includes('occupancy'))       return { ...r, today: `${occ.toFixed(1)}%` };
+                if (m.includes('adr'))             return { ...r, today: `$${Number(a.adr || 0).toFixed(2)}` };
+                if (m.includes('revpar'))          return { ...r, today: `$${Number(a.revpar || 0).toFixed(2)}` };
+                if (m.includes('receipts')) {
+                  // For receipts, we still use a heuristic if not in audit, but based on real posTotal
+                  if (m.includes('cash')) return { ...r, today: `$${(posTotal * 0.5).toFixed(2)}` };
+                  if (m.includes('card')) return { ...r, today: `$${(posTotal * 0.5).toFixed(2)}` };
+                }
+                return r;
+              })
+            };
           }
+        } catch (err) {
+          console.warn('[ReportingDashboard] DB flash enrichment failed:', err);
         }
         break;
       }
-      case 'pos-recon': data = buildPosReconciliation(dailyDate); break;
-      case 'purchase-log': data = buildPurchaseReceivingLog(dailyDate); break;
-      case 'pl': data = buildMonthlyPL(month); break;
-      case 'aged-ar': data = buildAgedAR(dailyDate); break;
-      case 'inventory-cogs': data = buildInventoryCOGS(month); break;
-      case 'housekeeping': data = buildHousekeepingStatus(); break;
-      case 'daily-tax': data = buildDailyTax(dailyDate); break;
-      case 'cash-bank': data = buildCashBankDeposits(dailyDate); break;
-      case 'trial-balance': data = buildTrialBalance(month); break;
+      case 'pos-recon': data = await buildPosReconciliation(dailyDate); break;
+      case 'purchase-log': data = await buildPurchaseReceivingLog(dailyDate); break;
+      case 'pl': data = await buildMonthlyPL(month); break;
+      case 'aged-ar': data = await buildAgedAR(dailyDate); break;
+      case 'inventory-cogs': data = await buildInventoryCOGS(month); break;
+      case 'housekeeping': data = await buildHousekeepingStatus(); break;
+      case 'daily-tax': data = await buildDailyTax(dailyDate); break;
+      case 'cash-bank': data = await buildCashBankDeposits(dailyDate); break;
+      case 'trial-balance': data = await buildTrialBalance(month); break;
       case 'dept-summary': data = await buildDepartmentalSummary(month); break;
-      case 'arrivals-departures': data = buildArrivalsDepartures(dailyDate); break;
-      case 'high-balance': data = buildHighBalance(threshold, dailyDate); break;
-      case 'proc-variance': data = buildProcurementVariance(month); break;
-      case 'fa-recon': data = buildFixedAssetRecon(month); break;
+      case 'arrivals-departures': data = await buildArrivalsDepartures(dailyDate); break;
+      case 'high-balance': data = await buildHighBalance(threshold, dailyDate); break;
+      case 'proc-variance': data = await buildProcurementVariance(month); break;
+      case 'fa-recon': data = await buildFixedAssetRecon(month); break;
       // Vendor reports
-      case 'open-bills': data = buildOpenBills(); break;
-      case 'aged-payables': data = buildAgedPayables(dailyDate); break;
-      case 'po-history': data = buildPurchaseOrderHistory(month + '-01', month + '-31'); break;
-      case 'payment-history': data = buildPaymentHistory(month + '-01', month + '-31'); break;
-      case 'vendor-payment-summary': data = buildVendorPaymentSummary(month + '-01', month + '-31'); break;
-      case 'expenses-by-dept': data = buildExpensesByDepartment(month + '-01', month + '-31'); break;
-      case 'expense-summary-daily': data = buildExpenseSummary('daily', month + '-01', month + '-31'); break;
-      case 'expense-summary-monthly': { const yr = month.slice(0, 4); data = buildExpenseSummary('monthly', yr + '-01-01', yr + '-12-31'); break; }
-      case 'line-item-export': data = buildDetailedLineItemExport(month + '-01', month + '-31'); break;
+      case 'open-bills': data = await buildOpenBills(); break;
+      case 'aged-payables': data = await buildAgedPayables(dailyDate); break;
+      case 'po-history': data = await buildPurchaseOrderHistory(month + '-01', month + '-31'); break;
+      case 'payment-history': data = await buildPaymentHistory(month + '-01', month + '-31'); break;
+      case 'vendor-payment-summary': data = await buildVendorPaymentSummary(month + '-01', month + '-31'); break;
+      case 'expenses-by-dept': data = await buildExpensesByDepartment(month + '-01', month + '-31'); break;
+      case 'expense-summary-daily': data = await buildExpenseSummary('daily', month + '-01', month + '-31'); break;
+      case 'expense-summary-monthly': { const yr = month.slice(0, 4); data = await buildExpenseSummary('monthly', yr + '-01-01', yr + '-12-31'); break; }
+      case 'line-item-export': data = await buildDetailedLineItemExport(month + '-01', month + '-31'); break;
     }
     if (data) setDataset(data);
-  }, [reportType, dailyDate, month]);
+  }, [reportType, dailyDate, month, threshold]);
 
   React.useEffect(() => { load(); }, [load]);
 
@@ -140,7 +183,7 @@ const ReportingDashboard: React.FC = () => {
   ].filter(o => allowed(o.key));
 
   // Consolidated monthly export
-  const exportMonthBundle = () => exportMonthlyWorkbookXLS(month, `MonthEnd_${month}`);
+  const exportMonthBundle = async () => await exportMonthlyWorkbookXLS(month, `MonthEnd_${month}`);
 
   return (
     <div className="space-y-4">
@@ -178,16 +221,26 @@ const ReportingDashboard: React.FC = () => {
           )}
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead><tr>{dataset.columns.map(c => (<th key={c} className="p-2 text-left border-b">{c}</th>))}</tr></thead>
+      <div className="ds-table-container">
+        <table className="ds-table">
+          <thead>
+            <tr>
+              {dataset.columns.map(c => (
+                <th key={c} scope="col" className={(c.toLowerCase().includes('date') || c.toLowerCase().includes('id')) ? 'hide-on-mobile' : ''}>{c}</th>
+              ))}
+            </tr>
+          </thead>
           <tbody>
             {dataset.rows.length === 0 && (
-              <tr><td className="p-2 text-gray-600" colSpan={dataset.columns.length || 1}>No data for the selected period.</td></tr>
+              <tr><td className="p-4 text-gray-500 text-center" colSpan={dataset.columns.length || 1}>No data for the selected period.</td></tr>
             )}
             {dataset.rows.map((r, idx) => (
               <tr key={idx}>
-                {dataset.columns.map(c => (<td key={c} className="p-2 border-b">{String((r as any)[c.toLowerCase()] ?? (r as any)[c] ?? '')}</td>))}
+                {dataset.columns.map(c => (
+                  <td key={c} className={(c.toLowerCase().includes('date') || c.toLowerCase().includes('id')) ? 'hide-on-mobile' : ''}>
+                    {String((r as any)[c.toLowerCase()] ?? (r as any)[c] ?? '')}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>

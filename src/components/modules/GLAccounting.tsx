@@ -229,8 +229,7 @@ export const GLAccounting: React.FC = () => {
           </table>
         </div>
       </div>
-      </div>
-          {Object.keys(pendingEdits).length > 0 && (
+      {Object.keys(pendingEdits).length > 0 && (
             <div className="mt-3 p-2 border rounded bg-yellow-50 text-xs">
               <div className="font-semibold mb-1">Pending Changes Preview</div>
               <div className="space-y-1">
@@ -245,8 +244,6 @@ export const GLAccounting: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
-      </div>
 
       <div className="p-4 border rounded">
         <div className="font-semibold mb-2">Code Mappings</div>

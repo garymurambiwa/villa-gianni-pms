@@ -3,6 +3,7 @@ import { readReceiptBranding } from './printSettings';
 import roomSvc from '@/lib/roomService';
 import expenseSvc from '@/lib/expenseService';
 import { syncNightAuditRunToLocalStorage } from './dbSync';
+import { db } from './db';
 
 export type ReportType = 'flash' | 'pos-recon' | 'purchase-log' | 'pl' | 'aged-ar' | 'inventory-cogs' | 'housekeeping' | 'daily-tax' | 'cash-bank' | 'trial-balance' | 'dept-summary' | 'arrivals-departures' | 'high-balance' | 'proc-variance' | 'fa-recon' | 'open-bills' | 'aged-payables' | 'po-history' | 'payment-history' | 'vendor-payment-summary' | 'expenses-by-dept' | 'expense-summary-daily' | 'expense-summary-monthly' | 'line-item-export';
 
@@ -53,7 +54,7 @@ export const getSameDateLastYear = (dateStr: string): string => {
 };
 
 // Daily Manager's Flash Report with Year-over-Year Comparison
-export const buildFlashReport = (forDate?: string) => {
+export const buildFlashReport = async (forDate?: string) => {
   const b = getLastNightAuditBundle();
   const date = forDate || b?.date || getBusinessDate();
   const cashCard = readJSON<Record<string, number>>('corepms_shift_totals', { cash: 0, card: 0 });
@@ -85,7 +86,46 @@ export const buildFlashReport = (forDate?: string) => {
   );
 
   // Separate Food and Bar revenue based on POS categories and descriptions
-  // This logic ensures no double-counting by processing charges in a specific order
+  // NEW: Try to get detailed breakdown from database if possible
+  let dbFoodRevenue = 0;
+  let dbBarRevenue = 0;
+  let dbPosTotal = 0;
+
+  try {
+    const posRes = await db.query<any>(
+      `SELECT items, total_amount FROM pos_orders WHERE status='closed' AND created_at::date = $1`,
+      [date]
+    );
+    const posOrders = 'rows' in posRes ? (posRes.rows || []) : [];
+    
+    posOrders.forEach((order: any) => {
+      const total = Number(order.total_amount || 0);
+      dbPosTotal += total;
+
+      const items = typeof order.items === 'string' ? JSON.parse(order.items) : (order.items || []);
+      if (Array.isArray(items)) {
+        items.forEach((item: any) => {
+          const itemPrice = Number(item.price || item.menuItem?.price || 0);
+          const itemQty = Number(item.quantity || 1);
+          const itemAmt = itemPrice * itemQty;
+          
+          const name = String(item.name || item.menuItem?.name || '').toLowerCase();
+          const cat = String(item.category || item.menuItem?.category || '').toLowerCase();
+          
+          const isBar = cat.includes('bar') || cat.includes('beverage') || cat.includes('liquor') || 
+                        name.includes('beer') || name.includes('wine') || name.includes('spirit') || 
+                        name.includes('cocktail') || name.includes('drink');
+          
+          if (isBar) dbBarRevenue += itemAmt;
+          else dbFoodRevenue += itemAmt;
+        });
+      } else {
+        dbFoodRevenue += total;
+      }
+    });
+  } catch (err) {
+    console.warn('[Reporting] Database POS breakdown failed, falling back to heuristics:', err);
+  }
 
   // First, identify all F&B charges for the business date
   const fbCharges = todaysCharges.filter((c: any) =>
@@ -118,7 +158,7 @@ export const buildFlashReport = (forDate?: string) => {
         desc.includes('dessert') ||
         desc.includes('snack') ||
         desc.includes('buffet') ||
-        desc.includes('room service meal'); // More specific room service
+        desc.includes('room service meal');
 
       // Explicitly bar-related keywords (to exclude from food)
       const isExplicitlyBar =
@@ -199,11 +239,10 @@ export const buildFlashReport = (forDate?: string) => {
     })
     .reduce((sum: number, c: any) => sum + Number(c.amount || 0), 0);
 
-  // Add remaining revenue to food (conservative approach)
-  const finalFoodRevenue = foodRevenue + remainingFbRevenue;
-
-  // Use the already calculated values
-  const finalBarRevenue = barRevenue;
+  // Combine DB values with folio charge values (ensuring no double count if possible, 
+  // but DB is usually more accurate for today's POS)
+  const finalFoodRevenue = dbPosTotal > 0 ? dbFoodRevenue : (foodRevenue + remainingFbRevenue);
+  const finalBarRevenue = dbPosTotal > 0 ? dbBarRevenue : barRevenue;
 
   // Calculate last year's F&B breakdown using the same logic
   const lastYearFbCharges = lastYearCharges.filter((c: any) =>
@@ -338,9 +377,8 @@ export const buildFlashReport = (forDate?: string) => {
     const storedExpenses = readJSON<number>('corepms_dept_expenses_total', 0);
     if (storedExpenses > 0) return storedExpenses;
 
-    // Last resort: estimate based on revenue (35% industry average)
-    const totalRevenueEstimate = Number(b?.roomRevenue || 0) + finalFoodRevenue + finalBarRevenue;
-    return totalRevenueEstimate * 0.35;
+    // No hardcoded heuristics — return 0 if no real data found
+    return 0;
   })();
 
   // Validate that our separated revenues match the original F&B total
@@ -477,15 +515,55 @@ export const buildFlashReport = (forDate?: string) => {
 };
 
 // POS Sales/Cashier Reconciliation
-export const buildPosReconciliation = (forDate?: string) => {
-  const ended = readJSON<any[]>('corepms_endedShifts', []);
-  const rows = ended.map(s => ({ cashier: s.openedBy || s.id, outlet: s.department || 'POS', sales: Number(s.totals?.total || s.totalSales || 0), cash: Number(s.totals?.cash || s.cashPayments || 0), card: Number(s.totals?.card || s.cardPayments || 0), overShort: Number((s.report_data?.cashDifference || 0)) }));
+export const buildPosReconciliation = async (forDate?: string) => {
   const date = forDate || getBusinessDate();
+  
+  try {
+    const { db } = await import('@/lib/db');
+    // Fetch shifts for the given date
+    const shiftRes = await db.query<any>(
+      `SELECT s.*, 
+       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed') as total_sales,
+       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"cash"%') as cash_sales,
+       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"card"%') as card_sales
+       FROM pos_shifts s 
+       WHERE s.opened_at::date = $1`,
+      [date]
+    );
+
+    if ('rows' in shiftRes && shiftRes.rows.length > 0) {
+      const rows = shiftRes.rows.map((s: any) => {
+        const metadata = typeof s.metadata === 'string' ? JSON.parse(s.metadata) : (s.metadata || {});
+        return {
+          cashier: s.opened_by || s.id,
+          outlet: metadata.department || 'POS',
+          sales: Number(s.total_sales || 0),
+          cash: Number(s.cash_sales || 0),
+          card: Number(s.card_sales || 0),
+          overShort: Number(s.actual_cash || 0) - (Number(s.starting_cash || 0) + Number(s.cash_sales || 0))
+        };
+      });
+      return { title: `POS Sales & Cashier Reconciliation — ${date}`, columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'Card', 'Over/Short'], rows };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildPosReconciliation DB query failed:', err);
+  }
+
+  // Fallback to localStorage
+  const ended = readJSON<any[]>('corepms_endedShifts', []);
+  const rows = ended.map(s => ({ 
+    cashier: s.openedBy || s.id, 
+    outlet: s.department || 'POS', 
+    sales: Number(s.totals?.total || s.totalSales || 0), 
+    cash: Number(s.totals?.cash || s.cashPayments || 0), 
+    card: Number(s.totals?.card || s.cardPayments || 0), 
+    overShort: Number((s.report_data?.cashDifference || 0)) 
+  }));
   return { title: `POS Sales & Cashier Reconciliation — ${date}`, columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'Card', 'Over/Short'], rows };
 };
 
 // Daily Purchase & Receiving Log (simple placeholder using expenses and vendors if present)
-export const buildPurchaseReceivingLog = (forDate?: string) => {
+export const buildPurchaseReceivingLog = async (forDate?: string) => {
   const purchases = readJSON<any[]>('corepms_purchases', []);
   const date = forDate || getBusinessDate();
   const rows = purchases.filter(p => p.date === date).map(p => ({ item: p.itemName || p.item || 'Item', vendor: p.vendorName || p.vendorId || 'Vendor', po: p.poId || p.po || '-', unitCost: Number(p.unitCost || 0), qty: Number(p.quantity || 0), total: Number((Number(p.unitCost || 0) * Number(p.quantity || 0)).toFixed(2)) }));
@@ -493,7 +571,7 @@ export const buildPurchaseReceivingLog = (forDate?: string) => {
 };
 
 // Housekeeping Status (daily snapshot from room service)
-export const buildHousekeepingStatus = () => {
+export const buildHousekeepingStatus = async () => {
   const rooms = roomSvc.getRooms();
   const byStatus: Record<string, number> = {};
   rooms.forEach(r => { byStatus[r.status] = (byStatus[r.status] || 0) + 1; });
@@ -503,7 +581,7 @@ export const buildHousekeepingStatus = () => {
 };
 
 // Daily Tax Report (sum of TAX account for date from GL)
-export const buildDailyTax = (forDate?: string) => {
+export const buildDailyTax = async (forDate?: string) => {
   const date = forDate || new Date().toISOString().slice(0, 10);
   const ledger = gl.getLedger().filter(e => e.date === date);
   const taxAcc = gl.getMappings().TAX || 'TAX';
@@ -513,7 +591,7 @@ export const buildDailyTax = (forDate?: string) => {
 };
 
 // Cash & Bank Deposits (daily totals for CASH/BANK accounts)
-export const buildCashBankDeposits = (forDate?: string) => {
+export const buildCashBankDeposits = async (forDate?: string) => {
   const date = forDate || new Date().toISOString().slice(0, 10);
   const ledger = gl.getLedger().filter(e => e.date === date);
   const cashAcc = gl.getMappings().CASH || '1000';
@@ -529,7 +607,7 @@ export const buildCashBankDeposits = (forDate?: string) => {
 };
 
 // Trial Balance (monthly)
-export const buildTrialBalance = (monthISO: string) => {
+export const buildTrialBalance = async (monthISO: string) => {
   const [y, m] = monthISO.split('-');
   const start = `${y}-${m}-01`;
   const endDate = new Date(Number(y), Number(m));
@@ -559,7 +637,7 @@ export const buildDepartmentalSummary = async (monthISO: string) => {
 };
 
 // Arrivals / Departures (daily)
-export const buildArrivalsDepartures = (forDate?: string) => {
+export const buildArrivalsDepartures = async (forDate?: string) => {
   const date = forDate || getBusinessDate();
   const reservations = readJSON<any[]>('corepms_reservations', []);
   const arrivals = reservations.filter(r => (r.checkIn || '').slice(0, 10) === date);
@@ -572,7 +650,7 @@ export const buildArrivalsDepartures = (forDate?: string) => {
 };
 
 // High Balance (daily) across folios and city ledger transfers
-export const buildHighBalance = (threshold?: number, forDate?: string) => {
+export const buildHighBalance = async (threshold?: number, forDate?: string) => {
   const date = forDate || getBusinessDate();
   const th = typeof threshold === 'number' ? threshold : readJSON<number>('corepms_high_balance_threshold', 500);
   const folios = readJSON<any[]>('corepms_folios', []);
@@ -586,7 +664,7 @@ export const buildHighBalance = (threshold?: number, forDate?: string) => {
 };
 
 // Procurement Variance (monthly) using AP invoices vs Purchase Orders
-export const buildProcurementVariance = (monthISO: string) => {
+export const buildProcurementVariance = async (monthISO: string) => {
   const [y, m] = monthISO.split('-');
   const start = `${y}-${m}-01`;
   const endDate = new Date(Number(y), Number(m));
@@ -606,14 +684,14 @@ export const buildProcurementVariance = (monthISO: string) => {
 };
 
 // Fixed Asset Register Reconciliation (monthly stub)
-export const buildFixedAssetRecon = (monthISO: string) => {
+export const buildFixedAssetRecon = async (monthISO: string) => {
   const assets = readJSON<any[]>('corepms_fixed_assets', []);
   const rows = assets.length === 0 ? [{ assetId: '—', name: 'Dataset not available', status: 'N/A' }] : assets.map(a => ({ assetId: a.id || a.asset_id || '—', name: a.name || 'Asset', status: 'OK' }));
   return { title: `Fixed Asset Register Reconciliation — ${monthISO}`, columns: ['Asset ID', 'Name', 'Status'], rows };
 };
 
 // Monthly Profit & Loss (USALI-style summary using GL trial balance)
-export const buildMonthlyPL = (monthISO: string) => {
+export const buildMonthlyPL = async (monthISO: string) => {
   const [y, m] = monthISO.split('-');
   const start = `${y}-${m}-01`;
   const end = new Date(Number(y), Number(m)).toISOString().slice(0, 10); // first day of next month
@@ -628,7 +706,7 @@ export const buildMonthlyPL = (monthISO: string) => {
 };
 
 // Aged Accounts Receivable (City Ledger Aging)
-export const buildAgedAR = (asOf?: string) => {
+export const buildAgedAR = async (asOf?: string) => {
   const date = asOf || getBusinessDate();
   const ledger = readJSON<any[]>('corepms_city_ledger', []);
   const now = new Date(date);
@@ -638,7 +716,7 @@ export const buildAgedAR = (asOf?: string) => {
 };
 
 // Inventory & COGS (simple summary using purchases and opening/ending balances if present)
-export const buildInventoryCOGS = (monthISO: string) => {
+export const buildInventoryCOGS = async (monthISO: string) => {
   const opening = readJSON<number>('corepms_inventory_opening', 0);
   const ending = readJSON<number>('corepms_inventory_ending', 0);
   const purchases = readJSON<any[]>('corepms_purchases', []).filter(p => (p.date || '').startsWith(monthISO));
@@ -658,7 +736,7 @@ export const buildInventoryCOGS = (monthISO: string) => {
 // ============================================================================
 
 // Open Bills Report — unpaid/partially-paid vendor expenses
-export const buildOpenBills = () => {
+export const buildOpenBills = async () => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const payments: any[] = readJSON('corepms_vendor_payments', []);
   const paymentsByVendor: Record<string, number> = {};
@@ -694,7 +772,7 @@ export const buildOpenBills = () => {
 };
 
 // Aged Payables Summary — aging buckets: Current, 1-30, 31-60, 61-90, 90+
-export const buildAgedPayables = (asOfISO: string = new Date().toISOString().slice(0, 10)) => {
+export const buildAgedPayables = async (asOfISO: string = new Date().toISOString().slice(0, 10)) => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const asOf = new Date(asOfISO);
   const diffDays = (d: string) => Math.floor((asOf.getTime() - new Date(d).getTime()) / 86400000);
@@ -739,7 +817,7 @@ export const buildAgedPayables = (asOfISO: string = new Date().toISOString().sli
 };
 
 // Purchase Order History (uses expense records as purchase proxies)
-export const buildPurchaseOrderHistory = (from: string, to: string) => {
+export const buildPurchaseOrderHistory = async (from: string, to: string) => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to)
     .sort((a, b) => b.expense_date.localeCompare(a.expense_date));
@@ -767,7 +845,7 @@ export const buildPurchaseOrderHistory = (from: string, to: string) => {
 };
 
 // Payment History + Check Register
-export const buildPaymentHistory = (from: string, to: string) => {
+export const buildPaymentHistory = async (from: string, to: string) => {
   const payments: any[] = readJSON('corepms_vendor_payments', []);
   const filtered = payments.filter(p => {
     const d = typeof p.payment_date === 'string' ? p.payment_date : new Date(p.payment_date).toISOString().slice(0, 10);
@@ -794,7 +872,7 @@ export const buildPaymentHistory = (from: string, to: string) => {
 };
 
 // Vendor Payment Summary — totals per vendor for a period
-export const buildVendorPaymentSummary = (from: string, to: string) => {
+export const buildVendorPaymentSummary = async (from: string, to: string) => {
   const payments: any[] = readJSON('corepms_vendor_payments', []);
   const filtered = payments.filter(p => {
     const d = typeof p.payment_date === 'string' ? p.payment_date : new Date(p.payment_date).toISOString().slice(0, 10);
@@ -829,7 +907,7 @@ export const buildVendorPaymentSummary = (from: string, to: string) => {
 };
 
 // Expenses by Department / Date Range
-export const buildExpensesByDepartment = (from: string, to: string) => {
+export const buildExpensesByDepartment = async (from: string, to: string) => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to);
 
@@ -873,7 +951,7 @@ export const buildExpensesByDepartment = (from: string, to: string) => {
 };
 
 // Daily / Monthly Expense Summaries
-export const buildExpenseSummary = (period: 'daily' | 'monthly', from: string, to: string) => {
+export const buildExpenseSummary = async (period: 'daily' | 'monthly', from: string, to: string) => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to);
 
@@ -904,7 +982,7 @@ export const buildExpenseSummary = (period: 'daily' | 'monthly', from: string, t
 };
 
 // Detailed Line-Item Export — every expense row with all fields
-export const buildDetailedLineItemExport = (from: string, to: string) => {
+export const buildDetailedLineItemExport = async (from: string, to: string) => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to)
     .sort((a, b) => a.expense_date.localeCompare(b.expense_date));
@@ -986,11 +1064,11 @@ export const exportXLSMulti = (sheets: Array<{ name: string; columns: string[]; 
   const a = document.createElement('a'); a.href = url; a.download = filename.endsWith('.xls') ? filename : (filename + '.xls'); a.click(); URL.revokeObjectURL(url);
 };
 
-export const exportMonthlyWorkbookXLS = (monthISO: string, filename?: string) => {
-  const pl = buildMonthlyPL(monthISO);
-  const ar = buildAgedAR(`${monthISO}-01`); // use first day as as-of
-  const inv = buildInventoryCOGS(monthISO);
-  const tb = buildTrialBalance(monthISO);
+export const exportMonthlyWorkbookXLS = async (monthISO: string, filename?: string) => {
+  const pl = await buildMonthlyPL(monthISO);
+  const ar = await buildAgedAR(`${monthISO}-01`); // use first day as as-of
+  const inv = await buildInventoryCOGS(monthISO);
+  const tb = await buildTrialBalance(monthISO);
   exportXLSMulti([
     { name: 'P&L', columns: pl.columns, rows: pl.rows },
     { name: 'Aged AR', columns: ar.columns, rows: ar.rows },

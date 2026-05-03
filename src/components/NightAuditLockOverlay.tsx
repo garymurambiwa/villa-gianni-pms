@@ -18,9 +18,8 @@ const STEPS: Record<string, string> = {
 export const NightAuditLockOverlay: React.FC = () => {
   const { locked, step, progress } = useNightAuditLock();
 
-  if (!locked && step !== 'complete') return null;
+  if (!locked) return null;
 
-  const isComplete  = step === 'complete';
   const displayStep = (step && STEPS[step]) || step || 'Processing…';
 
   return (
@@ -33,47 +32,40 @@ export const NightAuditLockOverlay: React.FC = () => {
         flexDirection:   'column',
         alignItems:      'center',
         justifyContent:  'center',
-        background:      isComplete
-          ? 'rgba(5, 46, 22, 0.96)'
-          : 'rgba(7, 10, 25, 0.97)',
+        background:      'rgba(7, 10, 25, 0.97)',
         backdropFilter:  'blur(6px)',
         userSelect:      'none',
-        transition:      'background 0.4s ease',
       }}
     >
       {/* Pulsing ring */}
-      {!isComplete && (
-        <div style={{
-          width: 120, height: 120,
-          borderRadius: '50%',
-          border: '3px solid rgba(251,191,36,0.25)',
-          position: 'absolute',
-          animation: 'na-pulse 2s ease-in-out infinite',
-        }} />
-      )}
+      <div style={{
+        width: 120, height: 120,
+        borderRadius: '50%',
+        border: '3px solid rgba(251,191,36,0.25)',
+        position: 'absolute',
+        animation: 'na-pulse 2s ease-in-out infinite',
+      }} />
 
       {/* Icon */}
       <div style={{
         fontSize: 56,
         marginBottom: 24,
-        filter: isComplete ? 'drop-shadow(0 0 12px #22c55e)' : 'drop-shadow(0 0 12px #f59e0b)',
+        filter: 'drop-shadow(0 0 12px #f59e0b)',
       }}>
-        {isComplete ? '✓' : '🌙'}
+        🌙
       </div>
 
       {/* Title */}
       <h1 style={{
-        color:          isComplete ? '#86efac' : '#fbbf24',
+        color:          '#fbbf24',
         fontSize:       '2rem',
         fontWeight:     800,
         letterSpacing:  '0.15em',
         textAlign:      'center',
         margin:         '0 0 8px',
-        textShadow:     isComplete
-          ? '0 0 20px rgba(134,239,172,0.5)'
-          : '0 0 20px rgba(251,191,36,0.5)',
+        textShadow:     '0 0 20px rgba(251,191,36,0.5)',
       }}>
-        {isComplete ? 'NIGHT AUDIT COMPLETE' : 'NIGHT AUDIT IN PROCESS'}
+        NIGHT AUDIT IN PROCESS
       </h1>
 
       {/* Subtitle */}
@@ -84,9 +76,7 @@ export const NightAuditLockOverlay: React.FC = () => {
         margin:      '0 0 32px',
         textAlign:   'center',
       }}>
-        {isComplete
-          ? 'System is ready for the new business day'
-          : 'All operations are temporarily suspended — please wait'}
+        All operations are temporarily suspended — please wait
       </p>
 
       {/* Progress bar */}
@@ -102,25 +92,21 @@ export const NightAuditLockOverlay: React.FC = () => {
           height:     '100%',
           width:      `${progress}%`,
           borderRadius: 3,
-          background:   isComplete
-            ? 'linear-gradient(90deg,#22c55e,#86efac)'
-            : 'linear-gradient(90deg,#f59e0b,#fbbf24)',
+          background:   'linear-gradient(90deg,#f59e0b,#fbbf24)',
           transition:   'width 0.6s ease',
-          boxShadow:    isComplete
-            ? '0 0 8px rgba(34,197,94,0.6)'
-            : '0 0 8px rgba(245,158,11,0.6)',
+          boxShadow:    '0 0 8px rgba(245,158,11,0.6)',
         }} />
       </div>
 
       {/* Step label */}
       <p style={{
-        color:         isComplete ? '#86efac' : '#fbbf24',
+        color:         '#fbbf24',
         fontSize:      '0.8rem',
         letterSpacing: '0.12em',
         textTransform: 'uppercase',
         opacity:       0.85,
       }}>
-        {displayStep}{!isComplete && progress < 100 ? '…' : ''}
+        {displayStep}{progress < 100 ? '…' : ''}
       </p>
 
       {/* CSS animation */}

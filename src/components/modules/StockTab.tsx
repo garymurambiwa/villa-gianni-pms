@@ -179,10 +179,15 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
         <Button variant="outline" className="ds-button-compact" onClick={() => {
           const ids = Array.from(selectedIds);
           if (!ids.length) return;
-          // Delete selected locally
-          const next = allItems.filter((it: any) => !ids.includes(it.id));
-          setAllItems(next);
-          setSelectedIds(new Set());
+          if (confirm(`Are you sure you want to delete ${ids.length} items?`)) {
+            if (onBulkDelete) {
+              onBulkDelete(ids);
+            } else {
+              // Fallback if no bulk handler provided
+              ids.forEach(id => onDeleteItem?.(id));
+            }
+            setSelectedIds(new Set());
+          }
         }}>Delete Selected</Button>
         <Button variant="outline" className="ds-button-compact" onClick={() => {
           const ids = Array.from(selectedIds); if (!ids.length) return;
@@ -199,7 +204,7 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
 
       {loading && (<div role="status" aria-live="polite" className="text-xs text-gray-600">Filtering…</div>)}
 
-      <div className="overflow-x-auto" role="region" aria-label="Stock table">
+      <div className="ds-table-container" role="region" aria-label="Stock table">
         <table className="ds-table" role="table" aria-label="Stock items">
           <thead>
             <tr>
@@ -213,7 +218,7 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
               <th scope="col" className="text-right hide-on-mobile">GP%</th>
               <th scope="col">Issues</th>
               <th scope="col" className="hide-on-mobile">Visibility</th>
-              <th scope="col">Actions</th>
+              <th scope="col" className="text-center">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -230,7 +235,7 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
                     if (e.target.checked) next.add(it.id); else next.delete(it.id);
                     setSelectedIds(next);
                   }} aria-label={`Select ${it.name}`} /></td>
-                  <td className="text-left font-medium">{it.name}</td>
+                  <td className="text-left font-medium max-w-[120px] sm:max-w-none truncate">{it.name}</td>
                   <td className="capitalize hide-on-mobile">{it.costCenter || '—'}</td>
                   <td className="text-right font-mono">${Number(it.sellingPrice || 0).toFixed(2)}</td>
                   <td className="text-right font-mono hide-on-mobile">{gp}%</td>
@@ -246,10 +251,10 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
                     <span className="text-[10px] bg-gray-100 rounded px-1.5 py-0.5">R:{it.visibility?.restaurant ? 'Y' : 'N'}</span>
                   </td>
                   <td>
-                    <div className="flex gap-1 flex-wrap">
-                      {canEdit && (<Button variant="outline" className="ds-button-compact" onClick={() => onEditItem?.(it)} aria-label={`Edit ${it.name}`}>Edit</Button>)}
-                      {canFix && (<Button variant="secondary" className="ds-button-compact" onClick={() => onFixItem?.(it)} aria-label={`Fix ${it.name}`}>Fix</Button>)}
-                      {canDelete && (<Button variant="destructive" className="ds-button-compact" onClick={() => onDeleteItem?.(it.id)} aria-label={`Delete ${it.name}`}>Del</Button>)}
+                    <div className="flex gap-1 justify-center flex-wrap min-w-[100px] sm:min-w-0">
+                      {canEdit && (<Button variant="outline" className="ds-button-compact px-2" onClick={() => onEditItem?.(it)} aria-label={`Edit ${it.name}`}>Edit</Button>)}
+                      {canFix && (<Button variant="secondary" className="ds-button-compact px-2" onClick={() => onFixItem?.(it)} aria-label={`Fix ${it.name}`}>Fix</Button>)}
+                      {canDelete && (<Button variant="destructive" className="ds-button-compact px-2" onClick={() => onDeleteItem?.(it.id)} aria-label={`Delete ${it.name}`}>Del</Button>)}
                     </div>
                   </td>
                 </tr>
@@ -257,7 +262,7 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
             })}
             {virtualize && bottomPad > 0 && (<tr style={{ height: bottomPad }} aria-hidden="true"><td colSpan={8} /></tr>)}
             {!pageItems.length && (
-              <tr><td colSpan={7} className="py-2 text-gray-500">No items match current filters</td></tr>
+              <tr><td colSpan={8} className="py-2 text-gray-500 text-center">No items match current filters</td></tr>
             )}
           </tbody>
         </table>

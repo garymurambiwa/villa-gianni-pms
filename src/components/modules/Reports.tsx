@@ -831,31 +831,33 @@ export const Reports: React.FC = () => {
             <div className="text-sm text-gray-600">Select a report from the dropdown to view.</div>
           )}
           {revSelected === 'overview' && (
-          <table className="ds-table">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Category</th>
-                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Amount</th>
-                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Percentage</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              <tr className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-sm text-gray-800">Room Revenue</td>
-                <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">${roomRevenue.toFixed(2)}</td>
-                <td className="px-4 py-3 text-sm text-right text-gray-600">
-                  {((roomRevenue / totalRevenue) * 100).toFixed(1)}%
-                </td>
-              </tr>
-              <tr className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-sm text-gray-800">F&B Revenue</td>
-                <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">${fbRevenue.toFixed(2)}</td>
-                <td className="px-4 py-3 text-sm text-right text-gray-600">
-                  {((fbRevenue / totalRevenue) * 100).toFixed(1)}%
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="ds-table-container">
+            <table className="ds-table">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th scope="col" className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Category</th>
+                  <th scope="col" className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Amount</th>
+                  <th scope="col" className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Percentage</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                <tr className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-sm text-gray-800">Room Revenue</td>
+                  <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">${roomRevenue.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-sm text-right text-gray-600">
+                    {((roomRevenue / totalRevenue) * 100).toFixed(1)}%
+                  </td>
+                </tr>
+                <tr className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-sm text-gray-800">F&B Revenue</td>
+                  <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">${fbRevenue.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-sm text-right text-gray-600">
+                    {((fbRevenue / totalRevenue) * 100).toFixed(1)}%
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           )}
         </div>
       )}

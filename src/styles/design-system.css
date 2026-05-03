@@ -209,4 +209,11 @@
   .ds-text-responsive {
     @apply text-xs sm:text-sm md:text-base;
   }
+
+  /* Responsive utility for mobile */
+  @media (max-width: 640px) {
+    .hide-on-mobile {
+      display: none !important;
+    }
+  }
 }

@@ -48,15 +48,15 @@ const VoidsReportView: React.FC<{ voidsRows: any[] }> = ({ voidsRows }) => {
         <Button variant={voidsFilter==='kitchen'?'secondary':'outline'} onClick={()=>setVoidsFilter('kitchen')}>Kitchen</Button>
         <Button variant={voidsFilter==='cellar'?'secondary':'outline'} onClick={()=>setVoidsFilter('cellar')}>Cellar</Button>
       </div>
-      <div className="overflow-x-auto">
+      <div className="ds-table-container">
         <table className="ds-table">
           <thead><tr><th className="p-2 text-left">Time</th><th className="p-2">Action</th><th className="p-2">Details</th></tr></thead>
           <tbody>
             {filtered.map((v, i) => (
               <tr key={i}>
-                <td className="p-2">{String(new Date(v.voided_at || v.timestamp).toLocaleString())}</td>
-                <td className="p-2">VOID</td>
-                <td className="p-2">{String(formatDetailsText(v.items || v.details))}</td>
+                <td className="p-2 text-xs">{String(new Date(v.voided_at || v.timestamp).toLocaleString())}</td>
+                <td className="p-2 text-center">VOID</td>
+                <td className="p-2 text-xs">{String(formatDetailsText(v.items || v.details))}</td>
               </tr>
             ))}
             {!filtered.length && (<tr><td className="p-2 text-center" colSpan={3}>No voids found.</td></tr>)}
@@ -71,16 +71,16 @@ const StockMovementReportView: React.FC<{ movementRows: any[] }> = ({ movementRo
   return (
     <div className="mb-6">
       <h3 className="text-lg font-semibold mb-2">Stock Movement DB</h3>
-      <div className="overflow-x-auto">
+      <div className="ds-table-container">
         <table className="ds-table">
           <thead><tr><th className="p-2 text-left">Time</th><th className="p-2">Type</th><th className="p-2">Item</th><th className="p-2">Change</th></tr></thead>
           <tbody>
             {movementRows.map((m, i) => (
               <tr key={i}>
-                <td className="p-2">{String(new Date(m.inserted_at).toLocaleString())}</td>
-                <td className="p-2">DEPLETION</td>
+                <td className="p-2 text-xs">{String(new Date(m.inserted_at).toLocaleString())}</td>
+                <td className="p-2 text-center">DEPLETION</td>
                 <td className="p-2">{String(m.name || m.item_id)}</td>
-                <td className="p-2">{String(m.delta)}</td>
+                <td className="p-2 text-center">{String(m.delta)}</td>
               </tr>
             ))}
             {!movementRows.length && (<tr><td className="p-2 text-center" colSpan={4}>No movements in range.</td></tr>)}
@@ -134,17 +134,17 @@ const GoodsReceivedReportView: React.FC<{ rangeText: string; grnRows: any[] }> =
         <div className="border rounded p-2">Total GRNs: {grvFiltered.length}</div>
         <div className="border rounded p-2">Total Value: {formatCurrency(Number.isNaN(Number(grvTotals.cost)) ? 0 : Number(grvTotals.cost))}</div>
       </div>
-      <div className="overflow-x-auto">
+      <div className="ds-table-container">
         <table className="ds-table">
-          <thead><tr><th className="p-2 text-left">GRN Number</th><th className="p-2">Date</th><th className="p-2">Supplier</th><th className="p-2 text-right">Value</th></tr></thead>
+          <thead><tr><th className="p-2 text-left">GRN Number</th><th className="p-2">Date</th><th className="p-2 hide-on-mobile">Supplier</th><th className="p-2 text-right">Value</th></tr></thead>
           <tbody>
              {grvFiltered.map((r, i) => (
-               <tr key={i} className="border-b hover:bg-gray-50">
-                 <td className="p-2">{String(r.grn_number)}</td>
-                 <td className="p-2">{String(new Date(r.inserted_at).toLocaleDateString())}</td>
-                 <td className="p-2">{String(r.supplier_name)}</td>
-                 <td className="p-2 text-right">{formatCurrency(Number(r.total_value || 0))}</td>
-               </tr>
+                <tr key={i} className="hover:bg-gray-50">
+                  <td className="p-2 font-mono text-xs">{String(r.grn_number)}</td>
+                  <td className="p-2 text-xs">{String(new Date(r.inserted_at).toLocaleDateString())}</td>
+                  <td className="p-2 hide-on-mobile">{String(r.supplier_name)}</td>
+                  <td className="p-2 text-right font-mono">{formatCurrency(Number(r.total_value || 0))}</td>
+                </tr>
              ))}
           </tbody>
         </table>
@@ -173,27 +173,27 @@ const ItemSalesReportView: React.FC<{ itemsRows: any[] }> = ({ itemsRows }) => {
         <Button variant={itemSort==='revenue'?'secondary':'outline'} onClick={()=>setItemSort('revenue')}>Sort by Revenue</Button>
         <Button variant={itemSort==='profit'?'secondary':'outline'} onClick={()=>setItemSort('profit')}>Sort by Profit</Button>
       </div>
-      <div className="overflow-x-auto">
+      <div className="ds-table-container">
         <table className="ds-table">
           <thead>
             <tr>
               <th className="p-2 text-left">Item Name</th>
               <th className="p-2 text-right">Qty Sold</th>
               <th className="p-2 text-right">Revenue</th>
-              <th className="p-2 text-right">Cost (COGS)</th>
-              <th className="p-2 text-right">Profit</th>
-              <th className="p-2 text-right">Margin</th>
+              <th className="p-2 text-right hide-on-mobile">Cost (COGS)</th>
+              <th className="p-2 text-right font-bold">Profit</th>
+              <th className="p-2 text-right hide-on-mobile">Margin</th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((r, i) => (
               <tr key={i}>
-                <td className="p-2 font-medium">{String(r.name)}</td>
+                <td className="p-2 font-medium text-xs sm:text-sm">{String(r.name)}</td>
                 <td className="p-2 text-right">{String(r.qty)}</td>
-                <td className="p-2 text-right">{formatCurrency(r.revenue)}</td>
-                <td className="p-2 text-right text-red-600">{formatCurrency(r.cost)}</td>
-                <td className="p-2 text-right font-bold text-green-600">{formatCurrency(r.profit)}</td>
-                <td className="p-2 text-right">{String(r.revenue ? ((r.profit / r.revenue) * 100).toFixed(1) : 0)}%</td>
+                <td className="p-2 text-right font-mono">{formatCurrency(r.revenue)}</td>
+                <td className="p-2 text-right text-red-600 font-mono hide-on-mobile">{formatCurrency(r.cost)}</td>
+                <td className="p-2 text-right font-bold text-green-600 font-mono">{formatCurrency(r.profit)}</td>
+                <td className="p-2 text-right text-xs hide-on-mobile">{String(r.revenue ? ((r.profit / r.revenue) * 100).toFixed(1) : 0)}%</td>
               </tr>
             ))}
             {!sorted.length && (<tr><td className="p-2 text-center" colSpan={6}>No item sales found.</td></tr>)}

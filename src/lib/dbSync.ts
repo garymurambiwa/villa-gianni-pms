@@ -231,6 +231,72 @@ export async function syncProductToDb(item: ProductRecord): Promise<SyncResult> 
 }
 
 /**
+ * Pull all products from DB and sync to localStorage
+ * This ensures localStorage stays in sync with the source of truth (DB)
+ */
+export async function pullProductsToLocalStorage(): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+
+    const res = await db.query('SELECT * FROM products');
+    if (!('rows' in res)) return { success: false, error: 'Failed to fetch products' };
+
+    const dbProducts = res.rows || [];
+    
+    // Map DB products back to the legacy POS format for corepms_pos_items
+    const posItems = dbProducts.map(p => {
+      let visibility = {};
+      try {
+        visibility = typeof p.visibility === 'string' ? JSON.parse(p.visibility) : (p.visibility || {});
+      } catch { visibility = {}; }
+
+      let barcodes = [];
+      try {
+        barcodes = typeof p.barcodes === 'string' ? JSON.parse(p.barcodes) : (p.barcodes || []);
+      } catch { barcodes = []; }
+
+      return {
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        costCenter: p.category, // Bridge field
+        department: p.department,
+        sellingPrice: Number(p.price || 0),
+        costPrice: Number(p.cost_price || 0),
+        qtyInStock: Number(p.stock_level || 0),
+        unit: p.unit || 'units',
+        available: p.active !== false,
+        visibility: visibility,
+        is_stock_item: p.is_stock_item !== false,
+        category_id: p.category_id,
+        sub_id: p.sub_id,
+        parent_sub_id: p.parent_sub_id,
+        notes: p.notes,
+        barcodes: barcodes,
+        cosPercent: Number(p.cos_percent || 0),
+        gpPercent: Number(p.gp_percent || 0),
+        gpAmount: Number(p.gp_amount || 0),
+        qtyReceived: Number(p.qty_received || 0),
+        imageBgColor: p.image_bg_color,
+        pictureData: p.picture_data
+      };
+    });
+
+    localStorage.setItem('corepms_pos_items', JSON.stringify(posItems));
+    console.log(`[dbSync] Pulled ${posItems.length} products to localStorage`);
+    
+    // Also broadcast update event
+    window.dispatchEvent(new CustomEvent('pos:data:updated'));
+    
+    return { success: true, synced: posItems.length };
+  } catch (err: any) {
+    console.error('[dbSync] Pull products error:', err);
+    return { success: false, error: String(err) };
+  }
+}
+
+/**
  * Delete a product from the database
  */
 export async function deleteProductFromDb(itemId: string): Promise<SyncResult> {
@@ -257,9 +323,43 @@ export async function deleteProductFromDb(itemId: string): Promise<SyncResult> {
     return { success: true, synced: 1 };
   } catch (err: any) {
     const msg = err?.message || String(err);
-    console.error('[dbSync] Delete product CRITICAL FAILURE:', msg, itemId);
+    console.error('[dbSync] Delete product error:', msg);
     return { success: false, error: msg };
   }
+}
+
+/**
+ * Bulk delete products from the database
+ */
+export async function bulkDeleteProductsFromDb(itemIds: string[]): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+    if (!itemIds.length) return { success: true, synced: 0 };
+
+    console.log(`[dbSync] Bulk deleting ${itemIds.length} products from DB...`);
+
+    const operations: { sql: string; params: any[] }[] = [];
+    itemIds.forEach(id => {
+      operations.push({ sql: `DELETE FROM products WHERE id = $1`, params: [id] });
+      operations.push({ sql: `DELETE FROM inventory_items WHERE id = $1`, params: [id] });
+      operations.push({ sql: `DELETE FROM menu_items WHERE id = $1`, params: [id] });
+    });
+
+    const result = await db.transaction(operations);
+    if (!result.ok) throw new Error((result as any).error || 'Bulk delete transaction failed');
+
+    console.log(`[dbSync] Successfully bulk deleted ${itemIds.length} products.`);
+    return { success: true, synced: itemIds.length };
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    console.error('[dbSync] Bulk delete products error:', msg);
+    return { success: false, error: msg };
+  }
+}
+
+export async function deletePosItemsFromDb(itemIds: string[]): Promise<SyncResult> {
+  return bulkDeleteProductsFromDb(itemIds);
 }
 
 // ============================================================================

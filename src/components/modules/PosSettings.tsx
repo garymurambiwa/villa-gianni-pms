@@ -25,6 +25,7 @@ import { parseColor, getContrastRatio } from '@/lib/colorUtils';
 import {
   syncPosItemToDb,
   deletePosItemFromDb,
+  deletePosItemsFromDb,
   performFullSync,
   ensureTablesExist,
   fixItemVisibility,
@@ -853,26 +854,28 @@ const ShiftReportingPanel: React.FC = () => {
           {shiftData.items.length > 0 && (
             <div className="mb-4">
               <div className="text-sm font-medium text-gray-500 mb-2">Item Sales</div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr>
-                    <th className="p-2 text-left">Item</th>
-                    <th className="p-2 text-center">Qty</th>
-                    <th className="p-2 text-right">Price</th>
-                    <th className="p-2 text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {shiftData.items.map((item, i) => (
-                    <tr key={i} className="border-t">
-                      <td className="p-2">{item.name || 'Unknown Item'}</td>
-                      <td className="p-2 text-center">{item.quantity || 0}</td>
-                      <td className="p-2 text-right">{formatCurrency(Number(item.price || 0))}</td>
-                      <td className="p-2 text-right">{formatCurrency(Number(item.quantity || 0) * Number(item.price || 0))}</td>
+              <div className="ds-table-container">
+                <table className="ds-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Item</th>
+                      <th scope="col" className="text-center">Qty</th>
+                      <th scope="col" className="text-right hide-on-mobile">Price</th>
+                      <th scope="col" className="text-right">Total</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {shiftData.items.map((item: any, i: number) => (
+                      <tr key={i}>
+                        <td>{item.name || 'Unknown Item'}</td>
+                        <td className="text-center">{item.quantity || 0}</td>
+                        <td className="text-right hide-on-mobile">{formatCurrency(Number(item.price || 0))}</td>
+                        <td className="text-right font-semibold">{formatCurrency(Number(item.quantity || 0) * Number(item.price || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -1477,30 +1480,52 @@ export const PosSettings: React.FC = () => {
     startEdit(it);
   };
 
-  const deleteItem = (id: string) => {
+  const deleteItem = async (id: string) => {
     try {
+      // Optimistic delete from UI
+      const previousItems = [...items];
       const next = items.filter((it: any) => it.id !== id);
       setItems(next);
-      // Persist to localStorage so performFullSync doesn't overwrite with stale data
-      try { localStorage.setItem('corepms_pos_items', JSON.stringify(next)); } catch { }
-      log('STOCK_ITEM_DELETE', { id });
+      localStorage.setItem('corepms_pos_items', JSON.stringify(next));
 
-      // Delete from database asynchronously
-      deletePosItemFromDb(id).then(result => {
-        if (!result.success) {
-          console.warn('[PosSettings] Database delete failed:', result.error);
-          toast({ title: 'Delete sync failed', description: result.error, variant: 'destructive' });
-        } else {
-          toast({ title: 'Deleted', description: 'Item removed from database.' });
-          refreshData?.();
-        }
-      }).catch(err => {
-        console.warn('[PosSettings] Database delete error:', err);
-        toast({ title: 'Delete sync error', description: String(err), variant: 'destructive' });
-      });
+      const result = await deletePosItemFromDb(id);
+      if (!result.success) {
+        // Revert on failure
+        setItems(previousItems);
+        localStorage.setItem('corepms_pos_items', JSON.stringify(previousItems));
+        console.warn('[PosSettings] Database delete failed:', result.error);
+        toast({ title: 'Delete failed', description: result.error, variant: 'destructive' });
+      } else {
+        toast({ title: 'Deleted', description: 'Item removed from database.' });
+        log('STOCK_ITEM_DELETE', { id });
+        refreshData?.();
+      }
     } catch (err) {
       console.error(err);
-      toast({ title: 'Failed to delete item', description: String(err), variant: 'destructive' });
+      toast({ title: 'Error', description: 'Could not delete item.', variant: 'destructive' });
+    }
+  };
+
+  const bulkDeleteItems = async (ids: string[]) => {
+    try {
+      const previousItems = [...items];
+      const next = items.filter((it: any) => !ids.includes(it.id));
+      setItems(next);
+      localStorage.setItem('corepms_pos_items', JSON.stringify(next));
+
+      const result = await deletePosItemsFromDb(ids);
+      if (!result.success) {
+        setItems(previousItems);
+        localStorage.setItem('corepms_pos_items', JSON.stringify(previousItems));
+        toast({ title: 'Bulk delete failed', description: result.error, variant: 'destructive' });
+      } else {
+        toast({ title: 'Success', description: `${ids.length} items deleted.` });
+        log('STOCK_ITEMS_BULK_DELETE', { count: ids.length });
+        refreshData?.();
+      }
+    } catch (err) {
+      console.error(err);
+      toast({ title: 'Error', description: 'Could not delete items.', variant: 'destructive' });
     }
   };
 
@@ -2312,21 +2337,23 @@ export const PosSettings: React.FC = () => {
             const gaps = items.filter((it: any) => !it.category_id);
             if (!gaps.length) return (<div className="text-xs text-green-700 mt-2">All items have categories ✔</div>);
             return (
-              <div className="mt-2 overflow-x-auto">
-                <table className="text-sm w-full">
-                  <thead><tr><th className="p-2 text-left">ID</th><th className="p-2 text-left">Name</th><th className="p-2">Center</th><th className="p-2">subCategory</th></tr></thead>
-                  <tbody>
-                    {gaps.map((it: any) => (
-                      <tr key={it.id}>
-                        <td className="p-2 font-mono text-xs">{it.id}</td>
-                        <td className="p-2">{it.name}</td>
-                        <td className="p-2">{it.costCenter || '—'}</td>
-                        <td className="p-2">{String(it.subCategory || '—')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="text-xs text-red-700 mt-2">Missing categories: <span className="font-semibold">{gaps.length}</span></div>
+              <div className="space-y-2 mt-2">
+                <div className="ds-table-container">
+                  <table className="ds-table">
+                    <thead><tr><th scope="col">ID</th><th scope="col">Name</th><th scope="col" className="hide-on-mobile">Center</th><th scope="col">subCategory</th></tr></thead>
+                    <tbody>
+                      {gaps.map((it: any) => (
+                        <tr key={it.id}>
+                          <td className="font-mono text-xs">{it.id}</td>
+                          <td>{it.name}</td>
+                          <td className="hide-on-mobile">{it.costCenter || '—'}</td>
+                          <td>{String(it.subCategory || '—')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="text-xs text-red-700">Missing categories: <span className="font-semibold">{gaps.length}</span></div>
               </div>
             );
           })()}
@@ -2526,6 +2553,7 @@ export const PosSettings: React.FC = () => {
             onEditItem={(it) => requireManager('EDIT_ITEM', () => startEdit(it))}
             onFixItem={(it) => requireManager('FIX_ITEM', () => fixItem(it))}
             onDeleteItem={(id) => requireManager('DELETE_ITEM', () => deleteItem(id))}
+            onBulkDelete={(ids) => requireManager('DELETE_ITEM', () => bulkDeleteItems(ids))}
           />
         </Section>
       )}
@@ -3076,27 +3104,27 @@ export const PosSettings: React.FC = () => {
                   } catch { }
                 }}>Record Purchase</Button>
               </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
+              <div className="ds-table-container">
+                <table className="ds-table">
                   <thead>
-                    <tr className="text-left border-b">
-                      <th className="py-2 pr-4">Date</th>
-                      <th className="py-2 pr-4">Item</th>
-                      <th className="py-2 pr-4">Qty</th>
-                      <th className="py-2 pr-4">Cost</th>
+                    <tr>
+                      <th scope="col">Date</th>
+                      <th scope="col">Item</th>
+                      <th scope="col">Qty</th>
+                      <th scope="col" className="text-right">Cost</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(() => {
                       const raw = localStorage.getItem('corepms_purchases');
                       const list = raw ? JSON.parse(raw) : [];
-                      if (!list.length) return (<tr><td colSpan={4} className="py-2 text-gray-500">No purchases yet</td></tr>);
+                      if (!list.length) return (<tr><td colSpan={4} className="text-center py-4 text-gray-500">No purchases yet</td></tr>);
                       return list.slice(0, 50).map((p: any) => (
-                        <tr key={p.id} className="border-b">
-                          <td className="py-2 pr-4">{new Date(p.date).toLocaleString()}</td>
-                          <td className="py-2 pr-4">{p.item}</td>
-                          <td className="py-2 pr-4">{p.qty}</td>
-                          <td className="py-2 pr-4">{formatCurrency(Number(p.cost || 0))}</td>
+                        <tr key={p.id}>
+                          <td>{new Date(p.date).toLocaleString()}</td>
+                          <td>{p.item}</td>
+                          <td>{p.qty}</td>
+                          <td className="text-right font-mono">{formatCurrency(Number(p.cost || 0))}</td>
                         </tr>
                       ));
                     })()}
@@ -3123,39 +3151,41 @@ export const PosSettings: React.FC = () => {
                   } catch { }
                 }}>Add Supplier</Button>
               </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
+              <div className="ds-table-container">
+                <table className="ds-table">
                   <thead>
-                    <tr className="text-left border-b">
-                      <th className="py-2 pr-4">Name</th>
-                      <th className="py-2 pr-4">Contact</th>
-                      <th className="py-2 pr-4">Actions</th>
+                    <tr>
+                      <th scope="col">Name</th>
+                      <th scope="col" className="hide-on-mobile">Contact</th>
+                      <th scope="col" className="text-center">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(() => {
                       const raw = localStorage.getItem('corepms_suppliers');
                       const list = raw ? JSON.parse(raw) : [];
-                      if (!list.length) return (<tr><td colSpan={3} className="py-2 text-gray-500">No suppliers</td></tr>);
+                      if (!list.length) return (<tr><td colSpan={3} className="text-center py-4 text-gray-500">No suppliers</td></tr>);
                       return list.slice(0, 50).map((s: any) => (
-                        <tr key={s.id} className="border-b">
-                          <td className="py-2 pr-4">{s.name}</td>
-                          <td className="py-2 pr-4">{s.contact}</td>
-                          <td className="py-2 pr-4">
-                            <Button variant="outline" onClick={() => {
-                              const name = prompt('Edit name', s.name) || s.name;
-                              const contact = prompt('Edit contact', s.contact) || s.contact;
-                              const raw2 = localStorage.getItem('corepms_suppliers');
-                              const list2 = raw2 ? JSON.parse(raw2) : [];
-                              localStorage.setItem('corepms_suppliers', JSON.stringify(list2.map((x: any) => x.id === s.id ? { ...x, name, contact } : x)));
-                              log('SUPPLIER_EDIT', { id: s.id });
-                            }}>Edit</Button>
-                            <Button variant="destructive" onClick={() => {
-                              const raw2 = localStorage.getItem('corepms_suppliers');
-                              const list2 = raw2 ? JSON.parse(raw2) : [];
-                              localStorage.setItem('corepms_suppliers', JSON.stringify(list2.filter((x: any) => x.id !== s.id)));
-                              log('SUPPLIER_DELETE', { id: s.id });
-                            }}>Delete</Button>
+                        <tr key={s.id}>
+                          <td>{s.name}</td>
+                          <td className="hide-on-mobile">{s.contact}</td>
+                          <td>
+                            <div className="flex gap-1 justify-center">
+                              <Button variant="outline" className="ds-button-compact" onClick={() => {
+                                const name = prompt('Edit name', s.name) || s.name;
+                                const contact = prompt('Edit contact', s.contact) || s.contact;
+                                const raw2 = localStorage.getItem('corepms_suppliers');
+                                const list2 = raw2 ? JSON.parse(raw2) : [];
+                                localStorage.setItem('corepms_suppliers', JSON.stringify(list2.map((x: any) => x.id === s.id ? { ...x, name, contact } : x)));
+                                log('SUPPLIER_EDIT', { id: s.id });
+                              }}>Edit</Button>
+                              <Button variant="destructive" className="ds-button-compact" onClick={() => {
+                                const raw2 = localStorage.getItem('corepms_suppliers');
+                                const list2 = raw2 ? JSON.parse(raw2) : [];
+                                localStorage.setItem('corepms_suppliers', JSON.stringify(list2.filter((x: any) => x.id !== s.id)));
+                                log('SUPPLIER_DELETE', { id: s.id });
+                              }}>Delete</Button>
+                            </div>
                           </td>
                         </tr>
                       ));
