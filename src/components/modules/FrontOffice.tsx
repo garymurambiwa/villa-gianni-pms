@@ -511,8 +511,8 @@ export const FrontOffice: React.FC = () => {
                 <tr>
                   <td>${r.guestName}</td>
                   <td>${roomAssignment}</td>
-                  <td>${r.checkIn}</td>
-                  <td>${r.checkOut}</td>
+                   <td>${r.checkIn  ? String(r.checkIn).split('T')[0]  : 'N/A'}</td>
+                   <td>${r.checkOut ? String(r.checkOut).split('T')[0] : 'N/A'}</td>
                   <td>${r.adults + (r.children || 0)}</td>
                   <td>${getResPackage(r)}</td>
                 </tr>
@@ -1255,7 +1255,13 @@ export const FrontOffice: React.FC = () => {
                         <TableCell>{res.roomType}</TableCell>
                         <TableCell>
                           <div className="text-sm">
-                            {format(new Date(res.checkIn), 'MMM d')} - {format(new Date(res.checkOut), 'MMM d')}
+                            {res.checkIn && !isNaN(new Date(res.checkIn).getTime())
+                              ? format(new Date(res.checkIn), 'MMM d')
+                              : 'N/A'}
+                            {' - '}
+                            {res.checkOut && !isNaN(new Date(res.checkOut).getTime())
+                              ? format(new Date(res.checkOut), 'MMM d')
+                              : 'N/A'}
                           </div>
                         </TableCell>
                         <TableCell>${res.rate}</TableCell>
@@ -1379,17 +1385,18 @@ export const FrontOffice: React.FC = () => {
                         <TableRow key={res.id}>
                           <TableCell className="font-bold">{roomNumber}</TableCell>
                           <TableCell>
-                            <div className="font-medium">{res.guestName}</div>
-                            <TableCell>
-                              {(() => {
-                                try {
-                                  const d = new Date(res.checkOut);
-                                  return isNaN(d.getTime()) ? '-' : format(d, 'MMM d, yyyy');
-                                } catch { return '-'; }
-                              })()}
-                            </TableCell>
-                            ${(Number(res.rate) || 0).toFixed(2)}
+                            <div className="font-medium">{res.guestName || 'Unknown'}</div>
+                            <div className="text-xs text-muted-foreground">ID: {res.id}</div>
                           </TableCell>
+                          <TableCell>
+                            {(() => {
+                              try {
+                                const d = new Date(res.checkOut);
+                                return (!res.checkOut || isNaN(d.getTime())) ? 'N/A' : format(d, 'MMM d, yyyy');
+                              } catch { return 'N/A'; }
+                            })()}
+                          </TableCell>
+                          <TableCell>${(Number(res.rate) || 0).toFixed(2)}</TableCell>
                           <TableCell><Badge variant="secondary">{getResPackage(res)}</Badge></TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">

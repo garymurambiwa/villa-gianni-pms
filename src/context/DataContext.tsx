@@ -85,9 +85,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await refreshRateConfig();
       }
 
-      const resRes = await db.query('SELECT r.*, g.full_name as guest_name FROM reservations r LEFT JOIN guests g ON r.guest_id = g.id');
+      const resRes = await db.query('SELECT r.*, g.full_name as guest_name, ro.number as room_number FROM reservations r LEFT JOIN guests g ON r.guest_id = g.id LEFT JOIN rooms ro ON r.room_id = ro.id');
       if ('rows' in resRes) {
-        setReservations((resRes.rows || []).map((r: any) => ({ ...r, guestName: r.guest_name || 'Unknown' })));
+        setReservations((resRes.rows || []).map((r: any) => ({
+          ...r,
+          // Camel-case aliases for snake_case DB columns so all consumers
+          // can use a consistent field name without defensive lookups.
+          guestName:   r.guest_name  || r.booking_name || 'Unknown',
+          checkIn:     r.check_in_date  || r.checkIn     || null,
+          checkOut:    r.check_out_date || r.checkOut    || null,
+          roomType:    r.room_type      || r.roomType    || null,
+          roomNumber:  r.room_number    || r.roomNumber  || null,
+          packageCode: r.package_code   || r.packageCode || 'RO',
+        })));
       }
 
       const chargesRes = await loadFolioChargesFromDb();
