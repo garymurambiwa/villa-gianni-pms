@@ -616,6 +616,130 @@ app.get('/api/folios', async (req, res) => {
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
+// ─── Users API ────────────────────────────────────────────────────────────────
+// Dedicated endpoint so User Management doesn't rely solely on raw SQL passthrough
+
+// GET /api/users — list all non-deleted users
+app.get('/api/users', async (req, res) => {
+  try {
+    // Use IS NOT TRUE to safely handle NULL is_deleted values (fresh DB migrations)
+    const result = await db.query(
+      `SELECT id, username, name, email, role, active, created_at, last_login,
+              last_activity, permissions, two_factor_enabled, is_deleted
+       FROM app_users
+       WHERE is_deleted IS NOT TRUE
+       ORDER BY username ASC`
+    );
+    safeJson(res, result);
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// GET /api/users/:id — get single user
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, username, name, email, role, active, created_at, last_login,
+              last_activity, permissions, two_factor_enabled, is_deleted
+       FROM app_users WHERE id = $1 AND is_deleted IS NOT TRUE`,
+      [req.params.id]
+    );
+    if (!result.rows?.length) return res.status(404).json({ ok: false, error: 'User not found' });
+    safeJson(res, { ok: true, user: result.rows[0] });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// POST /api/users — create user (register)
+app.post('/api/users', async (req, res) => {
+  const { id, username, name, email, role, password_hash, active, password_change_required, permissions } = req.body || {};
+  if (!id || !username || !password_hash) return safeJson(res, { ok: false, error: 'id, username, password_hash required' });
+  try {
+    const result = await db.query(
+      `INSERT INTO app_users (id, username, name, email, role, password_hash, active, password_change_required, permissions, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+       ON CONFLICT (username) DO NOTHING RETURNING id`,
+      [id, username, name||username, email||null, role||'staff', password_hash, active!==false, password_change_required||true, permissions||null]
+    );
+    if (!result.rows?.length) return safeJson(res, { ok: false, error: 'Username already exists' });
+    safeJson(res, { ok: true, id: result.rows[0].id });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// PUT /api/users/:id — update user
+app.put('/api/users/:id', async (req, res) => {
+  const allowed = ['name','email','role','active','password_change_required','permissions','pos_pin','two_factor_enabled'];
+  const fields = []; const vals = [];
+  for (const f of allowed) {
+    if (req.body[f] !== undefined) {
+      fields.push(`${f}=$${vals.length+1}`);
+      vals.push(f === 'permissions' && Array.isArray(req.body[f]) ? req.body[f] : req.body[f]);
+    }
+  }
+  if (!fields.length) return safeJson(res, { ok: false, error: 'No fields to update' });
+  vals.push(req.params.id);
+  try {
+    safeJson(res, await db.query(`UPDATE app_users SET ${fields.join(',')},updated_at=NOW() WHERE id=$${vals.length} AND is_deleted IS NOT TRUE`, vals));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// DELETE /api/users/:id — soft delete (rename + mark deleted)
+app.delete('/api/users/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const userRes = await db.query('SELECT username, email FROM app_users WHERE id=$1', [id]);
+    if (!userRes.rows?.length) return res.status(404).json({ ok: false, error: 'User not found' });
+    const { username, email } = userRes.rows[0];
+    const ts = Date.now();
+    const deletedUsername = `${username}_del_${ts}`;
+    const deletedEmail = email ? `${email}_del_${ts}` : null;
+    safeJson(res, await db.query(
+      `UPDATE app_users SET is_deleted=true, active=false, username=$1, email=$2, updated_at=NOW() WHERE id=$3`,
+      [deletedUsername, deletedEmail, id]
+    ));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// POST /api/users/:id/reset-password — update password hash
+app.post('/api/users/:id/reset-password', async (req, res) => {
+  const { password_hash } = req.body || {};
+  if (!password_hash) return safeJson(res, { ok: false, error: 'password_hash required' });
+  try {
+    safeJson(res, await db.query(
+      `UPDATE app_users SET password_hash=$1, password_change_required=false, updated_at=NOW() WHERE id=$2`,
+      [password_hash, req.params.id]
+    ));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// GET /api/users/stats — user statistics
+app.get('/api/users/stats', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT
+         COUNT(*) as total,
+         COUNT(CASE WHEN active=true THEN 1 END) as active_count,
+         COUNT(DISTINCT role) as role_count,
+         COUNT(CASE WHEN last_login > NOW() - INTERVAL '7 days' THEN 1 END) as recent_logins
+       FROM app_users
+       WHERE is_deleted IS NOT TRUE`
+    );
+    safeJson(res, { ok: true, stats: result.rows?.[0] });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// GET /api/access-logs — activity logs
+app.get('/api/access-logs', async (req, res) => {
+  try {
+    const { limit = 100, username, event } = req.query;
+    let sql = 'SELECT * FROM access_logs WHERE 1=1';
+    const params = [];
+    if (username) { sql += ` AND user_username=$${params.length+1}`; params.push(username); }
+    if (event) { sql += ` AND event=$${params.length+1}`; params.push(event); }
+    sql += ` ORDER BY ts DESC LIMIT $${params.length+1}`;
+    params.push(Number(limit));
+    safeJson(res, await db.query(sql, params));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 // ─── Catch-all: return JSON 404 (NOT HTML) ───────────────────────────────────
 // This prevents the "Unexpected token T" error — always return JSON
 app.use((req, res) => {

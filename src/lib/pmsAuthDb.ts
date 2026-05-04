@@ -713,11 +713,17 @@ export const pmsAuthDb = {
   },
 
   async listUsers(): Promise<DbUser[]> {
-    console.log('[pmsAuthDb] listUsers called');
-    const res = await db.query<DbUser>(`SELECT id, username, name, email, role, active, created_at, last_login, last_activity, permissions FROM app_users WHERE is_deleted = false ORDER BY username ASC`);
-    console.log('[pmsAuthDb] listUsers result:', res);
+    // Use IS NOT TRUE instead of = false to safely handle NULL values in is_deleted
+    // (NULL = false evaluates to false in SQL, so rows with NULL would be excluded)
+    const res = await db.query<DbUser>(
+      `SELECT id, username, name, email, role, active, created_at, last_login,
+              last_activity, permissions, pos_pin, two_factor_enabled, is_deleted
+       FROM app_users
+       WHERE is_deleted IS NOT TRUE
+       ORDER BY username ASC`
+    );
     if ('error' in res) {
-      console.error('[pmsAuthDb] listUsers error:', res.error);
+      console.error('[pmsAuthDb] listUsers error:', (res as any).error);
       return [];
     }
     return res.rows || [];
