@@ -112,19 +112,56 @@ router.put('/schedule', async (req, res) => {
   res.json({ ok: true, schedule: updated });
 });
 
-// ─── GET /api/night-audit/reports ────────────────────────────────────────────
-router.get('/reports', (req, res) => {
+// ─── GET /api/night-audit/reports ─────────────────────────────────────────────
+// Returns BOTH file-system reports AND DB-based synthetic reports for all
+// completed night audit runs. This ensures all historical audits are visible.
+router.get('/reports', async (req, res) => {
   try {
-    if (!fs.existsSync(REPORT_DIR)) return res.json({ ok: true, dates: [] });
-    const dates = fs.readdirSync(REPORT_DIR)
-      .filter(d => fs.statSync(path.join(REPORT_DIR, d)).isDirectory())
+    // 1. Read file-system reports (have full detail files)
+    const fsReports = {};
+    if (fs.existsSync(REPORT_DIR)) {
+      fs.readdirSync(REPORT_DIR)
+        .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d) && fs.statSync(path.join(REPORT_DIR, d)).isDirectory())
+        .forEach(date => {
+          const files = fs.readdirSync(path.join(REPORT_DIR, date));
+          fsReports[date] = files;
+        });
+    }
+
+    // 2. Read all completed audit runs from DB
+    const dbResult = await db.query(
+      `SELECT business_date::date::text as date,
+              room_revenue, total_revenue, occupancy_percent, adr, revpar,
+              rooms_posted, reports_snapshot
+       FROM night_audit_runs
+       WHERE status = 'completed'
+       ORDER BY business_date DESC
+       LIMIT 90`
+    );
+    const dbRuns = (dbResult.ok && dbResult.rows) ? dbResult.rows : [];
+
+    // 3. Build synthetic virtual files for DB runs that have no fs files
+    const dbDates = {};
+    for (const run of dbRuns) {
+      const date = run.date;
+      if (!date) continue;
+      const snap = run.reports_snapshot || {};
+      const syntheticFiles = ['front_office_report.txt', 'fnb_report.txt', 'reconciliation_report.txt', 'full_report.json'];
+      dbDates[date] = { files: syntheticFiles, dbRun: run };
+    }
+
+    // 4. Merge: prefer fs reports for dates that have them, supplement with DB dates
+    const allDates = new Set([...Object.keys(fsReports), ...Object.keys(dbDates)]);
+    const result = Array.from(allDates)
       .sort()
-      .reverse();
-    const result = dates.map(date => {
-      const dir   = path.join(REPORT_DIR, date);
-      const files = fs.readdirSync(dir);
-      return { date, files };
-    });
+      .reverse()
+      .map(date => ({
+        date,
+        files: fsReports[date] || (dbDates[date] ? dbDates[date].files : []),
+        fromDb: !fsReports[date] && !!dbDates[date],
+        dbRun: dbDates[date]?.dbRun || null
+      }));
+
     res.json({ ok: true, reports: result });
   } catch (e) {
     res.json({ ok: false, error: e.message });
@@ -132,19 +169,165 @@ router.get('/reports', (req, res) => {
 });
 
 // ─── GET /api/night-audit/reports/:date/:file ─────────────────────────────────
-router.get('/reports/:date/:file', (req, res) => {
+// Serves either a real file from disk or generates synthetic content from DB.
+router.get('/reports/:date/:file', async (req, res) => {
   const { date, file } = req.params;
-  // Security: only allow alphanumeric date and known filenames
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) ||
-      !/^[\w_.-]+$/.test(file)) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^[\w_.-]+$/.test(file)) {
     return res.status(400).json({ ok: false, error: 'Invalid path' });
   }
+
+  // 1. Try to serve from file system first (has full detail)
   const filePath = path.join(REPORT_DIR, date, file);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ ok: false, error: 'File not found' });
-  const ext = path.extname(file);
-  const mime = ext === '.json' ? 'application/json' : 'text/plain';
-  res.setHeader('Content-Type', mime);
-  res.sendFile(filePath);
+  if (fs.existsSync(filePath)) {
+    const ext = path.extname(file);
+    const mime = ext === '.json' ? 'application/json' : 'text/plain';
+    res.setHeader('Content-Type', mime);
+    return res.sendFile(filePath);
+  }
+
+  // 2. Generate synthetic report from DB for this date
+  try {
+    const dbResult = await db.query(
+      `SELECT business_date::date::text as date,
+              room_revenue, total_revenue, occupancy_percent, adr, revpar,
+              rooms_posted, occupied_rooms, available_rooms, tax_revenue,
+              city_ledger_transfers, city_ledger_amount,
+              reports_snapshot, completed_at
+       FROM night_audit_runs
+       WHERE business_date::date = $1::date
+       LIMIT 1`,
+      [date]
+    );
+
+    if (!dbResult.ok || !dbResult.rows || dbResult.rows.length === 0) {
+      return res.status(404).send('No audit data found for ' + date);
+    }
+
+    const run = dbResult.rows[0];
+    const snap = run.reports_snapshot || {};
+    const fbRevenue = snap.fbRevenue !== undefined
+      ? Number(snap.fbRevenue)
+      : Number(run.total_revenue) - Number(run.room_revenue);
+    const genTime = run.completed_at ? new Date(run.completed_at).toLocaleString() : date;
+    const div = '════════════════════════════════════════════════════════════';
+    const sub = '────────────────────────────────────────────────────────────';
+
+    let content = '';
+
+    if (file === 'front_office_report.txt') {
+      content = `${div}
+  VILLA GIANNI  –  FRONT OFFICE NIGHT AUDIT REPORT
+  Business Date : ${date}
+  Generated     : ${genTime}
+${div}
+
+ROOM OCCUPANCY
+${sub}
+  Occupied Rooms   : ${run.occupied_rooms || 0}
+  Available Rooms  : ${run.available_rooms || 13}
+  Occupancy %      : ${Number(run.occupancy_percent || 0).toFixed(1)}%
+
+ROOM REVENUE
+${sub}
+  Room Revenue     : $${Number(run.room_revenue || 0).toFixed(2)}
+  Tax Revenue      : $${Number(run.tax_revenue || 0).toFixed(2)}
+  ADR              : $${Number(run.adr || 0).toFixed(2)}
+  RevPAR           : $${Number(run.revpar || 0).toFixed(2)}
+
+ROOMS POSTED
+${sub}
+  Rooms Posted     : ${run.rooms_posted || 0}
+  (Full room-by-room detail available in nightly file reports only)
+
+CITY LEDGER TRANSFERS
+${sub}
+  Transfers        : ${run.city_ledger_transfers || 0}
+  Total Amount     : $${Number(run.city_ledger_amount || 0).toFixed(2)}
+
+${div}
+  END OF FRONT OFFICE REPORT
+${div}`;
+
+    } else if (file === 'fnb_report.txt') {
+      content = `${div}
+  VILLA GIANNI  –  FOOD & BEVERAGE NIGHT AUDIT REPORT
+  Business Date : ${date}
+  Generated     : ${genTime}
+${div}
+
+POS REVENUE SUMMARY
+${sub}
+  F&B Revenue      : $${fbRevenue.toFixed(2)}
+  Total Revenue    : $${Number(run.total_revenue || 0).toFixed(2)}
+  Room Revenue     : $${Number(run.room_revenue || 0).toFixed(2)}
+  (Full outlet breakdown available in nightly file reports only)
+
+SHIFT RECONCILIATION
+${sub}
+  Postings Count   : ${snap.postingsCount || run.rooms_posted || 0}
+  City Ledger Cnt  : ${snap.cityLedgerCount || run.city_ledger_transfers || 0}
+
+${div}
+  END OF F&B REPORT
+${div}`;
+
+    } else if (file === 'reconciliation_report.txt') {
+      const variance = Number(run.total_revenue || 0) - Number(run.room_revenue || 0) - fbRevenue;
+      content = `${div}
+  VILLA GIANNI  –  RECONCILIATION REPORT
+  Business Date : ${date}
+  Generated     : ${genTime}
+${div}
+
+REVENUE RECONCILIATION
+${sub}
+  Room Revenue     : $${Number(run.room_revenue || 0).toFixed(2)}
+  F&B Revenue      : $${fbRevenue.toFixed(2)}
+  Total Revenue    : $${Number(run.total_revenue || 0).toFixed(2)}
+  Variance         : $${variance.toFixed(2)} ${Math.abs(variance) < 0.01 ? '✓ BALANCED' : '⚠ CHECK REQUIRED'}
+
+KEY METRICS
+${sub}
+  Occupancy        : ${Number(run.occupancy_percent || 0).toFixed(2)}%
+  ADR              : $${Number(run.adr || 0).toFixed(2)}
+  RevPAR           : $${Number(run.revpar || 0).toFixed(2)}
+  Rooms Posted     : ${run.rooms_posted || 0}
+
+${div}
+  END OF RECONCILIATION REPORT
+${div}`;
+
+    } else if (file === 'full_report.json') {
+      const jsonData = {
+        date: run.date,
+        generatedAt: genTime,
+        source: 'database',
+        roomRevenue: Number(run.room_revenue || 0),
+        fbRevenue,
+        taxRevenue: Number(run.tax_revenue || 0),
+        totalRevenue: Number(run.total_revenue || 0),
+        occupancy: Number(run.occupancy_percent || 0),
+        adr: Number(run.adr || 0),
+        revpar: Number(run.revpar || 0),
+        roomsPosted: run.rooms_posted || 0,
+        occupiedRooms: run.occupied_rooms || 0,
+        availableRooms: run.available_rooms || 0,
+        cityLedgerTransfers: run.city_ledger_transfers || 0,
+        cityLedgerAmount: Number(run.city_ledger_amount || 0),
+        snapshot: snap
+      };
+      res.setHeader('Content-Type', 'application/json');
+      return res.json(jsonData);
+
+    } else {
+      return res.status(404).send('Unknown report file: ' + file);
+    }
+
+    res.setHeader('Content-Type', 'text/plain');
+    res.send(content);
+  } catch (e) {
+    res.status(500).send('Error generating report: ' + e.message);
+  }
 });
 
 // ─── GET /api/night-audit/history ────────────────────────────────────────────
