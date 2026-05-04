@@ -34,17 +34,30 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [lastUpdateTs, setLastUpdateTs] = useState<number | null>(null);
   const [priceSyncWs, setPriceSyncWs] = useState<WebSocket | null>(null);
 
-  // Initialize WebSocket connection for real-time price sync
+  // Initialize price sync — WebSocket on Render/local, HTTP polling on Vercel
+  // (Vercel serverless functions cannot hold WebSocket connections)
   const initializePriceSync = React.useCallback(() => {
+    const host = window.location.host;
+    const isVercel = host.includes('vercel.app');
+    const isDev = import.meta.env.DEV;
+
+    if (isVercel) {
+      // Vercel: no WebSocket support — silently skip, DataContext polling handles refreshes
+      console.log('[PriceSync] Vercel detected — WebSocket disabled, using HTTP polling');
+      return;
+    }
+
     try {
-      const isDev = import.meta.env.DEV;
-      const backendHost = isDev ? 'localhost:3001' : window.location.host;
+      const backendHost = isDev ? 'localhost:3001' : host;
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${backendHost}/api/v1/prices/sync`;
       const ws = new WebSocket(wsUrl);
+      let retryCount = 0;
+      const MAX_RETRIES = 5;
 
       ws.onopen = () => {
         console.log('[PriceSync] Connected to real-time price sync');
+        retryCount = 0;
         setPriceSyncWs(ws);
       };
 
@@ -63,11 +76,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (error) { console.error('[PriceSync] Failed to process message:', error); }
       };
 
+      ws.onerror = () => {
+        // Suppress noisy WebSocket errors — onclose will handle retry logic
+      };
+
       ws.onclose = () => {
         setPriceSyncWs(null);
-        setTimeout(() => initializePriceSync(), 10000);
+        retryCount++;
+        if (retryCount < MAX_RETRIES) {
+          // Exponential backoff: 10s, 20s, 40s, 80s, 160s
+          const delay = Math.min(10000 * Math.pow(2, retryCount - 1), 160000);
+          setTimeout(() => initializePriceSync(), delay);
+        } else {
+          console.log('[PriceSync] Max retries reached — WebSocket disabled');
+        }
       };
-    } catch (error) { console.error('[PriceSync] Failed to initialize:', error); }
+    } catch (error) {
+      console.warn('[PriceSync] Failed to initialize WebSocket:', (error as any)?.message);
+    }
   }, []);
 
   useEffect(() => {
@@ -77,12 +103,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loadAllData = React.useCallback(async () => {
     setLoading(true);
     try {
-      // Load PMS Data
+      // Load PMS Data — rooms first (critical for dashboard)
       let roomRes = await db.query('SELECT * FROM rooms WHERE is_active IS DISTINCT FROM false ORDER BY number');
-      if ('rows' in roomRes) {
+      if ('rows' in roomRes && roomRes.rows && roomRes.rows.length > 0) {
         setRooms((roomRes.rows || []).map((r: any) => ({ ...r, status: String(r.status || 'VC').toUpperCase() })));
         await refreshRooms();
         await refreshRateConfig();
+      } else if ('error' in (roomRes as any) || !('rows' in roomRes)) {
+        // DB unavailable — load default rooms so UI is not completely empty
+        console.warn('[DataContext] Rooms DB query failed, loading defaults:', (roomRes as any).error);
+        const { DEFAULT_ROOMS } = await import('@/data/defaultRooms');
+        setRooms(DEFAULT_ROOMS);
       }
 
       const resRes = await db.query('SELECT r.*, g.full_name as guest_name, ro.number as room_number FROM reservations r LEFT JOIN guests g ON r.guest_id = g.id LEFT JOIN rooms ro ON r.room_id = ro.id');

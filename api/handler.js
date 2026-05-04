@@ -554,6 +554,68 @@ app.get('/api/printer/status', (req, res) => {
   safeJson(res, { connected: true, method: 'browser', lastCheck: new Date().toISOString() });
 });
 
+// ─── SSE Stub — Vercel can't hold persistent SSE connections ─────────────────
+// Return a valid SSE response that immediately closes. The client (useNightAuditLock)
+// will fall back to polling on Vercel automatically (host.includes('vercel.app')).
+app.get('/api/night-audit/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'close'); // Signal immediate close
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  // Send one heartbeat then close — client detects close and falls back to polling
+  res.write(': Vercel serverless — SSE not supported, use polling\n\n');
+  res.end();
+});
+
+// ─── WebSocket price sync — not supported on Vercel, return 200 JSON ─────────
+// This prevents the 404 → the client detects non-WS response and skips gracefully
+app.get('/api/v1/prices/sync', (req, res) => {
+  safeJson(res, { ok: false, error: 'WebSocket not supported on Vercel. Use HTTP polling.' });
+});
+
+// ─── Rooms — serve from DB ────────────────────────────────────────────────────
+app.get('/api/rooms', async (req, res) => {
+  try {
+    safeJson(res, await db.query('SELECT * FROM rooms WHERE is_active IS DISTINCT FROM false ORDER BY number'));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// ─── Reservations ─────────────────────────────────────────────────────────────
+app.get('/api/reservations', async (req, res) => {
+  try {
+    safeJson(res, await db.query(
+      `SELECT r.*, g.full_name as guest_name, ro.number as room_number
+       FROM reservations r
+       LEFT JOIN guests g ON r.guest_id = g.id
+       LEFT JOIN rooms ro ON r.room_id = ro.id
+       ORDER BY r.check_in_date DESC LIMIT 500`
+    ));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// ─── Guests ───────────────────────────────────────────────────────────────────
+app.get('/api/guests', async (req, res) => {
+  try {
+    safeJson(res, await db.query('SELECT * FROM guests ORDER BY full_name LIMIT 500'));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// ─── Folio Charges ────────────────────────────────────────────────────────────
+app.get('/api/folio-charges', async (req, res) => {
+  try {
+    safeJson(res, await db.query(
+      'SELECT * FROM folio_charges WHERE is_voided=false ORDER BY posting_date DESC, inserted_at DESC LIMIT 1000'
+    ));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// ─── Folios ───────────────────────────────────────────────────────────────────
+app.get('/api/folios', async (req, res) => {
+  try {
+    safeJson(res, await db.query("SELECT * FROM folios WHERE status IN ('open','pending') ORDER BY inserted_at DESC"));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 // ─── Catch-all: return JSON 404 (NOT HTML) ───────────────────────────────────
 // This prevents the "Unexpected token T" error — always return JSON
 app.use((req, res) => {
