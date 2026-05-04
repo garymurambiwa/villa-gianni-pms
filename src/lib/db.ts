@@ -83,9 +83,19 @@ export const db = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sql, params })
       });
+
+      // Guard: if server returns HTML instead of JSON (404/503 page), return a clean error
+      // instead of letting JSON.parse throw "Unexpected token 'T', 'The page c...'"
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('json')) {
+        const text = await res.text();
+        console.warn('[DB-API] Non-JSON response from /api/db/query:', res.status, text.substring(0, 100));
+        return { error: `API unavailable (HTTP ${res.status})` } as any;
+      }
+
       const data = await res.json();
       if (!res.ok || data.error) {
-        throw new Error(data.error || 'Database query failed');
+        return { error: data.error || 'Database query failed', rows: [], rowCount: 0 } as any;
       }
       return data as QueryResult<Row>;
     } catch (e: any) {
@@ -100,8 +110,8 @@ export const db = {
         });
         return { rows: [], rowCount: 0 };
       }
-      console.error('[DB-API-Error]', e.message, sql);
-      throw e;
+      console.warn('[DB-API-Error]', e.message?.substring(0, 100));
+      return { error: e.message || 'Network error', rows: [], rowCount: 0 } as any;
     }
   },
 

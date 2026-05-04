@@ -168,22 +168,47 @@ export class RealTimeSyncService {
    * Perform a single synchronization cycle
    */
   private async performSync(): Promise<void> {
-    console.log('[RealTimeSync] Starting sync cycle...');
-    
+    // First check if the API is reachable — if it returns HTML instead of JSON, bail early
+    // to prevent cascading "Unexpected token" errors across all modules.
+    try {
+      const testRes = await fetch('/api/db/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+      const contentType = testRes.headers.get('content-type') || '';
+      if (!contentType.includes('application/json') && !contentType.includes('json')) {
+        // Server is returning HTML (404/503 page) — skip this cycle silently
+        console.warn('[RealTimeSync] API unavailable (non-JSON response), skipping sync cycle');
+        return;
+      }
+      const health = await testRes.json();
+      if (!health?.ok) {
+        console.warn('[RealTimeSync] API health check failed, skipping sync cycle:', health?.error);
+        return;
+      }
+    } catch (_healthErr) {
+      // Network failure or parse error — skip silently
+      console.warn('[RealTimeSync] API health check network error, skipping sync cycle');
+      return;
+    }
+
     const promises: Promise<void>[] = [];
 
-    // Sync each enabled module
+    // Sync each enabled module — each wrapped to never throw
     for (const [moduleName, isEnabled] of Object.entries(this.config.enabledModules)) {
       if (isEnabled) {
-        promises.push(this.syncModule(moduleName));
+        promises.push(this.syncModule(moduleName).catch(err => {
+          console.warn(`[RealTimeSync] ${moduleName} sync silently failed:`, err?.message || err);
+        }));
       }
     }
 
     try {
       await Promise.all(promises);
-      console.log('[RealTimeSync] Sync cycle completed successfully');
     } catch (error) {
-      console.error('[RealTimeSync] Error during sync cycle:', error);
+      // Should not reach here due to individual catch above, but safety net
+      console.warn('[RealTimeSync] Sync cycle had errors (suppressed)');
     }
   }
 
