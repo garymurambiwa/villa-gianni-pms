@@ -242,7 +242,7 @@ export const sendHeartbeat = async (userId: string): Promise<void> => {
 
 // --- Session Management (Local Storage) ---
 // Kept for seamless UI integration with AuthContext
-export const createSession = (user: UserRecord, minutes: number = 5): Session => {
+export const createSession = (user: UserRecord, minutes: number = 480): Session => { // 480 = 8 hours default
   const token = `SESS_${Math.random().toString(36).slice(2)}`;
   const now = new Date();
   const expires = new Date(now.getTime() + minutes * 60 * 1000);
@@ -264,15 +264,16 @@ export const getSession = (): Session | null => {
 };
 
 export const touchSession = () => {
-  const sess = getSession(); 
+  const sess = getSession();
   if (!sess) return;
-  
+
   const now = new Date();
-  const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
-  
+  // Extend session by 8 hours from now on each touch (keeps alive during active use)
+  const eightHoursFromNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+
   sess.lastActiveAt = now.toISOString();
-  sess.expiresAt = fiveMinutesFromNow.toISOString();
-  
+  sess.expiresAt = eightHoursFromNow.toISOString();
+
   writeJSON(K_SESSION, sess);
 };
 

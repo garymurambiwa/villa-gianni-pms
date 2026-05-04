@@ -295,7 +295,7 @@ export const FrontOffice: React.FC = () => {
         <div class="summary">
           <h3>Summary</h3>
           <p>Total Arrivals: ${arrivingGuests.length}</p>
-          <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}</p>
+          <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (Number(r.rate) || 0), 0).toFixed(2)}</p>
         </div>
       </body>
       </html>
@@ -400,7 +400,7 @@ export const FrontOffice: React.FC = () => {
           </table>
           <div class="summary">
             <p>Total Arrivals: ${arrivingGuests.length}</p>
-            <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}</p>
+            <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (Number(r.rate) || 0), 0).toFixed(2)}</p>
           </div>
         </div>
       </body>
@@ -758,7 +758,7 @@ export const FrontOffice: React.FC = () => {
             </table>
             <div class="summary">
               <p>Total Arrivals: ${arrivingGuests.length}</p>
-              <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}</p>
+              <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (Number(r.rate) || 0), 0).toFixed(2)}</p>
             </div>
           </div>
           
@@ -1388,7 +1388,7 @@ export const FrontOffice: React.FC = () => {
                                 } catch { return '-'; }
                               })()}
                             </TableCell>
-                            ${(res.rate || 0).toFixed(2)}
+                            ${(Number(res.rate) || 0).toFixed(2)}
                           </TableCell>
                           <TableCell><Badge variant="secondary">{getResPackage(res)}</Badge></TableCell>
                           <TableCell className="text-right">
@@ -1484,7 +1484,7 @@ export const FrontOffice: React.FC = () => {
                             })()}
                           </TableCell>
                           <TableCell className="text-green-600">
-                            ${(res.rate || 0).toFixed(2)}
+                            ${(Number(res.rate) || 0).toFixed(2)}
                           </TableCell>
                           <TableCell><Badge variant="secondary" className="bg-gray-100 text-gray-800">Checked Out</Badge></TableCell>
                         </TableRow>
@@ -2423,7 +2423,7 @@ export const FrontOffice: React.FC = () => {
                     </td>
                     <td></td>
                     <td className="text-right font-bold">
-                      ${todayArrivals.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}
+                      ${todayArrivals.reduce((sum, r) => sum + (Number(r.rate) || 0), 0).toFixed(2)}
                     </td>
                   </tr>
                 }
@@ -2470,7 +2470,7 @@ export const FrontOffice: React.FC = () => {
                           {getResPackage(res)}
                         </span>
                       </td>
-                      <td className="text-right font-medium">${(res.rate || 0).toFixed(2)}</td>
+                      <td className="text-right font-medium">${(Number(res.rate) || 0).toFixed(2)}</td>
                     </tr>
                   );
                 })}

@@ -122,6 +122,52 @@ const REPORTS = [
   { key: 'high-balance', name: 'High Balance Report', description: 'Accounts exceeding threshold', type: 'summary' as const }
 ];
 
+const businessDate = new Date().toISOString().slice(0,10);
+const currentMonth = new Date().toISOString().slice(0,7);
+
+const quickPrint = async (key: string) => {
+  try {
+    let data: { title: string; columns: string[]; rows: any[] } | null = null;
+    switch (key) {
+      case 'pnl':
+        data = await buildMonthlyPL(currentMonth);
+        break;
+      case 'daily-collection':
+        data = await buildFlashReport(businessDate);
+        break;
+      case 'journals':
+        data = await buildPosReconciliation(businessDate);
+        break;
+      case 'purchases':
+        data = await buildPurchaseReceivingLog(businessDate);
+        break;
+      case 'voids':
+      case 'sales-summary':
+      case 'sales-detail':
+        data = await buildPosReconciliation(businessDate);
+        break;
+      case 'stock-movement':
+      case 'stock-adjust':
+        data = await buildInventoryCOGS(currentMonth);
+        break;
+      case 'recon-summary':
+        data = await buildFlashReport(businessDate);
+        break;
+      case 'menu-cos':
+        data = await buildPosReconciliation(businessDate);
+        break;
+      default:
+        data = await buildFlashReport(businessDate);
+    }
+    if (!data) throw new Error('no_data');
+    const html = generateReportHTML(data.title, data.columns, data.rows);
+    printDocument(html, data.title, true);
+  } catch (e) {
+    console.error('Quick Print failed', e);
+    alert('Quick Print is not available for this report yet.');
+  }
+};
+
 export const AllReportsPage: React.FC = () => {
   const params = React.useMemo(() => parseParams(), []);
   const defaultRange = React.useMemo(() => last30Days(), []);
@@ -178,40 +224,41 @@ export const AllReportsPage: React.FC = () => {
     setError(''); setOpeningKey(key);
     try {
       // Build the report content directly to avoid SPA routing issues causing blank pages
-      const businessDate = new Date().toISOString().slice(0,10);
-      const currentMonth = new Date().toISOString().slice(0,7);
+      const businessDateStr = new Date().toISOString().slice(0,10);
+      const currentMonthStr = new Date().toISOString().slice(0,7);
       let data: { title: string; columns: string[]; rows: any[] } | null = null;
       switch (key) {
         case 'pnl':
-          data = await buildMonthlyPL(currentMonth);
+          data = await buildMonthlyPL(currentMonthStr);
           break;
         case 'daily-collection':
-          data = await buildFlashReport(businessDate);
+          data = await buildFlashReport(businessDateStr);
           break;
         case 'journals':
-          data = await buildPosReconciliation(businessDate);
+          data = await buildPosReconciliation(businessDateStr);
           break;
         case 'purchases':
-          data = await buildPurchaseReceivingLog(businessDate);
+          data = await buildPurchaseReceivingLog(businessDateStr);
           break;
         case 'voids':
         case 'sales-summary':
         case 'sales-detail':
-          data = await buildPosReconciliation(businessDate);
+          data = await buildPosReconciliation(businessDateStr);
           break;
         case 'stock-movement':
         case 'stock-adjust':
-          data = await buildInventoryCOGS(currentMonth);
+          data = await buildInventoryCOGS(currentMonthStr);
           break;
         case 'recon-summary':
-          data = await buildFlashReport(businessDate);
+          data = await buildFlashReport(businessDateStr);
           break;
         case 'menu-cos':
-          data = await buildPosReconciliation(businessDate);
+          data = await buildPosReconciliation(businessDateStr);
           break;
         default:
-          data = await buildFlashReport(businessDate);
+          data = await buildFlashReport(businessDateStr);
       }
+      if (!data) throw new Error('no_data');
       const html = generateReportHTML(data.title, data.columns, data.rows);
       // First attempt: open a blank tab and write HTML
       try {
@@ -272,21 +319,21 @@ export const AllReportsPage: React.FC = () => {
       )}
 
       {!loading && !error && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="ds-table-container">
+          <table className="ds-table">
             <thead>
-              <tr className="border-b">
+              <tr>
                 <th className="p-2 text-left">Report Name</th>
-                <th className="p-2 text-left">Description</th>
+                <th className="p-2 text-left hide-on-mobile">Description</th>
                 <th className="p-2 text-left">Category</th>
                 <th className="p-2 text-left">Actions</th>
               </tr>
             </thead>
             <tbody>
               {rows.map(r => (
-                <tr key={r.key} className="border-b hover:bg-gray-50 group">
+                <tr key={r.key} className="hover:bg-gray-50 group">
                   <td className="p-2 font-medium text-blue-700 group-hover:text-blue-900 transition-colors">{String(r.name)}</td>
-                  <td className="p-2 text-gray-600 max-w-xs truncate">{String(r.description)}</td>
+                  <td className="p-2 text-gray-600 max-w-xs truncate hide-on-mobile">{String(r.description)}</td>
                   <td className="p-2">
                     <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-full text-[10px] uppercase font-bold tracking-wider">
                       {String(r.type)}
@@ -294,9 +341,10 @@ export const AllReportsPage: React.FC = () => {
                   </td>
                   <td className="p-2">
                     <div className="flex items-center gap-2">
-                      <Button variant="outline" onClick={() => quickPrint(r.key)} className="hover:bg-gray-100 active:scale-[0.99]">Quick Print</Button>
+                      <Button variant="outline" size="sm" onClick={() => quickPrint(r.key)} className="hover:bg-gray-100 active:scale-[0.99] whitespace-nowrap">Quick Print</Button>
                       <Button
                         variant="outline"
+                        size="sm"
                         onClick={() => openReportNewTab(r.key)}
                         className={`hover:bg-gray-100 active:scale-[0.99] ${openingKey===r.key ? 'opacity-60 cursor-wait' : ''}`}
                         disabled={openingKey===r.key}
@@ -313,12 +361,14 @@ export const AllReportsPage: React.FC = () => {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <div className="text-xs text-gray-600">Showing {Math.min(total, startIdx + rows.length)} of {total} reports · Tx: {metrics.count} · Cash: ${metrics.cash.toFixed(2)} · Card: ${metrics.card.toFixed(2)} · Room: ${metrics.roomCharge.toFixed(2)}</div>
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+        <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded border w-full sm:w-auto">
+          Showing {Math.min(total, startIdx + rows.length)} of {total} reports · Tx: {metrics.count} · Cash: ${metrics.cash.toFixed(2)} · Card: ${metrics.card.toFixed(2)} · Room: ${metrics.roomCharge.toFixed(2)}
+        </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setPage(p => Math.max(1, p-1))} disabled={page===1}>Prev</Button>
-          <div className="text-sm">Page {page}</div>
-          <Button variant="outline" onClick={() => setPage(p => (startIdx + pageSize) < total ? p+1 : p)} disabled={(startIdx + pageSize) >= total}>Next</Button>
+          <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p-1))} disabled={page===1}>Prev</Button>
+          <div className="text-sm font-medium">Page {page}</div>
+          <Button variant="outline" size="sm" onClick={() => setPage(p => (startIdx + pageSize) < total ? p+1 : p)} disabled={(startIdx + pageSize) >= total}>Next</Button>
         </div>
       </div>
     </div>
@@ -326,46 +376,3 @@ export const AllReportsPage: React.FC = () => {
 };
 
 export default AllReportsPage;
-  const businessDate = new Date().toISOString().slice(0,10);
-  const currentMonth = new Date().toISOString().slice(0,7);
-  const quickPrint = async (key: string) => {
-    try {
-      let data: { title: string; columns: string[]; rows: any[] } | null = null;
-      switch (key) {
-        case 'pnl':
-          data = await buildMonthlyPL(currentMonth);
-          break;
-        case 'daily-collection':
-          data = await buildFlashReport(businessDate);
-          break;
-        case 'journals':
-          data = await buildPosReconciliation(businessDate);
-          break;
-        case 'purchases':
-          data = await buildPurchaseReceivingLog(businessDate);
-          break;
-        case 'voids':
-        case 'sales-summary':
-        case 'sales-detail':
-          data = await buildPosReconciliation(businessDate);
-          break;
-        case 'stock-movement':
-        case 'stock-adjust':
-          data = await buildInventoryCOGS(currentMonth);
-          break;
-        case 'recon-summary':
-          data = await buildFlashReport(businessDate);
-          break;
-        case 'menu-cos':
-          data = await buildPosReconciliation(businessDate);
-          break;
-        default:
-          data = await buildFlashReport(businessDate);
-      }
-      const html = generateReportHTML(data.title, data.columns, data.rows);
-      printDocument(html, data.title, true);
-    } catch (e) {
-      console.error('Quick Print failed', e);
-      alert('Quick Print is not available for this report yet.');
-    }
-  };

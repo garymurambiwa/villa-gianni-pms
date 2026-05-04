@@ -54,7 +54,7 @@ export const Dashboard: React.FC = () => {
   // We use 'checked-in' status to identify currently generating revenue
   const currentRevenue = reservations
     .filter(r => r.status === 'checked-in')
-    .reduce((sum, r) => sum + (r.rate || 0), 0);
+    .reduce((sum, r) => sum + (Number(r.rate) || 0), 0);
 
   // 5. ADR (Average Daily Rate) = Total Room Revenue / Number of Rooms Sold (Occupied Rooms)
   // Handle division by zero to prevent $Infinity display

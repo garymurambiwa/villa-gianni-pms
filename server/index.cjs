@@ -641,28 +641,10 @@ app.post('/api/inventory/batch-reconcile', async (req, res) => {
             const physQty = Number(physical_qty) || 0;
 
             // Validate product exists
-            const prodRes = await client.query('SELECT id, name, department, cost_price FROM products WHERE id = ?', [product_id]);
+            const prodRes = await client.query('SELECT id, name, department, stock_level, cost_price FROM products WHERE id = ?', [product_id]);
             if (!prodRes.rows || prodRes.rows.length === 0) {
                 throw new Error(`Product ${product_id} not found`);
             }
-            const product = prodRes.rows[0];
-
-            // Determine new cost (keep existing if not provided)
-            const newCost = cost_price !== undefined && cost_price !== null ? Number(cost_price) : Number(product.cost_price || 0);
-
-            // Record physical count metadata on product (do not alter stock_level yet)
-            const updates = ['last_inventory_period_id = ?', 'last_physical_qty = ?', 'last_physical_date = ?'];
-            const values = [period_id, physQty, new Date().toISOString().split('T')[0]];
-            if (cost_price !== undefined && cost_price !== null) {
-                updates.push('cost_price = ?');
-                values.push(newCost);
-            }
-            values.push(product_id);
-            await client.query(
-                `UPDATE products SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
-                values
-            );
-        }
             const product = prodRes.rows[0];
             const bookQty = Number(product.stock_level || 0);
             const currentCost = Number(product.cost_price || 0);
@@ -672,33 +654,32 @@ app.post('/api/inventory/batch-reconcile', async (req, res) => {
             const variance = physQty - bookQty;
             const totalValue = variance * newCost;
 
-            // Fetch aggregated transaction sums for this period/product BEFORE we add adjustment
+            // Fetch aggregated transaction sums for this period/product
             const aggRes = await client.query(
                 `SELECT
-                  COALESCE(SUM(CASE WHEN type = 'opening_balance' THEN quantity ELSE 0 END),0) as opening_qty,
-                  COALESCE(SUM(CASE WHEN type IN ('purchase','grv') THEN quantity ELSE 0 END),0) as received_qty,
-                  COALESCE(SUM(CASE WHEN type = 'usage' THEN quantity ELSE 0 END),0) as usage_qty
+                  COALESCE(SUM(CASE WHEN transaction_type = 'opening_balance' THEN total_quantity ELSE 0 END),0) as opening_qty,
+                  COALESCE(SUM(CASE WHEN transaction_type IN ('purchase','grv') THEN total_quantity ELSE 0 END),0) as received_qty,
+                  COALESCE(SUM(CASE WHEN transaction_type = 'usage' THEN total_quantity ELSE 0 END),0) as usage_qty
                  FROM inventory_transactions
-                 WHERE period_id = ? AND product_id = ?`,
-                [period_id, product_id]
+                 WHERE period_id = ?`,
+                [period_id]
             );
-            const openingQty = Number(aggRes.rows[0].opening_qty);
-            const receivedQty = Number(aggRes.rows[0].received_qty);
-            const usageQty = Number(aggRes.rows[0].usage_qty);
+            const openingQty = Number(aggRes.rows?.[0]?.opening_qty || 0);
+            const receivedQty = Number(aggRes.rows?.[0]?.received_qty || 0);
+            const usageQty = Number(aggRes.rows?.[0]?.usage_qty || 0);
 
-            // Upsert inventory_snapshot
-            await client.query(
-                `INSERT INTO inventory_snapshots (period_id, product_id, physical_qty, variance, opening_qty, received_qty, system_usage_qty)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT (period_id, product_id) DO UPDATE SET
-                   physical_qty = EXCLUDED.physical_qty,
-                   variance = EXCLUDED.variance,
-                   opening_qty = EXCLUDED.opening_qty,
-                   received_qty = EXCLUDED.received_qty,
-                   system_usage_qty = EXCLUDED.system_usage_qty,
-                   updated_at = NOW()`,
-                [period_id, product_id, physQty, variance, openingQty, receivedQty, usageQty]
-            );
+            // Upsert inventory_snapshot if table exists
+            try {
+                await client.query(
+                    `INSERT INTO inventory_snapshots (period_id, product_id, physical_qty, variance, opening_qty, received_qty, system_usage_qty)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT (period_id, product_id) DO UPDATE SET
+                       physical_qty = EXCLUDED.physical_qty, variance = EXCLUDED.variance,
+                       opening_qty = EXCLUDED.opening_qty, received_qty = EXCLUDED.received_qty,
+                       system_usage_qty = EXCLUDED.system_usage_qty, updated_at = NOW()`,
+                    [period_id, product_id, physQty, variance, openingQty, receivedQty, usageQty]
+                );
+            } catch (_snapErr) { /* table may not exist yet — non-fatal */ }
 
             // Create adjustment transaction if variance non-zero
             if (variance !== 0) {
@@ -706,22 +687,22 @@ app.post('/api/inventory/batch-reconcile', async (req, res) => {
                     `INSERT INTO inventory_transactions
                      (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, created_by)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                    ['adjustment', `BATCH-${Date.now()}-${product_id.slice(0,8)}`, period_id, new Date().toISOString().split('T')[0],
-                     product.department, variance, totalValue, req.body.user_id || 'system']
+                    ['adjustment', `BATCH-${Date.now()}-${String(product_id).slice(0,8)}`,
+                     period_id, new Date().toISOString().split('T')[0],
+                     product.department || 'General', variance, totalValue, user_id || 'system']
                 );
             }
 
-            // Update product
-            const updates = ['stock_level = ?', 'last_inventory_period_id = ?', 'last_physical_qty = ?', 'last_physical_date = ?'];
-            const values = [physQty, period_id, physQty, new Date().toISOString().split('T')[0]];
+            // Update product stock to physical count
+            const upFields = ['stock_level = ?', 'updated_at = NOW()'];
+            const upVals = [physQty];
             if (cost_price !== undefined && cost_price !== null) {
-                updates.push('cost_price = ?');
-                values.push(newCost);
+                upFields.push('cost_price = ?');
+                upVals.push(newCost);
             }
-            values.push(product_id);
+            upVals.push(product_id);
             await client.query(
-                `UPDATE products SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
-                values
+                `UPDATE products SET ${upFields.join(', ')} WHERE id = ?`, upVals
             );
         }
 
