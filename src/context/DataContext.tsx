@@ -137,22 +137,69 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const guestRes = await db.query('SELECT * FROM guests');
       if ('rows' in guestRes) setGuests(guestRes.rows || []);
 
+      // FIX: Load from products table (unified source of truth for POS + Inventory)
+      // Map ALL fields correctly including costCenter, category_id, visibility, prices
       const productsRes = await db.query('SELECT * FROM products ORDER BY name ASC');
       let mergedInventory: any[] = [];
-      if ('rows' in productsRes) {
-        mergedInventory = (productsRes.rows || []).map((p: any) => ({
-          ...p,
-          sellingPrice: Number(p.price || 0),
-          costPrice: Number(p.cost_price || 0),
-          qtyInStock: Number(p.stock_level || 0),
-          category: String(p.department || '').toLowerCase().includes('bar') ? 'bar' : 'food'
-        }));
-        setInventory(mergedInventory);
-      }
+      if ('rows' in productsRes && productsRes.rows && productsRes.rows.length > 0) {
+        mergedInventory = (productsRes.rows || []).map((p: any) => {
+          // Parse visibility — stored as JSONB in DB
+          let vis: any = {};
+          try { vis = typeof p.visibility === 'string' ? JSON.parse(p.visibility) : (p.visibility || {}); } catch { }
 
-      // Always update localStorage, even if empty
-      localStorage.setItem('corepms_pos_items', JSON.stringify(mergedInventory));
-      window.dispatchEvent(new Event('storage'));
+          // Determine costCenter from DB category field (set by syncPosItemToDb: category = item.costCenter)
+          // and bar_visibility / department as fallback
+          const costCenterFromDb = p.category || p.department || 'restaurant';
+
+          return {
+            ...p,
+            // ── Price fields (DB snake_case → frontend camelCase) ──────────────
+            sellingPrice:      Number(p.price || 0),       // products.price = selling price
+            costPrice:         Number(p.cost_price || 0),  // products.cost_price = cost
+            // ── Stock ─────────────────────────────────────────────────────────
+            qtyInStock:        Number(p.stock_level || 0),
+            qtyReceived:       Number(p.qty_received || 0),
+            // ── Category / classification ──────────────────────────────────────
+            costCenter:        costCenterFromDb,            // CRITICAL: restore costCenter from DB
+            inventoryCategory: p.department?.toLowerCase() === 'bar' ? 'cellar' : 'kitchen',
+            category_id:       p.category_id || null,
+            sub_id:            p.sub_id || null,
+            // ── Visibility (bar/restaurant toggles) ────────────────────────────
+            visibility:        vis,
+            bar_visibility:    p.bar_visibility !== false,
+            restaurant_visibility: p.restaurant_visibility !== false,
+            // ── Financial metrics ──────────────────────────────────────────────
+            cosPercent:        Number(p.cos_percent || 0),
+            gpPercent:         Number(p.gp_percent || 0),
+            gpAmount:          Number(p.gp_amount || 0),
+            // ── Display ───────────────────────────────────────────────────────
+            imageBgColor:      p.image_bg_color || null,
+            pictureData:       p.picture_data || null,
+            notes:             p.notes || '',
+            available:         p.active !== false,
+            // ── Legacy field for POS.tsx category classification ───────────────
+            type:              p.department,  // 'Bar' or 'Restaurant'
+            category:          p.department?.toLowerCase().includes('bar') ? 'bar' : 'food',
+          };
+        });
+        setInventory(mergedInventory);
+
+        // Only update localStorage when we have real data — never overwrite with empty array
+        // This prevents stale/empty DB responses from wiping user's saved items
+        try {
+          localStorage.setItem('corepms_pos_items', JSON.stringify(mergedInventory));
+          window.dispatchEvent(new Event('storage'));
+        } catch { /* storage full — non-fatal */ }
+      } else if ('error' in (productsRes as any)) {
+        // DB error — keep existing localStorage items, don't overwrite
+        console.warn('[DataContext] Products DB query failed, keeping existing localStorage:', (productsRes as any).error);
+      } else {
+        // Empty products table — only write if localStorage is also empty to avoid wiping seeded data
+        const existing = localStorage.getItem('corepms_pos_items');
+        if (!existing || existing === '[]') {
+          localStorage.setItem('corepms_pos_items', '[]');
+        }
+      }
 
       const folioRes = await db.query('SELECT * FROM folios');
       if ('rows' in folioRes) setFolios(folioRes.rows || []);

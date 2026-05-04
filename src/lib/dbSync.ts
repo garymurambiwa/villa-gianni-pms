@@ -243,48 +243,63 @@ export async function pullProductsToLocalStorage(): Promise<SyncResult> {
     if (!('rows' in res)) return { success: false, error: 'Failed to fetch products' };
 
     const dbProducts = res.rows || [];
-    
-    // Map DB products back to the legacy POS format for corepms_pos_items
-    const posItems = dbProducts.map(p => {
-      let visibility = {};
-      try {
-        visibility = typeof p.visibility === 'string' ? JSON.parse(p.visibility) : (p.visibility || {});
-      } catch { visibility = {}; }
 
-      let barcodes = [];
-      try {
-        barcodes = typeof p.barcodes === 'string' ? JSON.parse(p.barcodes) : (p.barcodes || []);
-      } catch { barcodes = []; }
+    // Only update localStorage if DB returned actual products — never overwrite with empty array
+    if (dbProducts.length === 0) {
+      console.log('[dbSync] products table is empty — keeping existing localStorage');
+      return { success: true, synced: 0 };
+    }
+
+    // Map DB products back to the complete camelCase POS format for corepms_pos_items
+    // CRITICAL: costCenter MUST be restored from products.category (where syncPosItemToDb stores it)
+    const posItems = dbProducts.map((p: any) => {
+      let visibility: any = {};
+      try { visibility = typeof p.visibility === 'string' ? JSON.parse(p.visibility) : (p.visibility || {}); } catch { }
+
+      let barcodes: any[] = [];
+      try { barcodes = typeof p.barcodes === 'string' ? JSON.parse(p.barcodes) : (p.barcodes || []); } catch { }
 
       return {
         id: p.id,
         name: p.name,
-        category: p.category,
-        costCenter: p.category, // Bridge field
-        department: p.department,
-        sellingPrice: Number(p.price || 0),
-        costPrice: Number(p.cost_price || 0),
-        qtyInStock: Number(p.stock_level || 0),
-        unit: p.unit || 'units',
-        available: p.active !== false,
-        visibility: visibility,
-        is_stock_item: p.is_stock_item !== false,
-        category_id: p.category_id,
-        sub_id: p.sub_id,
-        parent_sub_id: p.parent_sub_id,
-        notes: p.notes,
-        barcodes: barcodes,
-        cosPercent: Number(p.cos_percent || 0),
-        gpPercent: Number(p.gp_percent || 0),
-        gpAmount: Number(p.gp_amount || 0),
-        qtyReceived: Number(p.qty_received || 0),
-        imageBgColor: p.image_bg_color,
-        pictureData: p.picture_data
+        // ── costCenter restored from products.category (stored there by syncPosItemToDb) ──
+        costCenter:     p.category || p.department || 'restaurant',
+        category:       p.category,
+        department:     p.department,
+        type:           p.department, // 'Bar' or 'Restaurant' — used by POS.tsx for category detection
+        // ── Prices (DB field names → frontend camelCase) ──────────────────────
+        sellingPrice:   Number(p.price || 0),      // products.price = selling price
+        costPrice:      Number(p.cost_price || 0), // products.cost_price = cost
+        // ── Stock ─────────────────────────────────────────────────────────────
+        qtyInStock:     Number(p.stock_level || 0),
+        qtyReceived:    Number(p.qty_received || 0),
+        unit:           p.unit || 'units',
+        // ── Flags ─────────────────────────────────────────────────────────────
+        available:      p.active !== false,
+        is_stock_item:  p.is_stock_item !== false,
+        // ── Category linking ──────────────────────────────────────────────────
+        category_id:    p.category_id || null,
+        sub_id:         p.sub_id || null,
+        parent_sub_id:  p.parent_sub_id || null,
+        // ── Visibility toggles ────────────────────────────────────────────────
+        visibility,
+        bar_visibility:          p.bar_visibility !== false,
+        restaurant_visibility:   p.restaurant_visibility !== false,
+        inventoryCategory: p.department?.toLowerCase() === 'bar' ? 'cellar' : 'kitchen',
+        // ── Financial metrics ─────────────────────────────────────────────────
+        cosPercent:     Number(p.cos_percent || 0),
+        gpPercent:      Number(p.gp_percent || 0),
+        gpAmount:       Number(p.gp_amount || 0),
+        // ── Misc ──────────────────────────────────────────────────────────────
+        notes:          p.notes || '',
+        barcodes,
+        imageBgColor:   p.image_bg_color || null,
+        pictureData:    p.picture_data || null,
       };
     });
 
     localStorage.setItem('corepms_pos_items', JSON.stringify(posItems));
-    console.log(`[dbSync] Pulled ${posItems.length} products to localStorage`);
+    console.log(`[dbSync] Pulled ${posItems.length} products to localStorage with correct field mapping`);
     
     // Also broadcast update event
     window.dispatchEvent(new CustomEvent('pos:data:updated'));
@@ -737,15 +752,14 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
     const rawDeptPos = String(item.type || item.department || item.costCenter || '').toLowerCase();
     const deptPos = rawDeptPos.includes('bar') ? 'Bar' : 'Restaurant';
 
-    // Extract and validate prices
-    let price = Number(item.sellingPrice || 0);
-    const costPrice = Number(item.costPrice || 0);
-    
-    // Validate that sellingPrice is not less than costPrice
-    if (price < costPrice) {
-      console.warn(`[dbSync] Invalid price detected for item ${item.name || item.id}: sellingPrice (${price}) < costPrice (${costPrice}). Auto-correcting to maintain 10% margin.`);
-      // Auto-correct by setting sellingPrice to at least costPrice * 1.1 (10% margin)
-      price = costPrice * 1.1;
+    // Extract prices exactly as set — no silent auto-corrections
+    // The user's prescribed selling price must always be respected.
+    const price = Number(item.sellingPrice || item.price || 0);
+    const costPrice = Number(item.costPrice || item.cost_price || 0);
+    // NOTE: selling price CAN legitimately be lower than cost (promotional/staff pricing)
+    // Do NOT silently mutate the user's price. Log a warning only.
+    if (price > 0 && costPrice > 0 && price < costPrice) {
+      console.warn(`[dbSync] Notice: ${item.name} selling price ($${price}) < cost price ($${costPrice}). Saving as-is per user intent.`);
     }
 
     const product: ProductRecord = {
@@ -847,9 +861,19 @@ export async function deletePosItemFromDb(itemId: string): Promise<SyncResult> {
  * Perform a full sync of all POS items to the database
  * Called on app startup or manual sync request
  */
+/**
+ * Perform a full sync — DB is source of truth.
+ *
+ * DIRECTION: DB → localStorage (pull), NOT localStorage → DB (push)
+ *
+ * Why: pushing localStorage → DB can resurrect deleted items if localStorage
+ * was not properly cleaned up after deletion. The DB delete is authoritative.
+ *
+ * Use case: called on app startup to hydrate localStorage from the canonical DB state.
+ */
 export async function performFullSync(): Promise<SyncResult> {
   try {
-    console.log('[dbSync] Starting full database sync...');
+    console.log('[dbSync] performFullSync: pulling from DB → localStorage');
 
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
@@ -857,21 +881,33 @@ export async function performFullSync(): Promise<SyncResult> {
       return { success: true, synced: 0 };
     }
 
-    const menuResult = await syncAllMenuItemsToDb();
-    const invResult = await syncAllInventoryItemsToDb();
+    // Pull products from DB (authoritative source) into localStorage
+    const pullResult = await pullProductsToLocalStorage();
+    console.log(`[dbSync] Full sync pulled ${pullResult.synced || 0} items from DB`);
+    return pullResult;
 
-    const totalSynced = (menuResult.synced || 0) + (invResult.synced || 0);
-    const errors = [menuResult.error, invResult.error].filter(Boolean);
-
-    console.log(`[dbSync] Full sync complete: ${totalSynced} items synced`);
-
-    if (errors.length > 0) {
-      return { success: false, error: errors.join('; '), synced: totalSynced };
-    }
-
-    return { success: true, synced: totalSynced };
   } catch (err: any) {
     console.error('[dbSync] Full sync CRITICAL FAILURE:', err?.message || err);
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Push all localStorage items to DB.
+ * WARNING: Only call this for initial data migration or CSV import.
+ * Do NOT call on normal app startup — it can resurrect deleted items.
+ */
+export async function pushLocalStorageToDb(): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+    const menuResult = await syncAllMenuItemsToDb();
+    const invResult = await syncAllInventoryItemsToDb();
+    const totalSynced = (menuResult.synced || 0) + (invResult.synced || 0);
+    const errors = [menuResult.error, invResult.error].filter(Boolean);
+    if (errors.length > 0) return { success: false, error: errors.join('; '), synced: totalSynced };
+    return { success: true, synced: totalSynced };
+  } catch (err: any) {
     return { success: false, error: err?.message || String(err) };
   }
 }
