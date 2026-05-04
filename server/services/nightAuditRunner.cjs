@@ -172,7 +172,7 @@ async function postRoomCharges(businessDate) {
   // Get all occupied rooms with their current reservation/rate
   const rooms = await db.query(
     `SELECT ro.id as room_id, ro.number, ro.type, ro.rate as default_rate,
-            r.id as reservation_id, r.rate as reservation_rate,
+            r.id as reservation_id, COALESCE(NULLIF(r.rate::numeric, 0), ro.rate, 0) as reservation_rate,
             g.id as guest_id, g.full_name,
             f.id as folio_id
      FROM rooms ro
@@ -191,7 +191,7 @@ async function postRoomCharges(businessDate) {
   let totalRevenue = 0;
 
   for (const room of rooms.rows) {
-    const rate    = Number(room.reservation_rate || room.default_rate || 0);
+    const rate    = Number(room.reservation_rate || 0); // already COALESCE'd with room default in query
     const taxRate = 0.15; // 15% VAT — derive from app_settings if available
     const tax     = Number((rate * (taxRate / (1 + taxRate))).toFixed(2));
     const base    = Number((rate - tax).toFixed(2));

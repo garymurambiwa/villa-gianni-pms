@@ -342,4 +342,249 @@ router.get('/history', async (req, res) => {
   res.json({ ok: true, runs: r.ok ? r.rows : [] });
 });
 
+// ─── POST /api/night-audit/backfill ─────────────────────────────────────────
+// Reconstructs and inserts a missing historical night audit run for a given date.
+// Uses actual reservation + folio_charges data from that date to compute revenue.
+// Idempotent: if a record already exists for the date, it won't overwrite it.
+router.post('/backfill', async (req, res) => {
+  const { date, force } = req.body;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ ok: false, error: 'date required in YYYY-MM-DD format' });
+  }
+
+  try {
+    // 1. Check if audit already exists for this date
+    const existing = await db.query(
+      `SELECT id, status FROM night_audit_runs WHERE business_date::date = $1::date`,
+      [date]
+    );
+    if (existing.ok && existing.rows.length > 0 && !force) {
+      return res.json({
+        ok: false,
+        error: `Audit already exists for ${date} (status: ${existing.rows[0].status}). Pass force:true to overwrite.`,
+        existing: existing.rows[0]
+      });
+    }
+
+    // 2. Get all reservations that were checked-in on this date
+    const reservRes = await db.query(
+      `SELECT ro.id as room_id, ro.number, ro.type,
+              COALESCE(NULLIF(r.rate::numeric, 0), ro.rate, 0) as rate,
+              r.id as reservation_id, r.guest_id,
+              COALESCE(g.full_name, r.booking_name, 'Unknown') as guest_name,
+              f.id as folio_id
+       FROM reservations r
+       JOIN rooms ro ON ro.id = r.room_id
+       LEFT JOIN guests g ON g.id = r.guest_id
+       LEFT JOIN folios f ON f.reservation_id = r.id AND f.status = 'open'
+       WHERE r.check_in_date <= $1::date
+         AND r.check_out_date > $1::date
+         AND r.status IN ('checked-in', 'checked-out')`,
+      [date]
+    );
+
+    const reservations = reservRes.ok ? reservRes.rows : [];
+
+    // 3. Calculate room metrics
+    const totalRooms = 13; // Standard available rooms
+    const occupiedRooms = reservations.length;
+    let roomRevenue = 0;
+    let taxRevenue = 0;
+    const charges = [];
+
+    for (const room of reservations) {
+      const rate = Number(room.rate || 0);
+      const taxRate = 0.15; // 15% VAT inclusive
+      const tax = Number((rate * (taxRate / (1 + taxRate))).toFixed(2));
+      const base = Number((rate - tax).toFixed(2));
+      roomRevenue += rate;
+      taxRevenue += tax;
+
+      // Check if room charges were already posted for this date
+      const chargeRef = `NA_${date}_RM${room.number}`;
+      const existsCharge = await db.query(
+        `SELECT id FROM folio_charges WHERE source_reference = $1 LIMIT 1`,
+        [chargeRef]
+      );
+
+      if (!existsCharge.ok || existsCharge.rows.length === 0) {
+        // Post room charge to folio if not already there
+        let folioId = room.folio_id;
+
+        if (!folioId) {
+          const newFolio = await db.query(
+            `INSERT INTO folios (id, guest_id, reservation_id, room_number, status, balance, guest_name, arrival_date, inserted_at, updated_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, 'open', 0, $4, $5::date, NOW(), NOW())
+             RETURNING id`,
+            [room.guest_id, room.reservation_id, room.number, room.guest_name, date]
+          );
+          folioId = newFolio.ok ? newFolio.rows[0]?.id : null;
+        }
+
+        if (folioId) {
+          // Room base charge
+          await db.query(
+            `INSERT INTO folio_charges
+               (id, folio_id, guest_id, reservation_id, room_number, charge_type, category,
+                description, amount, tax_amount, total_amount, source, source_reference,
+                posting_date, business_date, department, service_date, inserted_at, updated_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, $4, 'charge', 'Room',
+                     $5, $6, 0, $6, 'night_audit', $7,
+                     $8::date, $8::date, 'Rooms', $8::date, NOW(), NOW())`,
+            [folioId, room.guest_id, room.reservation_id, room.number,
+             `Room ${room.number} - ${room.type}`, base, chargeRef, date]
+          );
+
+          // Tax charge
+          if (tax > 0) {
+            await db.query(
+              `INSERT INTO folio_charges
+                 (id, folio_id, guest_id, reservation_id, room_number, charge_type, category,
+                  description, amount, tax_amount, total_amount, source, source_reference,
+                  posting_date, business_date, department, service_date, inserted_at, updated_at)
+               VALUES (gen_random_uuid(), $1, $2, $3, $4, 'charge', 'Tax',
+                       $5, $6, 0, $6, 'night_audit', $7,
+                       $8::date, $8::date, 'Rooms', $8::date, NOW(), NOW())`,
+              [folioId, room.guest_id, room.reservation_id, room.number,
+               `Accommodation Tax - Room ${room.number}`, tax, chargeRef + '_TAX', date]
+            );
+          }
+
+          // Update folio balance
+          await db.query(
+            `UPDATE folios SET balance = balance + $1, updated_at = NOW() WHERE id = $2`,
+            [rate, folioId]
+          );
+        }
+      }
+
+      charges.push({ room: room.number, guest: room.guest_name, rate, base, tax });
+    }
+
+    // 4. Get any POS revenue for the date
+    const posRes = await db.query(
+      `SELECT COALESCE(SUM(total_amount), 0) as total FROM pos_orders
+       WHERE status = 'closed' AND created_at::date = $1::date`,
+      [date]
+    );
+    const posRevenue = Number(posRes.ok ? posRes.rows[0]?.total || 0 : 0);
+
+    // 5. Compute KPIs
+    const totalRevenue = roomRevenue + posRevenue;
+    const occupancyPct = totalRooms > 0 ? Number(((occupiedRooms / totalRooms) * 100).toFixed(2)) : 0;
+    const adr = occupiedRooms > 0 ? Number((roomRevenue / occupiedRooms).toFixed(2)) : 0;
+    const revpar = totalRooms > 0 ? Number((roomRevenue / totalRooms).toFixed(2)) : 0;
+
+    // 6. Next business date
+    const d = new Date(date + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + 1);
+    const nextDate = d.toISOString().slice(0, 10);
+
+    const snapshot = {
+      fbRevenue: posRevenue,
+      occupiedRooms,
+      availableRooms: totalRooms,
+      roomsPosted: occupiedRooms,
+      charges,
+      backfilled: true,
+      backfilledAt: new Date().toISOString()
+    };
+
+    // 7. Insert or update night_audit_runs
+    let auditId;
+    if (existing.ok && existing.rows.length > 0 && force) {
+      // Update existing record
+      const upRes = await db.query(
+        `UPDATE night_audit_runs SET
+           rooms_posted = $2, room_revenue = $3, tax_revenue = $4, total_revenue = $5,
+           occupied_rooms = $6, available_rooms = $7, occupancy_percent = $8,
+           adr = $9, revpar = $10, status = 'completed',
+           run_by = 'BACKFILL_SYSTEM', completed_at = NOW(),
+           reports_snapshot = $11::jsonb,
+           next_business_date = $12::date
+         WHERE business_date::date = $1::date RETURNING id`,
+        [date, occupiedRooms, roomRevenue, taxRevenue, totalRevenue,
+         occupiedRooms, totalRooms, occupancyPct, adr, revpar,
+         JSON.stringify(snapshot), nextDate]
+      );
+      auditId = upRes.ok ? upRes.rows[0]?.id : null;
+    } else {
+      // Insert new record
+      const insRes = await db.query(
+        `INSERT INTO night_audit_runs
+           (id, business_date, next_business_date, rooms_posted, room_revenue, tax_revenue,
+            total_revenue, city_ledger_transfers, city_ledger_amount,
+            occupied_rooms, available_rooms, occupancy_percent, adr, revpar,
+            status, run_by, started_at, completed_at, reports_snapshot, inserted_at)
+         VALUES
+           (gen_random_uuid(), $1::date, $2::date, $3, $4, $5,
+            $6, 0, 0,
+            $7, $8, $9, $10, $11,
+            'completed', 'BACKFILL_SYSTEM', $1::date, NOW(), $12::jsonb, NOW())
+         ON CONFLICT DO NOTHING
+         RETURNING id`,
+        [date, nextDate, occupiedRooms, roomRevenue, taxRevenue, totalRevenue,
+         occupiedRooms, totalRooms, occupancyPct, adr, revpar, JSON.stringify(snapshot)]
+      );
+      auditId = insRes.ok ? insRes.rows[0]?.id : null;
+    }
+
+    // 8. Generate and write report files to disk
+    const fs = require('fs');
+    const path = require('path');
+    const REPORT_DIR = path.join(__dirname, '..', 'Night Audit');
+    const dir = path.join(REPORT_DIR, date);
+    fs.mkdirSync(dir, { recursive: true });
+
+    const hr = '─'.repeat(60);
+    const dv = '═'.repeat(60);
+    const ts = new Date().toLocaleString('en-ZW', { timeZone: 'Africa/Harare' });
+
+    // Front Office Report
+    let fo = `${dv}\n  VILLA GIANNI  –  FRONT OFFICE NIGHT AUDIT REPORT\n`;
+    fo += `  Business Date : ${date}  [BACKFILLED]\n  Generated     : ${ts}\n${dv}\n\n`;
+    fo += `ROOM OCCUPANCY\n${hr}\n  Occupied Rooms : ${occupiedRooms}\n  Available Rooms: ${totalRooms}\n  Occupancy %    : ${occupancyPct.toFixed(1)}%\n\n`;
+    fo += `ROOM REVENUE\n${hr}\n  Room Revenue   : $${roomRevenue.toFixed(2)}\n  Tax Revenue    : $${taxRevenue.toFixed(2)}\n  ADR            : $${adr.toFixed(2)}\n  RevPAR         : $${revpar.toFixed(2)}\n\n`;
+    fo += `ROOM CHARGES POSTED\n${hr}\n`;
+    charges.forEach(c => { fo += `  Room ${String(c.room).padEnd(4)} | ${String(c.guest).padEnd(30)} | $${c.rate.toFixed(2)}\n`; });
+    fo += `\n${dv}\n  END OF FRONT OFFICE REPORT (BACKFILLED)\n${dv}\n`;
+    fs.writeFileSync(path.join(dir, 'front_office_report.txt'), fo);
+
+    // F&B Report
+    let fnb = `${dv}\n  VILLA GIANNI  –  FOOD & BEVERAGE NIGHT AUDIT REPORT\n`;
+    fnb += `  Business Date : ${date}  [BACKFILLED]\n  Generated     : ${ts}\n${dv}\n\n`;
+    fnb += `POS REVENUE\n${hr}\n  POS / F&B Revenue : $${posRevenue.toFixed(2)}\n\n`;
+    fnb += `${dv}\n  END OF F&B REPORT (BACKFILLED)\n${dv}\n`;
+    fs.writeFileSync(path.join(dir, 'fnb_report.txt'), fnb);
+
+    // Reconciliation Report
+    let rec = `${dv}\n  VILLA GIANNI  –  NIGHT AUDIT RECONCILIATION\n`;
+    rec += `  Business Date : ${date}  [BACKFILLED]\n  Generated     : ${ts}\n${dv}\n\n`;
+    rec += `REVENUE SUMMARY\n${hr}\n  Room Revenue : $${roomRevenue.toFixed(2)}\n  Tax Revenue  : $${taxRevenue.toFixed(2)}\n  F&B Revenue  : $${posRevenue.toFixed(2)}\n  ${hr}\n  TOTAL        : $${totalRevenue.toFixed(2)}\n\n`;
+    rec += `NOTE: This audit was backfilled on ${new Date().toISOString()}.\nOriginal audit was not run on ${date}. Data reconstructed from reservation records.\n`;
+    rec += `\n${dv}\n  END OF RECONCILIATION REPORT (BACKFILLED)\n${dv}\n`;
+    fs.writeFileSync(path.join(dir, 'reconciliation_report.txt'), rec);
+
+    // Full JSON
+    fs.writeFileSync(path.join(dir, 'full_report.json'), JSON.stringify({
+      businessDate: date, generatedAt: new Date().toISOString(), backfilled: true,
+      roomRevenue, taxRevenue, posRevenue, totalRevenue, occupiedRooms, availableRooms: totalRooms,
+      occupancyPct, adr, revpar, charges
+    }, null, 2));
+
+    res.json({
+      ok: true,
+      message: `Audit backfilled for ${date}`,
+      auditId,
+      summary: { date, occupiedRooms, roomRevenue, taxRevenue, posRevenue, totalRevenue, occupancyPct, adr, revpar },
+      charges,
+      reportsWritten: dir
+    });
+
+  } catch (e) {
+    console.error('[Backfill] Error:', e);
+    res.json({ ok: false, error: e.message });
+  }
+});
+
 module.exports = { router, broadcastSSE };
