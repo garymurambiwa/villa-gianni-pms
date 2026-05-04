@@ -1289,23 +1289,30 @@ status = 'checked-in',
         // Column may already exist, which is fine
       }
 
-      // Create the foreign key constraint if it doesn't exist
+      // Create the foreign key constraint idempotently
+      // PostgreSQL does NOT support ADD CONSTRAINT IF NOT EXISTS — use DO block instead
       try {
-        await db.query(`ALTER TABLE city_ledger_transactions ADD CONSTRAINT IF NOT EXISTS fk_transaction_account 
-                       FOREIGN KEY(account_id) REFERENCES city_ledger_accounts(id); `);
+        await db.query(`
+          DO $$ BEGIN
+            ALTER TABLE city_ledger_transactions
+              ADD CONSTRAINT fk_transaction_account
+              FOREIGN KEY(account_id) REFERENCES city_ledger_accounts(id);
+          EXCEPTION WHEN duplicate_object THEN NULL;
+          END $$;
+        `);
       } catch (e) {
-        // Constraint may already exist, which is fine
+        // Constraint already exists, which is fine
       }
 
       // Create city_ledger_notes table if it doesn't exist
       try {
         await db.query(`CREATE TABLE IF NOT EXISTS city_ledger_notes(
-        id TEXT PRIMARY KEY,
-        account_id TEXT,
-        date_field DATE NOT NULL, --Changed from 'date' to 'date_field' to avoid conflict with reserved keyword
+          id TEXT PRIMARY KEY,
+          account_id TEXT,
+          date_field DATE NOT NULL,
           author TEXT,
-  text TEXT NOT NULL,
-    note_type TEXT DEFAULT 'general', --Added note_type column with default
+          text TEXT NOT NULL,
+          note_type TEXT DEFAULT 'general',
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )`);
       } catch (createErr) {
@@ -1362,12 +1369,19 @@ status = 'checked-in',
         // Column may already exist, which is fine
       }
 
-      // Create the foreign key constraint if it doesn't exist
+      // Create the foreign key constraint idempotently
+      // PostgreSQL does NOT support ADD CONSTRAINT IF NOT EXISTS — use DO block instead
       try {
-        await db.query(`ALTER TABLE city_ledger_notes ADD CONSTRAINT IF NOT EXISTS fk_note_account 
-                       FOREIGN KEY(account_id) REFERENCES city_ledger_accounts(id); `);
+        await db.query(`
+          DO $$ BEGIN
+            ALTER TABLE city_ledger_notes
+              ADD CONSTRAINT fk_note_account
+              FOREIGN KEY(account_id) REFERENCES city_ledger_accounts(id);
+          EXCEPTION WHEN duplicate_object THEN NULL;
+          END $$;
+        `);
       } catch (e) {
-        // Constraint may already exist, which is fine
+        // Constraint already exists, which is fine
       }
 
       // Load all city ledger accounts
@@ -2471,39 +2485,30 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
   };
 
   // USER MANAGEMENT - Ensure user tables exist
+  // Delegates to pmsAuthDb.init() which owns the canonical app_users schema.
+  // Previously this created a redundant 'users' table using db.query() for DDL
+  // (which never throws — it returns { ok: false, error } instead), causing the
+  // error toast to fire even when the database was healthy.
   const ensureUserTables = async () => {
     try {
-      // Create users table
-      await db.query(`CREATE TABLE IF NOT EXISTS users(
-    id TEXT PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    email TEXT UNIQUE,
-    role TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )`);
-
-      // Add email column if it doesn't exist
-      try {
-        await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT; `);
-      } catch (e) {
-        // Column may already exist, which is fine
+      const configured = await db.isConfigured();
+      if (!configured) {
+        console.log('[DataContext] DB not configured, skipping user table init');
+        return;
       }
-
-      // Add updated_at column if it doesn't exist
-      try {
-        await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP; `);
-      } catch (e) {
-        // Column may already exist, which is fine
-      }
-
-      console.log('User tables created/verified successfully');
+      // pmsAuthDb.init() uses db.exec() (not db.query()) so it correctly surfaces
+      // DDL failures. It is idempotent — CREATE TABLE IF NOT EXISTS + ALTER TABLE
+      // ADD COLUMN IF NOT EXISTS on every tables it owns.
+      const { pmsAuthDb } = await import('@/lib/pmsAuthDb');
+      await pmsAuthDb.init();
+      console.log('[DataContext] User tables verified via pmsAuthDb.init()');
     } catch (e: any) {
-      console.error('Error creating user tables:', e?.message || e);
-      toast({ title: 'Database Error', description: 'Failed to create user tables', variant: 'destructive' });
+      // Only log — don't show a blocking toast. The app is still usable
+      // even if auth tables fail to init (e.g. read-only DB replica).
+      console.error('[DataContext] ensureUserTables error (non-fatal):', e?.message || e);
     }
   };
+
 
   // USER MANAGEMENT - Add a new user
   const addUser = async (userData: any): Promise<boolean> => {
