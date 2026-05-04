@@ -36,56 +36,104 @@ const FolioManagement: React.FC = () => {
   const [pendingVoid, setPendingVoid] = useState<{ transactionId: string; reason: string } | null>(null);
   const [computedBalance, setComputedBalance] = useState<{ subtotal: number; tax: number; total: number; payments: number } | null>(null);
   
-  // Generate folios from checked-in guests
+  // Generate folios from checked-in reservations (NOT from guests, which have no room_number column)
+  // Priority order: DB folios table → checked-in reservations → guests with charges
   useEffect(() => {
-    const checkedInGuests = guests.filter(guest => guest.roomNumber);
-    const newFolios = checkedInGuests.map(guest => {
-      // Get all folio charges for this guest
+    // 1. Start with DB folios (authoritative source)
+    const dbFolioMap: Record<string, any> = {};
+    (foliosMetadata || []).forEach((fm: any) => {
+      if (fm.status === 'open' || fm.status === 'pending') {
+        dbFolioMap[fm.guest_id || fm.id] = fm;
+      }
+    });
+
+    // 2. Build from checked-in reservations (reservations table has room_number joined)
+    const checkedInReservations = reservations.filter(
+      r => r.status === 'checked-in' || r.status === 'checked_in' || r.status === 'CHECKED_IN'
+    );
+
+    // 3. Also include guests who have folio charges (legacy path for guests without reservations)
+    const guestsWithCharges = guests.filter(g =>
+      folioCharges.some(c => c.guestId === g.id) &&
+      !checkedInReservations.some(r => r.guest_id === g.id || r.guestId === g.id)
+    );
+
+    // Build folio list from reservations
+    const fromReservations = checkedInReservations.map(res => {
+      const guestId = res.guest_id || res.guestId;
+      const roomNumber = res.room_number || res.roomNumber || '';
+      const dbFolio = dbFolioMap[guestId];
+
+      const guestTransactions = folioCharges
+        .filter(charge => charge.guestId === guestId)
+        .map(charge => ({
+          id: charge.id,
+          folioId: dbFolio?.id || `folio-${guestId}`,
+          amount: Number(charge.amount || 0),
+          description: charge.description,
+          date: new Date(charge.date),
+          type: (charge.type === 'payment' ? 'payment' : 'charge') as 'charge' | 'payment',
+          createdBy: charge.source || 'system',
+          authorizationLevel: 'staff' as const,
+          category: charge.category,
+          voidedBy: charge.voidedBy,
+          voidedAt: charge.voidedAt,
+        }));
+
+      const charges = guestTransactions.filter(t => t.type === 'charge' && !t.voidedBy).reduce((s, t) => s + Math.abs(Number(t.amount)), 0);
+      const payments = guestTransactions.filter(t => t.type === 'payment' && !t.voidedBy).reduce((s, t) => s + Math.abs(Number(t.amount)), 0);
+      const bal = guestTransactions.length > 0 ? Number((charges - payments).toFixed(2)) : Number(dbFolio?.balance || res.rate || 0);
+
+      return {
+        id: dbFolio?.id || `folio-${guestId}`,
+        guestId,
+        roomNumber,
+        createdAt: dbFolio?.inserted_at ? new Date(dbFolio.inserted_at) : new Date(),
+        updatedAt: new Date(),
+        balance: bal,
+        status: 'open' as const,
+        transactions: guestTransactions,
+        paymentMethod: dbFolio?.payment_method || res.payment_method || null,
+      };
+    });
+
+    // Build folio list from legacy guests-with-charges path
+    const fromGuests = guestsWithCharges.map(guest => {
       const guestTransactions = folioCharges
         .filter(charge => charge.guestId === guest.id)
-        .map(charge => {
-          const txnType: 'charge' | 'payment' = charge.type === 'payment' ? 'payment' : 'charge';
-          return {
-            id: charge.id,
-            folioId: `folio-${guest.id}`,
-            amount: Number(charge.amount || 0),
-            description: charge.description,
-            date: new Date(charge.date),
-            type: txnType,
-            createdBy: charge.source || 'system',
-            authorizationLevel: 'staff' as const,
-            category: charge.category,
-            voidedBy: charge.voidedBy,
-            voidedAt: charge.voidedAt
-          };
-        });
-      
-      // Calculate actual balance from transactions
-      // Balance = sum of charges - sum of payments (excluding voided)
-      const charges = guestTransactions
-        .filter(t => t.type === 'charge' && !t.voidedBy)
-        .reduce((sum, t) => sum + Math.abs(Number(t.amount || 0)), 0);
-      const payments = guestTransactions
-        .filter(t => t.type === 'payment' && !t.voidedBy)
-        .reduce((sum, t) => sum + Math.abs(Number(t.amount || 0)), 0);
-      const computedBalance = Number((charges - payments).toFixed(2));
-      
+        .map(charge => ({
+          id: charge.id,
+          folioId: `folio-${guest.id}`,
+          amount: Number(charge.amount || 0),
+          description: charge.description,
+          date: new Date(charge.date),
+          type: (charge.type === 'payment' ? 'payment' : 'charge') as 'charge' | 'payment',
+          createdBy: charge.source || 'system',
+          authorizationLevel: 'staff' as const,
+          category: charge.category,
+          voidedBy: charge.voidedBy,
+          voidedAt: charge.voidedAt,
+        }));
+
+      const charges = guestTransactions.filter(t => t.type === 'charge' && !t.voidedBy).reduce((s, t) => s + Math.abs(Number(t.amount)), 0);
+      const payments = guestTransactions.filter(t => t.type === 'payment' && !t.voidedBy).reduce((s, t) => s + Math.abs(Number(t.amount)), 0);
+
       return {
         id: `folio-${guest.id}`,
         guestId: guest.id,
-        roomNumber: guest.roomNumber || "",
+        roomNumber: (guest as any).room_number || (guest as any).roomNumber || '',
         createdAt: new Date(),
         updatedAt: new Date(),
-        // Prioritize actual transaction balance if any transactions exist, otherwise use rate fallback
-        balance: (guestTransactions.length > 0) ? computedBalance : (guest.folioBalance || 0),
-        status: "open" as const,
+        balance: Number((charges - payments).toFixed(2)),
+        status: 'open' as const,
         transactions: guestTransactions,
-        paymentMethod: foliosMetadata.find((fm: any) => fm.guest_id === guest.id && fm.status === 'open')?.payment_method
+        paymentMethod: null,
       };
     });
-    
-    setFolios(newFolios);
-  }, [guests, folioCharges, foliosMetadata]);
+
+    const allFolios = [...fromReservations, ...fromGuests];
+    setFolios(allFolios);
+  }, [guests, reservations, folioCharges, foliosMetadata]);
 
   // Handle deep-linking to specific folio from Availability Grid or other modules
   useEffect(() => {

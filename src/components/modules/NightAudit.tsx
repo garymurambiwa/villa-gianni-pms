@@ -58,7 +58,8 @@ const NightAudit: React.FC = () => {
       if (rawReports) setLastReports(JSON.parse(rawReports));
     } catch {}
 
-    // 2. Hydrate from DB (primary source of truth) — most recent completed audit
+    // 2. Hydrate ALL completed audits from DB — persist each to a dated localStorage key
+    // so the Flash Report (and YoY comparisons) can access historical data.
     import('@/lib/db').then(({ db }) => {
       db.query<any>(
         `SELECT business_date::date::text as date,
@@ -67,27 +68,51 @@ const NightAudit: React.FC = () => {
          FROM night_audit_runs
          WHERE status = 'completed'
          ORDER BY business_date DESC
-         LIMIT 1`
+         LIMIT 90`  // Fetch up to 90 days of history
       ).then(res => {
         if (!('rows' in res) || res.rows.length === 0) return;
-        const row = res.rows[0];
-        const snap = row.reports_snapshot || {};
-        const bundle = {
-          date: row.date,
-          roomRevenue: Number(row.room_revenue || 0),
-          fbRevenue: Number(snap.fbRevenue ?? (Number(row.total_revenue) - Number(row.room_revenue))),
-          totalRevenue: Number(row.total_revenue || 0),
-          occupancy: Number(row.occupancy || 0),
-          avgDailyRate: Number(row.avgDailyRate || 0),
-          revPAR: Number(row.revpar || 0),
-          postingsCount: snap.postingsCount || row.rooms_posted || 0,
-          cityLedgerCount: snap.cityLedgerCount || 0,
+
+        // Persist each audit to its own dated key so reporting can access any historical date
+        res.rows.forEach((row: any) => {
+          const snap = row.reports_snapshot || {};
+          const bundle = {
+            date: row.date,
+            roomRevenue: Number(row.room_revenue || 0),
+            fbRevenue: Number(snap.fbRevenue ?? (Number(row.total_revenue) - Number(row.room_revenue))),
+            totalRevenue: Number(row.total_revenue || 0),
+            occupancy: Number(row.occupancy || 0),
+            avgDailyRate: Number(row.avgDailyRate || 0),
+            revPAR: Number(row.revpar || 0),
+            postingsCount: snap.postingsCount || row.rooms_posted || 0,
+            cityLedgerCount: snap.cityLedgerCount || 0,
+          };
+          try {
+            localStorage.setItem(`corepms_nightAudit_reports_${row.date}`, JSON.stringify(bundle));
+          } catch { /* storage may be full — non-fatal */ }
+        });
+
+        // Set the most recent as the active "last reports"
+        const latest = res.rows[0];
+        const latestSnap = latest.reports_snapshot || {};
+        const latestBundle = {
+          date: latest.date,
+          roomRevenue: Number(latest.room_revenue || 0),
+          fbRevenue: Number(latestSnap.fbRevenue ?? (Number(latest.total_revenue) - Number(latest.room_revenue))),
+          totalRevenue: Number(latest.total_revenue || 0),
+          occupancy: Number(latest.occupancy || 0),
+          avgDailyRate: Number(latest.avgDailyRate || 0),
+          revPAR: Number(latest.revpar || 0),
+          postingsCount: latestSnap.postingsCount || latest.rooms_posted || 0,
+          cityLedgerCount: latestSnap.cityLedgerCount || 0,
         };
-        setLastReports(bundle);
-        // Cache to localStorage for future sessions
+        setLastReports(latestBundle);
         try {
-          localStorage.setItem('corepms_nightAudit_lastReports', JSON.stringify(bundle));
-          localStorage.setItem(`corepms_nightAudit_reports_${row.date}`, JSON.stringify(bundle));
+          localStorage.setItem('corepms_nightAudit_lastReports', JSON.stringify(latestBundle));
+          // Also update the business date key
+          localStorage.setItem(`corepms_nightAudit_reports_${latest.date}`, JSON.stringify(latestBundle));
+          // Store a list of available audit dates for the reporting dashboard
+          const auditDates = res.rows.map((r: any) => r.date);
+          localStorage.setItem('corepms_nightAudit_available_dates', JSON.stringify(auditDates));
         } catch { /* non-fatal */ }
       }).catch(err => console.warn('[NightAudit] DB bundle hydration failed:', err));
     }).catch(() => {});

@@ -101,7 +101,54 @@ export const buildFlashReport = async (forDate?: string) => {
 
   const b = dbAuditBundle || getLastNightAuditBundle();
   const date = forDate || b?.date || targetDate;
-  const cashCard = readJSON<Record<string, number>>('corepms_shift_totals', { cash: 0, card: 0 });
+
+  // ── REAL-TIME room revenue for current business day (no audit yet) ──
+  // If there's no completed audit for this date, pull live room revenue from folio_charges
+  let realtimeRoomRevenue: number | null = null;
+  try {
+    const todayAuditRes = await db.query<any>(
+      `SELECT room_revenue FROM night_audit_runs WHERE business_date::date = $1 AND status='completed' LIMIT 1`,
+      [date]
+    );
+    if ('rows' in todayAuditRes && todayAuditRes.rows.length > 0) {
+      // Audit ran for this exact date — authoritative
+      realtimeRoomRevenue = Number(todayAuditRes.rows[0].room_revenue || 0);
+    } else {
+      // No audit yet — sum today's room charges live from DB
+      const liveRoomRes = await db.query<any>(
+        `SELECT COALESCE(SUM(amount),0) as total FROM folio_charges
+         WHERE LOWER(category) IN ('room','accommodation','room charge','room rate')
+           AND is_voided = false AND business_date::date = $1`,
+        [date]
+      );
+      if ('rows' in liveRoomRes && liveRoomRes.rows.length > 0) {
+        realtimeRoomRevenue = Number(liveRoomRes.rows[0].total || 0);
+      }
+    }
+  } catch (_) { /* non-fatal — fall back to bundle */ }
+
+  // Use real-time room revenue if available, otherwise use last audit bundle
+  const effectiveRoomRevenue = realtimeRoomRevenue !== null
+    ? realtimeRoomRevenue
+    : Number(b?.roomRevenue || 0);
+
+  // ── REAL-TIME shift cash/card totals from DB ──
+  let cashCard = readJSON<Record<string, number>>('corepms_shift_totals', { cash: 0, card: 0 });
+  try {
+    const shiftTotalsRes = await db.query<any>(
+      `SELECT COALESCE(SUM(total_cash),0) as cash, COALESCE(SUM(total_card),0) as card
+       FROM pos_shifts WHERE business_date::date = $1`,
+      [date]
+    );
+    if ('rows' in shiftTotalsRes && shiftTotalsRes.rows.length > 0) {
+      const row = shiftTotalsRes.rows[0];
+      const dbCash = Number(row.cash || 0);
+      const dbCard = Number(row.card || 0);
+      if (dbCash > 0 || dbCard > 0) {
+        cashCard = { cash: dbCash, card: dbCard };
+      }
+    }
+  } catch (_) { /* non-fatal */ }
 
   // Get year-over-year comparison data
   const lastYearDate = getSameDateLastYear(date);
@@ -456,26 +503,39 @@ export const buildFlashReport = async (forDate?: string) => {
     });
   }
 
-  // Calculate totals for current period
-  const currentTotalRevenue = Number(b?.roomRevenue || 0) + calculatedFbTotal;
+  // Calculate totals for current period — use real-time room revenue
+  const currentTotalRevenue = effectiveRoomRevenue + calculatedFbTotal;
 
   // Calculate totals for last year
   const lastYearTotalFbRevenue = finalLastYearFoodRevenue + finalLastYearBarRevenue;
   const lastYearTotalRevenue = lastYearBundle ?
     (Number(lastYearBundle.roomRevenue || 0) + lastYearTotalFbRevenue) : 0;
 
-  // Get last year's cash/card data
-  const lastYearCashCard = lastYearBundle ?
+  // Get last year's cash/card data — try DB first
+  let lastYearCashCard = lastYearBundle ?
     readJSON<Record<string, number>>(`corepms_shift_totals_${lastYearDate}`, { cash: 0, card: 0 }) :
     { cash: 0, card: 0 };
+  try {
+    const lyShiftRes = await db.query<any>(
+      `SELECT COALESCE(SUM(total_cash),0) as cash, COALESCE(SUM(total_card),0) as card
+       FROM pos_shifts WHERE business_date::date = $1`,
+      [lastYearDate]
+    );
+    if ('rows' in lyShiftRes && lyShiftRes.rows.length > 0) {
+      const lyRow = lyShiftRes.rows[0];
+      if (Number(lyRow.cash) > 0 || Number(lyRow.card) > 0) {
+        lastYearCashCard = { cash: Number(lyRow.cash || 0), card: Number(lyRow.card || 0) };
+      }
+    }
+  } catch { /* non-fatal */ }
 
   const rows = [
-    // Room Revenue with YoY comparison
+    // Room Revenue with YoY comparison — uses real-time effectiveRoomRevenue
     {
       metric: 'Room Revenue',
-      today: Number(b?.roomRevenue || 0),
+      today: Number(effectiveRoomRevenue.toFixed(2)),
       lastYear: Number(lastYearBundle?.roomRevenue || 0),
-      difference: Number(b?.roomRevenue || 0) - Number(lastYearBundle?.roomRevenue || 0)
+      difference: Number(effectiveRoomRevenue.toFixed(2)) - Number(lastYearBundle?.roomRevenue || 0)
     },
     // Food Revenue with YoY comparison
     {
@@ -696,31 +756,110 @@ export const buildDepartmentalSummary = async (monthISO: string) => {
   return { title: `Operating Departmental Summary (USALI) — ${monthISO}`, columns: ['Section', 'Metric', 'Amount'], rows };
 };
 
-// Arrivals / Departures (daily)
+// Arrivals / Departures (daily) — DB-driven
 export const buildArrivalsDepartures = async (forDate?: string) => {
   const date = forDate || getBusinessDate();
+
+  try {
+    const { db: dbMod } = await import('@/lib/db');
+    const res = await dbMod.query<any>(
+      `SELECT r.status,
+              COALESCE(g.full_name, r.booking_name, 'Unknown') as guest_name,
+              ro.number as room_number,
+              r.room_type,
+              r.check_in_date::text as check_in,
+              r.check_out_date::text as check_out
+       FROM reservations r
+       LEFT JOIN guests g ON r.guest_id = g.id
+       LEFT JOIN rooms ro ON r.room_id = ro.id
+       WHERE r.check_in_date::date = $1 OR r.check_out_date::date = $1
+       ORDER BY r.status, g.full_name`,
+      [date]
+    );
+
+    if ('rows' in res && res.rows.length > 0) {
+      const rows = res.rows.map((r: any) => ({
+        type: r.check_in === date ? 'Arrival' : 'Departure',
+        guest: r.guest_name || '—',
+        room: r.room_number || r.room_type || '—',
+        status: r.status || '—',
+        date: r.check_in === date ? r.check_in : r.check_out
+      }));
+      return { title: `Arrivals & Departures — ${date}`, columns: ['Type', 'Guest', 'Room', 'Status', 'Date'], rows };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildArrivalsDepartures DB query failed, using localStorage:', err);
+  }
+
+  // Fallback to localStorage
   const reservations = readJSON<any[]>('corepms_reservations', []);
-  const arrivals = reservations.filter(r => (r.checkIn || '').slice(0, 10) === date);
-  const departures = reservations.filter(r => (r.checkOut || '').slice(0, 10) === date);
+  const arrivals = reservations.filter(r => (r.checkIn || r.check_in_date || '').slice(0, 10) === date);
+  const departures = reservations.filter(r => (r.checkOut || r.check_out_date || '').slice(0, 10) === date);
   const rows = [
-    ...arrivals.map(r => ({ type: 'Arrival', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', time: (r.checkIn || '').slice(11, 16) || '—' })),
-    ...departures.map(r => ({ type: 'Departure', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', time: (r.checkOut || '').slice(11, 16) || '—' }))
+    ...arrivals.map(r => ({ type: 'Arrival', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', status: r.status || '—', date })),
+    ...departures.map(r => ({ type: 'Departure', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', status: r.status || '—', date }))
   ];
-  return { title: `Arrivals & Departures — ${date}`, columns: ['Type', 'Guest', 'Room', 'Time'], rows };
+  return { title: `Arrivals & Departures — ${date}`, columns: ['Type', 'Guest', 'Room', 'Status', 'Date'], rows };
 };
 
-// High Balance (daily) across folios and city ledger transfers
+// High Balance (daily) — DB-driven from folios + city_ledger_accounts
 export const buildHighBalance = async (threshold?: number, forDate?: string) => {
   const date = forDate || getBusinessDate();
   const th = typeof threshold === 'number' ? threshold : readJSON<number>('corepms_high_balance_threshold', 500);
+
+  try {
+    const { db: dbMod } = await import('@/lib/db');
+
+    // Query open folios with high balance from DB
+    const folioRes = await dbMod.query<any>(
+      `SELECT f.id, f.balance, f.room_number,
+              COALESCE(g.full_name, r.booking_name, 'Unknown') as guest_name
+       FROM folios f
+       LEFT JOIN guests g ON f.guest_id = g.id
+       LEFT JOIN reservations r ON f.reservation_id = r.id
+       WHERE f.status = 'open' AND f.balance >= $1
+       ORDER BY f.balance DESC`,
+      [th]
+    );
+
+    // Query city ledger accounts with high balance
+    const ledgerRes = await dbMod.query<any>(
+      `SELECT account_name, current_balance FROM city_ledger_accounts
+       WHERE current_balance >= $1 AND status = 'Active'
+       ORDER BY current_balance DESC`,
+      [th]
+    );
+
+    const folioRows = ('rows' in folioRes ? folioRes.rows : []).map((f: any) => ({
+      source: 'Folio',
+      id: f.id || '—',
+      name: f.guest_name || '—',
+      room: f.room_number || '—',
+      balance: Number(Number(f.balance || 0).toFixed(2))
+    }));
+
+    const ledgerRows = ('rows' in ledgerRes ? ledgerRes.rows : []).map((l: any) => ({
+      source: 'City Ledger',
+      id: l.account_name,
+      name: l.account_name,
+      room: '—',
+      balance: Number(Number(l.current_balance || 0).toFixed(2))
+    }));
+
+    const rows = [...folioRows, ...ledgerRows];
+    return { title: `High Balance — ${date} (Threshold: $${th})`, columns: ['Source', 'ID', 'Name', 'Room', 'Balance'], rows };
+  } catch (err) {
+    console.warn('[Reporting] buildHighBalance DB query failed:', err);
+  }
+
+  // Fallback to localStorage
   const folios = readJSON<any[]>('corepms_folios', []);
   const cityLedger = readJSON<any[]>('corepms_city_ledger', []);
-  const folioRows = folios.filter(f => Number(f.balance || f.folioBalance || 0) >= th).map(f => ({ source: 'Folio', id: f.id || f.guestId || '—', name: f.guestName || f.name || '—', balance: Number((f.balance || f.folioBalance || 0).toFixed?.(2) ?? Number(f.balance || f.folioBalance || 0).toFixed(2)) }));
+  const folioRows = folios.filter(f => Number(f.balance || f.folioBalance || 0) >= th).map(f => ({ source: 'Folio', id: f.id || '—', name: f.guestName || f.name || '—', room: '—', balance: Number(Number(f.balance || f.folioBalance || 0).toFixed(2)) }));
   const ledgerAgg: Record<string, number> = {};
   cityLedger.forEach(tx => { const key = tx.guestId || tx.accountName || 'unknown'; ledgerAgg[key] = (ledgerAgg[key] || 0) + Number(tx.amount || 0); });
-  const ledgerRows = Object.entries(ledgerAgg).filter(([_, amt]) => amt >= th).map(([key, amt]) => ({ source: 'City Ledger', id: key, name: key, balance: Number(amt.toFixed(2)) }));
-  const rows = [...folioRows, ...ledgerRows];
-  return { title: `High Balance — ${date} (Threshold: $${th})`, columns: ['Source', 'ID', 'Name', 'Balance'], rows };
+  const ledgerRows = Object.entries(ledgerAgg).filter(([_, amt]) => amt >= th).map(([key, amt]) => ({ source: 'City Ledger', id: key, name: key, room: '—', balance: Number(amt.toFixed(2)) }));
+  return { title: `High Balance — ${date} (Threshold: $${th})`, columns: ['Source', 'ID', 'Name', 'Room', 'Balance'], rows: [...folioRows, ...ledgerRows] };
 };
 
 // Procurement Variance (monthly) using AP invoices vs Purchase Orders
@@ -775,8 +914,46 @@ export const buildAgedAR = async (asOf?: string) => {
   return { title: `Aged Accounts Receivable — ${date}`, columns: ['Account', 'Reference', 'Date', 'Amount', 'Aging'], rows };
 };
 
-// Inventory & COGS (simple summary using purchases and opening/ending balances if present)
+// Inventory & COGS — DB-driven using inventory_periods and transactions
 export const buildInventoryCOGS = async (monthISO: string) => {
+  try {
+    const { db: dbMod } = await import('@/lib/db');
+    const [year, month] = monthISO.split('-');
+
+    // Get period for this month
+    const periodRes = await dbMod.query<any>(
+      `SELECT id, period_name, opening_stock_value, closing_stock_value,
+              received_value, cogs_value, kitchen_cogs, cellar_cogs, status
+       FROM inventory_periods
+       WHERE period_year = $1 AND period_month = $2
+       LIMIT 1`,
+      [Number(year), Number(month)]
+    );
+
+    if ('rows' in periodRes && periodRes.rows.length > 0) {
+      const p = periodRes.rows[0];
+      const opening = Number(p.opening_stock_value || 0);
+      const purchases = Number(p.received_value || 0);
+      const ending = Number(p.closing_stock_value || 0);
+      const cogs = p.cogs_value ? Number(p.cogs_value) : Number((opening + purchases - ending).toFixed(2));
+
+      const rows = [
+        { metric: 'Period', value: p.period_name || monthISO },
+        { metric: 'Status', value: p.status || 'unknown' },
+        { metric: 'Opening Inventory', value: opening },
+        { metric: 'Purchases (Received)', value: purchases },
+        { metric: 'Ending Inventory', value: ending },
+        { metric: 'COGS', value: cogs },
+        { metric: 'Kitchen COGS', value: Number(p.kitchen_cogs || 0) },
+        { metric: 'Cellar COGS', value: Number(p.cellar_cogs || 0) },
+      ];
+      return { title: `Inventory & COGS — ${monthISO}`, columns: ['Metric', 'Value'], rows };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildInventoryCOGS DB query failed:', err);
+  }
+
+  // Fallback to localStorage
   const opening = readJSON<number>('corepms_inventory_opening', 0);
   const ending = readJSON<number>('corepms_inventory_ending', 0);
   const purchases = readJSON<any[]>('corepms_purchases', []).filter(p => (p.date || '').startsWith(monthISO));

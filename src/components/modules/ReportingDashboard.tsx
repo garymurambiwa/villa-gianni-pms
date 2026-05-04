@@ -15,6 +15,32 @@ const ReportingDashboard: React.FC = () => {
   const [dataset, setDataset] = React.useState<{ title: string; columns: string[]; rows: any[] }>({ title: '', columns: [], rows: [] });
   const { user } = useAuth();
 
+  // Load available audit dates from DB for date picker suggestions
+  const [availableAuditDates, setAvailableAuditDates] = React.useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('corepms_nightAudit_available_dates');
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+
+  React.useEffect(() => {
+    import('@/lib/db').then(({ db }) => {
+      db.query<any>(
+        `SELECT business_date::date::text as date FROM night_audit_runs WHERE status='completed' ORDER BY business_date DESC LIMIT 90`
+      ).then(res => {
+        if ('rows' in res && res.rows.length > 0) {
+          const dates = res.rows.map((r: any) => r.date);
+          setAvailableAuditDates(dates);
+          try { localStorage.setItem('corepms_nightAudit_available_dates', JSON.stringify(dates)); } catch { }
+          // Set default date for flash report to the most recent audit date
+          if (reportType === 'flash' && dates[0]) {
+            setDailyDate(dates[0]);
+          }
+        }
+      }).catch(() => {});
+    }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const load = React.useCallback(async () => {
     let data;
     switch (reportType) {
@@ -112,7 +138,30 @@ const ReportingDashboard: React.FC = () => {
         {(reportType === 'flash' || reportType === 'pos-recon' || reportType === 'purchase-log' || reportType === 'aged-ar') && (
           <div className="flex items-center gap-2">
             <label className="text-xs">Business Date</label>
-            <Input type="date" value={dailyDate} onChange={(e) => setDailyDate(e.target.value)} />
+            <Input
+              type="date"
+              value={dailyDate}
+              onChange={(e) => setDailyDate(e.target.value)}
+              list="audit-dates-list"
+            />
+            {availableAuditDates.length > 0 && (
+              <datalist id="audit-dates-list">
+                {availableAuditDates.map(d => <option key={d} value={d} />)}
+              </datalist>
+            )}
+            {reportType === 'flash' && availableAuditDates.length > 0 && (
+              <select
+                className="text-xs border rounded px-2 py-1"
+                value={dailyDate}
+                onChange={e => setDailyDate(e.target.value)}
+                title="Select from completed audit dates"
+              >
+                <option value="">— Recent Audits —</option>
+                {availableAuditDates.map(d => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            )}
           </div>
         )}
         {(reportType === 'pl' || reportType === 'inventory-cogs' || reportType === 'trial-balance' || reportType === 'dept-summary' || reportType === 'proc-variance' || reportType === 'fa-recon') && (
