@@ -110,10 +110,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await refreshRooms();
         await refreshRateConfig();
       } else if ('error' in (roomRes as any) || !('rows' in roomRes)) {
-        // DB unavailable — load default rooms so UI is not completely empty
-        console.warn('[DataContext] Rooms DB query failed, loading defaults:', (roomRes as any).error);
-        const { DEFAULT_ROOMS } = await import('@/data/defaultRooms');
-        setRooms(DEFAULT_ROOMS);
+        // DB unavailable — show empty state rather than loading wrong property's rooms
+        // DEFAULT_ROOMS contains Villa Gianni-specific data and MUST NOT be shown on Baradzanwa
+        console.warn('[DataContext] Rooms DB query failed — DB connection required for room data:', (roomRes as any).error);
+        setRooms([]); // Empty — user must configure DATABASE_URL to see rooms
       }
 
       const resRes = await db.query('SELECT r.*, g.full_name as guest_name, ro.number as room_number FROM reservations r LEFT JOIN guests g ON r.guest_id = g.id LEFT JOIN rooms ro ON r.room_id = ro.id');

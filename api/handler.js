@@ -740,6 +740,90 @@ app.get('/api/access-logs', async (req, res) => {
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
+// ─── Baradzanwa Rooms Restoration ────────────────────────────────────────────
+// GET /api/setup/restore-baradzanwa-rooms?key=confirm
+// Restores all 31 Baradzanwa rooms from the reconstruction dataset
+app.get('/api/setup/restore-baradzanwa-rooms', async (req, res) => {
+  if (req.query.key !== 'confirm') {
+    return safeJson(res, { ok: false, error: 'Pass ?key=confirm to execute' });
+  }
+  try {
+    const ops = [
+      // Fix rates on existing rooms overwritten by Villa Gianni schema seed
+      { sql: "UPDATE rooms SET type='Standard Room', rate=90.00, updated_at=NOW() WHERE number='103' AND rate::numeric=80", params: [] },
+      { sql: "UPDATE rooms SET type='Standard Room', rate=90.00, updated_at=NOW() WHERE number='105' AND rate::numeric=80", params: [] },
+      { sql: "UPDATE rooms SET type='Deluxe Queen', rate=100.00, updated_at=NOW() WHERE number='106'", params: [] },
+      { sql: "UPDATE rooms SET type='Standard Room', updated_at=NOW() WHERE type='Standard Roon'", params: [] },
+      // Add 18 missing rooms (113-131) to reach 31 total
+      ...['113:Deluxe Queen:90','115:Deluxe Queen:90','116:Deluxe Queen:90','117:Deluxe Queen:90',
+          '118:Deluxe Queen:100','119:Deluxe Queen:100','120:Deluxe Queen:100',
+          '121:Standard Room:90','122:Standard Room:90','123:Standard Room:90','124:Standard Room:90',
+          '125:Executive Room:100','126:Executive Room:100','127:Executive Room:100','128:Executive Room:110',
+          '129:Executive Suite:90','130:Executive Suite:90','131:Standard Room:90'
+      ].map(r => {
+        const [num, type, rate] = r.split(':');
+        return {
+          sql: `INSERT INTO rooms (id, number, type, status, rate, floor, is_active, inserted_at, updated_at)
+                VALUES (gen_random_uuid()::text, $1, $2, 'vacant', $3, 1, true, NOW(), NOW())
+                ON CONFLICT (number) DO NOTHING`,
+          params: [num, type, parseFloat(rate)]
+        };
+      })
+    ];
+
+    let succeeded = 0; const errors = [];
+    for (const op of ops) {
+      const r = await db.query(op.sql, op.params);
+      if (r.ok) succeeded++;
+      else errors.push(op.sql.substring(0, 60) + ': ' + r.error);
+    }
+
+    const countRes = await db.query("SELECT COUNT(*) as total FROM rooms WHERE is_active IS DISTINCT FROM false");
+    const total = countRes.ok ? countRes.rows[0]?.total : 'unknown';
+
+    safeJson(res, {
+      ok: errors.length === 0,
+      message: `Baradzanwa rooms restored. Total rooms: ${total}`,
+      operations: succeeded,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (e) {
+    safeJson(res, { ok: false, error: e.message });
+  }
+});
+
+// ─── Rooms CRUD API ───────────────────────────────────────────────────────────
+app.get('/api/rooms', async (req, res) => {
+  try {
+    safeJson(res, await db.query('SELECT * FROM rooms WHERE is_active IS DISTINCT FROM false ORDER BY number::int NULLS LAST'));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+app.post('/api/rooms', async (req, res) => {
+  const { id, number, type, status, rate, floor } = req.body || {};
+  if (!number || !type) return safeJson(res, { ok: false, error: 'number and type required' });
+  try {
+    safeJson(res, await db.query(
+      `INSERT INTO rooms (id, number, type, status, rate, floor, is_active, inserted_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, true, NOW(), NOW())
+       ON CONFLICT (number) DO UPDATE SET type=EXCLUDED.type, rate=EXCLUDED.rate, status=EXCLUDED.status, updated_at=NOW()`,
+      [id || `R${Date.now()}`, number, type, status || 'vacant', Number(rate || 0), Number(floor || 1)]
+    ));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+app.put('/api/rooms/:id', async (req, res) => {
+  const allowed = ['number','type','status','rate','floor','is_active','tax_applicable'];
+  const fields = []; const vals = [];
+  for (const f of allowed) {
+    if (req.body[f] !== undefined) { fields.push(`${f}=$${vals.length+1}`); vals.push(req.body[f]); }
+  }
+  if (!fields.length) return safeJson(res, { ok: false, error: 'No fields to update' });
+  vals.push(req.params.id);
+  try { safeJson(res, await db.query(`UPDATE rooms SET ${fields.join(',')},updated_at=NOW() WHERE id=$${vals.length}`, vals)); }
+  catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 // ─── Catch-all: return JSON 404 (NOT HTML) ───────────────────────────────────
 // This prevents the "Unexpected token T" error — always return JSON
 app.use((req, res) => {

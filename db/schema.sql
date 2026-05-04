@@ -1354,8 +1354,7 @@ INSERT INTO public.rooms (id, number, type, status, rate, inserted_at, updated_a
   ('room_114', '114', 'Villa Self Catering', 'vacant', 300.00, NOW(), NOW()),
   ('room_115', '115', 'Villa Self Catering', 'vacant', 300.00, NOW(), NOW()),
   ('room_116', '116', 'New Lodge', 'vacant', 300.00, NOW(), NOW())
-ON CONFLICT (number) DO UPDATE 
-SET rate = EXCLUDED.rate, type = EXCLUDED.type;
+ON CONFLICT (number) DO NOTHING; -- Never overwrite existing room configurations (Baradzanwa protection)
 
 -- Default menu categories
 INSERT INTO public.menu_items (id, name, category, price, active, inserted_at) VALUES
