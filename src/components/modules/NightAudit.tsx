@@ -50,12 +50,47 @@ const NightAudit: React.FC = () => {
   const [forceReason, setForceReason] = React.useState('');
 
   React.useEffect(() => {
+    // 1. Load whatever is already cached in localStorage immediately
     try {
       const rawRun = localStorage.getItem('corepms_nightAudit_lastRun');
       const rawReports = localStorage.getItem('corepms_nightAudit_lastReports');
-      setLastRun(rawRun ? JSON.parse(rawRun) : null);
-      setLastReports(rawReports ? JSON.parse(rawReports) : null);
+      if (rawRun) setLastRun(JSON.parse(rawRun));
+      if (rawReports) setLastReports(JSON.parse(rawReports));
     } catch {}
+
+    // 2. Hydrate from DB (primary source of truth) — most recent completed audit
+    import('@/lib/db').then(({ db }) => {
+      db.query<any>(
+        `SELECT business_date::date::text as date,
+                room_revenue, total_revenue, occupancy_percent as occupancy,
+                adr as "avgDailyRate", revpar, rooms_posted, reports_snapshot
+         FROM night_audit_runs
+         WHERE status = 'completed'
+         ORDER BY business_date DESC
+         LIMIT 1`
+      ).then(res => {
+        if (!('rows' in res) || res.rows.length === 0) return;
+        const row = res.rows[0];
+        const snap = row.reports_snapshot || {};
+        const bundle = {
+          date: row.date,
+          roomRevenue: Number(row.room_revenue || 0),
+          fbRevenue: Number(snap.fbRevenue ?? (Number(row.total_revenue) - Number(row.room_revenue))),
+          totalRevenue: Number(row.total_revenue || 0),
+          occupancy: Number(row.occupancy || 0),
+          avgDailyRate: Number(row.avgDailyRate || 0),
+          revPAR: Number(row.revpar || 0),
+          postingsCount: snap.postingsCount || row.rooms_posted || 0,
+          cityLedgerCount: snap.cityLedgerCount || 0,
+        };
+        setLastReports(bundle);
+        // Cache to localStorage for future sessions
+        try {
+          localStorage.setItem('corepms_nightAudit_lastReports', JSON.stringify(bundle));
+          localStorage.setItem(`corepms_nightAudit_reports_${row.date}`, JSON.stringify(bundle));
+        } catch { /* non-fatal */ }
+      }).catch(err => console.warn('[NightAudit] DB bundle hydration failed:', err));
+    }).catch(() => {});
   }, []);
 
   const forceReconciliation = () => {
@@ -576,7 +611,41 @@ const NightAudit: React.FC = () => {
       <section className="bg-white rounded-xl shadow p-4">
         <div className="flex items-center justify-between mb-2">
           <h3 className="font-semibold">Audit Reports</h3>
-          <Button variant="outline" onClick={() => {
+          <Button variant="outline" onClick={async () => {
+            // PRIMARY: read from DB (most accurate source)
+            try {
+              const { db } = await import('@/lib/db');
+              const res = await db.query<any>(`
+                SELECT business_date::date::text as date,
+                       room_revenue, total_revenue, occupancy_percent as occupancy,
+                       adr, revpar, rooms_posted, reports_snapshot
+                FROM night_audit_runs
+                WHERE status = 'completed' AND room_revenue > 0
+                ORDER BY business_date DESC LIMIT 1
+              `);
+              if ('rows' in res && res.rows.length > 0) {
+                const row = res.rows[0];
+                const snap = row.reports_snapshot || {};
+                const bundle = {
+                  date: row.date,
+                  roomRevenue: Number(row.room_revenue),
+                  fbRevenue: Number(snap.fbRevenue ?? (Number(row.total_revenue) - Number(row.room_revenue))),
+                  totalRevenue: Number(row.total_revenue),
+                  occupancy: Number(row.occupancy),
+                  avgDailyRate: Number(row.adr),
+                  revPAR: Number(row.revpar),
+                  postingsCount: snap.postingsCount || Number(row.rooms_posted),
+                  cityLedgerCount: snap.cityLedgerCount || 0,
+                };
+                setLastReports(bundle);
+                localStorage.setItem('corepms_nightAudit_lastReports', JSON.stringify(bundle));
+                toast({ title: 'Reports refreshed', description: `Last audit: ${row.date} — Room Revenue: $${bundle.roomRevenue}` });
+                return;
+              }
+            } catch (err) {
+              console.warn('[NightAudit] DB refresh failed, falling back:', err);
+            }
+            // FALLBACK: generate from current session data
             const reports = nightAuditService.generateReportsBundle({ rooms, guests, folioCharges, userId: user?.id || 'unknown' });
             setLastReports(reports);
             toast({ title: 'Reports refreshed', description: 'Key metrics updated for today.' });

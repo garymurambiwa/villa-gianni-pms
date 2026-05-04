@@ -55,8 +55,52 @@ export const getSameDateLastYear = (dateStr: string): string => {
 
 // Daily Manager's Flash Report with Year-over-Year Comparison
 export const buildFlashReport = async (forDate?: string) => {
-  const b = getLastNightAuditBundle();
-  const date = forDate || b?.date || getBusinessDate();
+  // --- PRIMARY SOURCE: DB night_audit_runs table ---
+  // Always prefer the database record for the requested date, falling back to localStorage.
+  let dbAuditBundle: any = null;
+  const targetDate = forDate || getBusinessDate();
+
+  try {
+    const auditRes = await db.query<any>(
+      `SELECT business_date::date::text as date,
+              room_revenue, total_revenue, occupancy_percent as occupancy,
+              adr as "avgDailyRate", revpar, rooms_posted,
+              reports_snapshot
+       FROM night_audit_runs
+       WHERE business_date::date <= $1::date
+       ORDER BY business_date DESC
+       LIMIT 1`,
+      [targetDate]
+    );
+    if ('rows' in auditRes && auditRes.rows.length > 0) {
+      const row = auditRes.rows[0];
+      const snap = row.reports_snapshot || {};
+      dbAuditBundle = {
+        date: row.date,
+        roomRevenue: Number(row.room_revenue || 0),
+        fbRevenue: Number(snap.fbRevenue || (Number(row.total_revenue || 0) - Number(row.room_revenue || 0))),
+        totalRevenue: Number(row.total_revenue || 0),
+        occupancy: Number(row.occupancy || 0),
+        avgDailyRate: Number(row.avgDailyRate || 0),
+        revPAR: Number(row.revpar || 0),
+      };
+      // Also hydrate localStorage so other consumers get up-to-date data
+      try {
+        const lsKey = `corepms_nightAudit_reports_${row.date}`;
+        if (!localStorage.getItem(lsKey)) {
+          localStorage.setItem(lsKey, JSON.stringify(dbAuditBundle));
+        }
+        if (!localStorage.getItem('corepms_nightAudit_lastReports')) {
+          localStorage.setItem('corepms_nightAudit_lastReports', JSON.stringify(dbAuditBundle));
+        }
+      } catch { /* non-fatal */ }
+    }
+  } catch (err) {
+    console.warn('[Reporting] DB audit bundle query failed, using localStorage:', err);
+  }
+
+  const b = dbAuditBundle || getLastNightAuditBundle();
+  const date = forDate || b?.date || targetDate;
   const cashCard = readJSON<Record<string, number>>('corepms_shift_totals', { cash: 0, card: 0 });
 
   // Get year-over-year comparison data

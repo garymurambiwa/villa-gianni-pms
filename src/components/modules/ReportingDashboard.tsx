@@ -19,94 +19,9 @@ const ReportingDashboard: React.FC = () => {
     let data;
     switch (reportType) {
       case 'flash': {
-        // Build base report structure
+        // buildFlashReport now queries night_audit_runs + pos_orders from DB as primary source.
+        // No additional DB queries needed here — the function handles everything.
         data = await buildFlashReport(dailyDate);
-        
-        try {
-          const { db } = await import('@/lib/db');
-          // Find the night_audit_runs row for the requested date or the latest one
-          const auditRes = await db.query<any>(
-            `SELECT business_date::date as bd, rooms_posted, room_revenue, total_revenue, adr, revpar, occupancy_percent
-             FROM night_audit_runs WHERE business_date::date = $1`,
-            [dailyDate]
-          );
-
-          // Get POS totals and category breakdown from the database
-          const posRes = await db.query<any>(
-            `SELECT items, total_amount FROM pos_orders WHERE status='closed' AND created_at::date = $1`,
-            [dailyDate]
-          );
-
-          const hasAudit = 'rows' in auditRes && auditRes.rows.length > 0;
-          const posOrders = 'rows' in posRes ? (posRes.rows || []) : [];
-          
-          let posTotal = 0;
-          let foodTotal = 0;
-          let barTotal = 0;
-          let otherTotal = 0;
-
-          posOrders.forEach((order: any) => {
-            const total = Number(order.total_amount || 0);
-            posTotal += total;
-
-            const items = typeof order.items === 'string' ? JSON.parse(order.items) : (order.items || []);
-            if (Array.isArray(items)) {
-              items.forEach((item: any) => {
-                const itemPrice = Number(item.price || item.menuItem?.price || 0);
-                const itemQty = Number(item.quantity || 1);
-                const itemAmt = itemPrice * itemQty;
-                
-                const name = String(item.name || item.menuItem?.name || '').toLowerCase();
-                const cat = String(item.category || item.menuItem?.category || '').toLowerCase();
-                
-                // Categorization logic
-                const isBar = cat.includes('bar') || cat.includes('beverage') || cat.includes('liquor') || 
-                              name.includes('beer') || name.includes('wine') || name.includes('spirit') || 
-                              name.includes('cocktail') || name.includes('drink');
-                
-                if (isBar) {
-                  barTotal += itemAmt;
-                } else {
-                  foodTotal += itemAmt;
-                }
-              });
-            } else {
-              // Fallback if items not listable
-              foodTotal += total;
-            }
-          });
-
-          if (hasAudit || posTotal > 0) {
-            const a = hasAudit ? auditRes.rows[0] : { room_revenue: 0, occupancy_percent: 0, adr: 0, revpar: 0 };
-            const roomRev = Number(a.room_revenue || 0);
-            const totalRev = roomRev + posTotal;
-            const occ = Number(a.occupancy_percent || 0);
-
-            // Override the report rows with dynamic database values
-            data = {
-              ...data,
-              rows: data.rows.map((r: any) => {
-                const m = String(r.metric || '').toLowerCase();
-                if (m.includes('room revenue'))    return { ...r, today: `$${roomRev.toFixed(2)}` };
-                if (m.includes('food revenue'))    return { ...r, today: `$${foodTotal.toFixed(2)}` };
-                if (m.includes('bar revenue'))     return { ...r, today: `$${barTotal.toFixed(2)}` };
-                if (m.includes('f&b'))             return { ...r, today: `$${posTotal.toFixed(2)}` };
-                if (m.includes('total revenue'))   return { ...r, today: `$${totalRev.toFixed(2)}` };
-                if (m.includes('occupancy'))       return { ...r, today: `${occ.toFixed(1)}%` };
-                if (m.includes('adr'))             return { ...r, today: `$${Number(a.adr || 0).toFixed(2)}` };
-                if (m.includes('revpar'))          return { ...r, today: `$${Number(a.revpar || 0).toFixed(2)}` };
-                if (m.includes('receipts')) {
-                  // For receipts, we still use a heuristic if not in audit, but based on real posTotal
-                  if (m.includes('cash')) return { ...r, today: `$${(posTotal * 0.5).toFixed(2)}` };
-                  if (m.includes('card')) return { ...r, today: `$${(posTotal * 0.5).toFixed(2)}` };
-                }
-                return r;
-              })
-            };
-          }
-        } catch (err) {
-          console.warn('[ReportingDashboard] DB flash enrichment failed:', err);
-        }
         break;
       }
       case 'pos-recon': data = await buildPosReconciliation(dailyDate); break;

@@ -305,41 +305,68 @@ export const backupSnapshot = (ctx: NightAuditContext) => {
   return { key: `corepms_backup_${snapshot.date}` };
 };
 
-export const generateReportsBundle = (ctx: NightAuditContext) => {
+export const generateReportsBundle = (ctx: NightAuditContext, auditBusinessDate?: string) => {
   const occupied = ctx.rooms.filter((r: any) => r.status === 'OC' || r.status === 'OD').length;
-  const totalRooms = ctx.rooms.length;
   const availableRooms = ctx.rooms.filter((r: any) => r.status !== 'OOO' && r.status !== 'OOS').length;
-
   const occupancy = availableRooms ? ((occupied / availableRooms) * 100) : 0;
 
-  // Only count charges for today's business date to avoid cumulative inflation
-  const businessDate = readJSON<string>('corepms_business_date', todayISO());
-  const todaysCharges = (ctx.folioCharges || []).filter((c: any) => {
-    const d = c.date || c.business_date || c.posting_date || '';
-    return d.startsWith(businessDate);
+  // CRITICAL FIX: Use the audit date (BEFORE rollover) not the current business date.
+  // generateReportsBundle is called AFTER rolloverBusinessDate(), so reading business_date
+  // from localStorage would give tomorrow's date — causing the filter to match nothing.
+  // The caller must pass auditBusinessDate (the date BEFORE rollover).
+  const reportDate = auditBusinessDate || todayISO();
+
+  // Read from localStorage corepms_folioCharges (freshly written by postRoomAndTax)
+  // instead of ctx.folioCharges (DataContext - stale, full history, unfilterable).
+  const allLocalCharges = readJSON<any[]>('corepms_folioCharges', []);
+
+  // Filter strictly to the audit business date to avoid cumulative revenue inflation.
+  const todaysCharges = allLocalCharges.filter((c: any) => {
+    const d = String(c.date || c.business_date || c.posting_date || '');
+    return d.startsWith(reportDate);
   });
 
-  const roomRevenue = todaysCharges.filter((c: any) => c.category === 'Room').reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
-  const fbRevenue = todaysCharges.filter((c: any) => c.category === 'F&B').reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
-  const totalRevenue = roomRevenue + fbRevenue;
-  
-  const avgDailyRate = occupied ? (roomRevenue / occupied) : 0;
-  
-  // RevPAR Calculation according to specs: Total Room Revenue / Total Available Rooms
-  let revPAR = 0;
-  try {
-    if (availableRooms > 0 && !isNaN(roomRevenue)) {
-      revPAR = roomRevenue / availableRooms;
-    } else {
-      console.warn('RevPAR calculation skipped: Invalid data (availableRooms=0 or revenue is NaN)');
+  // Also include charges from ctx.folioCharges that match the audit date
+  // (in case DataContext has F&B charges not yet written to corepms_folioCharges)
+  const ctxTodayCharges = (ctx.folioCharges || []).filter((c: any) => {
+    const d = String(c.date || c.business_date || c.posting_date || '');
+    return d.startsWith(reportDate);
+  });
+
+  // Merge, deduplicating by id
+  const seenIds = new Set<string>();
+  const mergedCharges: any[] = [];
+  [...todaysCharges, ...ctxTodayCharges].forEach(c => {
+    const id = String(c.id || '');
+    if (!id || !seenIds.has(id)) {
+      seenIds.add(id);
+      mergedCharges.push(c);
     }
-  } catch (err) {
-    console.error('RevPAR calculation exception:', err);
-    revPAR = 0;
+  });
+
+  const roomRevenue = mergedCharges
+    .filter((c: any) => c.category === 'Room')
+    .reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
+
+  const fbRevenue = mergedCharges
+    .filter((c: any) => c.category === 'F&B')
+    .reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
+
+  const totalRevenue = roomRevenue + fbRevenue;
+  const avgDailyRate = occupied > 0 && roomRevenue > 0 ? roomRevenue / occupied : 0;
+
+  // RevPAR = Total Room Revenue / Total Available Rooms
+  let revPAR = 0;
+  if (availableRooms > 0 && !isNaN(roomRevenue) && roomRevenue > 0) {
+    revPAR = roomRevenue / availableRooms;
   }
 
+  // Count only today's postings
+  const todaysPostings = readJSON<any[]>('corepms_postings', [])
+    .filter((p: any) => String(p.date || p.business_date || '').startsWith(reportDate));
+
   const bundle = {
-    date: todayISO(),
+    date: reportDate,
     occupancy: Number(occupancy.toFixed(2)),
     roomRevenue: Number(roomRevenue.toFixed(2)),
     fbRevenue: Number(fbRevenue.toFixed(2)),
@@ -347,9 +374,11 @@ export const generateReportsBundle = (ctx: NightAuditContext) => {
     avgDailyRate: Number(avgDailyRate.toFixed(2)),
     revPAR: Number(revPAR.toFixed(2)),
     cityLedgerCount: readJSON<any[]>('corepms_city_ledger', []).length,
-    postingsCount: readJSON<any[]>('corepms_postings', []).length
+    postingsCount: todaysPostings.length
   };
-  writeJSON(`corepms_nightAudit_reports_${bundle.date}`, bundle);
+
+  // Persist under the audit date key AND as the "last" bundle
+  writeJSON(`corepms_nightAudit_reports_${reportDate}`, bundle);
   writeJSON('corepms_nightAudit_lastReports', bundle);
   return bundle;
 };
@@ -733,19 +762,19 @@ export const runNightAudit = async (ctx: NightAuditContext, options: ValidationO
   
   const rollover = rolloverBusinessDate();
   const backup = backupSnapshot(ctx);
-  const reports = generateReportsBundle(ctx);
-  
-  // Attempt GL posting
+  // Pass businessDateBefore (the AUDIT night) not rolled-forward date
+  const reports = generateReportsBundle(ctx, businessDateBefore);
+
+  // GL posting using the audit date (before rollover)
   try {
-    const businessDate = readJSON<string>('corepms_business_date', todayISO());
-    const glResult = gl.postDailyJournalFromNightAudit(businessDate, reports);
+    const glResult = gl.postDailyJournalFromNightAudit(businessDateBefore, reports);
     if (!glResult.ok) {
       console.warn('GL posting skipped:', glResult.error);
     }
   } catch (err) {
     console.warn('GL posting error', err);
   }
-  
+
   // Record night audit run to database
   const occupied = ctx.rooms.filter((r: any) => r.status === 'OC' || r.status === 'OD').length;
   const availableRooms = ctx.rooms.filter((r: any) => r.status !== 'OOO' && r.status !== 'OOS').length;
@@ -804,12 +833,12 @@ export const runNightAuditSync = (ctx: NightAuditContext) => {
   const reconciliation = reconcileTotals(ctx);
   const rollover = rolloverBusinessDate();
   const backup = backupSnapshot(ctx);
-  const reports = generateReportsBundle(ctx);
-  
-  // Attempt GL posting
+  // Pass businessDateBefore so reports reflect the AUDIT night (not rolled-forward next day)
+  const reports = generateReportsBundle(ctx, businessDateBefore);
+
+  // GL posting using the audit business date (before rollover)
   try {
-    const businessDate = readJSON<string>('corepms_business_date', todayISO());
-    const glResult = gl.postDailyJournalFromNightAudit(businessDate, reports);
+    const glResult = gl.postDailyJournalFromNightAudit(businessDateBefore, reports);
     if (!glResult.ok) {
       console.warn('GL posting skipped:', glResult.error);
     }

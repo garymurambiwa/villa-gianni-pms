@@ -1840,8 +1840,12 @@ export async function syncNightAuditRunToLocalStorage(businessDate: string): Pro
       return { success: true, synced: 0 };
     }
 
+    // Use ::date cast to handle timezone-stored timestamps correctly
     const result = await db.query(
-      `SELECT * FROM night_audit_runs WHERE business_date = $1`,
+      `SELECT *, business_date::date::text as biz_date_str
+       FROM night_audit_runs
+       WHERE business_date::date = $1::date
+       ORDER BY inserted_at DESC LIMIT 1`,
       [businessDate]
     );
 
@@ -1850,22 +1854,30 @@ export async function syncNightAuditRunToLocalStorage(businessDate: string): Pro
     }
 
     const row = result.rows[0];
+    const snap = row.reports_snapshot || {};
+    // Prefer snapshot fbRevenue (accurate) over subtraction (which gives wrong values when cumulative)
+    const fbRevenue = snap.fbRevenue !== undefined
+      ? Number(snap.fbRevenue)
+      : Number(row.total_revenue || 0) - Number(row.room_revenue || 0);
+
     const bundle = {
-      date: row.business_date,
+      date: row.biz_date_str || businessDate,
       roomRevenue: Number(row.room_revenue || 0),
-      fbRevenue: Number(row.total_revenue || 0) - Number(row.room_revenue || 0),
+      fbRevenue: Number(fbRevenue.toFixed(2)),
       totalRevenue: Number(row.total_revenue || 0),
       occupancy: Number(row.occupancy_percent || 0),
       avgDailyRate: Number(row.adr || 0),
-      revPAR: Number(row.revpar || 0)
+      revPAR: Number(row.revpar || 0),
+      postingsCount: snap.postingsCount || Number(row.rooms_posted || 0),
+      cityLedgerCount: snap.cityLedgerCount || 0,
     };
 
     // Store in localStorage
     const writeJSON = (key: string, value: any) => {
       try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
     };
-    
-    writeJSON(`corepms_nightAudit_reports_${businessDate}`, bundle);
+
+    writeJSON(`corepms_nightAudit_reports_${bundle.date}`, bundle);
     writeJSON('corepms_nightAudit_lastReports', bundle);
 
     console.log('[dbSync] Synced night audit run to localStorage:', businessDate);
