@@ -945,14 +945,30 @@ export const FrontOffice: React.FC = () => {
     setSelectedResId(resId);
     setRateOverride(res.rate?.toString() || '');
     setSelectedPackage(sanitizePackageCode(res.packageCode || res.package_code || 'RO', 'RO'));
-    setTaxInclusive(!!res.taxInclusive); // Default to existing or false
+    setTaxInclusive(!!res.taxInclusive);
 
-    // Auto-select a room if available
-    if (availableRooms.length > 0) {
-      // Try to match room type first
-      const match = availableRooms.find(r => r.type === res.roomType);
-      setSelectedRoom(match ? match.id : availableRooms[0].id);
+    // Room selection priority:
+    // 1. Use reservation's pre-assigned room (room_id) if it exists and is available
+    // 2. Match by room type from available rooms
+    // 3. Do NOT auto-fallback to availableRooms[0] — that causes wrong room check-ins
+    const preAssignedRoomId = res.room_id || res.roomId;
+    if (preAssignedRoomId) {
+      // Pre-assigned room exists — use it (may be OC if re-checking-in)
+      const preRoom = rooms.find((r: any) => r.id === preAssignedRoomId);
+      if (preRoom) {
+        setSelectedRoom(preAssignedRoomId);
+        setCheckInDialogOpen(true);
+        return;
+      }
+    }
+
+    // No pre-assignment — match by room type, but do NOT auto-select if ambiguous
+    const matchByType = availableRooms.filter((r: any) => r.type === (res.roomType || res.room_type));
+    if (matchByType.length === 1) {
+      // Only one match — safe to auto-select
+      setSelectedRoom(matchByType[0].id);
     } else {
+      // Multiple matches or no match — let the user explicitly choose
       setSelectedRoom(null);
     }
 

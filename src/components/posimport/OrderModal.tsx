@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { useShift } from '@/contexts/ShiftContext';
 import { useAuth } from '@/context/AuthContext';
+import { canManagePOS } from '@/lib/permissions';
 
 export interface MenuItem {
   id: string;
@@ -463,17 +464,19 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
               )}
             </div>
 
-            {/* Quick Add Item Button */}
-            <Button
-              variant="outline"
-              className="ml-2 text-purple-600 border-purple-200 hover:bg-purple-50"
-              onClick={() => {
-                setQuickAddCategory(activeCategory === 'bar' ? 'CAT_BAR_GEN' : 'CAT_REST_GEN');
-                setShowQuickAdd(true);
-              }}
-            >
-              + Quick Add
-            </Button>
+            {/* Quick Add Item Button — Managers/POS Managers only */}
+            {canManagePOS(user?.role) && (
+              <Button
+                variant="outline"
+                className="ml-2 text-purple-600 border-purple-200 hover:bg-purple-50"
+                onClick={() => {
+                  setQuickAddCategory(activeCategory === 'bar' ? 'CAT_BAR_GEN' : 'CAT_REST_GEN');
+                  setShowQuickAdd(true);
+                }}
+              >
+                + Quick Add
+              </Button>
+            )}
 
             {/* Search results indicator */}
             {isSearching && (

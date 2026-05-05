@@ -750,38 +750,79 @@ check_in_date = ?, check_out_date = ?, status = ?,
   // FRONT OFFICE - Check-in guest
   const checkInGuest = async (reservationId: string, roomId: string, options: { rateOverride?: number; packageCode?: string; taxInclusive?: boolean } = {}): Promise<boolean> => {
     try {
-      // Update reservation status to checked-in and assign room
-      const resSql = `UPDATE reservations SET
-status = 'checked-in',
-  room_id = ?,
-  rate = COALESCE(?, rate),
-  package_code = COALESCE(?, package_code)
-      WHERE id = ? `;
-      const resParams = [
-        roomId,
-        options.rateOverride || null,
-        options.packageCode || null,
-        reservationId
-      ];
-      const resResult = await db.query(resSql, resParams);
-      if ('error' in resResult) {
-        console.error('Check-in reservation update failed:', (resResult as any).error);
+      // Validate room exists and is available before proceeding
+      const roomCheckRes = await db.query(
+        `SELECT id, number, type, status FROM rooms WHERE id = $1`,
+        [roomId]
+      );
+      if (!('rows' in roomCheckRes) || !roomCheckRes.rows?.length) {
+        toast({ title: 'Check-in Failed', description: 'Selected room not found in database', variant: 'destructive' });
+        return false;
+      }
+      const room = roomCheckRes.rows[0];
+
+      // Atomic transaction: update reservation + room in one operation
+      const txResult = await db.transaction([
+        {
+          // Update reservation: status, room_id, room_type, rate, package
+          sql: `UPDATE reservations SET
+                  status = 'checked-in',
+                  room_id = $1,
+                  room_type = $2,
+                  rate = COALESCE($3, rate),
+                  package_code = COALESCE($4, package_code),
+                  updated_at = NOW()
+                WHERE id = $5`,
+          params: [
+            roomId,
+            room.type,
+            options.rateOverride || null,
+            options.packageCode || null,
+            reservationId
+          ]
+        },
+        {
+          // Mark room as OC (Occupied Clean)
+          sql: `UPDATE rooms SET status = 'OC', updated_at = NOW() WHERE id = $1`,
+          params: [roomId]
+        },
+        {
+          // Create or update folio for this guest
+          sql: `INSERT INTO folios (id, guest_id, reservation_id, room_number, status, balance, package_code, created_by, inserted_at, updated_at)
+                SELECT
+                  gen_random_uuid()::text,
+                  r.guest_id,
+                  r.id,
+                  $2,
+                  'open',
+                  0,
+                  COALESCE($3, r.package_code, 'RO'),
+                  'check_in',
+                  NOW(),
+                  NOW()
+                FROM reservations r
+                WHERE r.id = $1
+                ON CONFLICT (reservation_id) DO UPDATE
+                  SET room_number = EXCLUDED.room_number,
+                      status = 'open',
+                      package_code = COALESCE(EXCLUDED.package_code, folios.package_code),
+                      updated_at = NOW()`,
+          params: [reservationId, room.number, options.packageCode || null]
+        }
+      ]);
+
+      if (!(txResult as any).ok) {
+        console.error('Check-in transaction failed:', (txResult as any).error);
         toast({ title: 'Check-in Failed', description: 'Could not update reservation', variant: 'destructive' });
         return false;
       }
 
-      // Update room status to occupied
-      const roomSql = "UPDATE rooms SET status = 'OCC' WHERE id = ?";
-      const roomResult = await db.query(roomSql, [roomId]);
-      if ('error' in roomResult) {
-        console.error('Room status update failed:', (roomResult as any).error);
-      }
-
+      // Refresh all data so UI reflects the new state immediately
       await loadAllData();
       return true;
     } catch (e: any) {
       console.error('Check-in error:', e?.message || e);
-      toast({ title: 'Check-in Failed', description: 'An error occurred during check-in', variant: 'destructive' });
+      toast({ title: 'Check-in Failed', description: e?.message || 'An error occurred during check-in', variant: 'destructive' });
       return false;
     }
   };
@@ -789,34 +830,52 @@ status = 'checked-in',
   // FRONT OFFICE - Check-out guest
   const checkOutGuest = async (reservationId: string): Promise<boolean> => {
     try {
-      // Get the reservation to find the room
-      const getResSql = "SELECT room_id FROM reservations WHERE id = ?";
-      const getResResult = await db.query(getResSql, [reservationId]);
+      // Get reservation details including room
+      const getResResult = await db.query(
+        `SELECT r.room_id, ro.number as room_number FROM reservations r
+         LEFT JOIN rooms ro ON ro.id = r.room_id
+         WHERE r.id = $1`,
+        [reservationId]
+      );
       let roomId: string | null = null;
       if ('rows' in getResResult && getResResult.rows.length > 0) {
         roomId = getResResult.rows[0].room_id;
       }
 
-      // Update reservation status to checked-out
-      const resSql = "UPDATE reservations SET status = 'checked-out' WHERE id = ?";
-      const resResult = await db.query(resSql, [reservationId]);
-      if ('error' in resResult) {
-        console.error('Check-out reservation update failed:', (resResult as any).error);
-        toast({ title: 'Check-out Failed', description: 'Could not update reservation', variant: 'destructive' });
-        return false;
+      // Atomic transaction: check-out reservation + release room
+      const ops: { sql: string; params: any[] }[] = [
+        {
+          sql: `UPDATE reservations SET status = 'checked-out', updated_at = NOW() WHERE id = $1`,
+          params: [reservationId]
+        }
+      ];
+
+      if (roomId) {
+        // Set room to VD (Vacant Dirty) — housekeeping must clean before next check-in
+        ops.push({
+          sql: `UPDATE rooms SET status = 'VD', updated_at = NOW() WHERE id = $1`,
+          params: [roomId]
+        });
+        // Close any open folios for this reservation
+        ops.push({
+          sql: `UPDATE folios SET status = 'closed', closed_at = NOW(), closed_by = 'CHECK_OUT', updated_at = NOW()
+                WHERE reservation_id = $1 AND status = 'open'`,
+          params: [reservationId]
+        });
       }
 
-      // Update room status to vacant
-      if (roomId) {
-        const roomSql = "UPDATE rooms SET status = 'VD' WHERE id = ?";
-        await db.query(roomSql, [roomId]);
+      const txResult = await db.transaction(ops);
+      if (!(txResult as any).ok) {
+        console.error('Check-out transaction failed:', (txResult as any).error);
+        toast({ title: 'Check-out Failed', description: 'Could not process check-out', variant: 'destructive' });
+        return false;
       }
 
       await loadAllData();
       return true;
     } catch (e: any) {
       console.error('Check-out error:', e?.message || e);
-      toast({ title: 'Check-out Failed', description: 'An error occurred during check-out', variant: 'destructive' });
+      toast({ title: 'Check-out Failed', description: e?.message || 'An error occurred during check-out', variant: 'destructive' });
       return false;
     }
   };

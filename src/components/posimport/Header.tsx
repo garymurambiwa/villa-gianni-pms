@@ -9,7 +9,6 @@ import { ShiftClosureModal } from '../pos/ShiftClosureModal';
 import { PINModal } from '../pos/PINModal';
 import { ShiftReading } from '../../types';
 import { canManagePOS } from '../../lib/permissions';
-// import BackOfficeSettings from './BackOfficeSettings';
 
 export const Header: React.FC = () => {
   const { user, logout, costCentre, setCostCentre, verifyPosPin } = useAuth();
@@ -19,9 +18,12 @@ export const Header: React.FC = () => {
   const [showClosureModal, setShowClosureModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
-  const [pinPurpose, setPinPurpose] = useState<'start' | 'switch' | null>(null);
   const [currentReading, setCurrentReading] = useState<ShiftReading | null>(null);
-  // const [showSettings, setShowSettings] = useState(false);
+
+  // Extended pin purpose — now includes 'end_shift' and 'z_reading'
+  const [pinPurpose, setPinPurpose] = useState<'start' | 'switch' | 'end_shift' | 'z_reading' | null>(null);
+  // Store which manager verified (for audit trail)
+  const [verifiedManager, setVerifiedManager] = useState<any>(null);
 
   const handleXReading = async () => {
     try {
@@ -33,8 +35,17 @@ export const Header: React.FC = () => {
     }
   };
 
-  const handleEndShift = () => {
-    setShowClosureModal(true);
+  // Managers can proceed directly — cashiers/barmen must enter manager PIN first
+  const requireManagerPin = (purpose: 'end_shift' | 'z_reading') => {
+    if (canManagePOS(user?.role)) {
+      // Current user IS a manager — proceed directly
+      if (purpose === 'end_shift') setShowClosureModal(true);
+      if (purpose === 'z_reading') handleXReading();
+    } else {
+      // Cashier / Barman — requires manager PIN override
+      setPinPurpose(purpose);
+      setShowPinModal(true);
+    }
   };
 
   const handleShiftClosed = (zReading: ShiftReading) => {
@@ -43,19 +54,38 @@ export const Header: React.FC = () => {
     setShowClosureModal(false);
   };
 
-  const handlePinSuccess = (verifiedUser: any) => {
+  const handlePinSuccess = (verified: any) => {
+    setVerifiedManager(verified);
     setShowPinModal(false);
-    if (pinPurpose === 'start') {
-      // We could store the verifiedUser in a state if we want StartShiftModal to use it instead of useAuth().user
-      setShowStartModal(true);
-    } else if (pinPurpose === 'switch') {
-      clearActiveShift();
-      setCostCentre(null);
+
+    switch (pinPurpose) {
+      case 'start':
+        setShowStartModal(true);
+        break;
+      case 'switch':
+        clearActiveShift();
+        setCostCentre(null);
+        break;
+      case 'end_shift':
+        // Manager PIN verified — open shift closure modal
+        setShowClosureModal(true);
+        break;
+      case 'z_reading':
+        // Manager PIN verified — generate X-Reading
+        handleXReading();
+        break;
     }
     setPinPurpose(null);
   };
 
-  // Brand logo fallback (shared with BrandHeader defaults)
+  // PIN modal title based on purpose
+  const pinTitle = pinPurpose === 'end_shift'
+    ? 'Manager Authorisation Required — End Shift'
+    : pinPurpose === 'z_reading'
+      ? 'Manager Authorisation Required — Z Reading'
+      : 'Enter POS PIN';
+
+  // Brand logo fallback
   const readJSON = <T,>(key: string, fallback: T): T => {
     try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; }
   };
@@ -88,7 +118,6 @@ export const Header: React.FC = () => {
                 </picture>
               </a>
               <div>
-                {/* Brand Name Removed */}
                 <p className="text-sm text-purple-200">Restaurant Management System</p>
               </div>
             </div>
@@ -116,21 +145,28 @@ export const Header: React.FC = () => {
                   </Button>
                 ) : (
                   <>
+                    {/* X-Reading — requires manager PIN for barmen/cashiers */}
                     <Button
                       variant="destructive"
                       size="sm"
-                      onClick={handleXReading}
+                      onClick={() => requireManagerPin('z_reading')}
                       className="transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
+                      title={canManagePOS(user?.role) ? 'Generate X-Reading' : 'Requires Manager PIN'}
                     >
                       X-Reading
+                      {!canManagePOS(user?.role) && <span className="ml-1 text-[10px] opacity-70">🔒</span>}
                     </Button>
+
+                    {/* End Shift — requires manager PIN for barmen/cashiers */}
                     <Button
                       variant="destructive"
                       size="sm"
-                      onClick={handleEndShift}
+                      onClick={() => requireManagerPin('end_shift')}
                       className="transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
+                      title={canManagePOS(user?.role) ? 'End Shift' : 'Requires Manager PIN'}
                     >
                       End Shift
+                      {!canManagePOS(user?.role) && <span className="ml-1 text-[10px] opacity-70">🔒</span>}
                     </Button>
                   </>
                 )}
@@ -181,7 +217,7 @@ export const Header: React.FC = () => {
                   <div className="text-xs text-purple-200">
                     Station: <span className="font-bold text-white">{costCentre || 'Not Selected'}</span>
                   </div>
-                  <button 
+                  <button
                     onClick={() => { setPinPurpose('switch'); setShowPinModal(true); }}
                     className="text-[10px] text-purple-300 hover:text-white underline decoration-purple-400 underline-offset-2 transition-colors"
                   >
@@ -190,9 +226,9 @@ export const Header: React.FC = () => {
                 </div>
               </div>
 
-              <Button 
-                variant="ghost" 
-                size="sm" 
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={logout}
                 className="text-white hover:bg-white/10"
               >
@@ -215,12 +251,13 @@ export const Header: React.FC = () => {
         reading={currentReading}
       />
 
-
+      {/* PIN Modal — used for Start Shift, Switch Station, End Shift (manager override), Z-Reading (manager override) */}
       <PINModal
         isOpen={showPinModal}
-        onClose={() => setShowPinModal(false)}
+        onClose={() => { setShowPinModal(false); setPinPurpose(null); }}
         onSuccess={handlePinSuccess}
         verifyPin={verifyPosPin}
+        title={pinTitle}
       />
     </>
   );
