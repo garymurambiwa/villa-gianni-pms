@@ -1,15 +1,19 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { addDays, format, startOfDay, isSameDay } from 'date-fns';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, AlertTriangle, CheckCircle2, Wrench } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from '@/components/ui/use-toast';
+import { db } from '@/lib/db';
 
 export const RoomAvailabilityGrid: React.FC = () => {
   const { rooms, reservations, guests, loadAllData } = useData() as any;
   const { toast } = useToast();
   const [refreshing, setRefreshing] = useState(false);
+  const [showFixPanel, setShowFixPanel] = useState(false);
+  const [fixing, setFixing] = useState(false);
+  const [fixLog, setFixLog] = useState<string[]>([]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -20,6 +24,132 @@ export const RoomAvailabilityGrid: React.FC = () => {
       setRefreshing(false);
     }
   }, [loadAllData, toast]);
+
+  /**
+   * Force-check-in all confirmed reservations whose check-in date is on or before
+   * today. Optionally restrict to a specific list of room numbers.
+   */
+  const handleForceCheckIn = useCallback(async (roomNumbers?: string[]) => {
+    setFixing(true);
+    setFixLog([]);
+    const log: string[] = [];
+    const today = new Date().toISOString().slice(0, 10);
+
+    try {
+      // Fetch overdue confirmed reservations from DB
+      const res = await db.query<any>(
+        `SELECT r.id as res_id, r.room_id, r.check_in_date, r.guest_id,
+                g.full_name as guest_name, ro.number as room_number, ro.type as room_type
+         FROM reservations r
+         LEFT JOIN guests g ON g.id = r.guest_id
+         LEFT JOIN rooms  ro ON ro.id = r.room_id
+         WHERE r.status = 'confirmed'
+           AND r.check_in_date::date <= $1::date
+           AND r.room_id IS NOT NULL`,
+        [today]
+      );
+
+      if (!('rows' in res) || res.rows.length === 0) {
+        log.push('No overdue confirmed reservations found.');
+        setFixLog(log);
+        setFixing(false);
+        return;
+      }
+
+      // Filter by room numbers if specified
+      const targets = roomNumbers && roomNumbers.length > 0
+        ? res.rows.filter((r: any) => roomNumbers.includes(String(r.room_number)))
+        : res.rows;
+
+      if (targets.length === 0) {
+        log.push(`No confirmed reservations found for rooms: ${roomNumbers?.join(', ')}.`);
+        setFixLog(log);
+        setFixing(false);
+        return;
+      }
+
+      log.push(`Found ${targets.length} reservation(s) to fix…`);
+      setFixLog([...log]);
+
+      let successCount = 0;
+      let failCount    = 0;
+
+      for (const row of targets) {
+        try {
+          const txResult = await db.transaction([
+            {
+              sql: `UPDATE reservations
+                    SET status = 'checked-in'
+                    WHERE id = $1 AND status = 'confirmed'`,
+              params: [row.res_id]
+            },
+            {
+              sql: `UPDATE rooms
+                    SET status = 'OC', updated_at = NOW()
+                    WHERE id = $1`,
+              params: [row.room_id]
+            },
+            {
+              // Ensure folio exists
+              sql: `INSERT INTO folios
+                          (id, guest_id, reservation_id, room_number, status, balance,
+                           package_code, created_by, inserted_at, updated_at)
+                    SELECT gen_random_uuid()::text,
+                           r.guest_id, r.id, ro.number,
+                           'open', 0,
+                           COALESCE(r.package_code, 'RO'),
+                           'auto_fix',
+                           NOW(), NOW()
+                    FROM reservations r
+                    JOIN rooms ro ON ro.id = r.room_id
+                    WHERE r.id = $1
+                    ON CONFLICT (reservation_id) DO UPDATE
+                      SET status = 'open', updated_at = NOW()`,
+              params: [row.res_id]
+            }
+          ]);
+
+          if ((txResult as any).ok) {
+            log.push(`✅ Room ${row.room_number} — ${row.guest_name}: confirmed → checked-in`);
+            successCount++;
+          } else {
+            log.push(`❌ Room ${row.room_number} — ${row.guest_name}: FAILED — ${(txResult as any).error}`);
+            failCount++;
+          }
+        } catch (err: any) {
+          log.push(`❌ Room ${row.room_number} — ${row.guest_name}: ERROR — ${err?.message || err}`);
+          failCount++;
+        }
+        setFixLog([...log]);
+      }
+
+      log.push(`Done. ${successCount} fixed, ${failCount} failed.`);
+      setFixLog([...log]);
+
+      if (successCount > 0) {
+        toast({
+          title: `${successCount} Reservation(s) Fixed`,
+          description: 'Guests have been moved from Confirmed → Checked-In.',
+        });
+        if (typeof loadAllData === 'function') await loadAllData();
+      }
+    } catch (err: any) {
+      log.push(`Fatal error: ${err?.message || err}`);
+      setFixLog([...log]);
+      toast({ title: 'Fix Failed', description: String(err?.message || err), variant: 'destructive' });
+    } finally {
+      setFixing(false);
+    }
+  }, [loadAllData, toast]);
+
+  // Count of overdue confirmed reservations (for badge)
+  const overdueConfirmedCount = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return reservations.filter((r: any) => {
+      const ci = String(r.checkIn || r.check_in_date || '').slice(0, 10);
+      return r.status === 'confirmed' && ci && ci <= today && (r.room_id || r.roomId);
+    }).length;
+  }, [reservations]);
   const [viewDays, setViewDays] = useState(() => {
     const saved = sessionStorage.getItem('availability_grid_viewDays');
     return saved ? Number(saved) : 30;
@@ -158,6 +288,24 @@ export const RoomAvailabilityGrid: React.FC = () => {
             >
               <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
             </button>
+            {/* Admin fix button — shown when there are overdue confirmed bookings */}
+            <button
+              onClick={() => setShowFixPanel(v => !v)}
+              title="Fix overdue confirmed check-ins"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                overdueConfirmedCount > 0
+                  ? 'bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-300'
+                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200 border border-gray-200'
+              }`}
+            >
+              <Wrench size={13} />
+              Fix Check-Ins
+              {overdueConfirmedCount > 0 && (
+                <span className="ml-1 bg-amber-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">
+                  {overdueConfirmedCount}
+                </span>
+              )}
+            </button>
           </div>
           <p className="text-sm text-gray-500">Interactive tape chart for room management</p>
         </div>
@@ -187,7 +335,54 @@ export const RoomAvailabilityGrid: React.FC = () => {
           </Select>
         </div>
       </div>
-      
+
+      {/* ── Admin Fix Panel ────────────────────────────────────────────── */}
+      {showFixPanel && (
+        <div className="border-b bg-amber-50/80 px-4 py-3 text-sm">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={18} className="mt-0.5 text-amber-600 shrink-0" />
+            <div className="flex-1">
+              <p className="font-semibold text-amber-800 mb-1">
+                Auto Check-In Fix — Overdue Confirmed Reservations
+              </p>
+              <p className="text-gray-600 text-xs mb-3">
+                The buttons below will update the status of confirmed reservations whose
+                check-in date has already passed to <strong>Checked-In</strong> and mark
+                the room as <strong>OC (Occupied Clean)</strong>.
+              </p>
+              <div className="flex flex-wrap gap-2 mb-3">
+                <Button
+                  size="sm"
+                  disabled={fixing}
+                  onClick={() => handleForceCheckIn(['101', '103', '109', '110', '112'])}
+                  className="bg-amber-600 hover:bg-amber-700 text-white text-xs h-8"
+                >
+                  {fixing ? 'Fixing…' : 'Fix Rooms 101, 103, 109, 110, 112'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={fixing}
+                  onClick={() => handleForceCheckIn()}
+                  className="text-xs h-8 border-amber-400 text-amber-700 hover:bg-amber-100"
+                >
+                  Fix ALL Overdue Confirmed ({overdueConfirmedCount})
+                </Button>
+              </div>
+              {fixLog.length > 0 && (
+                <div className="bg-white border rounded p-2 max-h-36 overflow-y-auto font-mono text-xs space-y-0.5">
+                  {fixLog.map((line, i) => (
+                    <div key={i} className={line.startsWith('✅') ? 'text-green-700' : line.startsWith('❌') ? 'text-red-700' : 'text-gray-600'}>
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Grid Content */}
       <div 
         ref={scrollContainerRef}
