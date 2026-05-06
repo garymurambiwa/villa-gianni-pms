@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect, useRef, useCallback } from 'react';
 import { User } from '../types';
-import auth, { initAuth, setUsers, hashPassword } from '@/lib/authService';
+import auth, { initAuth, setUsers, hashPassword, INACTIVITY_MINUTES, INACTIVITY_WARNING_SECONDS } from '@/lib/authService';
+import { useInactivityTimeout } from '@/hooks/useInactivityTimeout';
 import { supabase } from '@/lib/supabaseClient';
 import { mergeUserWithProfile } from '@/lib/profile';
 import { db } from '@/lib/db';
@@ -57,30 +58,37 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return { ...u, role };
   };
 
-  // Session expiry check interval
-  useEffect(() => {
-    let sessionCheckInterval: NodeJS.Timeout | null = null;
-    const checkSessionExpiry = () => {
-      if (!isSupabaseEnabled && user) {
-        const session = auth.getSession();
-        console.log('Session check: session =', session, 'now =', new Date().toISOString(), 'expiresAt =', session?.expiresAt, 'expired =', session && new Date() > new Date(session.expiresAt));
-        if (!session || (session.expiresAt && new Date() > new Date(session.expiresAt))) {
-          logger.logAuth('session_expired', {
-            userId: user.id,
-            username: user.username,
-            timestamp: new Date().toISOString()
-          });
-          logout();
-        }
-      }
-    };
-    if (!isSupabaseEnabled) {
-      sessionCheckInterval = setInterval(checkSessionExpiry, 15000);
-    }
-    return () => {
-      if (sessionCheckInterval) clearInterval(sessionCheckInterval);
-    };
-  }, [user, isSupabaseEnabled]);
+  // ── Inactivity-based auto-logout (5 minutes of zero activity) ───────────────
+  // Replaces the old erratic 15-second session-check interval.
+  // The timer only runs when a user is actively logged in.
+  useInactivityTimeout({
+    timeoutMs:   INACTIVITY_MINUTES * 60 * 1000,          // 5 min
+    warnBeforeMs: INACTIVITY_WARNING_SECONDS * 1000,       // warn 60 s before
+    enabled: !!user && !isSupabaseEnabled,
+    onWarn: (secondsLeft) => {
+      toast({
+        title: '⏳ Session Expiring Soon',
+        description: `You will be logged out in ${secondsLeft} seconds due to inactivity. Move the mouse or press any key to stay logged in.`,
+        duration: (INACTIVITY_WARNING_SECONDS - 5) * 1000, // dismiss 5 s before actual logout
+      });
+    },
+    onTimeout: () => {
+      logger.logAuth('session_expired', {
+        userId: user?.id,
+        username: user?.username,
+        reason: 'inactivity_timeout',
+        inactivityMinutes: INACTIVITY_MINUTES,
+        timestamp: new Date().toISOString(),
+      });
+      toast({
+        title: 'Logged Out',
+        description: `You have been logged out after ${INACTIVITY_MINUTES} minutes of inactivity.`,
+        variant: 'destructive',
+        duration: 6000,
+      });
+      logout();
+    },
+  });
 
   useEffect(() => {
     let unsub: any;
@@ -174,9 +182,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           }
           if (!userFound) auth.logout();
         }
+        // Touch the session on activity (resets the 5-min inactivity window)
         let lastActivityUpdate = 0;
         onActivity = () => {
-          auth.touchSession();
+          auth.touchSession();  // extends inactivity deadline by 5 min from now
           const now = Date.now();
           if (now - lastActivityUpdate > 60_000) {
             lastActivityUpdate = now;

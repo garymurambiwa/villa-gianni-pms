@@ -32,12 +32,16 @@ export const POSFrontOffice: React.FC = () => {
   const { activeShift, startShift, endShift, getTotals, addTransaction } = useShift();
   const { user, costCentre, shiftId, isLocked, setIsLocked, verifyPosPin } = useAuth();
 
-  // 90-second inactivity timeout
-  useInactivityTimeout(90000, () => {
-    if (activeShift && costCentre) {
-      setIsLocked(true);
-    }
-  }, !!activeShift && !!costCentre && !isLocked);
+  // 90-second inactivity timeout (locks the station, does not log out)
+  useInactivityTimeout({
+    timeoutMs: 90000,
+    onTimeout: () => {
+      if (activeShift && costCentre) {
+        setIsLocked(true);
+      }
+    },
+    enabled: !!activeShift && !!costCentre && !isLocked
+  });
 
   const [mountLoading, setMountLoading] = useState<boolean>(false);
   const [tables, setTables] = useState<Array<{ id: string; number: number; status: 'available' | 'occupied' | 'suspended'; currentBill?: any; cost_center?: string }>>(
