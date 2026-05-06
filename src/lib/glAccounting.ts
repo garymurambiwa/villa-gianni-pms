@@ -53,6 +53,7 @@ export const setAccounts = (list: GLAccount[]) => writeJSON(K_ACCOUNTS, list);
 export const REQUIRED_CODES = [
   'ROOM_REVENUE',
   'FB_REVENUE',
+  'CONF_REVENUE',
   'TAX',
   'CASH',
   'CARD',
@@ -112,6 +113,7 @@ export const suggestRequiredCodeMappings = (): Array<{ code: string; accountId: 
   const add = (code: string, id: string | undefined, reason: string) => picks.push({ code, accountId: id || '', reason });
   add('ROOM_REVENUE', findByName('Revenue', ['room','accommodation']) || '4000', 'Map to Rooms Revenue account');
   add('FB_REVENUE', findByName('Revenue', ['food','beverage','f&b']) || '4100', 'Map to Food & Beverage Revenue');
+  add('CONF_REVENUE', findByName('Revenue', ['conference']) || '4200', 'Map to Conference Revenue account');
   add('TAX', findByName('Liability', ['tax','vat']) || '2000', 'Taxes to liabilities (Taxes Payable)');
   add('CASH', findByName('Asset', ['cash']) || '1000', 'Cash receipts to Cash');
   add('CARD', findByName('Asset', ['merchant','clearing']) || '1300', 'Card receipts to merchant clearing');
@@ -133,8 +135,10 @@ export const ensureUSALIBaseAccounts = () => {
     { id: '3000', name: 'Equity', category: 'Equity', usali: 'Equity' },
     { id: '4000', name: 'Rooms Revenue', category: 'Revenue', usali: 'Rooms', department: 'Rooms' },
     { id: '4100', name: 'Food & Beverage Revenue', category: 'Revenue', usali: 'F&B', department: 'F&B' },
+    { id: '4200', name: 'Conference Revenue', category: 'Revenue', usali: 'Conference', department: 'Conference' },
     { id: '5200', name: 'Rooms Supplies Expense', category: 'Expense', usali: 'Operating', department: 'Rooms' },
     { id: '5300', name: 'F&B Kitchen Expense', category: 'Expense', usali: 'Operating', department: 'F&B' },
+    { id: '5350', name: 'Conference Expense', category: 'Expense', usali: 'Operating', department: 'Conference' },
     { id: '5400', name: 'Administration Expense', category: 'Expense', usali: 'Operating', department: 'Administration' },
     { id: '5500', name: 'Sales & Marketing Expense', category: 'Expense', usali: 'Operating', department: 'Sales & Marketing' },
   ];
