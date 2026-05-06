@@ -1,13 +1,25 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { addDays, format, startOfDay, isSameDay } from 'date-fns';
+import { RefreshCw } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from '@/components/ui/use-toast';
 
 export const RoomAvailabilityGrid: React.FC = () => {
-  const { rooms, reservations, guests } = useData();
+  const { rooms, reservations, guests, loadAllData } = useData() as any;
   const { toast } = useToast();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      if (typeof loadAllData === 'function') await loadAllData();
+      toast({ title: 'Refreshed', description: 'Room availability updated from database.' });
+    } catch { /* non-fatal */ } finally {
+      setRefreshing(false);
+    }
+  }, [loadAllData, toast]);
   const [viewDays, setViewDays] = useState(() => {
     const saved = sessionStorage.getItem('availability_grid_viewDays');
     return saved ? Number(saved) : 30;
@@ -58,24 +70,40 @@ export const RoomAvailabilityGrid: React.FC = () => {
     );
 
     return sortedRooms.map((room: any) => {
-      const roomRes = reservations.filter((res: any) => 
-        (res.room_id === room.id || res.roomId === room.id) &&
-        res.status !== 'cancelled' && res.status !== 'checked-out'
-      );
+      // FIX: filter by room_id OR roomId (handles both snake_case from DB and camelCase)
+      const roomRes = reservations.filter((res: any) => {
+        const linkedRoomId = res.room_id || res.roomId;
+        return linkedRoomId === room.id &&
+          res.status !== 'cancelled' &&
+          res.status !== 'checked-out';
+      });
 
       const cells = dates.map(date => {
         const res = roomRes.find((r: any) => {
-          const start = startOfDay(new Date(r.checkIn || r.check_in_date));
-          const end = startOfDay(new Date(r.checkOut || r.check_out_date));
+          const rawStart = r.checkIn || r.check_in_date || r.check_in;
+          const rawEnd   = r.checkOut || r.check_out_date || r.check_out;
+          if (!rawStart || !rawEnd) return false;
+          const start = startOfDay(new Date(rawStart));
+          const end   = startOfDay(new Date(rawEnd));
           return date >= start && date < end;
         });
-        
+
         let status = 'vacant';
         if (res) {
           if (res.status === 'checked-in' || res.status === 'occupied') status = 'occupied';
           else if (res.status === 'blocked') status = 'blocked';
           else status = 'booked';
         }
+
+        // Also cross-check the room's physical status for today
+        // If room.status shows OOO/maintenance even with no reservation, show that
+        const todayDate = startOfDay(new Date());
+        if (isSameDay(date, todayDate) && !res) {
+          const rs = String(room.status || '').toUpperCase();
+          if (rs === 'OOO' || rs === 'OOS') status = 'blocked';
+          else if (rs === 'OC' || rs === 'OD') status = 'occupied'; // Physically occupied even without linked reservation
+        }
+
         return { date, status, res };
       });
 
@@ -120,7 +148,17 @@ export const RoomAvailabilityGrid: React.FC = () => {
       {/* Header */}
       <div className="p-4 border-b flex justify-between items-center bg-gray-50/80 backdrop-blur-sm">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Room Availability Grid</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-2xl font-bold text-gray-800">Room Availability Grid</h2>
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Refresh room data from database"
+              className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+            </button>
+          </div>
           <p className="text-sm text-gray-500">Interactive tape chart for room management</p>
         </div>
         <div className="flex items-center gap-3">

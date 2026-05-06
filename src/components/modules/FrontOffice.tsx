@@ -1980,10 +1980,11 @@ export const FrontOffice: React.FC = () => {
         reservationId={transferResId}
         currentRoomId={transferRoomId}
         onSuccess={() => {
-          // Trigger a refresh if the context doesn't auto-update, 
-          // but usually useData context updates via polling or subscription.
-          // For now, we can reload to be safe or assume context sync.
-          if (typeof window !== 'undefined') window.location.reload();
+          setTransferDialogOpen(false);
+          setTransferResId(null);
+          setTransferRoomId(null);
+          // loadAllData() is called inside TransferRoomModal before onSuccess fires
+          // so DataContext state is already fresh — no reload needed
         }}
       />
 

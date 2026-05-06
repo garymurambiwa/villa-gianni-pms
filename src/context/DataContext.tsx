@@ -765,13 +765,13 @@ check_in_date = ?, check_out_date = ?, status = ?,
       const txResult = await db.transaction([
         {
           // Update reservation: status, room_id, room_type, rate, package
+          // NOTE: reservations table has NO updated_at column — do not include it
           sql: `UPDATE reservations SET
                   status = 'checked-in',
                   room_id = $1,
                   room_type = $2,
                   rate = COALESCE($3, rate),
-                  package_code = COALESCE($4, package_code),
-                  updated_at = NOW()
+                  package_code = COALESCE($4, package_code)
                 WHERE id = $5`,
           params: [
             roomId,
@@ -845,7 +845,8 @@ check_in_date = ?, check_out_date = ?, status = ?,
       // Atomic transaction: check-out reservation + release room
       const ops: { sql: string; params: any[] }[] = [
         {
-          sql: `UPDATE reservations SET status = 'checked-out', updated_at = NOW() WHERE id = $1`,
+          // NOTE: reservations table has NO updated_at column
+          sql: `UPDATE reservations SET status = 'checked-out' WHERE id = $1`,
           params: [reservationId]
         }
       ];

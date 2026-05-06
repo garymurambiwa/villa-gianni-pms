@@ -9,20 +9,10 @@ export interface TransferResult {
 
 /**
  * Service to handle transferring a guest (reservation + folio) to a new room.
+ *
+ * NOTE: reservations table has NO updated_at column — do NOT include it in UPDATE.
  */
 export const transferService = {
-    /**
-     * Transfer a reservation to a new room.
-     * Updates:
-     * 1. Reservation record (room_id, room_number)
-     * 2. Folio record (room_number)
-     * 3. Folio charges (room_number)
-     * 4. Old Room status -> 'VD' (Vacant Dirty) or 'OOO'
-     * 5. New Room status -> 'OC' (Occupied Clean)
-     * 
-     * Note: If no reservation exists (quick check-in case), still performs:
-     * - Room status updates (old room -> VD/OOO, new room -> OC)
-     */
     async transferGuest(
         reservationId: string | null,
         targetRoomId: string,
@@ -31,87 +21,89 @@ export const transferService = {
         actorName: string = 'System'
     ): Promise<TransferResult> {
         try {
-            let reservation: { id: string; room_id: string; guest_id: string; folio_id: string } | null = null;
+            if (!targetRoomId) return { ok: false, error: 'Target room ID is required' };
+
+            // ── 1. Resolve reservation ─────────────────────────────────────────
+            let reservation: any = null;
             let oldRoomId: string | null = null;
             let oldRoomNumber: string | null = null;
 
-            // 1. Fetch Reservation by ID
             if (reservationId) {
+                // Primary: look up by reservation ID
                 const resQuery = await db.query<any>(
-                    `SELECT r.id, r.room_id, r.guest_id, r.folio_id, ro.number as room_number
+                    `SELECT r.id, r.room_id, r.guest_id, ro.number AS room_number
                      FROM reservations r
                      LEFT JOIN rooms ro ON ro.id = r.room_id
                      WHERE r.id = $1`,
                     [reservationId]
                 );
-                if ('rows' in resQuery && resQuery.rows && resQuery.rows.length) {
-                    reservation = resQuery.rows[0];
-                    oldRoomId = resQuery.rows[0].room_id;
-                    oldRoomNumber = resQuery.rows[0].room_number;
+                if ('rows' in resQuery && resQuery.rows?.length) {
+                    reservation   = resQuery.rows[0];
+                    oldRoomId     = reservation.room_id;
+                    oldRoomNumber = reservation.room_number;
+                }
+
+                // Fallback: treat reservationId as a room_id (for guests without a direct res link)
+                if (!reservation) {
+                    const roomResQuery = await db.query<any>(
+                        `SELECT r.id, r.room_id, r.guest_id, ro.number AS room_number
+                         FROM reservations r
+                         LEFT JOIN rooms ro ON ro.id = r.room_id
+                         WHERE r.room_id = $1
+                           AND r.status IN ('checked-in','confirmed','pending')
+                         ORDER BY r.inserted_at DESC
+                         LIMIT 1`,
+                        [reservationId]
+                    );
+                    if ('rows' in roomResQuery && roomResQuery.rows?.length) {
+                        reservation   = roomResQuery.rows[0];
+                        oldRoomId     = reservation.room_id;
+                        oldRoomNumber = reservation.room_number;
+                    }
                 }
             }
 
-            // 2. If not found by reservation ID, search by room_id (quick check-in guests)
-            if (!reservation && reservationId) {
-                const roomResQuery = await db.query<any>(
-                    `SELECT r.id, r.room_id, r.guest_id, r.folio_id, ro.number as room_number
-                     FROM reservations r
-                     LEFT JOIN rooms ro ON ro.id = r.room_id
-                     WHERE r.room_id = $1 AND r.status IN ('checked-in', 'checkedin', 'confirmed')
-                     LIMIT 1`,
-                    [reservationId]
-                );
-                if ('rows' in roomResQuery && roomResQuery.rows && roomResQuery.rows.length) {
-                    reservation = roomResQuery.rows[0];
-                    oldRoomId = roomResQuery.rows[0].room_id;
-                    oldRoomNumber = roomResQuery.rows[0].room_number;
-                }
+            if (oldRoomId === targetRoomId) {
+                return { ok: false, error: 'Cannot transfer to the same room' };
             }
 
-            if (!targetRoomId) return { ok: false, error: 'Target room ID is required' };
-            if (oldRoomId && oldRoomId === targetRoomId) return { ok: false, error: 'Cannot transfer to the same room' };
-
-            // 3. Fetch Target Room details
+            // ── 2. Validate target room ────────────────────────────────────────
             const roomQuery = await db.query<any>(
                 `SELECT id, number, status, type FROM rooms WHERE id = $1`,
                 [targetRoomId]
             );
-            if (!('rows' in roomQuery) || !roomQuery.rows || !roomQuery.rows.length) {
+            if (!('rows' in roomQuery) || !roomQuery.rows?.length) {
                 return { ok: false, error: 'Target room not found' };
             }
             const targetRoom = roomQuery.rows[0];
 
-            // Validate target room is available
-            if (!['VC', 'VD', 'vacant', 'available'].includes(String(targetRoom.status || '').toUpperCase()) &&
-                !['VC', 'VD'].includes(String(targetRoom.status || ''))) {
-                return { ok: false, error: `Room ${targetRoom.number} is not available (status: ${targetRoom.status})` };
-            }
+            // ── 3. Build atomic transaction ────────────────────────────────────
+            const ops: { sql: string; params: any[] }[] = [];
 
-            // 4. Build atomic transaction
-            const operations: { sql: string; params: any[] }[] = [];
-
-            // A. Update Reservation - assign new room_id AND update room_type
+            // A. Reservation — update room assignment
+            //    IMPORTANT: reservations table has no updated_at column
             if (reservation) {
-                operations.push({
+                ops.push({
                     sql: `UPDATE reservations
-                          SET room_id = $1, room_type = $2, updated_at = NOW()
+                          SET room_id = $1, room_type = $2
                           WHERE id = $3`,
                     params: [targetRoomId, targetRoom.type, reservation.id]
                 });
             }
 
-            // B. Update Folio - new room_number
+            // B. Folio — update room_number
             if (reservation) {
-                operations.push({
-                    sql: `UPDATE folios SET room_number = $1, updated_at = NOW()
+                ops.push({
+                    sql: `UPDATE folios
+                          SET room_number = $1, updated_at = NOW()
                           WHERE reservation_id = $2 OR guest_id = $3`,
-                    params: [targetRoom.number, reservation.id, (reservation as any).guest_id]
+                    params: [targetRoom.number, reservation.id, reservation.guest_id]
                 });
             }
 
-            // C. Update active Folio Charges - new room_number
+            // C. Folio charges — move active charges to new room
             if (reservation) {
-                operations.push({
+                ops.push({
                     sql: `UPDATE folio_charges
                           SET room_number = $1, updated_at = NOW()
                           WHERE reservation_id = $2 AND is_voided = false`,
@@ -119,9 +111,9 @@ export const transferService = {
                 });
             }
 
-            // D. Update Folio Payments - new room_number
+            // D. Folio payments
             if (reservation) {
-                operations.push({
+                ops.push({
                     sql: `UPDATE folio_payments
                           SET room_number = $1, updated_at = NOW()
                           WHERE reservation_id = $2`,
@@ -130,24 +122,23 @@ export const transferService = {
             }
 
             // E. Release old room → VD (Vacant Dirty) or OOO
-            const oldStatus = markOldAsOOO ? 'OOO' : 'VD';
             if (oldRoomId) {
-                operations.push({
+                ops.push({
                     sql: `UPDATE rooms SET status = $1, updated_at = NOW() WHERE id = $2`,
-                    params: [oldStatus, oldRoomId]
+                    params: [markOldAsOOO ? 'OOO' : 'VD', oldRoomId]
                 });
             }
 
             // F. Mark new room as Occupied Clean
-            operations.push({
+            ops.push({
                 sql: `UPDATE rooms SET status = 'OC', updated_at = NOW() WHERE id = $1`,
                 params: [targetRoomId]
             });
 
-            // G. Log transfer in system_audits
-            operations.push({
-                sql: `INSERT INTO system_audits (id, action, entity_type, entity_id, user_id, details, timestamp)
-                      VALUES (gen_random_uuid()::text, 'ROOM_TRANSFER', 'RESERVATION', $1, 'SYSTEM', $2::jsonb, NOW())
+            // G. Audit log
+            ops.push({
+                sql: `INSERT INTO system_audits (id, action, entity_type, entity_id, user_id, details)
+                      VALUES (gen_random_uuid()::text, 'ROOM_TRANSFER', 'RESERVATION', $1, 'SYSTEM', $2::jsonb)
                       ON CONFLICT DO NOTHING`,
                 params: [
                     reservation?.id || targetRoomId,
@@ -156,14 +147,15 @@ export const transferService = {
                         to_room: targetRoom.number,
                         reason,
                         actor: actorName,
-                        mark_old_as_ooo: markOldAsOOO
+                        mark_old_as_ooo: markOldAsOOO,
+                        ts: new Date().toISOString()
                     })
                 ]
             });
 
-            const result = await db.transaction(operations);
-
-            if (!result.ok) {
+            const result = await db.transaction(ops);
+            if (!(result as any).ok) {
+                console.error('[TransferService] Transaction failed:', (result as any).error);
                 return { ok: false, error: (result as any).error || 'Transaction failed' };
             }
 
