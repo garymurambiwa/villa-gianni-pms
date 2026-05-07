@@ -49,6 +49,8 @@ export const CityLedger: React.FC = () => {
   const [targetGuestId, setTargetGuestId] = useState<string>('');
   const [targetType, setTargetType] = useState<'guest' | 'account'>('guest');
   const [closeAccountAfterTransfer, setCloseAccountAfterTransfer] = useState(false);
+  // Collapsible accounts state
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
   
   const resetTxnForm = () => setTxnForm({ date: new Date().toISOString().slice(0, 10), reference: '', description: '', amount: '' });
   const computeAging = (account: any) => {
@@ -248,76 +250,118 @@ export const CityLedger: React.FC = () => {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     downloadBlob(blob, `ar_aging_${new Date().toISOString().slice(0,10)}.csv`);
   };
+
+  // Compute additional reports
+  const computeAccountSummary = () => {
+    const active = cityLedger.filter(acc => acc.status !== 'Closed').length;
+    const totalBalance = cityLedger.reduce((sum, acc) => sum + Number(acc.balance || 0), 0);
+    const totalCreditLimit = cityLedger.reduce((sum, acc) => sum + Number(acc.creditLimit || 0), 0);
+    const overdue = cityLedger.filter(acc => {
+      const aging = computeAging(acc);
+      return aging.d30 > 0 || aging.d60 > 0 || aging.d90 > 0;
+    }).length;
+
+    return { active, totalBalance, totalCreditLimit, overdue };
+  };
+
+  const computeTopDebtors = () => {
+    return cityLedger
+      .filter(acc => Number(acc.balance || 0) > 0)
+      .sort((a, b) => Number(b.balance || 0) - Number(a.balance || 0))
+      .slice(0, 5);
+  };
   // --- End helpers ---
 
   return (
-    <div className="p-6">
-      <BackToAccountingButton />
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-3xl font-bold text-gray-800">City Ledger (AR)</h2>
-        <button
-          onClick={() => setShowNewForm(!showNewForm)}
-          className="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700"
-        >
-          + New Account
-        </button>
-      </div>
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-7xl mx-auto p-6">
+        <BackToAccountingButton />
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-4xl font-bold text-gray-900">City Ledger</h1>
+            <p className="text-gray-600 mt-2">Accounts Receivable Management</p>
+          </div>
+          <button
+            onClick={() => setShowNewForm(!showNewForm)}
+            className="bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 shadow-sm transition-colors duration-200"
+          >
+            + New Account
+          </button>
+        </div>
 
       {showNewForm && (
-        <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-          <h3 className="text-xl font-bold text-gray-800 mb-4">Create City Ledger Account</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <input
-              type="text"
-              placeholder="Account Name"
-              className="px-4 py-2 border rounded-lg"
-              value={newAccName}
-              onChange={(e) => setNewAccName(e.target.value)}
-            />
-            <select
-              className="px-4 py-2 border rounded-lg"
-              value={newAccType}
-              onChange={(e) => setNewAccType(e.target.value)}
-            >
-              <option>Corporate</option>
-              <option>Travel Agent</option>
-              <option>Group Master</option>
-              <option>Wholesale</option>
-            </select>
-            <input
-              type="number"
-              placeholder="Credit Limit"
-              className="px-4 py-2 border rounded-lg"
-              value={newAccCreditLimit}
-              onChange={(e) => setNewAccCreditLimit(e.target.value)}
-            />
-            <select
-              className="px-4 py-2 border rounded-lg"
-              value={newAccPaymentTerms}
-              onChange={(e) => setNewAccPaymentTerms(e.target.value)}
-            >
-              <option>Net 30</option>
-              <option>Net 60</option>
-              <option>Due Upon Receipt</option>
-            </select>
-            <input
-              type="text"
-              placeholder="Tax ID / VAT"
-              className="px-4 py-2 border rounded-lg"
-              value={newAccTaxId}
-              onChange={(e) => setNewAccTaxId(e.target.value)}
-            />
-            <input
-              type="email"
-              placeholder="Billing Email"
-              className="px-4 py-2 border rounded-lg"
-              value={newAccBillingEmail}
-              onChange={(e) => setNewAccBillingEmail(e.target.value)}
-            />
+        <div className="bg-white rounded-xl shadow-lg p-8 mb-8 border border-gray-200">
+          <h3 className="text-2xl font-bold text-gray-900 mb-6">Create New City Ledger Account</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Account Name *</label>
+              <input
+                type="text"
+                placeholder="Enter account name"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                value={newAccName}
+                onChange={(e) => setNewAccName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Account Type</label>
+              <select
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                value={newAccType}
+                onChange={(e) => setNewAccType(e.target.value)}
+              >
+                <option>Corporate</option>
+                <option>Travel Agent</option>
+                <option>Group Master</option>
+                <option>Wholesale</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Credit Limit *</label>
+              <input
+                type="number"
+                placeholder="0.00"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                value={newAccCreditLimit}
+                onChange={(e) => setNewAccCreditLimit(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Payment Terms</label>
+              <select
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                value={newAccPaymentTerms}
+                onChange={(e) => setNewAccPaymentTerms(e.target.value)}
+              >
+                <option>Net 30</option>
+                <option>Net 60</option>
+                <option>Due Upon Receipt</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Tax ID / VAT</label>
+              <input
+                type="text"
+                placeholder="Enter tax ID"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                value={newAccTaxId}
+                onChange={(e) => setNewAccTaxId(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Billing Email</label>
+              <input
+                type="email"
+                placeholder="billing@company.com"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                value={newAccBillingEmail}
+                onChange={(e) => setNewAccBillingEmail(e.target.value)}
+              />
+            </div>
           </div>
-          <div className="flex gap-3 mt-4">
+          <div className="flex gap-4 mt-8">
             <button
-              className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700"
+              className="bg-green-600 text-white px-8 py-3 rounded-lg hover:bg-green-700 font-semibold shadow-sm transition-colors duration-200"
               onClick={() => {
                 if (!newAccName.trim() || !newAccCreditLimit) return;
                 const ok = addCityLedgerAccount({
@@ -352,7 +396,7 @@ export const CityLedger: React.FC = () => {
                 setNewAccBillingEmail('');
                 setShowNewForm(false);
               }}
-              className="bg-gray-300 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-400"
+              className="bg-gray-100 text-gray-700 px-8 py-3 rounded-lg hover:bg-gray-200 font-semibold transition-colors duration-200"
             >
               Cancel
             </button>
@@ -364,22 +408,43 @@ export const CityLedger: React.FC = () => {
         {(cityLedger || []).map(account => {
           const isClosed = account.status === 'Closed';
           const accountStatus = account.status || 'Active';
-          const statusColor = isClosed ? 'bg-gray-100 border-l-gray-400' : accountStatus === 'On Hold' ? 'bg-white border-l-yellow-500' : 'bg-white border-l-blue-500';
-          
+          const statusColor = isClosed ? 'bg-gray-50 border-l-gray-400' : accountStatus === 'On Hold' ? 'bg-white border-l-yellow-500' : 'bg-white border-l-blue-500';
+
           return (
-          <div key={account.id} className={`${statusColor} rounded-xl shadow-lg p-6 border-l-4 ${isClosed ? 'opacity-75' : ''}`}>
+          <div key={account.id} className={`${statusColor} rounded-xl shadow-lg p-6 border-l-4 border border-gray-200 ${isClosed ? 'opacity-75' : ''} hover:shadow-xl transition-shadow duration-200`}>
             <div className="flex justify-between items-start mb-4">
-              <div>
-                <h3 className="text-xl font-bold text-gray-800">{account.account_name || account.name}</h3>
-                <p className="text-sm text-gray-600">{account.type}</p>
-                <p className="text-xs text-gray-500 mt-1">Payment Terms: {account.paymentTerms}</p>
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-2">
+                  <button
+                    onClick={() => {
+                      const newExpanded = new Set(expandedAccounts);
+                      if (newExpanded.has(account.id)) {
+                        newExpanded.delete(account.id);
+                      } else {
+                        newExpanded.add(account.id);
+                      }
+                      setExpandedAccounts(newExpanded);
+                    }}
+                    className="text-gray-500 hover:text-gray-700 p-1"
+                    title={expandedAccounts.has(account.id) ? 'Collapse' : 'Expand'}
+                  >
+                    <svg className={`w-5 h-5 transform transition-transform ${expandedAccounts.has(account.id) ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                  <div>
+                    <h3 className="text-xl font-bold text-gray-800">{account.account_name || account.name}</h3>
+                    <p className="text-sm text-gray-600">{account.type}</p>
+                    <p className="text-xs text-gray-500 mt-1">Payment Terms: {account.paymentTerms}</p>
+                  </div>
+                </div>
               </div>
               <div className="flex items-center gap-2 flex-col">
                 <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                  isClosed 
-                    ? 'bg-gray-300 text-gray-700' 
-                    : accountStatus === 'On Hold' 
-                    ? 'bg-yellow-100 text-yellow-700' 
+                  isClosed
+                    ? 'bg-gray-300 text-gray-700'
+                    : accountStatus === 'On Hold'
+                    ? 'bg-yellow-100 text-yellow-700'
                     : 'bg-green-100 text-green-700'
                 }`}>
                   {accountStatus}
@@ -403,237 +468,247 @@ export const CityLedger: React.FC = () => {
               </div>
             </div>
             
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div className="bg-gray-50 p-3 rounded-lg">
-                <p className="text-xs text-gray-600 mb-1">Credit Limit</p>
-                <p className="text-lg font-bold text-gray-800">${Number(account.creditLimit || 0).toLocaleString()}</p>
-              </div>
-              <div className="bg-red-50 p-3 rounded-lg">
-                <p className="text-xs text-gray-600 mb-1">Current Balance</p>
-                <p className="text-lg font-bold text-red-600">${Number(account.balance || 0).toLocaleString()}</p>
-              </div>
-            </div>
-            
-            <div className="flex gap-2 mb-3">
-              <button
-                className="flex-1 bg-blue-500 text-white py-2 rounded-lg text-sm hover:bg-blue-600"
-                onClick={() => { setActiveTxnAccount(account.id); setTxnType('debit'); resetTxnForm(); }}
-              >
-                Post Charge
-              </button>
-              <button
-                className="flex-1 bg-green-500 text-white py-2 rounded-lg text-sm hover:bg-green-600"
-                onClick={() => { setActiveTxnAccount(account.id); setTxnType('credit'); resetTxnForm(); }}
-              >
-                Record Payment
-              </button>
-              <button
-                className="flex-1 bg-purple-500 text-white py-2 rounded-lg text-sm hover:bg-purple-600"
-                onClick={() => {
-                  const togglingOn = editAccountId !== account.id;
-                  setEditAccountId(togglingOn ? account.id : null);
-                  if (togglingOn) {
-                    setDetailsForm({
-                      status: String(account.status || 'Active'),
-                      contactName: String(account.contactName || ''),
-                      contactPhone: String(account.contactPhone || ''),
-                      contactEmail: String(account.contactEmail || ''),
-                      address: String(account.address || ''),
-                      billingCycle: String(account.billingCycle || 'Monthly'),
-                      paymentTerms: String(account.paymentTerms || ''),
-                      creditLimit: String(Number(account.creditLimit || 0))
-                    });
-                  }
-                }}
-              >
-                Edit Details
-              </button>
-            </div>
-
-            {editAccountId === account.id && (
-              <div className="bg-gray-50 p-4 rounded-lg mb-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <select className="px-3 py-2 border rounded" value={detailsForm.status} onChange={e => setDetailsForm({ ...detailsForm, status: e.target.value })}>
-                    <option>Active</option>
-                    <option>Closed</option>
-                    <option>On Hold</option>
-                  </select>
-                  <input className="px-3 py-2 border rounded" placeholder="Contact Name" value={detailsForm.contactName} onChange={e => setDetailsForm({ ...detailsForm, contactName: e.target.value })} />
-                  <input className="px-3 py-2 border rounded" placeholder="Contact Phone" value={detailsForm.contactPhone} onChange={e => setDetailsForm({ ...detailsForm, contactPhone: e.target.value })} />
-                  <input className="px-3 py-2 border rounded" placeholder="Contact Email" value={detailsForm.contactEmail} onChange={e => setDetailsForm({ ...detailsForm, contactEmail: e.target.value })} />
-                  <input className="px-3 py-2 border rounded col-span-1 md:col-span-2" placeholder="Address" value={detailsForm.address} onChange={e => setDetailsForm({ ...detailsForm, address: e.target.value })} />
-                  <select className="px-3 py-2 border rounded" value={detailsForm.billingCycle} onChange={e => setDetailsForm({ ...detailsForm, billingCycle: e.target.value })}>
-                    <option>Monthly</option>
-                    <option>Weekly</option>
-                    <option>Upon Checkout</option>
-                  </select>
-                  <input className="px-3 py-2 border rounded" placeholder="Payment Terms" value={detailsForm.paymentTerms} onChange={e => setDetailsForm({ ...detailsForm, paymentTerms: e.target.value })} />
-                  <input type="number" className="px-3 py-2 border rounded" placeholder="Credit Limit" value={detailsForm.creditLimit} onChange={e => setDetailsForm({ ...detailsForm, creditLimit: e.target.value })} />
-                </div>
-                <div className="flex gap-2 mt-3">
-                  <button className="bg-blue-600 text-white px-4 py-2 rounded" onClick={() => {
-                    updateCityLedgerAccount(account.id, {
-                      status: detailsForm.status as any,
-                      contactName: detailsForm.contactName,
-                      contactPhone: detailsForm.contactPhone,
-                      contactEmail: detailsForm.contactEmail,
-                      address: detailsForm.address,
-                      billingCycle: detailsForm.billingCycle as any,
-                      paymentTerms: detailsForm.paymentTerms || account.paymentTerms,
-                      creditLimit: detailsForm.creditLimit ? Number(detailsForm.creditLimit) : account.creditLimit
-                    });
-                    setEditAccountId(null);
-                  }}>Save</button>
-                  <button className="bg-gray-300 text-gray-800 px-4 py-2 rounded" onClick={() => setEditAccountId(null)}>Cancel</button>
-                </div>
-              </div>
-            )}
-
-            {activeTxnAccount === account.id && (
-              <div className="bg-gray-50 p-4 rounded-lg mb-4">
-                <h4 className="text-sm font-semibold mb-2">{txnType === 'debit' ? 'Post Charge' : 'Record Payment'}</h4>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                  <input type="date" className="px-3 py-2 border rounded" value={txnForm.date} onChange={e => setTxnForm({ ...txnForm, date: e.target.value })} />
-                  <input className="px-3 py-2 border rounded" placeholder="Reference" value={txnForm.reference} onChange={e => setTxnForm({ ...txnForm, reference: e.target.value })} />
-                  <input className="px-3 py-2 border rounded col-span-1 md:col-span-2" placeholder="Description" value={txnForm.description} onChange={e => setTxnForm({ ...txnForm, description: e.target.value })} />
-                  <input type="number" className="px-3 py-2 border rounded" placeholder="Amount" value={txnForm.amount} onChange={e => setTxnForm({ ...txnForm, amount: e.target.value })} />
-                </div>
-                <div className="flex gap-2 mt-3">
-                  <button className="bg-blue-600 text-white px-4 py-2 rounded" onClick={() => {
-                    const amountNum = Number(txnForm.amount || 0);
-                    if (!amountNum || !txnForm.description) return;
-                    addCityLedgerTransaction(account.id, {
-                      date: txnForm.date,
-                      reference: txnForm.reference,
-                      description: txnForm.description,
-                      debit: txnType === 'debit' ? amountNum : undefined,
-                      credit: txnType === 'credit' ? amountNum : undefined,
-                    });
-                    setActiveTxnAccount(null);
-                    resetTxnForm();
-                  }}>Add</button>
-                  <button className="bg-gray-300 text-gray-800 px-4 py-2 rounded" onClick={() => { setActiveTxnAccount(null); resetTxnForm(); }}>Cancel</button>
-                </div>
-              </div>
-            )}
-
-            {account.transactions && account.transactions.length > 0 && (
-              <div className="mt-4">
-                <h4 className="text-sm font-semibold mb-2">Activity Log</h4>
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-100">
-                    <tr>
-                      <th className="px-2 py-2 text-left">Date</th>
-                      <th className="px-2 py-2 text-left">Reference</th>
-                      <th className="px-2 py-2 text-left">Description</th>
-                      <th className="px-2 py-2 text-right">Debit</th>
-                      <th className="px-2 py-2 text-right">Credit</th>
-                      <th className="px-2 py-2 text-center">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {(account.transactions || []).map((t, idx) => {
-                      // Shorten reference and resolve names
-                      const rawRef = String(t.reference || '-');
-                      const displayRef = rawRef.length > 4 ? `...${rawRef.slice(-4)}` : rawRef;
-                      
-                      let resolvedName = '';
-                      if (rawRef.toLowerCase().includes('folio-')) {
-                        const gid = rawRef.split('folio-')[1];
-                        const g = guests.find((x: any) => x.id === gid);
-                        if (g) resolvedName = ` (${g.name || g.full_name})`;
-                      }
-
-                      return (
-                        <tr key={idx} className={t.is_voided ? 'opacity-50 line-through bg-gray-50' : ''}>
-                          <td className="px-2 py-2 whitespace-nowrap">{typeof t.date === 'object' && t.date instanceof Date ? t.date.toISOString().split('T')[0] : t.date}</td>
-                          <td className="px-2 py-2 font-mono text-xs" title={rawRef}>
-                            {displayRef}{resolvedName}
-                          </td>
-                          <td className="px-2 py-2">{t.description}</td>
-                          <td className="px-2 py-2 text-right">{t.debit != null && t.debit !== '' ? `$${Number(t.debit).toFixed(2)}` : '-'}</td>
-                          <td className="px-2 py-2 text-right">{t.credit != null && t.credit !== '' ? `$${Number(t.credit).toFixed(2)}` : '-'}</td>
-                          <td className="px-2 py-2 text-center">
-                            <div className="flex justify-center gap-2 flex-wrap">
-                              {!t.is_voided && (
-                                <button 
-                                  className="text-amber-600 hover:text-amber-800 hover:bg-amber-50 px-2 py-1 rounded whitespace-nowrap text-xs font-medium" 
-                                  title="Void Transaction"
-                                  onClick={() => {
-                                    if (confirm('Void this transaction? It will be zeroed out but remain in history.')) {
-                                      voidCityLedgerTransaction?.(account.id, t.id || idx);
-                                    }
-                                  }}
-                                >
-                                  Void
-                                </button>
-                              )}
-                              {!t.is_voided && (
-                                <button 
-                                  className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded whitespace-nowrap text-xs font-medium" 
-                                  title="Transfer to Guest Folio"
-                                  onClick={() => {
-                                    setTransferTxn({ accountId: account.id, txnId: t.id });
-                                  }}
-                                >
-                                  Transfer
-                                </button>
-                              )}
-                              <button 
-                                className="text-red-600 hover:text-red-800 hover:bg-red-50 px-2 py-1 rounded whitespace-nowrap text-xs font-medium" 
-                                title="Delete Permanently"
-                                onClick={() => {
-                                  if (confirm('Permanently delete this transaction log? This cannot be undone.')) {
-                                    deleteCityLedgerTransaction?.(account.id, t.id || idx);
-                                  }
-                                }}
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            <div className="mt-4">
-              <div className="flex justify-between items-center mb-2">
-                <h4 className="text-sm font-semibold">Notes & History</h4>
-                <button className="text-blue-600 text-sm" onClick={() => setActiveNoteAccount(activeNoteAccount === account.id ? null : account.id)}>
-                  {activeNoteAccount === account.id ? 'Close' : 'Add Note'}
-                </button>
-              </div>
-              {activeNoteAccount === account.id && (
-                <div className="bg-gray-50 p-3 rounded mb-3">
-                  <textarea className="w-full px-3 py-2 border rounded" rows={3} placeholder="Enter note..." value={noteText} onChange={e => setNoteText(e.target.value)} />
-                  <div className="flex gap-2 mt-2">
-                    <button className="bg-blue-600 text-white px-4 py-2 rounded" onClick={() => {
-                      if (!noteText.trim()) return;
-                      addCityLedgerNote(account.id, { date: new Date().toISOString().slice(0, 10), author: 'Front Desk', text: noteText.trim() });
-                      setNoteText('');
-                      setActiveNoteAccount(null);
-                    }}>Save Note</button>
-                    <button className="bg-gray-300 text-gray-800 px-4 py-2 rounded" onClick={() => { setNoteText(''); setActiveNoteAccount(null); }}>Cancel</button>
+            {expandedAccounts.has(account.id) && (
+              <>
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="bg-gray-50 p-3 rounded-lg">
+                    <p className="text-xs text-gray-600 mb-1">Credit Limit</p>
+                    <p className="text-lg font-bold text-gray-800">${Number(account.creditLimit || 0).toLocaleString()}</p>
+                  </div>
+                  <div className="bg-red-50 p-3 rounded-lg">
+                    <p className="text-xs text-gray-600 mb-1">Current Balance</p>
+                    <p className="text-lg font-bold text-red-600">${Number(account.balance || 0).toLocaleString()}</p>
                   </div>
                 </div>
-              )}
-              {account.notes && account.notes.length > 0 ? (
-                <ul className="space-y-2 text-sm">
-                  {(account.notes || []).map((n, i) => (
-                    <li key={i} className="bg-gray-50 p-2 rounded">
-                      <div className="text-xs text-gray-500">{typeof n.date === 'object' && n.date instanceof Date ? n.date.toISOString().split('T')[0] : n.date} • {n.author || 'Staff'}</div>
-                      <div className="text-gray-800">{n.text}</div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-xs text-gray-500">No notes yet.</p>
-              )}
-            </div>
+
+                <div className="flex gap-2 mb-3">
+                  <button
+                    className="flex-1 bg-blue-500 text-white py-2 rounded-lg text-sm hover:bg-blue-600"
+                    onClick={() => { setActiveTxnAccount(account.id); setTxnType('debit'); resetTxnForm(); }}
+                  >
+                    Post Charge
+                  </button>
+                  <button
+                    className="flex-1 bg-green-500 text-white py-2 rounded-lg text-sm hover:bg-green-600"
+                    onClick={() => { setActiveTxnAccount(account.id); setTxnType('credit'); resetTxnForm(); }}
+                  >
+                    Record Payment
+                  </button>
+                  <button
+                    className="flex-1 bg-purple-500 text-white py-2 rounded-lg text-sm hover:bg-purple-600"
+                    onClick={() => {
+                      const togglingOn = editAccountId !== account.id;
+                      setEditAccountId(togglingOn ? account.id : null);
+                      if (togglingOn) {
+                        setDetailsForm({
+                          status: String(account.status || 'Active'),
+                          contactName: String(account.contactName || ''),
+                          contactPhone: String(account.contactPhone || ''),
+                          contactEmail: String(account.contactEmail || ''),
+                          address: String(account.address || ''),
+                          billingCycle: String(account.billingCycle || 'Monthly'),
+                          paymentTerms: String(account.paymentTerms || ''),
+                          creditLimit: String(Number(account.creditLimit || 0))
+                        });
+                      }
+                    }}
+                  >
+                    Edit Details
+                  </button>
+                </div>
+              </>
+            )}
+
+            {expandedAccounts.has(account.id) && (
+              <>
+                {editAccountId === account.id && (
+                  <div className="bg-gray-50 p-4 rounded-lg mb-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <select className="px-3 py-2 border rounded" value={detailsForm.status} onChange={e => setDetailsForm({ ...detailsForm, status: e.target.value })}>
+                        <option>Active</option>
+                        <option>Closed</option>
+                        <option>On Hold</option>
+                      </select>
+                      <input className="px-3 py-2 border rounded" placeholder="Contact Name" value={detailsForm.contactName} onChange={e => setDetailsForm({ ...detailsForm, contactName: e.target.value })} />
+                      <input className="px-3 py-2 border rounded" placeholder="Contact Phone" value={detailsForm.contactPhone} onChange={e => setDetailsForm({ ...detailsForm, contactPhone: e.target.value })} />
+                      <input className="px-3 py-2 border rounded" placeholder="Contact Email" value={detailsForm.contactEmail} onChange={e => setDetailsForm({ ...detailsForm, contactEmail: e.target.value })} />
+                      <input className="px-3 py-2 border rounded col-span-1 md:col-span-2" placeholder="Address" value={detailsForm.address} onChange={e => setDetailsForm({ ...detailsForm, address: e.target.value })} />
+                      <select className="px-3 py-2 border rounded" value={detailsForm.billingCycle} onChange={e => setDetailsForm({ ...detailsForm, billingCycle: e.target.value })}>
+                        <option>Monthly</option>
+                        <option>Weekly</option>
+                        <option>Upon Checkout</option>
+                      </select>
+                      <input className="px-3 py-2 border rounded" placeholder="Payment Terms" value={detailsForm.paymentTerms} onChange={e => setDetailsForm({ ...detailsForm, paymentTerms: e.target.value })} />
+                      <input type="number" className="px-3 py-2 border rounded" placeholder="Credit Limit" value={detailsForm.creditLimit} onChange={e => setDetailsForm({ ...detailsForm, creditLimit: e.target.value })} />
+                    </div>
+                    <div className="flex gap-2 mt-3">
+                      <button className="bg-blue-600 text-white px-4 py-2 rounded" onClick={() => {
+                        updateCityLedgerAccount(account.id, {
+                          status: detailsForm.status as any,
+                          contactName: detailsForm.contactName,
+                          contactPhone: detailsForm.contactPhone,
+                          contactEmail: detailsForm.contactEmail,
+                          address: detailsForm.address,
+                          billingCycle: detailsForm.billingCycle as any,
+                          paymentTerms: detailsForm.paymentTerms || account.paymentTerms,
+                          creditLimit: detailsForm.creditLimit ? Number(detailsForm.creditLimit) : account.creditLimit
+                        });
+                        setEditAccountId(null);
+                      }}>Save</button>
+                      <button className="bg-gray-300 text-gray-800 px-4 py-2 rounded" onClick={() => setEditAccountId(null)}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {activeTxnAccount === account.id && (
+                  <div className="bg-gray-50 p-4 rounded-lg mb-4">
+                    <h4 className="text-sm font-semibold mb-2">{txnType === 'debit' ? 'Post Charge' : 'Record Payment'}</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                      <input type="date" className="px-3 py-2 border rounded" value={txnForm.date} onChange={e => setTxnForm({ ...txnForm, date: e.target.value })} />
+                      <input className="px-3 py-2 border rounded" placeholder="Reference" value={txnForm.reference} onChange={e => setTxnForm({ ...txnForm, reference: e.target.value })} />
+                      <input className="px-3 py-2 border rounded col-span-1 md:col-span-2" placeholder="Description" value={txnForm.description} onChange={e => setTxnForm({ ...txnForm, description: e.target.value })} />
+                      <input type="number" className="px-3 py-2 border rounded" placeholder="Amount" value={txnForm.amount} onChange={e => setTxnForm({ ...txnForm, amount: e.target.value })} />
+                    </div>
+                    <div className="flex gap-2 mt-3">
+                      <button className="bg-blue-600 text-white px-4 py-2 rounded" onClick={() => {
+                        const amountNum = Number(txnForm.amount || 0);
+                        if (!amountNum || !txnForm.description) return;
+                        addCityLedgerTransaction(account.id, {
+                          date: txnForm.date,
+                          reference: txnForm.reference,
+                          description: txnForm.description,
+                          debit: txnType === 'debit' ? amountNum : undefined,
+                          credit: txnType === 'credit' ? amountNum : undefined,
+                        });
+                        setActiveTxnAccount(null);
+                        resetTxnForm();
+                      }}>Add</button>
+                      <button className="bg-gray-300 text-gray-800 px-4 py-2 rounded" onClick={() => { setActiveTxnAccount(null); resetTxnForm(); }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {account.transactions && account.transactions.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="text-sm font-semibold mb-2">Activity Log</h4>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-100">
+                          <tr>
+                            <th className="px-2 py-2 text-left">Date</th>
+                            <th className="px-2 py-2 text-left">Reference</th>
+                            <th className="px-2 py-2 text-left">Description</th>
+                            <th className="px-2 py-2 text-right">Debit</th>
+                            <th className="px-2 py-2 text-right">Credit</th>
+                            <th className="px-2 py-2 text-center">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {(account.transactions || []).map((t, idx) => {
+                            // Shorten reference and resolve names
+                            const rawRef = String(t.reference || '-');
+                            const displayRef = rawRef.length > 4 ? `...${rawRef.slice(-4)}` : rawRef;
+
+                            let resolvedName = '';
+                            if (rawRef.toLowerCase().includes('folio-')) {
+                              const gid = rawRef.split('folio-')[1];
+                              const g = guests.find((x: any) => x.id === gid);
+                              if (g) resolvedName = ` (${g.name || g.full_name})`;
+                            }
+
+                            return (
+                              <tr key={idx} className={t.is_voided ? 'opacity-50 line-through bg-gray-50' : ''}>
+                                <td className="px-2 py-2 whitespace-nowrap">{typeof t.date === 'object' && t.date instanceof Date ? t.date.toISOString().split('T')[0] : t.date}</td>
+                                <td className="px-2 py-2 font-mono text-xs" title={rawRef}>
+                                  {displayRef}{resolvedName}
+                                </td>
+                                <td className="px-2 py-2">{t.description}</td>
+                                <td className="px-2 py-2 text-right">{t.debit != null && t.debit !== '' ? `$${Number(t.debit).toFixed(2)}` : '-'}</td>
+                                <td className="px-2 py-2 text-right">{t.credit != null && t.credit !== '' ? `$${Number(t.credit).toFixed(2)}` : '-'}</td>
+                                <td className="px-2 py-2 text-center">
+                                  <div className="flex justify-center gap-1 flex-wrap">
+                                    {!t.is_voided && (
+                                      <button
+                                        className="text-amber-600 hover:text-amber-800 hover:bg-amber-50 px-1 py-0.5 rounded text-xs font-medium"
+                                        title="Void Transaction"
+                                        onClick={() => {
+                                          if (confirm('Void this transaction? It will be zeroed out but remain in history.')) {
+                                            voidCityLedgerTransaction?.(account.id, t.id || idx);
+                                          }
+                                        }}
+                                      >
+                                        Void
+                                      </button>
+                                    )}
+                                    {!t.is_voided && (
+                                      <button
+                                        className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-1 py-0.5 rounded text-xs font-medium"
+                                        title="Transfer to Guest Folio"
+                                        onClick={() => {
+                                          setTransferTxn({ accountId: account.id, txnId: t.id });
+                                        }}
+                                      >
+                                        Transfer
+                                      </button>
+                                    )}
+                                    <button
+                                      className="text-red-600 hover:text-red-800 hover:bg-red-50 px-1 py-0.5 rounded text-xs font-medium text-xs"
+                                      title="Delete Permanently"
+                                      onClick={() => {
+                                        if (confirm('Permanently delete this transaction log? This cannot be undone.')) {
+                                          deleteCityLedgerTransaction?.(account.id, t.id || idx);
+                                        }
+                                      }}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="text-sm font-semibold">Notes & History</h4>
+                    <button className="text-blue-600 text-sm" onClick={() => setActiveNoteAccount(activeNoteAccount === account.id ? null : account.id)}>
+                      {activeNoteAccount === account.id ? 'Close' : 'Add Note'}
+                    </button>
+                  </div>
+                  {activeNoteAccount === account.id && (
+                    <div className="bg-gray-50 p-3 rounded mb-3">
+                      <textarea className="w-full px-3 py-2 border rounded" rows={3} placeholder="Enter note..." value={noteText} onChange={e => setNoteText(e.target.value)} />
+                      <div className="flex gap-2 mt-2">
+                        <button className="bg-blue-600 text-white px-4 py-2 rounded" onClick={() => {
+                          if (!noteText.trim()) return;
+                          addCityLedgerNote(account.id, { date: new Date().toISOString().slice(0, 10), author: 'Front Desk', text: noteText.trim() });
+                          setNoteText('');
+                          setActiveNoteAccount(null);
+                        }}>Save Note</button>
+                        <button className="bg-gray-300 text-gray-800 px-4 py-2 rounded" onClick={() => { setNoteText(''); setActiveNoteAccount(null); }}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                  {account.notes && account.notes.length > 0 ? (
+                    <ul className="space-y-2 text-sm">
+                      {(account.notes || []).map((n, i) => (
+                        <li key={i} className="bg-gray-50 p-2 rounded">
+                          <div className="text-xs text-gray-500">{typeof n.date === 'object' && n.date instanceof Date ? n.date.toISOString().split('T')[0] : n.date} • {n.author || 'Staff'}</div>
+                          <div className="text-gray-800">{n.text}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-gray-500">No notes yet.</p>
+                  )}
+                </div>
+              </>
+            )}
           </div>
           );
         })}
@@ -756,35 +831,161 @@ export const CityLedger: React.FC = () => {
         </div>
       )}
 
-      <div className="bg-white rounded-xl shadow-lg p-6">
-        <h3 className="text-xl font-bold text-gray-800 mb-4">AR Aging Report</h3>
-        <table className="w-full">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Account</th>
-              <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Current</th>
-              <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">1-30 Days</th>
-              <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">31-60 Days</th>
-              <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">60+ Days</th>
-              <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Total</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {(cityLedger || []).map(account => {
-              const aging = computeAging(account);
-              return (
-                <tr key={account.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm text-gray-800">{account.account_name || account.name || account.id}</td>
-                  <td className="px-4 py-3 text-sm text-right text-gray-600">${Number(aging.current).toFixed(2)}</td>
-                  <td className="px-4 py-3 text-sm text-right text-gray-600">${Number(aging.d30).toFixed(2)}</td>
-                  <td className="px-4 py-3 text-sm text-right text-gray-600">${Number(aging.d60).toFixed(2)}</td>
-                  <td className="px-4 py-3 text-sm text-right text-red-600">${Number(aging.d90).toFixed(2)}</td>
-                  <td className="px-4 py-3 text-sm text-right font-bold text-gray-800">${Number(aging.total).toFixed(2)}</td>
+        <div className="bg-white rounded-xl shadow-lg p-8 border border-gray-200">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-2xl font-bold text-gray-900">Accounts Receivable Aging Report</h3>
+            <button
+              onClick={exportAgingCSV}
+              className="bg-blue-600 text-white px-6 py-3 rounded-lg text-sm hover:bg-blue-700 font-semibold shadow-sm transition-colors duration-200"
+            >
+              Export CSV
+            </button>
+          </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-full">
+            <thead className="bg-gray-100">
+              <tr>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Account</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Current</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">1-30 Days</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">31-60 Days</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">60+ Days</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {(cityLedger || []).map(account => {
+                const aging = computeAging(account);
+                return (
+                  <tr key={account.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-sm text-gray-800">{account.account_name || account.name || account.id}</td>
+                    <td className="px-4 py-3 text-sm text-right text-gray-600">${Number(aging.current).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-sm text-right text-gray-600">${Number(aging.d30).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-sm text-right text-gray-600">${Number(aging.d60).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-red-600">${Number(aging.d90).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-sm text-right font-bold text-gray-800">${Number(aging.total).toFixed(2)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+        {/* Additional Reports Section */}
+        <div className="mt-12 space-y-8">
+          <div className="text-center">
+            <h3 className="text-3xl font-bold text-gray-900 mb-2">Financial Reports & Analytics</h3>
+            <p className="text-gray-600">Comprehensive insights into your accounts receivable</p>
+          </div>
+
+          {/* Account Summary Report */}
+          <div className="bg-white rounded-xl shadow-lg p-8 border border-gray-200">
+            <h4 className="text-xl font-bold text-gray-900 mb-6">Account Summary Overview</h4>
+          {(() => {
+            const summary = computeAccountSummary();
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <p className="text-sm text-gray-600">Active Accounts</p>
+                  <p className="text-2xl font-bold text-blue-600">{summary.active}</p>
+                </div>
+                <div className="bg-green-50 p-4 rounded-lg">
+                  <p className="text-sm text-gray-600">Total Credit Limit</p>
+                  <p className="text-2xl font-bold text-green-600">${summary.totalCreditLimit.toLocaleString()}</p>
+                </div>
+                <div className="bg-red-50 p-4 rounded-lg">
+                  <p className="text-sm text-gray-600">Total Outstanding</p>
+                  <p className="text-2xl font-bold text-red-600">${summary.totalBalance.toLocaleString()}</p>
+                </div>
+                <div className="bg-yellow-50 p-4 rounded-lg">
+                  <p className="text-sm text-gray-600">Accounts with Overdue</p>
+                  <p className="text-2xl font-bold text-yellow-600">{summary.overdue}</p>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
+          {/* Top Debtors Report */}
+          <div className="bg-white rounded-xl shadow-lg p-8 border border-gray-200">
+            <h4 className="text-xl font-bold text-gray-900 mb-6">Top Debtors Analysis</h4>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Account</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Type</th>
+                  <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Balance</th>
+                  <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Credit Limit</th>
+                  <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Utilization</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {computeTopDebtors().map(account => {
+                  const balance = Number(account.balance || 0);
+                  const creditLimit = Number(account.creditLimit || 0);
+                  const utilization = creditLimit > 0 ? (balance / creditLimit * 100).toFixed(1) : 'N/A';
+                  return (
+                    <tr key={account.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm text-gray-800">{account.account_name || account.name}</td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{account.type}</td>
+                      <td className="px-4 py-3 text-sm text-right text-red-600">${balance.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">${creditLimit.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">{utilization}%</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+          {/* Aging Summary */}
+          <div className="bg-white rounded-xl shadow-lg p-8 border border-gray-200">
+            <h4 className="text-xl font-bold text-gray-900 mb-6">AR Aging Summary</h4>
+          {(() => {
+            const totalCurrent = cityLedger.reduce((sum, acc) => sum + computeAging(acc).current, 0);
+            const total30 = cityLedger.reduce((sum, acc) => sum + computeAging(acc).d30, 0);
+            const total60 = cityLedger.reduce((sum, acc) => sum + computeAging(acc).d60, 0);
+            const total90 = cityLedger.reduce((sum, acc) => sum + computeAging(acc).d90, 0);
+            const grandTotal = totalCurrent + total30 + total60 + total90;
+
+            return (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                  <div className="text-center">
+                    <p className="text-sm text-gray-600 mb-1">Current</p>
+                    <p className="text-xl font-bold text-green-600">${totalCurrent.toLocaleString()}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm text-gray-600 mb-1">1-30 Days</p>
+                    <p className="text-xl font-bold text-yellow-600">${total30.toLocaleString()}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm text-gray-600 mb-1">31-60 Days</p>
+                    <p className="text-xl font-bold text-orange-600">${total60.toLocaleString()}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm text-gray-600 mb-1">60+ Days</p>
+                    <p className="text-xl font-bold text-red-600">${total90.toLocaleString()}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm text-gray-600 mb-1">Total AR</p>
+                    <p className="text-2xl font-bold text-gray-800">${grandTotal.toLocaleString()}</p>
+                  </div>
+                </div>
+                <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-600">
+                    <strong>Collection Priority:</strong> Focus on the ${total90.toLocaleString()} in 60+ days aging first,
+                    followed by ${total60.toLocaleString()} in 31-60 days.
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+          </div>
+        </div>
       </div>
     </div>
   );
