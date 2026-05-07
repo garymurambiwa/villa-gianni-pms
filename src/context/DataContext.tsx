@@ -1570,6 +1570,13 @@ check_in_date = ?, check_out_date = ?, status = ?,
             }));
 
             setCityLedger(accountsWithNotes);
+
+            // Save to localStorage for reports to access
+            try {
+              localStorage.setItem('corepms_city_ledger', JSON.stringify(accountsWithNotes));
+            } catch (e) {
+              console.warn('Failed to save city ledger to localStorage:', e);
+            }
           }
         }
       }

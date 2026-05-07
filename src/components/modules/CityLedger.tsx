@@ -92,11 +92,18 @@ export const CityLedger: React.FC = () => {
     for (const c of charges) {
       const amt = c.amount;
       if (amt <= 0) continue;
-      const days = Math.floor((nowMs - new Date(c.date).getTime()) / (1000 * 60 * 60 * 24));
-      if (days < 30) current += amt;
-      else if (days < 60) d30 += amt;
-      else if (days < 90) d60 += amt;
-      else d90 += amt;
+      try {
+        const chargeDate = new Date(c.date);
+        if (isNaN(chargeDate.getTime())) continue; // Skip invalid dates
+        const days = Math.floor((nowMs - chargeDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (days < 30) current += amt;
+        else if (days < 60) d30 += amt;
+        else if (days < 90) d60 += amt;
+        else d90 += amt;
+      } catch {
+        // If date parsing fails, treat as current
+        current += amt;
+      }
     }
 
     const total = current + d30 + d60 + d90;
@@ -158,32 +165,41 @@ export const CityLedger: React.FC = () => {
     const txRows = (account.transactions || [])
       .slice()
       .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
-      .map((t: any) => `<tr><td>${t.date}</td><td>${t.reference || '-'}</td><td>${t.description || ''}</td><td style="text-align:right">${t.debit != null ? `$${Number(t.debit).toFixed(2)}` : '-'}</td><td style="text-align:right">${t.credit != null ? `$${Number(t.credit).toFixed(2)}` : '-'}</td></tr>`) 
+      .map((t: any) => `<tr><td>${t.date}</td><td>${t.reference || '-'}</td><td>${t.description || ''}</td><td style="text-align:right">${t.debit != null ? `$${Number(t.debit).toFixed(2)}` : '-'}</td><td style="text-align:right">${t.credit != null ? `$${Number(t.credit).toFixed(2)}` : '-'}</td></tr>`)
       .join('');
 
     const html = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8" />
-<title>City Ledger Statement</title>
+<title>Villa Gianni - City Ledger Statement</title>
 <style>
-  body { font-family: Arial, sans-serif; padding: 24px; }
-  h1 { margin: 0 0 8px; }
-  .meta { margin-bottom: 16px; font-size: 12px; color: #444; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { border: 1px solid #ddd; padding: 6px; font-size: 12px; }
-  th { background: #f5f5f5; text-align: left; }
-  .summary { margin-top: 16px; }
+  body { font-family: Arial, sans-serif; padding: 24px; color: #333; }
+  .header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 16px; margin-bottom: 24px; }
+  .logo { font-size: 28px; font-weight: bold; color: #2563eb; margin-bottom: 8px; }
+  .subtitle { font-size: 16px; color: #666; }
+  h1 { margin: 0 0 8px; font-size: 24px; color: #1f2937; }
+  .meta { margin-bottom: 16px; font-size: 12px; color: #444; background: #f8fafc; padding: 12px; border-radius: 6px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 12px; }
+  th { background: #f9fafb; text-align: left; font-weight: 600; color: #374151; }
+  .summary { margin-top: 24px; }
+  .summary h3 { color: #1f2937; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; }
+  .footer { margin-top: 32px; text-align: center; font-size: 10px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 16px; }
 </style>
 </head>
 <body>
-<h1>${account.name} (${account.id})</h1>
-<div class="meta">
-  Type: ${account.type} | Status: ${account.status || 'Active'} | Terms: ${account.paymentTerms}
-  | Credit Limit: $${Number(account.creditLimit || 0).toLocaleString()}
-  | Balance: $${Number(account.balance || 0).toLocaleString()}
+<div class="header">
+  <div class="logo">Villa Gianni</div>
+  <div class="subtitle">Hospitality Management System</div>
 </div>
-<h2>Transactions</h2>
+<h1>City Ledger Statement</h1>
+<div class="meta">
+  <strong>Account:</strong> ${account.account_name || account.name} (${account.id})<br/>
+  <strong>Type:</strong> ${account.type} | <strong>Status:</strong> ${account.status || 'Active'} | <strong>Payment Terms:</strong> ${account.paymentTerms}<br/>
+  <strong>Credit Limit:</strong> $${Number(account.creditLimit || 0).toLocaleString()} | <strong>Current Balance:</strong> $${Number(account.balance || 0).toLocaleString()}
+</div>
+<h2>Transaction History</h2>
 <table>
   <thead>
     <tr><th>Date</th><th>Reference</th><th>Description</th><th style="text-align:right">Debit</th><th style="text-align:right">Credit</th></tr>
@@ -191,9 +207,9 @@ export const CityLedger: React.FC = () => {
   <tbody>${txRows}</tbody>
 </table>
 <div class="summary">
-  <h3>AR Aging</h3>
+  <h3>Accounts Receivable Aging Summary</h3>
   <table>
-    <tr><th>Current</th><th>1-30</th><th>31-60</th><th>60+</th><th>Total</th></tr>
+    <tr><th>Current (&lt;30 days)</th><th>1-30 Days</th><th>31-60 Days</th><th>60+ Days</th><th>Total Outstanding</th></tr>
     <tr>
       <td>$${Number(aging.current).toFixed(2)}</td>
       <td>$${Number(aging.d30).toFixed(2)}</td>
@@ -202,6 +218,9 @@ export const CityLedger: React.FC = () => {
       <td><b>$${Number(aging.total).toFixed(2)}</b></td>
     </tr>
   </table>
+</div>
+<div class="footer">
+  Villa Gianni | Confidential Business Document | Generated on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}
 </div>
 <script>window.onload = function(){ window.print(); }</script>
 </body>
@@ -607,7 +626,7 @@ export const CityLedger: React.FC = () => {
                           {(account.transactions || []).map((t, idx) => {
                             // Shorten reference and resolve names
                             const rawRef = String(t.reference || '-');
-                            const displayRef = rawRef.length > 4 ? `...${rawRef.slice(-4)}` : rawRef;
+                            const displayRef = rawRef.length > 4 ? `bill #${rawRef.slice(-4)}` : rawRef;
 
                             let resolvedName = '';
                             if (rawRef.toLowerCase().includes('folio-')) {
@@ -618,7 +637,7 @@ export const CityLedger: React.FC = () => {
 
                             return (
                               <tr key={idx} className={t.is_voided ? 'opacity-50 line-through bg-gray-50' : ''}>
-                                <td className="px-2 py-2 whitespace-nowrap">{typeof t.date === 'object' && t.date instanceof Date ? t.date.toISOString().split('T')[0] : t.date}</td>
+                                <td className="px-2 py-2 whitespace-nowrap text-xs">{typeof t.date === 'object' && t.date instanceof Date ? t.date.toISOString().split('T')[0] : (t.date || '').slice(-10)}</td>
                                 <td className="px-2 py-2 font-mono text-xs" title={rawRef}>
                                   {displayRef}{resolvedName}
                                 </td>

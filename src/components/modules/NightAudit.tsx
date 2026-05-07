@@ -684,6 +684,7 @@ const NightAudit: React.FC = () => {
             <div className="p-3 border rounded"><div className="text-xs">Total Revenue</div><div className="text-xl font-semibold">${lastReports.totalRevenue}</div></div>
             <div className="p-3 border rounded"><div className="text-xs">Avg Daily Rate</div><div className="text-xl font-semibold">${lastReports.avgDailyRate}</div></div>
             <div className="p-3 border rounded"><div className="text-xs">RevPAR</div><div className="text-xl font-semibold">${lastReports.revPAR}</div></div>
+            <div className="p-3 border rounded"><div className="text-xs">City Ledger Count</div><div className="text-xl font-semibold">{lastReports.cityLedgerCount || 0}</div></div>
           </div>
         ) : (
           <div className="text-sm text-gray-600">No report data yet. Run Night Audit to generate.</div>

@@ -331,10 +331,12 @@ export const generateShiftXReadingHTML = (shiftMeta: any, transactions: any[], t
 
 export const generateCityLedgerReceiptHTML = (account: any, receiptNo: string, txns: any[], taxRate?: number): string => {
   const brand = (() => { try { return readReceiptBranding(); } catch { return { restaurant_name: 'Property' }; } })();
-  const rows = txns.map(t => '<tr><td>' + t.date + '</td><td>' + t.description + '</td><td class="r">' + formatCurrency(Number(t.debit || 0) - Number(t.credit || 0)) + '</td></tr>').join('');
+  const accountName = account.name || account.account_name || 'Unknown Account';
+  const accountId = account.id || 'N/A';
+  const rows = txns.map(t => '<tr><td>' + (t.date || '') + '</td><td>' + (t.description || '') + '</td><td class="r">' + formatCurrency(Number(t.debit || 0) - Number(t.credit || 0)) + '</td></tr>').join('');
   return '<!DOCTYPE html><html><head><style>body { font-family: Arial, sans-serif; font-size: 12px; padding: 20px; } .r { text-align: right; } .c { text-align: center; } .b { font-weight: bold; } table { width: 100%; border-collapse: collapse; margin-top: 10px; } td, th { border: 1px solid #ddd; padding: 8px; }</style></head><body>' +
     '<div class="c b" style="font-size:1.4em">' + brand.restaurant_name + '</div><div class="c">CITY LEDGER RECEIPT</div><hr/>' +
-    '<div>Account: ' + account.name + ' (#' + account.id + ')</div><div>Receipt: ' + receiptNo + '</div><table><thead><tr><th>Date</th><th>Description</th><th class="r">Amount</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<div>Account: ' + accountName + ' (#' + accountId + ')</div><div>Receipt: ' + receiptNo + '</div><table><thead><tr><th>Date</th><th>Description</th><th class="r">Amount</th></tr></thead><tbody>' + rows + '</tbody></table>' +
     '<div class="c" style="margin-top:20px">Thank you!</div></body></html>';
 };
 
