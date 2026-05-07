@@ -138,26 +138,35 @@ export const GLAccounting: React.FC = () => {
       <BackToAccountingButton />
       <h3 className="text-xl font-bold">GL Accounting</h3>
 
-      <div className="p-4 border rounded">
-        <div className="font-semibold mb-2">Chart of Accounts</div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
-          <Input placeholder="Account ID" value={newAcc.id} onChange={(e)=>setNewAcc({...newAcc, id: e.target.value})} />
-          <Input placeholder="Name" value={newAcc.name} onChange={(e)=>setNewAcc({...newAcc, name: e.target.value})} />
-          <select className="border rounded px-2 py-2" value={newAcc.category} onChange={(e)=>setNewAcc({...newAcc, category: e.target.value as any})}>
+      <div className="ds-section">
+        <div className="ds-subheader">Chart of Accounts</div>
+        <div className="ds-grid-responsive mb-3">
+          <Input className="ds-input-compact" placeholder="Account ID" value={newAcc.id} onChange={(e)=>setNewAcc({...newAcc, id: e.target.value})} />
+          <Input className="ds-input-compact" placeholder="Name" value={newAcc.name} onChange={(e)=>setNewAcc({...newAcc, name: e.target.value})} />
+          <select className="ds-select-compact border rounded" value={newAcc.category} onChange={(e)=>setNewAcc({...newAcc, category: e.target.value as any})}>
             {(['Asset','Liability','Equity','Revenue','Expense'] as const).map(c=> <option key={c} value={c}>{c}</option>)}
           </select>
           {newAcc.category === 'Expense' && (
-            <select className="border rounded px-2 py-2" value={newAcc.department} onChange={(e)=>setNewAcc({...newAcc, department: e.target.value})}>
+            <select className="ds-select-compact border rounded" value={newAcc.department} onChange={(e)=>setNewAcc({...newAcc, department: e.target.value})}>
               <option value="">Department</option>
               {['Rooms','F&B','Administration','Sales & Marketing'].map(d=> <option key={d} value={d}>{d}</option>)}
             </select>
           )}
         </div>
-        <Button variant="outline" onClick={()=>{ if (!newAcc.id || !newAcc.name) return; const next = [...coa, { ...newAcc }]; gl.setAccounts(next); setCoa(next); setNewAcc({ id:'', name:'', category:'Asset' as any, department:'' }); }}>Add Account</Button>
-        <div className="mt-3 text-xs text-gray-600">Predefined USALI base accounts are seeded automatically.</div>
-        <div className="mt-4 overflow-x-auto">
-          <table className="text-sm w-full">
-            <thead><tr><th className="p-2 text-left">ID</th><th className="p-2 text-left">Name</th><th className="p-2">Category</th><th className="p-2">Department</th><th className="p-2">Actions</th></tr></thead>
+        <Button variant="outline" className="ds-button-compact" onClick={()=>{ if (!newAcc.id || !newAcc.name) return; const next = [...coa, { ...newAcc }]; gl.setAccounts(next); setCoa(next); setNewAcc({ id:'', name:'', category:'Asset' as any, department:'' }); }}>Add Account</Button>
+        <div className="ds-muted mt-2">Predefined USALI base accounts are seeded automatically.</div>
+        
+        <div className="ds-table-container mt-4">
+          <table className="ds-table">
+            <thead>
+              <tr>
+                <th className="p-2">ID</th>
+                <th className="p-2">Name</th>
+                <th className="p-2">Category</th>
+                <th className="p-2">Department</th>
+                <th className="p-2">Actions</th>
+              </tr>
+            </thead>
             <tbody>{coa.map(a => {
               const isEditing = editingId === a.id;
               const draft = { name: pendingEdits[a.id]?.name ?? a.name, category: pendingEdits[a.id]?.category ?? a.category, department: pendingEdits[a.id]?.department ?? a.department } as any;
@@ -169,28 +178,28 @@ export const GLAccounting: React.FC = () => {
               };
               return (
                 <tr key={a.id}>
-                  <td className="p-2">{a.id}</td>
+                  <td className="p-2 font-mono text-xs">{String(a.id)}</td>
                   <td className="p-2">
                     {isEditing ? (
-                      <Input value={draft.name} onChange={(e)=> setPendingEdits(p=> ({ ...p, [a.id]: { ...p[a.id], name: e.target.value } }))} />
+                      <Input className="ds-input-compact" value={draft.name} onChange={(e)=> setPendingEdits(p=> ({ ...p, [a.id]: { ...p[a.id], name: e.target.value } }))} />
                     ) : (
-                      a.name
+                      String(a.name)
                     )}
                     {isEditing && (()=>{ const err = validateDraft(); return err ? <div className="text-xs text-red-700 mt-1">{err}</div> : null; })()}
                   </td>
                   <td className="p-2">
                     {isEditing ? (
-                      <select className="border rounded px-2 py-2" value={draft.category} onChange={(e)=> setPendingEdits(p=> ({ ...p, [a.id]: { ...p[a.id], category: e.target.value as any, department: e.target.value === 'Expense' ? (p[a.id]?.department || a.department || '') : '' } }))}>
+                      <select className="ds-select-compact border rounded" value={draft.category} onChange={(e)=> setPendingEdits(p=> ({ ...p, [a.id]: { ...p[a.id], category: e.target.value as any, department: e.target.value === 'Expense' ? (p[a.id]?.department || a.department || '') : '' } }))}>
                         {(['Asset','Liability','Equity','Revenue','Expense'] as const).map(c=> <option key={c} value={c}>{c}</option>)}
                       </select>
                     ) : (
-                      a.category
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100">{String(a.category)}</span>
                     )}
                   </td>
                   <td className="p-2">
                     {isEditing ? (
                       draft.category === 'Expense' ? (
-                        <select className="border rounded px-2 py-2" value={draft.department || ''} onChange={(e)=> setPendingEdits(p=> ({ ...p, [a.id]: { ...p[a.id], department: e.target.value } }))}>
+                        <select className="ds-select-compact border rounded" value={draft.department || ''} onChange={(e)=> setPendingEdits(p=> ({ ...p, [a.id]: { ...p[a.id], department: e.target.value } }))}>
                           <option value="">Department</option>
                           {['Rooms','F&B','Administration','Sales & Marketing'].map(d=> <option key={d} value={d}>{d}</option>)}
                         </select>
@@ -198,28 +207,29 @@ export const GLAccounting: React.FC = () => {
                         <span>—</span>
                       )
                     ) : (
-                      a.department || '—'
+                      <span className="text-xs italic">{String(a.department || '—')}</span>
                     )}
                   </td>
                   <td className="p-2">
                     {isEditing ? (
-                      <div className="flex items-center gap-2">
-                        <Button variant="outline" onClick={()=>{
-                          const err = validateDraft();
-                          if (err) { toast({ title: 'Validation Error', description: err }); return; }
-                          setEditingId(null);
-                        }}>Save</Button>
-                        <Button variant="outline" onClick={()=>{ setEditingId(null); setPendingEdits(p=> { const n = { ...p }; delete n[a.id]; return n; }); }}>Cancel</Button>
+                      <div className="flex gap-1">
+                        <Button variant="outline" className="ds-button-compact bg-green-50" onClick={() => { if (!validateDraft()) setEditingId(null); }}>Done</Button>
+                        <Button variant="outline" className="ds-button-compact bg-red-50" onClick={() => { setPendingEdits(p => { const n = { ...p }; delete n[a.id]; return n; }); setEditingId(null); }}>Cancel</Button>
                       </div>
                     ) : (
-                      <Button variant="outline" onClick={()=>{ setEditingId(a.id); setPendingEdits(p=> ({ ...p, [a.id]: { name: a.name, category: a.category as any, department: a.department } })); }}>Edit</Button>
+                      <div className="flex gap-1">
+                        <Button variant="outline" className="ds-button-compact" onClick={() => setEditingId(a.id)}>Edit</Button>
+                        <Button variant="destructive" className="ds-button-compact" onClick={() => { if (confirm(`Delete account ${a.id}?`)) { const next = coa.filter(x => x.id !== a.id); gl.setAccounts(next); setCoa(next); } }}>Del</Button>
+                      </div>
                     )}
                   </td>
                 </tr>
               );
             })}</tbody>
           </table>
-          {Object.keys(pendingEdits).length > 0 && (
+        </div>
+      </div>
+      {Object.keys(pendingEdits).length > 0 && (
             <div className="mt-3 p-2 border rounded bg-yellow-50 text-xs">
               <div className="font-semibold mb-1">Pending Changes Preview</div>
               <div className="space-y-1">
@@ -234,8 +244,6 @@ export const GLAccounting: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
-      </div>
 
       <div className="p-4 border rounded">
         <div className="font-semibold mb-2">Code Mappings</div>
@@ -681,7 +689,7 @@ export const GLAccounting: React.FC = () => {
                             <table className="w-full text-xs mt-2">
                               <thead><tr><th className="p-1">Date</th><th className="p-1">Entry</th><th className="p-1">Ref</th><th className="p-1 text-right">Amount</th><th className="p-1">Description</th></tr></thead>
                               <tbody>
-                                {r.lines.map(l=> (<tr key={l.entryId+String(l.amount)}><td className="p-1">{l.date}</td><td className="p-1">{l.entryId}</td><td className="p-1">{l.reference||'—'}</td><td className="p-1 text-right">$ {Number(l.amount || 0).toFixed(2)}</td><td className="p-1">{l.description||'—'}</td></tr>))}
+                                {r.lines.map(l=> (<tr key={l.entryId+String(l.amount)}><td className="p-1">{String(l.date)}</td><td className="p-1">{String(l.entryId)}</td><td className="p-1">{String(l.reference||'—')}</td><td className="p-1 text-right">$ {Number(l.amount || 0).toFixed(2)}</td><td className="p-1">{String(l.description||'—')}</td></tr>))}
                               </tbody>
                             </table>
                           </details>

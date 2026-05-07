@@ -272,9 +272,9 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
                 <TableBody>
                   {pilferageData.map((item, idx) => (
                     <TableRow key={idx}>
-                      <TableCell className="font-medium">{item.item_name}</TableCell>
-                      <TableCell>{item.sku}</TableCell>
-                      <TableCell>{item.category}</TableCell>
+                      <TableCell className="font-medium">{String(item.item_name)}</TableCell>
+                      <TableCell>{String(item.sku)}</TableCell>
+                      <TableCell>{String(item.category)}</TableCell>
                       <TableCell className="text-right">{item.expected_qty}</TableCell>
                       <TableCell className="text-right">{item.actual_qty}</TableCell>
                       <TableCell className="text-right font-medium text-red-600">
@@ -288,10 +288,10 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
                       </TableCell>
                       <TableCell>
                         <Badge variant={getRiskColor(item.risk_level) as any}>
-                          {item.risk_level}
+                          {String(item.risk_level)}
                         </Badge>
                       </TableCell>
-                      <TableCell>{item.last_count_date}</TableCell>
+                      <TableCell>{String(item.last_count_date)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

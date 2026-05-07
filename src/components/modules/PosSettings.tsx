@@ -25,6 +25,7 @@ import { parseColor, getContrastRatio } from '@/lib/colorUtils';
 import {
   syncPosItemToDb,
   deletePosItemFromDb,
+  deletePosItemsFromDb,
   performFullSync,
   ensureTablesExist,
   fixItemVisibility,
@@ -690,6 +691,9 @@ const UserManagementPanel: React.FC = () => {
 const ShiftReportingPanel: React.FC = () => {
   const [shifts, setShifts] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(false);
+  const [selectedShift, setSelectedShift] = React.useState<string | null>(preselectedShift);
+  const [shiftData, setShiftData] = React.useState<any | null>(null);
+  const [reportLoading, setReportLoading] = React.useState(false);
 
   React.useEffect(() => {
     setLoading(true);
@@ -698,6 +702,53 @@ const ShiftReportingPanel: React.FC = () => {
       setLoading(false);
     });
   }, []);
+
+  const fetchShiftReport = async (shiftId: string) => {
+    if (!shiftId) return;
+    setReportLoading(true);
+    try {
+      // Fetch detailed shift data including transactions
+      const shiftRes = await db.query(
+        `SELECT * FROM pos_shifts WHERE id = ?`,
+        [shiftId]
+      );
+      
+      const transactionsRes = await db.query(
+        `SELECT * FROM pos_transactions WHERE shift_id = ? ORDER BY created_at`,
+        [shiftId]
+      );
+      
+      const itemsRes = await db.query(
+        `SELECT * FROM pos_shift_items WHERE shift_id = ?`,
+        [shiftId]
+      );
+      
+      const summary = {
+        shift: shiftRes.rows?.[0] || null,
+        transactions: transactionsRes.rows || [],
+        items: itemsRes.rows || [],
+        totals: {
+          sales: transactionsRes.rows?.reduce((sum, t) => sum + Number(t.amount || 0), 0) || 0,
+          cash: transactionsRes.rows?.reduce((sum, t) => sum + Number(t.cash_amount || 0), 0) || 0,
+          card: transactionsRes.rows?.reduce((sum, t) => sum + Number(t.card_amount || 0), 0) || 0,
+          room: transactionsRes.rows?.reduce((sum, t) => sum + Number(t.room_charge || 0), 0) || 0
+        }
+      };
+      
+      setShiftData(summary);
+    } catch (err) {
+      console.error('Failed to fetch shift report:', err);
+      toast({ title: 'Error', description: 'Failed to load shift data', variant: 'destructive' });
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (selectedShift) {
+      fetchShiftReport(selectedShift);
+    }
+  }, [selectedShift]);
 
   return (
     <div className="space-y-4">
@@ -731,13 +782,104 @@ const ShiftReportingPanel: React.FC = () => {
                   {s.status === 'open' ? `In: $${Number(s.start_balance).toFixed(2)}` : `Out: $${Number(s.end_balance || 0).toFixed(2)}`}
                 </td>
                 <td className="p-2 text-right">
-                  <Button variant="ghost" size="sm">Report</Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setSelectedShift(s.id)}
+                    disabled={reportLoading && selectedShift === s.id}
+                  >
+                    {reportLoading && selectedShift === s.id ? 'Loading...' : 'Report'}
+                  </Button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      
+      {shiftData && !reportLoading && (
+        <div className="mt-6 p-4 border rounded">
+          <div className="text-lg font-semibold mb-4">Shift Report: #{shiftData.shift?.id?.slice(-6) || 'Unknown'}</div>
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <div className="text-sm font-medium text-gray-500">Shift Details</div>
+              <table className="w-full text-sm space-y-2">
+                <tr><td className="p-1">Date:</td><td className="p-1 text-right">{new Date(shiftData.shift?.start_time).toLocaleDateString()}</td></tr>
+                <tr><td className="p-1">User:</td><td className="p-1 text-right">{shiftData.shift?.user_name || 'Unknown'}</td></tr>
+                <tr><td className="p-1">Status:</td><td className="p-1 text-right">{shiftData.shift?.status || 'Unknown'}</td></tr>
+                <tr><td className="p-1">Opened:</td><td className="p-1 text-right">{new Date(shiftData.shift?.start_time).toLocaleTimeString()}</td></tr>
+                <tr><td className="p-1">Closed:</td><td className="p-1 text-right">{shiftData.shift?.end_time ? new Date(shiftData.shift?.end_time).toLocaleTimeString() : 'Open'}</td></tr>
+              </table>
+            </div>
+            <div>
+              <div className="text-sm font-medium text-gray-500">Financial Summary</div>
+              <table className="w-full text-sm space-y-2">
+                <tr><td className="p-1">Total Sales:</td><td className="p-1 text-right font-bold">{formatCurrency(shiftData.totals.sales)}</td></tr>
+                <tr><td className="p-1">Cash:</td><td className="p-1 text-right">{formatCurrency(shiftData.totals.cash)}</td></tr>
+                <tr><td className="p-1">Card:</td><td className="p-1 text-right">{formatCurrency(shiftData.totals.card)}</td></tr>
+                <tr><td className="p-1">Room Charges:</td><td className="p-1 text-right">{formatCurrency(shiftData.totals.room)}</td></tr>
+                <tr><td className="p-1">Transaction Count:</td><td className="p-1 text-right">{shiftData.transactions.length}</td></tr>
+              </table>
+            </div>
+          </div>
+          
+          {shiftData.transactions.length > 0 && (
+            <div className="mb-4">
+              <div className="text-sm font-medium text-gray-500 mb-2">Transactions</div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="p-2 text-left">Time</th>
+                    <th className="p-2">Type</th>
+                    <th className="p-2">Amount</th>
+                    <th className="p-2">Method</th>
+                    <th className="p-2">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shiftData.transactions.map((t, i) => (
+                    <tr key={i} className="border-t">
+                      <td className="p-2">{new Date(t.created_at).toLocaleTimeString()}</td>
+                      <td className="p-2">{t.transaction_type || 'Unknown'}</td>
+                      <td className="p-2 text-right">{formatCurrency(Number(t.amount || 0))}</td>
+                      <td className="p-2">{t.payment_method || 'Unknown'}</td>
+                      <td className="p-2">{t.description || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          
+          {shiftData.items.length > 0 && (
+            <div className="mb-4">
+              <div className="text-sm font-medium text-gray-500 mb-2">Item Sales</div>
+              <div className="ds-table-container">
+                <table className="ds-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Item</th>
+                      <th scope="col" className="text-center">Qty</th>
+                      <th scope="col" className="text-right hide-on-mobile">Price</th>
+                      <th scope="col" className="text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shiftData.items.map((item: any, i: number) => (
+                      <tr key={i}>
+                        <td>{item.name || 'Unknown Item'}</td>
+                        <td className="text-center">{item.quantity || 0}</td>
+                        <td className="text-right hide-on-mobile">{formatCurrency(Number(item.price || 0))}</td>
+                        <td className="text-right font-semibold">{formatCurrency(Number(item.quantity || 0) * Number(item.price || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -747,6 +889,7 @@ export const PosSettings: React.FC = () => {
   const { toast } = useToast();
   const isManager = canManagePOS(user?.role);
   const isAdminRole = isAdmin(user?.role);
+  const [preselectedShift, setPreselectedShift] = React.useState<string | null>(null);
   const logSettingsError = (step: string, error: any, ctx?: any) => {
     try {
       const entry = { step, error: String((error && (error.message || error)) || 'Unknown'), ctx, at: new Date().toISOString() };
@@ -856,9 +999,14 @@ export const PosSettings: React.FC = () => {
       const init = (q === 'admin' || q === 'menu' || q === 'stock' || q === 'purchasing') ? (q as any) : (stored as any) || 'admin';
       setActiveTab(init);
       const anchor = String(params.get('anchor') || '').trim();
+      const shiftId = String(params.get('shift') || '').trim();
       const anchors = tabAnchors[init];
       const fallback = anchors.length ? anchors[0].id : '';
       setActiveSectionId(anchor || fallback);
+      // Preselect shift if specified in URL and we're in the shift reporting section
+      if (init === 'admin' && anchor === 'shift-reporting' && shiftId) {
+        setPreselectedShift(shiftId);
+      }
     } catch { }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1332,30 +1480,52 @@ export const PosSettings: React.FC = () => {
     startEdit(it);
   };
 
-  const deleteItem = (id: string) => {
+  const deleteItem = async (id: string) => {
     try {
+      // Optimistic delete from UI
+      const previousItems = [...items];
       const next = items.filter((it: any) => it.id !== id);
       setItems(next);
-      // Persist to localStorage so performFullSync doesn't overwrite with stale data
-      try { localStorage.setItem('corepms_pos_items', JSON.stringify(next)); } catch { }
-      log('STOCK_ITEM_DELETE', { id });
+      localStorage.setItem('corepms_pos_items', JSON.stringify(next));
 
-      // Delete from database asynchronously
-      deletePosItemFromDb(id).then(result => {
-        if (!result.success) {
-          console.warn('[PosSettings] Database delete failed:', result.error);
-          toast({ title: 'Delete sync failed', description: result.error, variant: 'destructive' });
-        } else {
-          toast({ title: 'Deleted', description: 'Item removed from database.' });
-          refreshData?.();
-        }
-      }).catch(err => {
-        console.warn('[PosSettings] Database delete error:', err);
-        toast({ title: 'Delete sync error', description: String(err), variant: 'destructive' });
-      });
+      const result = await deletePosItemFromDb(id);
+      if (!result.success) {
+        // Revert on failure
+        setItems(previousItems);
+        localStorage.setItem('corepms_pos_items', JSON.stringify(previousItems));
+        console.warn('[PosSettings] Database delete failed:', result.error);
+        toast({ title: 'Delete failed', description: result.error, variant: 'destructive' });
+      } else {
+        toast({ title: 'Deleted', description: 'Item removed from database.' });
+        log('STOCK_ITEM_DELETE', { id });
+        refreshData?.();
+      }
     } catch (err) {
       console.error(err);
-      toast({ title: 'Failed to delete item', description: String(err), variant: 'destructive' });
+      toast({ title: 'Error', description: 'Could not delete item.', variant: 'destructive' });
+    }
+  };
+
+  const bulkDeleteItems = async (ids: string[]) => {
+    try {
+      const previousItems = [...items];
+      const next = items.filter((it: any) => !ids.includes(it.id));
+      setItems(next);
+      localStorage.setItem('corepms_pos_items', JSON.stringify(next));
+
+      const result = await deletePosItemsFromDb(ids);
+      if (!result.success) {
+        setItems(previousItems);
+        localStorage.setItem('corepms_pos_items', JSON.stringify(previousItems));
+        toast({ title: 'Bulk delete failed', description: result.error, variant: 'destructive' });
+      } else {
+        toast({ title: 'Success', description: `${ids.length} items deleted.` });
+        log('STOCK_ITEMS_BULK_DELETE', { count: ids.length });
+        refreshData?.();
+      }
+    } catch (err) {
+      console.error(err);
+      toast({ title: 'Error', description: 'Could not delete items.', variant: 'destructive' });
     }
   };
 
@@ -2167,21 +2337,23 @@ export const PosSettings: React.FC = () => {
             const gaps = items.filter((it: any) => !it.category_id);
             if (!gaps.length) return (<div className="text-xs text-green-700 mt-2">All items have categories ✔</div>);
             return (
-              <div className="mt-2 overflow-x-auto">
-                <table className="text-sm w-full">
-                  <thead><tr><th className="p-2 text-left">ID</th><th className="p-2 text-left">Name</th><th className="p-2">Center</th><th className="p-2">subCategory</th></tr></thead>
-                  <tbody>
-                    {gaps.map((it: any) => (
-                      <tr key={it.id}>
-                        <td className="p-2 font-mono text-xs">{it.id}</td>
-                        <td className="p-2">{it.name}</td>
-                        <td className="p-2">{it.costCenter || '—'}</td>
-                        <td className="p-2">{String(it.subCategory || '—')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="text-xs text-red-700 mt-2">Missing categories: <span className="font-semibold">{gaps.length}</span></div>
+              <div className="space-y-2 mt-2">
+                <div className="ds-table-container">
+                  <table className="ds-table">
+                    <thead><tr><th scope="col">ID</th><th scope="col">Name</th><th scope="col" className="hide-on-mobile">Center</th><th scope="col">subCategory</th></tr></thead>
+                    <tbody>
+                      {gaps.map((it: any) => (
+                        <tr key={it.id}>
+                          <td className="font-mono text-xs">{it.id}</td>
+                          <td>{it.name}</td>
+                          <td className="hide-on-mobile">{it.costCenter || '—'}</td>
+                          <td>{String(it.subCategory || '—')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="text-xs text-red-700">Missing categories: <span className="font-semibold">{gaps.length}</span></div>
               </div>
             );
           })()}
@@ -2381,6 +2553,7 @@ export const PosSettings: React.FC = () => {
             onEditItem={(it) => requireManager('EDIT_ITEM', () => startEdit(it))}
             onFixItem={(it) => requireManager('FIX_ITEM', () => fixItem(it))}
             onDeleteItem={(id) => requireManager('DELETE_ITEM', () => deleteItem(id))}
+            onBulkDelete={(ids) => requireManager('DELETE_ITEM', () => bulkDeleteItems(ids))}
           />
         </Section>
       )}
@@ -2931,27 +3104,27 @@ export const PosSettings: React.FC = () => {
                   } catch { }
                 }}>Record Purchase</Button>
               </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
+              <div className="ds-table-container">
+                <table className="ds-table">
                   <thead>
-                    <tr className="text-left border-b">
-                      <th className="py-2 pr-4">Date</th>
-                      <th className="py-2 pr-4">Item</th>
-                      <th className="py-2 pr-4">Qty</th>
-                      <th className="py-2 pr-4">Cost</th>
+                    <tr>
+                      <th scope="col">Date</th>
+                      <th scope="col">Item</th>
+                      <th scope="col">Qty</th>
+                      <th scope="col" className="text-right">Cost</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(() => {
                       const raw = localStorage.getItem('corepms_purchases');
                       const list = raw ? JSON.parse(raw) : [];
-                      if (!list.length) return (<tr><td colSpan={4} className="py-2 text-gray-500">No purchases yet</td></tr>);
+                      if (!list.length) return (<tr><td colSpan={4} className="text-center py-4 text-gray-500">No purchases yet</td></tr>);
                       return list.slice(0, 50).map((p: any) => (
-                        <tr key={p.id} className="border-b">
-                          <td className="py-2 pr-4">{new Date(p.date).toLocaleString()}</td>
-                          <td className="py-2 pr-4">{p.item}</td>
-                          <td className="py-2 pr-4">{p.qty}</td>
-                          <td className="py-2 pr-4">{formatCurrency(Number(p.cost || 0))}</td>
+                        <tr key={p.id}>
+                          <td>{new Date(p.date).toLocaleString()}</td>
+                          <td>{p.item}</td>
+                          <td>{p.qty}</td>
+                          <td className="text-right font-mono">{formatCurrency(Number(p.cost || 0))}</td>
                         </tr>
                       ));
                     })()}
@@ -2978,39 +3151,41 @@ export const PosSettings: React.FC = () => {
                   } catch { }
                 }}>Add Supplier</Button>
               </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
+              <div className="ds-table-container">
+                <table className="ds-table">
                   <thead>
-                    <tr className="text-left border-b">
-                      <th className="py-2 pr-4">Name</th>
-                      <th className="py-2 pr-4">Contact</th>
-                      <th className="py-2 pr-4">Actions</th>
+                    <tr>
+                      <th scope="col">Name</th>
+                      <th scope="col" className="hide-on-mobile">Contact</th>
+                      <th scope="col" className="text-center">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(() => {
                       const raw = localStorage.getItem('corepms_suppliers');
                       const list = raw ? JSON.parse(raw) : [];
-                      if (!list.length) return (<tr><td colSpan={3} className="py-2 text-gray-500">No suppliers</td></tr>);
+                      if (!list.length) return (<tr><td colSpan={3} className="text-center py-4 text-gray-500">No suppliers</td></tr>);
                       return list.slice(0, 50).map((s: any) => (
-                        <tr key={s.id} className="border-b">
-                          <td className="py-2 pr-4">{s.name}</td>
-                          <td className="py-2 pr-4">{s.contact}</td>
-                          <td className="py-2 pr-4">
-                            <Button variant="outline" onClick={() => {
-                              const name = prompt('Edit name', s.name) || s.name;
-                              const contact = prompt('Edit contact', s.contact) || s.contact;
-                              const raw2 = localStorage.getItem('corepms_suppliers');
-                              const list2 = raw2 ? JSON.parse(raw2) : [];
-                              localStorage.setItem('corepms_suppliers', JSON.stringify(list2.map((x: any) => x.id === s.id ? { ...x, name, contact } : x)));
-                              log('SUPPLIER_EDIT', { id: s.id });
-                            }}>Edit</Button>
-                            <Button variant="destructive" onClick={() => {
-                              const raw2 = localStorage.getItem('corepms_suppliers');
-                              const list2 = raw2 ? JSON.parse(raw2) : [];
-                              localStorage.setItem('corepms_suppliers', JSON.stringify(list2.filter((x: any) => x.id !== s.id)));
-                              log('SUPPLIER_DELETE', { id: s.id });
-                            }}>Delete</Button>
+                        <tr key={s.id}>
+                          <td>{s.name}</td>
+                          <td className="hide-on-mobile">{s.contact}</td>
+                          <td>
+                            <div className="flex gap-1 justify-center">
+                              <Button variant="outline" className="ds-button-compact" onClick={() => {
+                                const name = prompt('Edit name', s.name) || s.name;
+                                const contact = prompt('Edit contact', s.contact) || s.contact;
+                                const raw2 = localStorage.getItem('corepms_suppliers');
+                                const list2 = raw2 ? JSON.parse(raw2) : [];
+                                localStorage.setItem('corepms_suppliers', JSON.stringify(list2.map((x: any) => x.id === s.id ? { ...x, name, contact } : x)));
+                                log('SUPPLIER_EDIT', { id: s.id });
+                              }}>Edit</Button>
+                              <Button variant="destructive" className="ds-button-compact" onClick={() => {
+                                const raw2 = localStorage.getItem('corepms_suppliers');
+                                const list2 = raw2 ? JSON.parse(raw2) : [];
+                                localStorage.setItem('corepms_suppliers', JSON.stringify(list2.filter((x: any) => x.id !== s.id)));
+                                log('SUPPLIER_DELETE', { id: s.id });
+                              }}>Delete</Button>
+                            </div>
                           </td>
                         </tr>
                       ));

@@ -295,7 +295,7 @@ export const FrontOffice: React.FC = () => {
         <div class="summary">
           <h3>Summary</h3>
           <p>Total Arrivals: ${arrivingGuests.length}</p>
-          <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}</p>
+          <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (Number(r.rate) || 0), 0).toFixed(2)}</p>
         </div>
       </body>
       </html>
@@ -400,7 +400,7 @@ export const FrontOffice: React.FC = () => {
           </table>
           <div class="summary">
             <p>Total Arrivals: ${arrivingGuests.length}</p>
-            <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}</p>
+            <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (Number(r.rate) || 0), 0).toFixed(2)}</p>
           </div>
         </div>
       </body>
@@ -511,8 +511,8 @@ export const FrontOffice: React.FC = () => {
                 <tr>
                   <td>${r.guestName}</td>
                   <td>${roomAssignment}</td>
-                  <td>${r.checkIn}</td>
-                  <td>${r.checkOut}</td>
+                   <td>${r.checkIn  ? String(r.checkIn).split('T')[0]  : 'N/A'}</td>
+                   <td>${r.checkOut ? String(r.checkOut).split('T')[0] : 'N/A'}</td>
                   <td>${r.adults + (r.children || 0)}</td>
                   <td>${getResPackage(r)}</td>
                 </tr>
@@ -758,7 +758,7 @@ export const FrontOffice: React.FC = () => {
             </table>
             <div class="summary">
               <p>Total Arrivals: ${arrivingGuests.length}</p>
-              <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}</p>
+              <p>Expected Revenue: $${arrivingGuests.reduce((sum, r) => sum + (Number(r.rate) || 0), 0).toFixed(2)}</p>
             </div>
           </div>
           
@@ -945,14 +945,30 @@ export const FrontOffice: React.FC = () => {
     setSelectedResId(resId);
     setRateOverride(res.rate?.toString() || '');
     setSelectedPackage(sanitizePackageCode(res.packageCode || res.package_code || 'RO', 'RO'));
-    setTaxInclusive(!!res.taxInclusive); // Default to existing or false
+    setTaxInclusive(!!res.taxInclusive);
 
-    // Auto-select a room if available
-    if (availableRooms.length > 0) {
-      // Try to match room type first
-      const match = availableRooms.find(r => r.type === res.roomType);
-      setSelectedRoom(match ? match.id : availableRooms[0].id);
+    // Room selection priority:
+    // 1. Use reservation's pre-assigned room (room_id) if it exists and is available
+    // 2. Match by room type from available rooms
+    // 3. Do NOT auto-fallback to availableRooms[0] — that causes wrong room check-ins
+    const preAssignedRoomId = res.room_id || res.roomId;
+    if (preAssignedRoomId) {
+      // Pre-assigned room exists — use it (may be OC if re-checking-in)
+      const preRoom = rooms.find((r: any) => r.id === preAssignedRoomId);
+      if (preRoom) {
+        setSelectedRoom(preAssignedRoomId);
+        setCheckInDialogOpen(true);
+        return;
+      }
+    }
+
+    // No pre-assignment — match by room type, but do NOT auto-select if ambiguous
+    const matchByType = availableRooms.filter((r: any) => r.type === (res.roomType || res.room_type));
+    if (matchByType.length === 1) {
+      // Only one match — safe to auto-select
+      setSelectedRoom(matchByType[0].id);
     } else {
+      // Multiple matches or no match — let the user explicitly choose
       setSelectedRoom(null);
     }
 
@@ -1198,18 +1214,18 @@ export const FrontOffice: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex items-center space-x-2 bg-white p-4 rounded-lg shadow-sm border">
-        <Search className="h-5 w-5 text-gray-400" />
+      <div className="flex items-center space-x-2 bg-white p-2 sm:p-4 rounded-lg shadow-sm border">
+        <Search className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400" />
         <Input
           placeholder="Search guest name or reservation ID..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="flex-1 border-none shadow-none focus-visible:ring-0"
+          className="flex-1 border-none shadow-none focus-visible:ring-0 ds-input-compact sm:h-10 sm:text-sm"
         />
       </div>
 
       <Tabs defaultValue="arrivals" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-6 lg:w-[750px] h-auto">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-6 lg:grid-cols-7 h-auto p-1 bg-muted">
           <TabsTrigger value="in_house">In House ({inHouse.length})</TabsTrigger>
           <TabsTrigger value="arrivals">Arrivals ({arrivals.length})</TabsTrigger>
           <TabsTrigger value="departures">Departed ({checkedOutToday.length})</TabsTrigger>
@@ -1255,7 +1271,13 @@ export const FrontOffice: React.FC = () => {
                         <TableCell>{res.roomType}</TableCell>
                         <TableCell>
                           <div className="text-sm">
-                            {format(new Date(res.checkIn), 'MMM d')} - {format(new Date(res.checkOut), 'MMM d')}
+                            {res.checkIn && !isNaN(new Date(res.checkIn).getTime())
+                              ? format(new Date(res.checkIn), 'MMM d')
+                              : 'N/A'}
+                            {' - '}
+                            {res.checkOut && !isNaN(new Date(res.checkOut).getTime())
+                              ? format(new Date(res.checkOut), 'MMM d')
+                              : 'N/A'}
                           </div>
                         </TableCell>
                         <TableCell>${res.rate}</TableCell>
@@ -1379,17 +1401,18 @@ export const FrontOffice: React.FC = () => {
                         <TableRow key={res.id}>
                           <TableCell className="font-bold">{roomNumber}</TableCell>
                           <TableCell>
-                            <div className="font-medium">{res.guestName}</div>
-                            <TableCell>
-                              {(() => {
-                                try {
-                                  const d = new Date(res.checkOut);
-                                  return isNaN(d.getTime()) ? '-' : format(d, 'MMM d, yyyy');
-                                } catch { return '-'; }
-                              })()}
-                            </TableCell>
-                            ${(res.rate || 0).toFixed(2)}
+                            <div className="font-medium">{res.guestName || 'Unknown'}</div>
+                            <div className="text-xs text-muted-foreground">ID: {res.id}</div>
                           </TableCell>
+                          <TableCell>
+                            {(() => {
+                              try {
+                                const d = new Date(res.checkOut);
+                                return (!res.checkOut || isNaN(d.getTime())) ? 'N/A' : format(d, 'MMM d, yyyy');
+                              } catch { return 'N/A'; }
+                            })()}
+                          </TableCell>
+                          <TableCell>${(Number(res.rate) || 0).toFixed(2)}</TableCell>
                           <TableCell><Badge variant="secondary">{getResPackage(res)}</Badge></TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
@@ -1484,7 +1507,7 @@ export const FrontOffice: React.FC = () => {
                             })()}
                           </TableCell>
                           <TableCell className="text-green-600">
-                            ${(res.rate || 0).toFixed(2)}
+                            ${(Number(res.rate) || 0).toFixed(2)}
                           </TableCell>
                           <TableCell><Badge variant="secondary" className="bg-gray-100 text-gray-800">Checked Out</Badge></TableCell>
                         </TableRow>
@@ -1957,10 +1980,11 @@ export const FrontOffice: React.FC = () => {
         reservationId={transferResId}
         currentRoomId={transferRoomId}
         onSuccess={() => {
-          // Trigger a refresh if the context doesn't auto-update, 
-          // but usually useData context updates via polling or subscription.
-          // For now, we can reload to be safe or assume context sync.
-          if (typeof window !== 'undefined') window.location.reload();
+          setTransferDialogOpen(false);
+          setTransferResId(null);
+          setTransferRoomId(null);
+          // loadAllData() is called inside TransferRoomModal before onSuccess fires
+          // so DataContext state is already fresh — no reload needed
         }}
       />
 
@@ -2423,7 +2447,7 @@ export const FrontOffice: React.FC = () => {
                     </td>
                     <td></td>
                     <td className="text-right font-bold">
-                      ${todayArrivals.reduce((sum, r) => sum + (r.rate || 0), 0).toFixed(2)}
+                      ${todayArrivals.reduce((sum, r) => sum + (Number(r.rate) || 0), 0).toFixed(2)}
                     </td>
                   </tr>
                 }
@@ -2470,7 +2494,7 @@ export const FrontOffice: React.FC = () => {
                           {getResPackage(res)}
                         </span>
                       </td>
-                      <td className="text-right font-medium">${(res.rate || 0).toFixed(2)}</td>
+                      <td className="text-right font-medium">${(Number(res.rate) || 0).toFixed(2)}</td>
                     </tr>
                   );
                 })}

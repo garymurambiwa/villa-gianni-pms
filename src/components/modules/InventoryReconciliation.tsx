@@ -104,7 +104,8 @@ export const InventoryReconciliation: React.FC = () => {
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const [showBatchReconDialog, setShowBatchReconDialog] = useState(false);
   const [showNewPeriodDialog, setShowNewPeriodDialog] = useState(false);
-  const [batchData, setBatchData] = useState<Record<string, { physicalQty: number }>>({});
+  const [showBackfillDialog, setShowBackfillDialog] = useState(false);
+  const [batchData, setBatchData] = useState<Record<string, { physicalQty: number; costPrice?: number }>>({});
   
   const [newPeriod, setNewPeriod] = useState({
     periodYear: new Date().getFullYear(),
@@ -221,213 +222,272 @@ export const InventoryReconciliation: React.FC = () => {
     }
   };
 
-  const createPeriod = async () => {
-    if (!newPeriod.startDate || !newPeriod.endDate) {
-      toast({ title: 'Please select start and end dates', variant: 'destructive' });
-      return;
-    }
+   const createPeriod = async () => {
+     if (!newPeriod.startDate || !newPeriod.endDate) {
+       toast({ title: 'Please select start and end dates', variant: 'destructive' });
+       return;
+     }
 
-    try {
-      const existingRes = await db.query(
-        'SELECT id FROM inventory_periods WHERE period_year = ? AND period_month = ?',
-        [newPeriod.periodYear, newPeriod.periodMonth]
-      );
-      if ('rows' in existingRes && existingRes.rows.length > 0) {
-        toast({ title: 'Period already exists for this month', variant: 'destructive' });
-        return;
-      }
+     try {
+       const existingRes = await db.query(
+         'SELECT id FROM inventory_periods WHERE period_year = ? AND period_month = ?',
+         [newPeriod.periodYear, newPeriod.periodMonth]
+       );
+       if ('rows' in existingRes && existingRes.rows.length > 0) {
+         toast({ title: 'Period already exists for this month', variant: 'destructive' });
+         return;
+       }
 
-      let openingStockValue = 0;
-      if (!newPeriod.isInitial) {
-        const latestRes = await db.query(
-          'SELECT closing_stock_value FROM inventory_periods WHERE status IN (?, ?) ORDER BY period_year DESC, period_month DESC LIMIT 1',
-          ['closed', 'locked']
-        );
-        if ('rows' in latestRes && latestRes.rows.length > 0) {
-          openingStockValue = Number(latestRes.rows[0].closing_stock_value || 0);
+       let openingStockValue = 0;
+       if (!newPeriod.isInitial) {
+         const latestRes = await db.query(
+           'SELECT closing_stock_value FROM inventory_periods WHERE status IN (?, ?) ORDER BY period_year DESC, period_month DESC LIMIT 1',
+           ['closed', 'locked']
+         );
+         if ('rows' in latestRes && latestRes.rows.length > 0) {
+           openingStockValue = Number(latestRes.rows[0].closing_stock_value || 0);
+         }
+       } else {
+         const stockRes = await db.query(
+           `SELECT SUM(p.stock_level * p.cost_price) as total FROM products p WHERE p.is_stock_item = true`
+         );
+         if ('rows' in stockRes && stockRes.rows.length > 0) {
+           openingStockValue = Number(stockRes.rows[0].total || 0);
+         }
+       }
+
+       const monthName = new Date(newPeriod.periodYear, newPeriod.periodMonth - 1).toLocaleString('default', { month: 'long' });
+       const periodName = `${monthName} ${newPeriod.periodYear}`;
+
+       // Use dedicated endpoint with singleton protection
+       const response = await fetch('/api/inventory/periods', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           period_name: periodName,
+           period_year: newPeriod.periodYear,
+           period_month: newPeriod.periodMonth,
+           start_date: newPeriod.startDate,
+           end_date: newPeriod.endDate,
+           status: 'open',
+           opening_stock_value: openingStockValue,
+           created_by: user?.name
+         })
+       });
+       const data = await response.json();
+       if (!response.ok || !data.ok) {
+         throw new Error(data.error || 'Failed to create period');
+       }
+       const periodId = data.rows[0]?.id;
+
+       // Audit log (can use generic db)
+       await db.query(
+         `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, is_historical_backfill)
+          VALUES (?, 'PERIOD_CREATED', ?, ?, false)`,
+         [periodId, user?.id, user?.name]
+       );
+
+       toast({ title: 'Inventory period created successfully' });
+       setShowNewPeriodDialog(false);
+       loadData();
+     } catch (e: any) {
+       console.error('Create period error:', e);
+       toast({ title: 'Failed to create period', variant: 'destructive' });
+     }
+   };
+
+   const openPeriod = async (periodId: string) => {
+     try {
+       const response = await fetch(`/api/inventory/periods/${periodId}`, {
+         method: 'PUT',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           status: 'open',
+           reopened_by: user?.name,
+           reopened_at: new Date().toISOString()
+         })
+       });
+       const data = await response.json();
+       if (!response.ok || !data.ok) {
+         throw new Error(data.error || 'Failed to open period');
+       }
+
+       toast({ title: 'Period opened successfully' });
+       loadData();
+     } catch (e: any) {
+       toast({ title: 'Failed to open period', variant: 'destructive' });
+     }
+   };
+
+    const startReconciliation = async (periodId: string) => {
+      try {
+        // Update status to reconciling via dedicated endpoint
+        const response = await fetch(`/api/inventory/periods/${periodId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'reconciling' })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          const msg = data.error || 'Failed to start reconciliation';
+          throw new Error(msg);
         }
-      } else {
-        const stockRes = await db.query(
-          `SELECT SUM(p.stock_level * p.cost_price) as total FROM products p WHERE p.is_stock_item = true`
-        );
-        if ('rows' in stockRes && stockRes.rows.length > 0) {
-          openingStockValue = Number(stockRes.rows[0].total || 0);
+
+        const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = ?', [periodId]);
+        if ('rows' in periodRes && periodRes.rows.length > 0) {
+          const period = periodRes.rows[0] as InventoryPeriod;
+          setSelectedPeriod(period);
+          await loadProducts(periodId);
         }
+
+        toast({ title: 'Reconciliation started' });
+        loadData();
+      } catch (e: any) {
+        console.error('Start reconciliation error:', e);
+        toast({ title: 'Failed to start reconciliation', description: e.message, variant: 'destructive' });
       }
-
-      const monthName = new Date(newPeriod.periodYear, newPeriod.periodMonth - 1).toLocaleString('default', { month: 'long' });
-      const periodName = `${monthName} ${newPeriod.periodYear}`;
-
-      const insertRes = await db.query(
-        `INSERT INTO inventory_periods (period_name, period_year, period_month, start_date, end_date, status, opening_stock_value, received_value, kitchen_cogs, cellar_cogs, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-        [periodName, newPeriod.periodYear, newPeriod.periodMonth, newPeriod.startDate, newPeriod.endDate, 'open', openingStockValue, 0, 0, 0, user?.name]
-      );
-
-      const periodId = (insertRes as any).rows[0].id;
-
-      await db.query(
-        `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, is_historical_backfill)
-         VALUES (?, 'PERIOD_CREATED', ?, ?, false)`,
-        [periodId, user?.id, user?.name]
-      );
-
-      toast({ title: 'Inventory period created successfully' });
-      setShowNewPeriodDialog(false);
-      loadData();
-    } catch (e: any) {
-      console.error('Create period error:', e);
-      toast({ title: 'Failed to create period', variant: 'destructive' });
-    }
-  };
-
-  const openPeriod = async (periodId: string) => {
-    try {
-      const openRes = await db.query("SELECT id FROM inventory_periods WHERE status = 'open'");
-      if ('rows' in openRes && openRes.rows.length > 0) {
-        toast({ title: 'Another period is already open', variant: 'destructive' });
-        return;
-      }
-
-      await db.query(
-        `UPDATE inventory_periods SET status = 'open', reopened_at = NOW(), reopened_by = ? WHERE id = ?`,
-        [user?.name, periodId]
-      );
-
-      toast({ title: 'Period opened successfully' });
-      loadData();
-    } catch (e: any) {
-      toast({ title: 'Failed to open period', variant: 'destructive' });
-    }
-  };
-
-  const startReconciliation = async (periodId: string) => {
-    try {
-      await db.query(
-        `UPDATE inventory_periods SET status = 'reconciling' WHERE id = ?`,
-        [periodId]
-      );
-
-      const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = ?', [periodId]);
-      if ('rows' in periodRes && periodRes.rows.length > 0) {
-        const period = periodRes.rows[0] as InventoryPeriod;
-        setSelectedPeriod(period);
-        await loadProducts(periodId);
-      }
-
-      toast({ title: 'Reconciliation started' });
-      loadData();
-    } catch (e: any) {
-      toast({ title: 'Failed to start reconciliation', variant: 'destructive' });
-    }
-  };
+    };
 
   const savePhysicalCounts = async () => {
     if (!selectedPeriod) return;
 
     try {
       for (const [productId, qty] of Object.entries(physicalCounts)) {
+        const physicalQty = Number(qty) || 0;
+        const today = new Date().toISOString().split('T')[0];
+
+        // Get product details to access current book quantity and cost
+        const productRes = await db.query(
+          'SELECT stock_level, cost_price FROM products WHERE id = ?',
+          [productId]
+        );
+        const product = ('rows' in productRes && productRes.rows?.[0]) || { stock_level: 0, cost_price: 0 };
+        const bookQty = Number(product.stock_level || 0);
+        const costPrice = Number(product.cost_price || 0);
+
+        // Calculate variance
+        const variance = physicalQty - bookQty;
+
+        // Fetch aggregated transaction sums for this period/product
+        const aggRes = await db.query(
+          `SELECT
+            COALESCE(SUM(CASE WHEN type = 'opening_balance' THEN quantity ELSE 0 END), 0) as opening_qty,
+            COALESCE(SUM(CASE WHEN type IN ('purchase', 'grv') THEN quantity ELSE 0 END), 0) as received_qty,
+            COALESCE(SUM(CASE WHEN type = 'usage' THEN quantity ELSE 0 END), 0) as usage_qty
+           FROM inventory_transactions
+           WHERE period_id = ? AND product_id = ?`,
+          [selectedPeriod.id, productId]
+        );
+        const agg = ('rows' in aggRes && aggRes.rows?.[0]) || { opening_qty: 0, received_qty: 0, usage_qty: 0 };
+        const openingQty = Number(agg.opening_qty || 0);
+        const receivedQty = Number(agg.received_qty || 0);
+        const usageQty = Number(agg.usage_qty || 0);
+
+        // Update product metadata
         await db.query(
           `UPDATE products SET last_inventory_period_id = ?, last_physical_qty = ?, last_physical_date = ? WHERE id = ?`,
-          [selectedPeriod.id, qty, new Date().toISOString().split('T')[0], productId]
+          [selectedPeriod.id, physicalQty, today, productId]
+        );
+
+        // Upsert inventory_snapshot with ON CONFLICT DO UPDATE
+        await db.query(
+          `INSERT INTO inventory_snapshots (period_id, product_id, physical_qty, variance, opening_qty, received_qty, system_usage_qty)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (period_id, product_id) DO UPDATE SET
+             physical_qty = excluded.physical_qty,
+             variance = excluded.variance,
+             opening_qty = excluded.opening_qty,
+             received_qty = excluded.received_qty,
+             system_usage_qty = excluded.system_usage_qty,
+             updated_at = NOW()`,
+          [selectedPeriod.id, productId, physicalQty, variance, openingQty, receivedQty, usageQty]
         );
       }
 
-      toast({ title: 'Physical counts saved' });
+      toast({ title: 'Physical counts saved successfully' });
     } catch (e: any) {
-      toast({ title: 'Failed to save counts', variant: 'destructive' });
+      console.error('Save physical counts error:', e);
+      toast({ title: 'Failed to save physical counts', description: e.message, variant: 'destructive' });
     }
   };
 
-  const closePeriod = async () => {
-    if (!selectedPeriod) return;
+   const closePeriod = async () => {
+     if (!selectedPeriod) return;
 
-    try {
-      const kitchenProds = products.filter(p => p.department === 'Kitchen');
-      const cellarProds = products.filter(p => p.department === 'Cellar');
-      
-      const kitchenOp = kitchenProds.reduce((sum, p) => sum + (p.last_physical_qty || p.stock_level || 0), 0);
-      const cellarOp = cellarProds.reduce((sum, p) => sum + (p.last_physical_qty || p.stock_level || 0), 0);
-      
-      const kitchenRec = transactions
-        .filter(t => t.period_id === selectedPeriod.id && t.department === 'Kitchen')
-        .reduce((sum, t) => sum + t.total_quantity, 0);
-      const cellarRec = transactions
-        .filter(t => t.period_id === selectedPeriod.id && t.department === 'Cellar')
-        .reduce((sum, t) => sum + t.total_quantity, 0);
-      
-      const kitchenExp = kitchenOp + kitchenRec;
-      const cellarExp = cellarOp + cellarRec;
-      
-      const physKitchen = kitchenProds.reduce((sum, p) => sum + (physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0)), 0);
-      const physCellar = cellarProds.reduce((sum, p) => sum + (physicalCounts[p.id] ? Number(physicalCounts[p.id]) : (p.last_physical_qty || 0)), 0);
-      
-      const kitchenVar = physKitchen - kitchenExp;
-      const cellarVar = physCellar - cellarExp;
-      
-      const kitchenVarVal = kitchenVar * 2.5;
-      const cellarVarVal = cellarVar * 4.0;
-      
-      const closingVal = (physKitchen + physCellar) * 3.0;
-      const cogsVal = selectedPeriod.opening_stock_value + selectedPeriod.received_value - closingVal;
-      
-      await db.query(
-        `UPDATE inventory_periods 
-         SET status = 'closed', closing_stock_value = ?, variance_value = ?, cogs_value = ?,
-             kitchen_cogs = ?, cellar_cogs = ?, closed_at = NOW(), closed_by = ?, closed_reason = ?
-         WHERE id = ?`,
-        [closingVal, kitchenVarVal + cellarVarVal, cogsVal, 
-         kitchenVarVal, cellarVarVal, user?.name, closeReason, selectedPeriod.id]
-      );
+     try {
+       // Call server to close period; server will compute totals, create snapshots and adjustments
+       const response = await fetch('/api/inventory/close', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           period_id: selectedPeriod.id,
+           closed_by: user?.name,
+           closed_reason: closeReason
+           // manager_override will be sent automatically if zero-capture
+         })
+       });
+       const data = await response.json();
+       if (!response.ok || !data.ok) {
+         if (data.error === 'ZERO_CAPTURE') {
+           // Prompt user for override confirmation? For now just show error
+           toast({ title: 'Zero capture detected', description: 'No receipts found. Add manager_override or add receipts.', variant: 'destructive' });
+           return;
+         }
+         throw new Error(data.error || 'Failed to close period');
+       }
 
-      for (const product of products) {
-        const newQty = physicalCounts[product.id] || product.last_physical_qty || product.stock_level;
-        await db.query(`UPDATE products SET stock_level = ? WHERE id = ?`, [newQty, product.id]);
-      }
+       toast({ title: 'Period closed successfully', description: `Closing stock: $${Number(data.closing_stock_value || 0).toFixed(2)}` });
+       setShowCloseDialog(false);
+       loadData();
+     } catch (e: any) {
+       console.error('Close period error:', e);
+       toast({ title: 'Failed to close period', description: e.message, variant: 'destructive' });
+     }
+   };
 
-      toast({ title: 'Period closed successfully' });
-      setShowCloseDialog(false);
-      loadData();
-    } catch (e: any) {
-      console.error('Close period error:', e);
-      toast({ title: 'Failed to close period', variant: 'destructive' });
-    }
-  };
+   const addBackfill = async () => {
+     if (!selectedPeriod || selectedProducts.size === 0) {
+       toast({ title: 'Please select products to backfill', variant: 'destructive' });
+       return;
+     }
 
-  const addBackfill = async () => {
-    if (!selectedPeriod || selectedProducts.size === 0) {
-      toast({ title: 'Please select products to backfill', variant: 'destructive' });
-      return;
-    }
+     try {
+       for (const productId of selectedProducts) {
+         const product = products.find(p => p.id === productId);
+         if (product && physicalCounts[productId]) {
+           const qty = parseFloat(String(physicalCounts[productId])) || 0;
+           
+           // Use dedicated endpoint which also updates period received_value
+           const response = await fetch('/api/inventory/transactions', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({
+               transaction_type: 'grv',
+               transaction_number: `BF-${Date.now()}-${productId.slice(0,8)}`,
+               period_id: selectedPeriod.id,
+               transaction_date: new Date().toISOString().split('T')[0],
+               department: product.department,
+               total_quantity: qty,
+               total_value: qty * Number(product.cost_price || 0),
+               supplier_name: 'Historical Backfill',
+               created_by: user?.name,
+               is_historical_backfill: true
+             })
+           });
+           const data = await response.json();
+           if (!response.ok || !data.ok) {
+             console.error('Backfill transaction failed:', data.error);
+           }
+         }
+       }
 
-    try {
-      for (const productId of selectedProducts) {
-        const product = products.find(p => p.id === productId);
-        if (product && physicalCounts[productId]) {
-          const qty = parseFloat(String(physicalCounts[productId])) || 0;
-          
-          await db.query(
-            `INSERT INTO inventory_transactions 
-             (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, created_by, is_historical_backfill)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, true)`,
-            ['adjustment', `BF-${Date.now()}`, selectedPeriod.id, new Date().toISOString().split('T')[0],
-             product.department, qty, qty * product.cost_price, user?.name]
-          );
-
-          await db.query(
-            `UPDATE inventory_periods SET received_value = received_value + ? WHERE id = ?`,
-            [qty * product.cost_price, selectedPeriod.id]
-          );
-        }
-      }
-
-      toast({ title: 'Backfill added successfully' });
-      setShowBackfillDialog(false);
-      loadData();
-    } catch (e: any) {
-      toast({ title: 'Failed to add backfill', variant: 'destructive' });
-    }
-  };
+       toast({ title: 'Backfill added successfully' });
+       setShowBackfillDialog(false);
+       loadData();
+     } catch (e: any) {
+       toast({ title: 'Failed to add backfill', variant: 'destructive' });
+     }
+   };
 
   const calculateVariance = (opening: number, received: number, physical: number) => {
     const expected = opening + received;
@@ -521,7 +581,8 @@ export const InventoryReconciliation: React.FC = () => {
                       <TableRow key={period.id}>
                         <TableCell className="font-medium">{period.period_name}</TableCell>
                         <TableCell>
-                          {period.start_date} - {period.end_date}
+                          {new Date(period.start_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} - {' '}
+                          {new Date(period.end_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                         </TableCell>
                         <TableCell>
                           <Badge className={getStatusColor(period.status)}>
@@ -602,7 +663,9 @@ export const InventoryReconciliation: React.FC = () => {
                   ) : (
                     transactions.map(tx => (
                       <TableRow key={tx.id}>
-                        <TableCell>{tx.transaction_date}</TableCell>
+                         <TableCell>
+                           {new Date(tx.transaction_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                         </TableCell>
                         <TableCell className="capitalize">{tx.transaction_type}</TableCell>
                         <TableCell>{tx.transaction_number}</TableCell>
                         <TableCell>{tx.department}</TableCell>
@@ -860,35 +923,48 @@ export const InventoryReconciliation: React.FC = () => {
           </DialogHeader>
           <div className="flex-1 overflow-y-auto py-4">
             <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Item Name</TableHead>
-                  <TableHead>Department</TableHead>
-                  <TableHead className="text-right">Current Stock</TableHead>
-                  <TableHead className="text-right w-32">Physical Qty</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {products.map(p => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium">{p.name}</TableCell>
-                    <TableCell>{p.department}</TableCell>
-                    <TableCell className="text-right">{p.stock_level}</TableCell>
-                    <TableCell>
-                      <Input
-                        type="number"
-                        className="text-right h-8"
-                        placeholder="0"
-                        value={batchData[p.id]?.physicalQty ?? ''}
-                        onChange={(e) => setBatchData(prev => ({
-                          ...prev,
-                          [p.id]: { ...prev[p.id], physicalQty: parseFloat(e.target.value) || 0 }
-                        }))}
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
+               <TableHeader>
+                 <TableRow>
+                   <TableHead>Item Name</TableHead>
+                   <TableHead>Department</TableHead>
+                   <TableHead className="text-right">Current Stock</TableHead>
+                   <TableHead className="text-right w-32">Physical Qty</TableHead>
+                   <TableHead className="text-right w-32">Unit Cost</TableHead>
+                 </TableRow>
+               </TableHeader>
+               <TableBody>
+                 {products.map(p => (
+                   <TableRow key={p.id}>
+                     <TableCell className="font-medium">{p.name}</TableCell>
+                     <TableCell>{p.department}</TableCell>
+                     <TableCell className="text-right">{p.stock_level}</TableCell>
+                     <TableCell>
+                       <Input
+                         type="number"
+                         className="text-right h-8"
+                         placeholder="0"
+                         value={batchData[p.id]?.physicalQty ?? ''}
+                         onChange={(e) => setBatchData(prev => ({
+                           ...prev,
+                           [p.id]: { ...(prev[p.id] || { physicalQty: 0 }), physicalQty: parseFloat(e.target.value) || 0 }
+                         }))}
+                       />
+                     </TableCell>
+                     <TableCell>
+                       <Input
+                         type="number"
+                         className="text-right h-8"
+                         placeholder={p.cost_price?.toString() ?? '0'}
+                         value={batchData[p.id]?.costPrice ?? ''}
+                         onChange={(e) => setBatchData(prev => ({
+                           ...prev,
+                           [p.id]: { ...(prev[p.id] || { physicalQty: 0 }), costPrice: parseFloat(e.target.value) || 0 }
+                         }))}
+                       />
+                     </TableCell>
+                   </TableRow>
+                 ))}
+               </TableBody>
             </Table>
           </div>
           <DialogFooter>
@@ -901,22 +977,25 @@ export const InventoryReconciliation: React.FC = () => {
                   return;
                 }
 
-                for (const [id, data] of entries) {
-                  // Update product stock and cost
-                  await db.query(
-                    `UPDATE products SET stock_level = ?, updated_at = NOW() WHERE id = ?`,
-                    [data.physicalQty, id]
-                  );
+                // Prepare items array for batch endpoint
+                const items = entries.map(([id, data]) => ({
+                  product_id: id,
+                  physical_qty: data.physicalQty,
+                  cost_price: data.costPrice
+                }));
 
-                  // Log transaction
-                  const product = products.find(p => p.id === id);
-                  await db.query(
-                    `INSERT INTO inventory_transactions 
-                     (transaction_type, transaction_number, transaction_date, department, total_quantity, total_value, created_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                    ['adjustment', `BATCH-${Date.now()}`, new Date().toISOString().split('T')[0],
-                     product?.department || 'Kitchen', data.physicalQty, 0, user?.name]
-                  );
+                const response = await fetch('/api/inventory/batch-reconcile', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    period_id: selectedPeriod.id,
+                    user_id: user?.id,
+                    items
+                  })
+                });
+                const result = await response.json();
+                if (!response.ok || !result.ok) {
+                  throw new Error(result.error || 'Batch reconciliation failed');
                 }
 
                 toast({ title: 'Batch reconciliation saved successfully' });

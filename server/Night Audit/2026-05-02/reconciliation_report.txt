@@ -1,0 +1,57 @@
+════════════════════════════════════════════════════════════
+  VILLA GIANNI  –  NIGHT AUDIT RECONCILIATION
+  Business Date : 2026-05-02
+  Generated     : 2/5/2026, 08:15:10
+════════════════════════════════════════════════════════════
+
+REVENUE SUMMARY
+────────────────────────────────────────────────────────────
+  Room Revenue        : $0.00
+  Tax Revenue         : $0.00
+  F&B / POS Revenue   : $0.00
+  ──────────────────────────────────────────────
+  TOTAL REVENUE       : $0.00
+
+FOLIO RECONCILIATION
+────────────────────────────────────────────────────────────
+  Folio Charges Total : $390.00
+  Rooms Posted        : 0
+
+AUDIT TRAIL
+────────────────────────────────────────────────────────────
+  Started At          : 2026-05-02T06:14:33.408Z
+  Completed At        : 2026-05-02T06:15:10.978Z
+  Run By              : NIGHT_AUDIT_SYSTEM (Automated)
+  Next Business Date  : 2026-05-03
+
+PROCESS LOG
+────────────────────────────────────────────────────────────
+  [2026-05-02T06:14:33.408Z] 
+  [2026-05-02T06:14:33.408Z] ════════════════════════════════════════════════════
+  [2026-05-02T06:14:33.408Z]   NIGHT AUDIT STARTED  –  Triggered by: manual_trigger
+  [2026-05-02T06:14:33.408Z] ════════════════════════════════════════════════════
+  [2026-05-02T06:14:34.050Z]   Business date: 2026-05-02
+  [2026-05-02T06:14:34.370Z] 🔒 System lock acquired for business date: 2026-05-02
+  [2026-05-02T06:14:34.980Z]   ↳ [10%] Closing open POS shifts
+  [2026-05-02T06:14:34.981Z]   Closing open POS shifts...
+  [2026-05-02T06:14:36.837Z]   No open shifts found
+  [2026-05-02T06:14:37.460Z]   ↳ [20%] Voiding stale POS orders
+  [2026-05-02T06:14:37.787Z]   Voided 1 stale open order(s)
+  [2026-05-02T06:14:38.853Z]   ↳ [35%] Posting room charges
+  [2026-05-02T06:14:38.859Z]   Posting room charges...
+  [2026-05-02T06:14:40.483Z]     Skipping room 114 — already posted today
+  [2026-05-02T06:14:44.197Z]     Skipping room 107 — already posted today
+  [2026-05-02T06:14:45.897Z]     Skipping room 111 — already posted today
+  [2026-05-02T06:14:47.122Z]     Skipping room 102 — already posted today
+  [2026-05-02T06:14:49.015Z]     Skipping room 105 — already posted today
+  [2026-05-02T06:14:52.955Z]   ↳ [50%] Aggregating POS revenue
+  [2026-05-02T06:14:57.486Z]   ↳ [60%] Processing city ledger transfers
+  [2026-05-02T06:15:01.815Z]   ↳ [70%] Reconciling totals
+  [2026-05-02T06:15:04.273Z]   ↳ [80%] Recording audit run to database
+  [2026-05-02T06:15:08.723Z]   ↳ [88%] Rolling over business date
+  [2026-05-02T06:15:09.716Z]   Business date rolled: 2026-05-02 → 2026-05-03
+  [2026-05-02T06:15:10.955Z]   ↳ [94%] Writing report files
+
+════════════════════════════════════════════════════════════
+  END OF RECONCILIATION REPORT
+════════════════════════════════════════════════════════════

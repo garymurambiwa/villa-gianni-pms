@@ -1,6 +1,6 @@
 /**
  * Z Reading Service (DB-Backed)
- * 
+ *
  * Handles automated Z reading generation, printing, and audit logging
  * for shift closure operations using PostgreSQL.
  */
@@ -13,6 +13,15 @@ import { db } from './db';
 
 export type OutletType = 'default' | 'restaurant' | 'bar';
 
+// Departmental breakdown per Z-reading
+export interface DepartmentalSales {
+  department: string;
+  sales: number;
+  taxCollected: number;
+  transactionCount: number;
+  percentage: number;
+}
+
 export interface ZReadingData {
   shift: Shift;
   totals: {
@@ -22,9 +31,15 @@ export interface ZReadingData {
     count: number;
     voidedCount: number;
     voidedAmount: number;
+    barSales?: number;
+    restaurantSales?: number;
   };
   closingCash?: number;
   outlet?: OutletType;
+  /** Optional per-department breakdown for enhanced analytics */
+  departmentalBreakdown?: DepartmentalSales[];
+  /** Tax rate used for shift (from system config, default 0) */
+  taxRate?: number;
 }
 
 export interface PrinterStatus {
@@ -34,46 +49,71 @@ export interface PrinterStatus {
 }
 
 /**
- * Generates a comprehensive Z reading report
+ * Generates a comprehensive Z reading report.
+ * IMPORTANT: Call getNextZReadingNumber() BEFORE this function so reading_number is accurate on the slip.
  */
-export const generateZReading = (data: ZReadingData): ShiftReading => {
-  const { shift, totals, closingCash, outlet = 'default' } = data;
+export const generateZReading = (data: ZReadingData, readingNumber: number = 0): ShiftReading => {
+  const { shift, totals, closingCash, outlet = 'default', departmentalBreakdown = [], taxRate = 0 } = data;
   const totalSales = totals.cash + totals.card + totals.roomCharge;
   const expectedCash = shift.openingCash + totals.cash;
   const cashDifference = closingCash !== undefined ? closingCash - expectedCash : 0;
 
-  // We need async for getNextZReadingNumber, but we can't make this async easily if called synchronously.
-  // Strategy: Generate a temp number or rely on DB sequence/count at insert time.
-  // For consistency with existing flow, we'll assign a placeholder and update on save, 
-  // OR we assume the caller will handle storage which assigns the number.
-  // But wait, reading_number is part of the object.
-  // We'll use a timestamp-based fallback if we can't fetch, or update logic.
-  // Actually, let's keep it simple: `storeZReading` will handle the count/number finalization if needed,
-  // but better to fetch it here? No, let's fetch it at store time or use a random one for display?
-  // Let's change getNextZReadingNumber to be async and call it before this?
-  // Or just use 0 and let persist update it? 
-  // Let's try to maintain signature if possible, but reading_number needs to be accurate for print.
-  // We will assume the caller will await `getNextZReadingNumber` if they need it, 
-  // but here we just return the object structure.
+  // Calculate tax from totals if taxRate provided (tax-inclusive calculation)
+  const taxCollected = taxRate > 0
+    ? parseFloat((totalSales * (taxRate / (100 + taxRate))).toFixed(2))
+    : 0;
+  const netSales = parseFloat((totalSales - taxCollected).toFixed(2));
+
+  // Build departmental percentage breakdown
+  const enrichedDeptBreakdown: DepartmentalSales[] = departmentalBreakdown.map(d => ({
+    ...d,
+    percentage: totalSales > 0 ? parseFloat(((d.sales / totalSales) * 100).toFixed(1)) : 0
+  }));
+
+  // If no explicit breakdown provided but bar/restaurant sales are in totals, synthesise
+  if (enrichedDeptBreakdown.length === 0 && ((totals.barSales || 0) + (totals.restaurantSales || 0)) > 0) {
+    const bar = totals.barSales || 0;
+    const restaurant = totals.restaurantSales || 0;
+    if (bar > 0) enrichedDeptBreakdown.push({
+      department: 'Bar',
+      sales: bar,
+      taxCollected: taxRate > 0 ? parseFloat((bar * (taxRate / (100 + taxRate))).toFixed(2)) : 0,
+      transactionCount: 0,
+      percentage: totalSales > 0 ? parseFloat(((bar / totalSales) * 100).toFixed(1)) : 0
+    });
+    if (restaurant > 0) enrichedDeptBreakdown.push({
+      department: 'Restaurant',
+      sales: restaurant,
+      taxCollected: taxRate > 0 ? parseFloat((restaurant * (taxRate / (100 + taxRate))).toFixed(2)) : 0,
+      transactionCount: 0,
+      percentage: totalSales > 0 ? parseFloat(((restaurant / totalSales) * 100).toFixed(1)) : 0
+    });
+  }
 
   const zReading: ShiftReading = {
     id: `Z_${shift.id}_${Date.now()}`,
-    reading_number: 0, // Placeholder, usually fetched before
+    reading_number: readingNumber, // Must be provided by caller via getNextZReadingNumber()
     reading_type: 'Z',
     shift_id: shift.id,
     outlet: outlet,
     total_sales: totalSales,
     total_transactions: totals.count,
-    bar_sales: totalSales * 0.4,
-    restaurant_sales: totalSales * 0.6,
+    bar_sales: totals.barSales || 0,
+    restaurant_sales: totals.restaurantSales || 0,
     cash_payments: totals.cash,
     card_payments: totals.card,
     room_charge_payments: totals.roomCharge,
     created_at: new Date().toISOString(),
     report_data: {
       expectedCash,
-      closingCash: closingCash || expectedCash,
-      cashDifference
+      closingCash: closingCash ?? expectedCash,
+      cashDifference,
+      taxCollected,
+      netSales,
+      taxRate,
+      departmentalBreakdown: enrichedDeptBreakdown,
+      voidedCount: totals.voidedCount,
+      voidedAmount: totals.voidedAmount
     }
   };
 
@@ -103,6 +143,22 @@ export const generateZReadingHTML = (
 
   const bodyWidth = '74mm';
   const fontSize = '11px';
+
+  const rd = zReading.report_data || {};
+  const taxCollected: number = rd.taxCollected || 0;
+  const netSales: number = rd.netSales || zReading.total_sales;
+  const taxRate: number = rd.taxRate || 0;
+  const deptBreakdown: DepartmentalSales[] = rd.departmentalBreakdown || [];
+  const voidedCount: number = rd.voidedCount || 0;
+  const voidedAmount: number = rd.voidedAmount || 0;
+
+  // Build departmental rows HTML
+  const deptRowsHtml = deptBreakdown.length > 0
+    ? deptBreakdown.map(d =>
+        `<tr><td>${d.department}</td><td class="r">${formatCurrency(d.sales)}</td><td class="r">${d.percentage}%</td></tr>`
+      ).join('')
+    : `<tr><td>Restaurant</td><td class="r">${formatCurrency(zReading.restaurant_sales)}</td><td class="r">—</td></tr>
+       <tr><td>Bar</td><td class="r">${formatCurrency(zReading.bar_sales)}</td><td class="r">—</td></tr>`;
 
   return `<!DOCTYPE html>
 <html>
@@ -136,8 +192,11 @@ export const generateZReadingHTML = (
     .qt { text-align: center; width: 20%; padding: 0.8mm 1mm; }
     .pr { text-align: right; width: 40%; padding: 0.8mm 0; }
     .tot td { padding: 0.5mm 0; font-size: 0.95em; }
+    .section-title { font-weight: bold; font-size: 0.95em; margin-top: 1mm; }
     .ft { text-align: center; font-size: 0.88em; margin-top: 2mm; line-height: 1.6; }
     .pw { text-align: center; font-size: 0.78em; margin-top: 3mm; color: #444; }
+    .highlight { font-weight: bold; }
+    .neg { font-weight: bold; }
   </style>
 </head>
 <body>
@@ -152,7 +211,7 @@ export const generateZReadingHTML = (
   <div class="ttl">Z Reading - Cash Up Slip</div>
   <div class="div">--------------------------------</div>
   <div class="meta">
-    <div>Reading: ${zReading.reading_number}</div>
+    <div>Reading #: <b>${zReading.reading_number || '—'}</b></div>
     <div>Outlet: ${outletDisplayName}</div>
     <div>Printed: ${timestamp}</div>
   </div>
@@ -165,68 +224,84 @@ export const generateZReadingHTML = (
     <div>Duration: ${shiftDuration}</div>
   </div>
   <div class="div">--------------------------------</div>
+  <div class="section-title">SALES SUMMARY</div>
   <table>
     <tbody>
-      <tr><td>Total Sales</td><td class="r b">${formatCurrency(zReading.total_sales)}</td></tr>
+      <tr><td>Gross Sales</td><td class="r b">${formatCurrency(zReading.total_sales)}</td></tr>
+      ${taxRate > 0 ? `
+      <tr><td>Net Sales (ex-tax)</td><td class="r">${formatCurrency(netSales)}</td></tr>
+      <tr><td>Tax Collected (${taxRate}%)</td><td class="r">${formatCurrency(taxCollected)}</td></tr>
+      ` : ''}
       <tr><td>Transactions</td><td class="r">${zReading.total_transactions}</td></tr>
-      <tr><td>Restaurant</td><td class="r">${formatCurrency(zReading.restaurant_sales)}</td></tr>
-      <tr><td>Bar</td><td class="r">${formatCurrency(zReading.bar_sales)}</td></tr>
+      ${voidedCount > 0 ? `<tr><td>Voids (${voidedCount})</td><td class="r">${formatCurrency(voidedAmount)}</td></tr>` : ''}
     </tbody>
   </table>
   <div class="div">--------------------------------</div>
+  <div class="section-title">DEPARTMENTAL BREAKDOWN</div>
+  <table>
+    <thead>
+      <tr><th class="nm">Department</th><th class="r">Sales</th><th class="r">%</th></tr>
+    </thead>
+    <tbody>
+      ${deptRowsHtml}
+    </tbody>
+  </table>
+  <div class="div">--------------------------------</div>
+  <div class="section-title">PAYMENT METHODS</div>
   <table>
     <tbody>
       <tr><td>Cash</td><td class="r">${formatCurrency(zReading.cash_payments)}</td></tr>
-      <tr><td>Card</td><td class="r">${formatCurrency(zReading.card_payments)}</td></tr>
+      <tr><td>Card / EFT</td><td class="r">${formatCurrency(zReading.card_payments)}</td></tr>
       <tr><td>Room Charge</td><td class="r">${formatCurrency(zReading.room_charge_payments)}</td></tr>
+      <tr><td class="b">Total</td><td class="r b">${formatCurrency(zReading.total_sales)}</td></tr>
     </tbody>
   </table>
-   ${shift.voidedTransactions.length > 0 ? `
-   <div class="div">--------------------------------</div>
-   <div class="b">Voided Transactions</div>
-   <table>
-     <thead>
-       <tr>
-         <th class="nm">Time</th>
-         <th class="qt">Method</th>
-         <th class="qt">User</th>
-         <th class="pr">Amount</th>
-       </tr>
-     </thead>
-     <tbody>
-       ${shift.voidedTransactions.map(tx => `<tr><td class="nm">${new Date(tx.voidedAt || tx.createdAt).toLocaleTimeString()}</td><td class="qt">${tx.method.toUpperCase()}</td><td class="qt">${tx.userName ? tx.userName.substring(0,1).toUpperCase() : '?'}</td><td class="pr">${formatCurrency(tx.amount)}</td></tr>`).join('')}
-     </tbody>
-   </table>
-   <div>Total Voided: ${formatCurrency(shift.voidedTransactions.reduce((sum, tx) => sum + tx.amount, 0))}</div>
-   ` : ''}
+  ${shift.voidedTransactions && shift.voidedTransactions.length > 0 ? `
   <div class="div">--------------------------------</div>
-  <div class="b c">Cash Reconciliation</div>
+  <div class="section-title">VOIDED TRANSACTIONS</div>
+  <table>
+    <thead>
+      <tr>
+        <th class="nm">Time</th>
+        <th class="qt">Method</th>
+        <th class="qt">By</th>
+        <th class="pr">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${shift.voidedTransactions.map(tx => `<tr><td class="nm">${new Date(tx.voidedAt || tx.createdAt).toLocaleTimeString()}</td><td class="qt">${tx.method.toUpperCase()}</td><td class="qt">${tx.userName ? tx.userName.substring(0,1).toUpperCase() : '?'}</td><td class="pr">${formatCurrency(tx.amount)}</td></tr>`).join('')}
+    </tbody>
+  </table>
+  <div>Total Voided: ${formatCurrency(shift.voidedTransactions.reduce((sum, tx) => sum + tx.amount, 0))}</div>
+  ` : ''}
+  <div class="div">--------------------------------</div>
+  <div class="b c">CASH RECONCILIATION</div>
   <table>
     <tbody>
       <tr><td>Opening Cash</td><td class="r">${formatCurrency(shift.openingCash)}</td></tr>
       <tr><td>Cash Sales</td><td class="r">${formatCurrency(zReading.cash_payments)}</td></tr>
-      <tr><td>Expected</td><td class="r b">${formatCurrency(zReading.report_data?.expectedCash || 0)}</td></tr>
-      <tr><td>Closing</td><td class="r">${formatCurrency(zReading.report_data?.closingCash || 0)}</td></tr>
-      <tr><td>Difference</td><td class="r" style="color: ${(zReading.report_data?.cashDifference || 0) >= 0 ? '#000' : '#000'}">${formatCurrency(zReading.report_data?.cashDifference || 0)}</td></tr>
+      <tr><td>Expected In Drawer</td><td class="r b">${formatCurrency(rd.expectedCash || 0)}</td></tr>
+      <tr><td>Closing Count</td><td class="r">${formatCurrency(rd.closingCash || 0)}</td></tr>
+      <tr><td class="${(rd.cashDifference || 0) < 0 ? 'neg' : 'b'}">Over / (Short)</td><td class="r ${(rd.cashDifference || 0) < 0 ? 'neg' : 'b'}">${formatCurrency(rd.cashDifference || 0)}</td></tr>
     </tbody>
   </table>
-   <div class="div">--------------------------------</div>
-   <div class="b">Transactions</div>
-   <table>
-     <thead>
-       <tr>
-         <th class="nm">Time</th>
-         <th class="qt">Method</th>
-         <th class="qt">User</th>
-         <th class="pr">Amount</th>
-       </tr>
-     </thead>
-     <tbody>
-       ${shift.transactions.slice(0, 20).map(tx => `<tr><td class="nm">${new Date(tx.createdAt).toLocaleTimeString()}</td><td class="qt">${tx.method.toUpperCase()}</td><td class="qt">${tx.userName ? tx.userName.substring(0,1).toUpperCase() : '?'}</td><td class="pr">${formatCurrency(tx.amount)}</td></tr>`).join('')}
-     </tbody>
-   </table>
-   ${shift.transactions.length > 20 ? `<div>... and ${shift.transactions.length - 20} more</div>` : ''}
   <div class="div">--------------------------------</div>
+  <div class="section-title">TRANSACTIONS (Last 20)</div>
+  <table>
+    <thead>
+      <tr>
+        <th class="nm">Time</th>
+        <th class="qt">Method</th>
+        <th class="qt">By</th>
+        <th class="pr">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${(shift.transactions || []).slice(0, 20).map(tx => `<tr><td class="nm">${new Date(tx.createdAt).toLocaleTimeString()}</td><td class="qt">${tx.method.toUpperCase()}</td><td class="qt">${tx.userName ? tx.userName.substring(0,1).toUpperCase() : '?'}</td><td class="pr">${formatCurrency(tx.amount)}</td></tr>`).join('')}
+    </tbody>
+  </table>
+  ${(shift.transactions || []).length > 20 ? `<div class="c">... and ${shift.transactions.length - 20} more</div>` : ''}
+  <div class="div">================================</div>
   <div class="ft">
     ${settings?.footer_text ? `<div>${settings.footer_text}</div>` : '<div>Thank you!</div>'}
   </div>
@@ -242,11 +317,6 @@ export const printZReading = async (
   receiptSettings?: Record<string, unknown>
 ): Promise<{ success: boolean; error?: string }> => {
   try {
-    const printerStatus = await checkPrinterStatus();
-    if (!printerStatus.connected) {
-      throw new Error(printerStatus.error || 'Printer not connected');
-    }
-
     let settings = receiptSettings;
     if (!settings && zReading.outlet) {
       try {
@@ -282,26 +352,38 @@ export const logZReadingAudit = async (zReading: ShiftReading, shift: Shift, pri
   try {
     const id = `AUDIT_Z_${Date.now()}`;
     await db.query(
-      `INSERT INTO system_audits (id, action, entity_type, entity_id, user_id, details) VALUES (?, ?, ?, ?, ?, ?::jsonb)`,
+      `INSERT INTO system_audits (id, action, entity_type, entity_id, user_id, details) VALUES ($1, $2, $3, $4, $5, $6)`,
       [id, 'Z_READING_GENERATED', 'SHIFT', shift.id, shift.openedBy || 'SYSTEM', JSON.stringify(auditEntry)]
     );
   } catch (error) {
     console.error('Failed to log Z reading audit:', error);
+    // Non-fatal: store in localStorage as fallback
+    try {
+      const key = 'corepms_zreading_audit_queue';
+      const queue = JSON.parse(localStorage.getItem(key) || '[]');
+      queue.push({ ...auditEntry, queued_at: new Date().toISOString() });
+      localStorage.setItem(key, JSON.stringify(queue.slice(-100))); // keep last 100
+    } catch { /* ignore */ }
   }
 };
 
+/**
+ * Checks printer availability. Uses browser print capability instead of random simulation.
+ */
 export const checkPrinterStatus = async (): Promise<PrinterStatus> => {
+  const lastCheck = new Date().toISOString();
+  // Browser-based printing is always "connected" — it opens the print dialog.
+  // A real thermal printer check would call /api/printer/status here.
   try {
-    const lastCheck = new Date().toISOString();
-    const isConnected = Math.random() > 0.05;
-
-    if (!isConnected) {
-      return { connected: false, error: 'Printer offline or paper jam detected', lastCheck };
+    const res = await fetch('/api/printer/status', { method: 'GET', signal: AbortSignal.timeout(2000) });
+    if (res.ok) {
+      const data = await res.json();
+      return { connected: data.connected !== false, lastCheck };
     }
-    return { connected: true, lastCheck };
-  } catch (error) {
-    return { connected: false, error: error instanceof Error ? error.message : 'Printer check failed', lastCheck: new Date().toISOString() };
+  } catch {
+    // No printer endpoint — fall back to browser print (always available)
   }
+  return { connected: true, lastCheck };
 };
 
 /**
@@ -309,13 +391,19 @@ export const checkPrinterStatus = async (): Promise<PrinterStatus> => {
  */
 export const getNextZReadingNumber = async (): Promise<number> => {
   try {
-    const res = await db.query('SELECT MAX(reading_number) as max_num FROM z_readings');
+    const res = await db.query<{ max_num: number | null }>('SELECT MAX(reading_number) as max_num FROM z_readings');
     if ('rows' in res && res.rows.length > 0) {
       return (Number(res.rows[0].max_num) || 0) + 1;
     }
     return 1;
   } catch {
-    return 1;
+    // Fallback: count from localStorage
+    try {
+      const stored = JSON.parse(localStorage.getItem('corepms_zReadings') || '[]');
+      return (stored.length || 0) + 1;
+    } catch {
+      return 1;
+    }
   }
 };
 
@@ -335,17 +423,25 @@ const calculateShiftDuration = (startTime: string, endTime?: string): string => 
  */
 export const storeZReading = async (zReading: ShiftReading): Promise<void> => {
   try {
-    // Ensure reading number (if not set properly before)
+    // Ensure reading number is set (should already be set by caller)
     if (!zReading.reading_number) {
       zReading.reading_number = await getNextZReadingNumber();
     }
 
     await db.query(
-      `INSERT INTO z_readings (id, reading_number, shift_id, outlet, data, created_at) VALUES (?, ?, ?, ?, ?::jsonb, ?)`,
+      `INSERT INTO z_readings (id, reading_number, shift_id, outlet, data, created_at) VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data`,
       [zReading.id, zReading.reading_number, zReading.shift_id, zReading.outlet || 'default', JSON.stringify(zReading), new Date().toISOString()]
     );
   } catch (error) {
-    console.error('Failed to store Z reading:', error);
+    console.error('Failed to store Z reading in DB:', error);
+    // Store in localStorage as fallback so data is not lost
+    try {
+      const key = 'corepms_zreading_db_queue';
+      const queue = JSON.parse(localStorage.getItem(key) || '[]');
+      queue.push(zReading);
+      localStorage.setItem(key, JSON.stringify(queue.slice(-50)));
+    } catch { /* ignore */ }
   }
 };
 

@@ -380,7 +380,7 @@ export const Reports: React.FC = () => {
       {(reportType === 'night-audit' || reportType === 'gl') && (
         <BackToAccountingButton />
       )}
-      <h2 className="text-3xl font-bold text-gray-800 mb-6">Reports & Analytics</h2>
+      <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-800 mb-4 sm:mb-6">Reports &amp; Analytics</h2>
       
       <div className="bg-blue-600 rounded-xl shadow-lg p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
@@ -417,7 +417,7 @@ export const Reports: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-blue-500">
               <p className="text-gray-600 text-sm font-medium mb-2">Occupancy Rate</p>
               <p className="text-4xl font-bold text-blue-600">
@@ -440,6 +440,29 @@ export const Reports: React.FC = () => {
           <div className="bg-white rounded-xl shadow-lg p-6">
             <h3 className="text-xl font-bold text-gray-800 mb-4">Revenue Breakdown</h3>
             <div className="space-y-4">
+              {recon && (
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center p-3 bg-white rounded border">
+                    <span className="text-gray-600">POS Sales (Total)</span>
+                    <span className="font-bold text-lg">{String(formatCurrency(recon.posTotal))}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-3 bg-white rounded border">
+                    <span className="text-gray-600">Folio Charges (Posted)</span>
+                    <span className="font-bold text-lg text-blue-600">{String(formatCurrency(recon.folioTotal))}</span>
+                  </div>
+                  <div className="flex justify-between items-center p-3 bg-white rounded border">
+                    <span className="text-gray-600">Discrepancy</span>
+                    <span className={`font-bold text-lg ${Math.abs(recon.discrepancy) > 1 ? 'text-red-600' : 'text-green-600'}`}>
+                      {String(formatCurrency(recon.discrepancy))}
+                    </span>
+                  </div>
+                  {Math.abs(recon.discrepancy) > 0.01 && (
+                    <div className="p-3 bg-red-50 text-red-800 rounded text-sm border border-red-100">
+                      <strong>Action Required:</strong> Discrepancy detected between POS sales and folio postings. Please audit individual guest bills before proceeding.
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex justify-between items-center p-4 bg-blue-50 rounded-lg">
                 <div>
                   <span className="font-medium text-gray-700">Room Revenue</span>
@@ -808,31 +831,33 @@ export const Reports: React.FC = () => {
             <div className="text-sm text-gray-600">Select a report from the dropdown to view.</div>
           )}
           {revSelected === 'overview' && (
-          <table className="ds-table">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Category</th>
-                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Amount</th>
-                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Percentage</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              <tr className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-sm text-gray-800">Room Revenue</td>
-                <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">${roomRevenue.toFixed(2)}</td>
-                <td className="px-4 py-3 text-sm text-right text-gray-600">
-                  {((roomRevenue / totalRevenue) * 100).toFixed(1)}%
-                </td>
-              </tr>
-              <tr className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-sm text-gray-800">F&B Revenue</td>
-                <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">${fbRevenue.toFixed(2)}</td>
-                <td className="px-4 py-3 text-sm text-right text-gray-600">
-                  {((fbRevenue / totalRevenue) * 100).toFixed(1)}%
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="ds-table-container">
+            <table className="ds-table">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th scope="col" className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Category</th>
+                  <th scope="col" className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Amount</th>
+                  <th scope="col" className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Percentage</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                <tr className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-sm text-gray-800">Room Revenue</td>
+                  <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">${roomRevenue.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-sm text-right text-gray-600">
+                    {((roomRevenue / totalRevenue) * 100).toFixed(1)}%
+                  </td>
+                </tr>
+                <tr className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-sm text-gray-800">F&B Revenue</td>
+                  <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">${fbRevenue.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-sm text-right text-gray-600">
+                    {((fbRevenue / totalRevenue) * 100).toFixed(1)}%
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           )}
         </div>
       )}

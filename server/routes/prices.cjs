@@ -235,5 +235,12 @@ router.post('/sync', async (req, res) => {
   }
 });
 
+// WebSocket endpoint for real-time price synchronization
+// This is the endpoint the browser connects to via initializePriceSync()
+router.ws('/sync', (ws, req) => {
+  console.log('[PriceSync] WebSocket client connected to /sync');
+  addWebSocketClient(ws);
+});
+
 module.exports = router;
 module.exports.addWebSocketClient = addWebSocketClient;

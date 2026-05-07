@@ -7,7 +7,7 @@
     "rewrites": [
         {
             "source": "/api/(.*)",
-            "destination": "/api/db.cjs"
+            "destination": "/api/handler"
         },
         {
             "source": "/((?!api/).*)$",

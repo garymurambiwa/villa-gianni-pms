@@ -9,6 +9,7 @@ const db = require('./db-web.cjs');
 try { require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }) } catch { }
 
 const app = express();
+const wsInstance = require('express-ws')(app);
 const PORT = process.env.PORT || 3001;
 
 // Minimal middleware
@@ -112,6 +113,350 @@ app.get('/api/setup/init-db', async (req, res) => {
 });
 
 
+// ─── PRODUCT CRUD API ─────────────────────────────────────────────────────────
+// These provide structured, validated endpoints for POS item management
+// instead of raw SQL passthrough via /api/db/query
+
+// GET /api/products — list all products
+app.get('/api/products', async (req, res) => {
+    try {
+        const { department, active, category } = req.query;
+        let sql = 'SELECT * FROM products WHERE 1=1';
+        const params = [];
+        if (department) { sql += ' AND LOWER(department) = LOWER(?)'; params.push(department); }
+        if (active !== undefined) { sql += ' AND active = ?'; params.push(active === 'true'); }
+        if (category) { sql += ' AND LOWER(category) = LOWER(?)'; params.push(category); }
+        sql += ' ORDER BY name ASC';
+        const result = await db.query(sql, params);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/products/:id
+app.get('/api/products/:id', async (req, res) => {
+    try {
+        const result = await db.query('SELECT * FROM products WHERE id = ?', [req.params.id]);
+        if (!result.rows || result.rows.length === 0) return res.status(404).json({ ok: false, error: 'Product not found' });
+        res.json({ ok: true, row: result.rows[0] });
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/products — create or upsert product
+app.post('/api/products', async (req, res) => {
+    const { id, name, category, department, price, cost_price, stock_level, unit, active,
+            visibility, bar_visibility, restaurant_visibility, is_stock_item,
+            category_id, sub_id, notes, barcodes } = req.body;
+    if (!id || !name) return res.status(400).json({ ok: false, error: 'id and name are required' });
+    try {
+        const visJson = visibility ? (typeof visibility === 'string' ? visibility : JSON.stringify(visibility)) : '{"bar":true,"restaurant":true}';
+        const barVis = bar_visibility !== undefined ? bar_visibility : true;
+        const restVis = restaurant_visibility !== undefined ? restaurant_visibility : true;
+        const result = await db.query(`
+            INSERT INTO products (id, name, category, department, price, cost_price, stock_level, unit,
+                active, visibility, bar_visibility, restaurant_visibility, is_stock_item,
+                category_id, sub_id, notes, barcodes, inserted_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name, category = EXCLUDED.category, department = EXCLUDED.department,
+                price = EXCLUDED.price, cost_price = EXCLUDED.cost_price,
+                stock_level = EXCLUDED.stock_level, unit = EXCLUDED.unit, active = EXCLUDED.active,
+                visibility = EXCLUDED.visibility, bar_visibility = EXCLUDED.bar_visibility,
+                restaurant_visibility = EXCLUDED.restaurant_visibility,
+                is_stock_item = EXCLUDED.is_stock_item,
+                category_id = COALESCE(EXCLUDED.category_id, products.category_id),
+                sub_id = COALESCE(EXCLUDED.sub_id, products.sub_id),
+                notes = EXCLUDED.notes, barcodes = EXCLUDED.barcodes, updated_at = NOW()
+        `, [id, name, category || 'general', department || 'Restaurant',
+            Number(price || 0), Number(cost_price || 0), Number(stock_level || 0),
+            unit || 'units', active !== false, visJson, barVis, restVis,
+            is_stock_item !== false, category_id || null, sub_id || null,
+            notes || null, barcodes ? JSON.stringify(barcodes) : '[]']);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// PUT /api/products/:id — partial update (does NOT overwrite stock_level unless provided)
+app.put('/api/products/:id', async (req, res) => {
+    const { id } = req.params;
+    const allowed = ['name','category','department','price','cost_price','stock_level','unit',
+                     'active','visibility','bar_visibility','restaurant_visibility','is_stock_item',
+                     'category_id','sub_id','notes','barcodes','cos_percent','gp_percent','gp_amount',
+                     'image_bg_color','picture_data','reorder_level'];
+    const fields = []; const values = [];
+    for (const f of allowed) {
+        if (req.body[f] !== undefined) {
+            if (f === 'visibility' && typeof req.body[f] !== 'string') {
+                fields.push(`${f} = ?`); values.push(JSON.stringify(req.body[f]));
+            } else if (f === 'barcodes' && typeof req.body[f] !== 'string') {
+                fields.push(`${f} = ?`); values.push(JSON.stringify(req.body[f]));
+            } else {
+                fields.push(`${f} = ?`); values.push(req.body[f]);
+            }
+        }
+    }
+    if (!fields.length) return res.status(400).json({ ok: false, error: 'No updatable fields provided' });
+    values.push(id);
+    try {
+        const result = await db.query(`UPDATE products SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`, values);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// DELETE /api/products/:id — atomic delete from all product tables
+app.delete('/api/products/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await db.transaction([
+            { sql: 'DELETE FROM products WHERE id = ?', params: [id] },
+            { sql: 'DELETE FROM inventory_items WHERE id = ?', params: [id] },
+            { sql: 'DELETE FROM menu_items WHERE id = ?', params: [id] },
+        ]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// DELETE /api/products — bulk delete
+app.delete('/api/products', async (req, res) => {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ ok: false, error: 'ids array required' });
+    try {
+        const ph = ids.map(() => '?').join(',');
+        const result = await db.transaction([
+            { sql: `DELETE FROM products WHERE id IN (${ph})`, params: ids },
+            { sql: `DELETE FROM inventory_items WHERE id IN (${ph})`, params: ids },
+            { sql: `DELETE FROM menu_items WHERE id IN (${ph})`, params: ids },
+        ]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// PUT /api/products/visibility — bulk update visibility
+app.put('/api/products/visibility', async (req, res) => {
+    const { ids, bar, restaurant } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ ok: false, error: 'ids array required' });
+    try {
+        const ph = ids.map(() => '?').join(',');
+        const updateFields = [];
+        const params = [];
+        if (bar !== undefined) { updateFields.push('bar_visibility = ?'); params.push(bar); }
+        if (restaurant !== undefined) { updateFields.push('restaurant_visibility = ?'); params.push(restaurant); }
+        if (!updateFields.length) return res.status(400).json({ ok: false, error: 'bar or restaurant value required' });
+        params.push(...ids);
+        const result = await db.query(
+            `UPDATE products SET ${updateFields.join(', ')}, updated_at = NOW() WHERE id IN (${ph})`,
+            params
+        );
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/products/stock — get current stock levels
+app.get('/api/products/stock', async (req, res) => {
+    try {
+        const result = await db.query('SELECT id, name, stock_level, reorder_level, unit FROM products WHERE is_stock_item = true ORDER BY name');
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// PATCH /api/products/:id/stock — update stock level only (inventory deduction)
+app.patch('/api/products/:id/stock', async (req, res) => {
+    const { id } = req.params;
+    const { delta, reason, user_id } = req.body; // delta = +/- quantity change
+    if (delta === undefined || isNaN(Number(delta))) return res.status(400).json({ ok: false, error: 'delta required' });
+    try {
+        const ops = [
+            {
+                sql: 'UPDATE products SET stock_level = GREATEST(0, stock_level + ?), updated_at = NOW() WHERE id = ?',
+                params: [Number(delta), id]
+            },
+            {
+                sql: `INSERT INTO inventory_movements (id, item_id, delta, reason, user_id, inserted_at)
+                      VALUES (gen_random_uuid()::text, ?, ?, ?, ?, NOW())`,
+                params: [id, Number(delta), reason || 'POS sale', user_id || 'system']
+            }
+        ];
+        const result = await db.transaction(ops);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// ─── POS SHIFT MANAGEMENT API ─────────────────────────────────────────────────
+
+// GET /api/pos/shifts — list shifts
+app.get('/api/pos/shifts', async (req, res) => {
+    try {
+        const { date, status } = req.query;
+        let sql = 'SELECT * FROM pos_shifts WHERE 1=1';
+        const params = [];
+        if (date) { sql += ' AND business_date = ?'; params.push(date); }
+        if (status) { sql += ' AND status = ?'; params.push(status); }
+        sql += ' ORDER BY opened_at DESC LIMIT 100';
+        const result = await db.query(sql, params);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/pos/shifts/active — get active shift for a user
+app.get('/api/pos/shifts/active', async (req, res) => {
+    try {
+        const { user_id } = req.query;
+        let sql = "SELECT * FROM pos_shifts WHERE status = 'open'";
+        const params = [];
+        if (user_id) { sql += ' AND opened_by = ?'; params.push(user_id); }
+        sql += ' ORDER BY opened_at DESC LIMIT 1';
+        const result = await db.query(sql, params);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/pos/shifts — start a shift
+app.post('/api/pos/shifts', async (req, res) => {
+    const { id, opened_by, opening_cash, outlet, station_id } = req.body;
+    if (!id || !opened_by) return res.status(400).json({ ok: false, error: 'id and opened_by required' });
+    try {
+        // Enforce one open shift per user
+        const existing = await db.query(
+            "SELECT id FROM pos_shifts WHERE opened_by = ? AND status = 'open' LIMIT 1",
+            [opened_by]
+        );
+        if (existing.rows && existing.rows.length > 0) {
+            return res.status(409).json({ ok: false, error: 'User already has an open shift', existing_id: existing.rows[0].id });
+        }
+        const shiftNum = await db.query('SELECT COALESCE(MAX(shift_number),0)+1 as next FROM pos_shifts WHERE business_date = CURRENT_DATE');
+        const nextNum = shiftNum.rows?.[0]?.next || 1;
+        const result = await db.query(`
+            INSERT INTO pos_shifts (id, outlet, shift_number, business_date, opened_by, opening_cash, status, inserted_at, updated_at)
+            VALUES (?, ?, ?, CURRENT_DATE, ?, ?, 'open', NOW(), NOW())
+        `, [id, outlet || 'Restaurant', nextNum, opened_by, Number(opening_cash || 0)]);
+        res.json({ ...result, shift_number: nextNum });
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// PUT /api/pos/shifts/:id/close — close a shift
+app.put('/api/pos/shifts/:id/close', async (req, res) => {
+    const { id } = req.params;
+    const { closing_cash, closed_by, total_sales, total_cash, total_card, total_room_charge,
+            total_voids, transaction_count, void_count, z_reading_number } = req.body;
+    try {
+        const expected = await db.query('SELECT opening_cash FROM pos_shifts WHERE id = ?', [id]);
+        const openingCash = expected.rows?.[0]?.opening_cash || 0;
+        const cashVariance = closing_cash !== undefined ? Number(closing_cash) - (Number(openingCash) + Number(total_cash || 0)) : 0;
+        const result = await db.query(`
+            UPDATE pos_shifts SET
+                status = 'closed', closed_at = NOW(), closed_by = ?,
+                closing_cash = ?, expected_cash = ?, cash_variance = ?,
+                total_sales = ?, total_cash = ?, total_card = ?,
+                total_room_charge = ?, total_voids = ?,
+                transaction_count = ?, void_count = ?,
+                z_reading_number = ?, updated_at = NOW()
+            WHERE id = ?
+        `, [closed_by, Number(closing_cash || 0),
+            Number(openingCash) + Number(total_cash || 0), cashVariance,
+            Number(total_sales || 0), Number(total_cash || 0), Number(total_card || 0),
+            Number(total_room_charge || 0), Number(total_voids || 0),
+            Number(transaction_count || 0), Number(void_count || 0),
+            z_reading_number || null, id]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// PUT /api/pos/shifts/:id/totals — update running totals
+app.put('/api/pos/shifts/:id/totals', async (req, res) => {
+    const { id } = req.params;
+    const { total_sales, total_cash, total_card, total_room_charge, tx_count } = req.body;
+    try {
+        const result = await db.query(`
+            UPDATE pos_shifts SET
+                total_sales = ?, total_cash = ?, total_card = ?,
+                total_room_charge = ?, transaction_count = ?, updated_at = NOW()
+            WHERE id = ? AND status = 'open'
+        `, [Number(total_sales || 0), Number(total_cash || 0), Number(total_card || 0),
+            Number(total_room_charge || 0), Number(tx_count || 0), id]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/pos/orders — save a POS order/bill
+app.post('/api/pos/orders', async (req, res) => {
+    const { id, items, total_amount, status, outlet, shift_id, payment_method,
+            business_date, table_number, guest_id, opened_by, closed_by } = req.body;
+    if (!id || !total_amount === undefined) return res.status(400).json({ ok: false, error: 'id required' });
+    try {
+        const result = await db.query(`
+            INSERT INTO pos_orders (id, items, total_amount, status, outlet, shift_id,
+                payment_method, business_date, table_number, guest_id, opened_by, closed_by, updated_at, created_at)
+            VALUES (?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                items = EXCLUDED.items, total_amount = EXCLUDED.total_amount,
+                status = EXCLUDED.status, payment_method = EXCLUDED.payment_method,
+                closed_by = EXCLUDED.closed_by, updated_at = NOW()
+        `, [id, JSON.stringify(items || []), Number(total_amount || 0),
+            status || 'open', outlet || 'Restaurant', shift_id || null,
+            payment_method || null, business_date || new Date().toISOString().slice(0,10),
+            table_number || null, guest_id || null,
+            opened_by || null, closed_by || null]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/pos/reports/daily — daily POS summary by date
+app.get('/api/pos/reports/daily', async (req, res) => {
+    try {
+        const { date } = req.query;
+        const reportDate = date || new Date().toISOString().slice(0, 10);
+        const result = await db.query(`
+            SELECT
+                COUNT(*) as order_count,
+                SUM(total_amount) as gross_sales,
+                outlet,
+                payment_method
+            FROM pos_orders
+            WHERE status = 'closed' AND business_date = ?
+            GROUP BY outlet, payment_method
+            ORDER BY outlet, payment_method
+        `, [reportDate]);
+        res.json(result);
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/printer/status — printer health check
+app.get('/api/printer/status', (req, res) => {
+    // Browser print is always available. Real thermal printers would need a different check.
+    res.json({ connected: true, method: 'browser', lastCheck: new Date().toISOString() });
+});
+
 // ─── Inventory Reconciliation API Endpoints ─────────────────────────────────────
 
 // GET /api/inventory/periods
@@ -133,6 +478,14 @@ app.post('/api/inventory/periods', async (req, res) => {
         return res.status(400).json({ ok: false, error: 'Missing required fields' });
     }
     try {
+        // Enforce: only one period may be open/reconciling at a time
+        const openCheck = await db.query(
+            "SELECT id FROM inventory_periods WHERE status IN ('open', 'reconciling') LIMIT 1"
+        );
+        if (openCheck.rows && openCheck.rows.length > 0) {
+            return res.status(409).json({ ok: false, error: 'Another period is already open or reconciling. Close it before creating a new one.' });
+        }
+
         const result = await db.query(
             `INSERT INTO inventory_periods (period_name, period_year, period_month, start_date, end_date, status, opening_stock_value, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -149,7 +502,7 @@ app.put('/api/inventory/periods/:id', async (req, res) => {
     const { id } = req.params;
     const fields = [];
     const values = [];
-    const allowedFields = ['period_name', 'status', 'closing_stock_value', 'variance_value', 'cogs_value', 'kitchen_cogs', 'cellar_cogs', 'closed_by', 'closed_reason'];
+    const allowedFields = ['period_name', 'status', 'closing_stock_value', 'variance_value', 'cogs_value', 'kitchen_cogs', 'cellar_cogs', 'closed_by', 'closed_reason', 'reopened_at', 'reopened_by', 'is_locked', 'locked_at', 'locked_by'];
     
     for (const field of allowedFields) {
         if (req.body[field] !== undefined) {
@@ -165,6 +518,18 @@ app.put('/api/inventory/periods/:id', async (req, res) => {
     values.push(id);
     
     try {
+        // If status is being changed to 'open' or 'reconciling', enforce singleton
+        const newStatus = req.body.status;
+        if (newStatus && ['open', 'reconciling'].includes(newStatus)) {
+            const existing = await db.query(
+                "SELECT id FROM inventory_periods WHERE status IN ('open', 'reconciling') AND id != ?",
+                [id]
+            );
+            if (existing.rows && existing.rows.length > 0) {
+                return res.status(409).json({ ok: false, error: 'Another period is already open or reconciling.' });
+            }
+        }
+        
         const result = await db.query(
             `UPDATE inventory_periods SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`,
             values
@@ -208,14 +573,147 @@ app.post('/api/inventory/transactions', async (req, res) => {
         return res.status(400).json({ ok: false, error: 'Missing required fields' });
     }
     try {
-        const result = await db.query(
-            `INSERT INTO inventory_transactions (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, supplier_name, created_by, is_historical_backfill)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [transaction_type, transaction_number, period_id, transaction_date, department, total_quantity || 0, total_value || 0, supplier_name, created_by, is_historical_backfill || false]
-        );
+        // Validate period exists and is not locked/closed (if period_id provided)
+        if (period_id) {
+            const periodCheck = await db.query('SELECT status, is_locked FROM inventory_periods WHERE id = ?', [period_id]);
+            if (!periodCheck.rows || periodCheck.rows.length === 0) {
+                return res.status(404).json({ ok: false, error: 'Period not found' });
+            }
+            const period = periodCheck.rows[0];
+            if (period.is_locked) {
+                return res.status(403).json({ ok: false, error: 'Period is locked. Cannot add transactions.' });
+            }
+            if (['closed', 'locked'].includes(period.status)) {
+                return res.status(403).json({ ok: false, error: `Period is ${period.status}. Cannot add transactions.` });
+            }
+        }
+
+        // Insert transaction and optionally bump period received_value (for receipts) atomically
+        const ops = [
+            {
+                sql: `INSERT INTO inventory_transactions (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, supplier_name, created_by, is_historical_backfill)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                params: [transaction_type, transaction_number, period_id, transaction_date, department, total_quantity || 0, total_value || 0, supplier_name, created_by, is_historical_backfill || false]
+            }
+        ];
+
+        if (['purchase', 'grv'].includes(transaction_type) && period_id) {
+            ops.push({
+                sql: `UPDATE inventory_periods SET received_value = COALESCE(received_value,0) + ? WHERE id = ?`,
+                params: [total_value || 0, period_id]
+            });
+        }
+
+        const result = await db.transaction(ops);
         res.json(result);
     } catch (e) {
         res.json({ ok: false, error: e.message });
+    }
+});
+
+// POST /api/inventory/batch-reconcile
+// Atomically process batch physical count updates, create snapshots, and generate adjustment transactions
+app.post('/api/inventory/batch-reconcile', async (req, res) => {
+    const { period_id, user_id, items } = req.body;  // items: [{ product_id, physical_qty, cost_price? }]
+    if (!period_id || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ ok: false, error: 'Invalid request: period_id and items array required' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        // Validate period is in reconciling state
+        const periodRes = await client.query('SELECT status, is_locked FROM inventory_periods WHERE id = ?', [period_id]);
+        if (!periodRes.rows || periodRes.rows.length === 0) {
+            return res.status(404).json({ ok: false, error: 'Period not found' });
+        }
+        const period = periodRes.rows[0];
+        if (period.is_locked) {
+            return res.status(403).json({ ok: false, error: 'Period is locked. Cannot reconcile.' });
+        }
+        if (period.status !== 'reconciling') {
+            return res.status(403).json({ ok: false, error: `Period must be in 'reconciling' state, current: ${period.status}` });
+        }
+
+        await client.query('BEGIN');
+
+        for (const item of items) {
+            const { product_id, physical_qty, cost_price } = item;
+            const physQty = Number(physical_qty) || 0;
+
+            // Validate product exists
+            const prodRes = await client.query('SELECT id, name, department, stock_level, cost_price FROM products WHERE id = ?', [product_id]);
+            if (!prodRes.rows || prodRes.rows.length === 0) {
+                throw new Error(`Product ${product_id} not found`);
+            }
+            const product = prodRes.rows[0];
+            const bookQty = Number(product.stock_level || 0);
+            const currentCost = Number(product.cost_price || 0);
+            const newCost = cost_price !== undefined && cost_price !== null ? Number(cost_price) : currentCost;
+
+            // Compute variance and value delta
+            const variance = physQty - bookQty;
+            const totalValue = variance * newCost;
+
+            // Fetch aggregated transaction sums for this period/product
+            const aggRes = await client.query(
+                `SELECT
+                  COALESCE(SUM(CASE WHEN transaction_type = 'opening_balance' THEN total_quantity ELSE 0 END),0) as opening_qty,
+                  COALESCE(SUM(CASE WHEN transaction_type IN ('purchase','grv') THEN total_quantity ELSE 0 END),0) as received_qty,
+                  COALESCE(SUM(CASE WHEN transaction_type = 'usage' THEN total_quantity ELSE 0 END),0) as usage_qty
+                 FROM inventory_transactions
+                 WHERE period_id = ?`,
+                [period_id]
+            );
+            const openingQty = Number(aggRes.rows?.[0]?.opening_qty || 0);
+            const receivedQty = Number(aggRes.rows?.[0]?.received_qty || 0);
+            const usageQty = Number(aggRes.rows?.[0]?.usage_qty || 0);
+
+            // Upsert inventory_snapshot if table exists
+            try {
+                await client.query(
+                    `INSERT INTO inventory_snapshots (period_id, product_id, physical_qty, variance, opening_qty, received_qty, system_usage_qty)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT (period_id, product_id) DO UPDATE SET
+                       physical_qty = EXCLUDED.physical_qty, variance = EXCLUDED.variance,
+                       opening_qty = EXCLUDED.opening_qty, received_qty = EXCLUDED.received_qty,
+                       system_usage_qty = EXCLUDED.system_usage_qty, updated_at = NOW()`,
+                    [period_id, product_id, physQty, variance, openingQty, receivedQty, usageQty]
+                );
+            } catch (_snapErr) { /* table may not exist yet — non-fatal */ }
+
+            // Create adjustment transaction if variance non-zero
+            if (variance !== 0) {
+                await client.query(
+                    `INSERT INTO inventory_transactions
+                     (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, created_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    ['adjustment', `BATCH-${Date.now()}-${String(product_id).slice(0,8)}`,
+                     period_id, new Date().toISOString().split('T')[0],
+                     product.department || 'General', variance, totalValue, user_id || 'system']
+                );
+            }
+
+            // Update product stock to physical count
+            const upFields = ['stock_level = ?', 'updated_at = NOW()'];
+            const upVals = [physQty];
+            if (cost_price !== undefined && cost_price !== null) {
+                upFields.push('cost_price = ?');
+                upVals.push(newCost);
+            }
+            upVals.push(product_id);
+            await client.query(
+                `UPDATE products SET ${upFields.join(', ')} WHERE id = ?`, upVals
+            );
+        }
+
+        await client.query('COMMIT');
+        res.json({ ok: true, message: `Batch reconciled ${items.length} items` });
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error('Batch reconcile error:', e);
+        res.json({ ok: false, error: e.message });
+    } finally {
+        client.release();
     }
 });
 
@@ -246,8 +744,167 @@ app.get('/api/inventory/audit', async (req, res) => {
 });
 
 // POST /api/inventory/close
+// Finalizes a reconciliation period: creates snapshots, adjustment transactions,
+// updates product stocks, and locks the period.
 app.post('/api/inventory/close', async (req, res) => {
-    const { period_id, closing_stock_value, variance_value, cogs_value, kitchen_cogs, cellar_cogs, closed_by, closed_reason } = req.body;
+    const { period_id, closed_by, closed_reason, manager_override } = req.body;
+    if (!period_id || !closed_by) {
+        return res.status(400).json({ ok: false, error: 'Period ID and closed_by required' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        // Validate period
+        const periodRes = await client.query('SELECT * FROM inventory_periods WHERE id = ?', [period_id]);
+        if (!periodRes.rows || periodRes.rows.length === 0) {
+            return res.status(404).json({ ok: false, error: 'Period not found' });
+        }
+        const period = periodRes.rows[0];
+        if (period.is_locked) {
+            return res.status(403).json({ ok: false, error: 'Period already locked' });
+        }
+        if (period.status !== 'reconciling') {
+            return res.status(403).json({ ok: false, error: `Period must be in 'reconciling' state, current: ${period.status}` });
+        }
+
+        // Zero-capture detection: if period has no receipt transactions, require override
+        const txCountRes = await client.query(
+            `SELECT COUNT(*) as cnt FROM inventory_transactions WHERE period_id = ? AND transaction_type IN ('purchase', 'grv')`,
+            [period_id]
+        );
+        const txCount = (txCountRes.rows && txCountRes.rows[0] && Number(txCountRes.rows[0].cnt)) || 0;
+        if (txCount === 0 && !manager_override) {
+            return res.status(403).json({ ok: false, error: 'ZERO_CAPTURE', message: 'Period has no inventory receipts. Manager override required to close.' });
+        }
+
+        await client.query('BEGIN');
+
+        // 1. Get all products that have a physical count for this period (via last_inventory_period_id)
+        // Note: batch-reconcile updates last_inventory_period_id; savePhysicalCounts also does.
+        const prodRes = await client.query(
+            `SELECT id, name, department, stock_level, cost_price, last_physical_qty
+             FROM products
+             WHERE last_inventory_period_id = ?`,
+            [period_id]
+        );
+        if (!prodRes.rows || prodRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ ok: false, error: 'No physical counts recorded for this period. Perform a stock take before closing.' });
+        }
+        const products = prodRes.rows;
+
+        let totalClosingValue = 0;
+        let totalVarianceValue = 0;
+        let kitchenVarianceValue = 0;
+        let cellarVarianceValue = 0;
+
+        // 2. Process each product: create snapshot, create adjustment transaction, update stock
+        for (const p of products) {
+            const physQty = Number(p.last_physical_qty || 0);
+            const bookQty = Number(p.stock_level || 0);
+            const costPrice = Number(p.cost_price || 0);
+
+            const variance = physQty - bookQty;
+            const varianceValue = variance * costPrice;
+            const physValue = physQty * costPrice;
+
+            totalClosingValue += physValue;
+            totalVarianceValue += varianceValue;
+            if ((p.department || '').toLowerCase() === 'kitchen') kitchenVarianceValue += varianceValue;
+            else if ((p.department || '').toLowerCase() === 'cellar') cellarVarianceValue += varianceValue;
+
+            // Fetch opening/received/usage aggregates for snapshot
+            const agg = await client.query(
+                `SELECT
+                  COALESCE(SUM(CASE WHEN type = 'opening_balance' THEN quantity ELSE 0 END),0) as opening_qty,
+                  COALESCE(SUM(CASE WHEN type IN ('purchase','grv') THEN quantity ELSE 0 END),0) as received_qty,
+                  COALESCE(SUM(CASE WHEN type = 'usage' THEN quantity ELSE 0 END),0) as usage_qty
+                 FROM inventory_transactions
+                 WHERE period_id = ? AND product_id = ?`,
+                [period_id, p.id]
+            );
+            const openingQty = Number(agg.rows[0].opening_qty);
+            const receivedQty = Number(agg.rows[0].received_qty);
+            const usageQty = Number(agg.rows[0].usage_qty);
+
+            // Upsert snapshot
+            await client.query(
+                `INSERT INTO inventory_snapshots (period_id, product_id, physical_qty, variance, opening_qty, received_qty, system_usage_qty)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT (period_id, product_id) DO UPDATE SET
+                   physical_qty = EXCLUDED.physical_qty,
+                   variance = EXCLUDED.variance,
+                   opening_qty = EXCLUDED.opening_qty,
+                   received_qty = EXCLUDED.received_qty,
+                   system_usage_qty = EXCLUDED.system_usage_qty,
+                   updated_at = NOW()`,
+                [period_id, p.id, physQty, variance, openingQty, receivedQty, usageQty]
+            );
+
+            // Create adjustment transaction if variance non-zero
+            if (variance !== 0) {
+                await client.query(
+                    `INSERT INTO inventory_transactions
+                     (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, created_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    ['adjustment', `CLS-${Date.now()}-${p.id.slice(0,8)}`, period_id, new Date().toISOString().split('T')[0],
+                     p.department, variance, varianceValue, closed_by]
+                );
+            }
+
+            // Update product stock to physical count
+            await client.query(
+                `UPDATE products SET stock_level = ?, updated_at = NOW() WHERE id = ?`,
+                [physQty, p.id]
+            );
+        }
+
+        // 3. Compute COGS and update period
+        const openingStock = Number(period.opening_stock_value || 0);
+        const receivedValue = Number(period.received_value || 0);
+        const cogsValue = openingStock + receivedValue - totalClosingValue;
+
+        await client.query(
+            `UPDATE inventory_periods
+             SET status = 'closed',
+                 closing_stock_value = ?,
+                 variance_value = ?,
+                 cogs_value = ?,
+                 kitchen_cogs = ?,
+                 cellar_cogs = ?,
+                 closed_at = NOW(),
+                 closed_by = ?,
+                 closed_reason = ?,
+                 is_locked = true,
+                 locked_at = NOW()
+             WHERE id = ?`,
+            [totalClosingValue, totalVarianceValue, cogsValue, kitchenVarianceValue, cellarVarianceValue, closed_by, closed_reason, period_id]
+        );
+
+        // 4. If zero-capture override, audit log
+        if (txCount === 0 && manager_override) {
+            await client.query(
+                `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, change_reason)
+                 VALUES (?, 'ZERO_CAPTURE_OVERRIDE', ?, ?, ?)`,
+                [period_id, closed_by, closed_by, 'Manager override: closed period with zero receipts']
+            );
+        }
+
+        await client.query('COMMIT');
+
+        res.json({ ok: true, message: 'Period closed successfully', closing_stock_value: totalClosingValue, variance_value: totalVarianceValue, cogs_value: cogsValue });
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error('Close period error:', e);
+        res.json({ ok: false, error: e.message });
+    } finally {
+        client.release();
+    }
+});
+
+// POST /api/inventory/reopen
+app.post('/api/inventory/reopen', async (req, res) => {
+    const { period_id, reopened_by } = req.body;
     if (!period_id) {
         return res.status(400).json({ ok: false, error: 'Period ID required' });
     }
@@ -256,14 +913,30 @@ app.post('/api/inventory/close', async (req, res) => {
         if (!periodRes.rows || periodRes.rows.length === 0) {
             return res.status(404).json({ ok: false, error: 'Period not found' });
         }
-        
+        const period = periodRes.rows[0];
+        // Only locked/closed periods can be reopened
+        if (!period.is_locked) {
+            return res.status(400).json({ ok: false, error: 'Period is not locked and cannot be reopened' });
+        }
+
         const result = await db.query(
             `UPDATE inventory_periods 
-             SET status = 'closed', closing_stock_value = ?, variance_value = ?, cogs_value = ?, kitchen_cogs = ?, cellar_cogs = ?, closed_at = NOW(), closed_by = ?, closed_reason = ?, is_locked = true, locked_at = NOW()
+             SET status = 'open', 
+                 closed_at = NULL, closed_by = NULL, closed_reason = NULL,
+                 is_locked = false, locked_at = NULL, locked_by = NULL,
+                 reopened_at = NOW(), reopened_by = ?
              WHERE id = ?`,
-            [closing_stock_value, variance_value, cogs_value, kitchen_cogs, cellar_cogs, closed_by, closed_reason, period_id]
+            [reopened_by, period_id]
         );
-        res.json(result);
+        
+        // Audit log for reopen
+        await db.query(
+            `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, change_reason)
+             VALUES (?, 'PERIOD_REOPENED', ?, ?, ?)`,
+            [period_id, reopened_by, reopened_by, 'Period reopened for correction']
+        );
+        
+        res.json({ ok: true, message: 'Period reopened successfully', result });
     } catch (e) {
         res.json({ ok: false, error: e.message });
     }
@@ -405,6 +1078,15 @@ app.post('/api/reports/load-historical', async (req, res) => {
         res.json({ ok: false, error: e.message });
     }
 });
+
+// Price Management routes (with WebSocket real-time sync)
+try {
+  const pricesRoutes = require('./routes/prices.cjs');
+  console.log('💰 Registering price routes at /api/v1/prices');
+  app.use('/api/v1/prices', pricesRoutes);
+} catch (error) {
+  console.error('❌ Failed to load price routes:', error.message);
+}
 
 // Temporary: Add the inventory routes
 try {

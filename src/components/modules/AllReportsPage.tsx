@@ -48,24 +48,60 @@ const last30Days = () => {
 type ShiftTx = { id: string; method: 'cash'|'card'|'room-charge'; amount: number; reference?: string; createdAt: string };
 type ShiftStore = { id: string; startedAt: string; endedAt?: string; transactions: ShiftTx[] };
 
-const readAllTransactionsInRange = (startISO: string, endISO: string): ShiftTx[] => {
-  const start = new Date(startISO);
-  const end = new Date(endISO);
-  const inRange = (d: string) => { const dt = new Date(d); return dt >= start && dt <= end; };
-  const txs: ShiftTx[] = [];
+const readAllTransactionsInRange = async (startISO: string, endISO: string): Promise<ShiftTx[]> => {
   try {
+    const { db } = await import('@/lib/db');
+    // Fetch closed POS orders within the date range from the database
+    // Note: created_at::date comparison works in PostgreSQL to compare only the date part
+    const res = await db.query<any>(
+      `SELECT id, created_at, total_amount, items FROM pos_orders 
+       WHERE status = 'closed' 
+       AND created_at::date >= $1::date 
+       AND created_at::date <= $2::date`,
+      [startISO, endISO]
+    );
+
+    const dbTxs: ShiftTx[] = ('rows' in res ? res.rows : []).map((row: any) => {
+      // items is stored as JSONB, we need to find the payment method
+      let method: 'cash' | 'card' | 'room-charge' = 'cash';
+      try {
+        const items = typeof row.items === 'string' ? JSON.parse(row.items) : row.items;
+        // In this system, the payment method might be in the metadata or items structure
+        // Fallback to cash if not found, or check a hypothetical payment_method column if added later
+        method = (row.payment_method || 'cash').toLowerCase() as any;
+      } catch {}
+
+      return {
+        id: row.id,
+        method,
+        amount: Number(row.total_amount || 0),
+        createdAt: row.created_at
+      };
+    });
+
+    if (dbTxs.length > 0) return dbTxs;
+
+    // Fallback to localStorage if database is empty (for backward compatibility during migration)
+    const start = new Date(startISO);
+    const end = new Date(endISO);
+    const inRange = (d: string) => { const dt = new Date(d); return dt >= start && dt <= end; };
+    const txs: ShiftTx[] = [];
+    
     const rawActive = localStorage.getItem('corepms_activeShift');
     if (rawActive) {
       const s = JSON.parse(rawActive) as ShiftStore; if (s?.transactions) txs.push(...s.transactions.filter(t => inRange(t.createdAt)));
     }
-  } catch {}
-  try {
+    
     const rawEnded = localStorage.getItem('corepms_endedShifts');
     if (rawEnded) {
       const arr = JSON.parse(rawEnded) as ShiftStore[]; arr.forEach(s => { if (s?.transactions) txs.push(...s.transactions.filter(t => inRange(t.createdAt))); });
     }
-  } catch {}
-  return txs;
+    
+    return txs;
+  } catch (err) {
+    console.warn('[AllReportsPage] Database query failed, falling back to localStorage:', err);
+    return [];
+  }
 };
 
 const REPORTS = [
@@ -86,6 +122,52 @@ const REPORTS = [
   { key: 'high-balance', name: 'High Balance Report', description: 'Accounts exceeding threshold', type: 'summary' as const }
 ];
 
+const businessDate = new Date().toISOString().slice(0,10);
+const currentMonth = new Date().toISOString().slice(0,7);
+
+const quickPrint = async (key: string) => {
+  try {
+    let data: { title: string; columns: string[]; rows: any[] } | null = null;
+    switch (key) {
+      case 'pnl':
+        data = await buildMonthlyPL(currentMonth);
+        break;
+      case 'daily-collection':
+        data = await buildFlashReport(businessDate);
+        break;
+      case 'journals':
+        data = await buildPosReconciliation(businessDate);
+        break;
+      case 'purchases':
+        data = await buildPurchaseReceivingLog(businessDate);
+        break;
+      case 'voids':
+      case 'sales-summary':
+      case 'sales-detail':
+        data = await buildPosReconciliation(businessDate);
+        break;
+      case 'stock-movement':
+      case 'stock-adjust':
+        data = await buildInventoryCOGS(currentMonth);
+        break;
+      case 'recon-summary':
+        data = await buildFlashReport(businessDate);
+        break;
+      case 'menu-cos':
+        data = await buildPosReconciliation(businessDate);
+        break;
+      default:
+        data = await buildFlashReport(businessDate);
+    }
+    if (!data) throw new Error('no_data');
+    const html = generateReportHTML(data.title, data.columns, data.rows);
+    printDocument(html, data.title, true);
+  } catch (e) {
+    console.error('Quick Print failed', e);
+    alert('Quick Print is not available for this report yet.');
+  }
+};
+
 export const AllReportsPage: React.FC = () => {
   const params = React.useMemo(() => parseParams(), []);
   const defaultRange = React.useMemo(() => last30Days(), []);
@@ -98,23 +180,35 @@ export const AllReportsPage: React.FC = () => {
   const [metrics, setMetrics] = React.useState<{ count: number; cash: number; card: number; roomCharge: number; total: number }>({ count: 0, cash: 0, card: 0, roomCharge: 0, total: 0 });
 
   React.useEffect(() => {
-    try {
-      setLoading(true);
-      setError('');
-      const timer = setTimeout(() => { setLoading(false); }, 350);
-      const txs = readAllTransactionsInRange(start, end);
-      const m = txs.reduce((acc, t) => {
-        if (t.method === 'cash') acc.cash += t.amount;
-        else if (t.method === 'card') acc.card += t.amount;
-        else if (t.method === 'room-charge') acc.roomCharge += t.amount;
-        acc.count += 1; return acc;
-      }, { count: 0, cash: 0, card: 0, roomCharge: 0 });
-      setMetrics({ ...m, total: m.cash + m.card + m.roomCharge });
-      return () => clearTimeout(timer);
-    } catch (err: any) {
-      setError('Failed to load reports'); setLoading(false);
-    }
-  }, [start, end, page, pageSize]);
+    let isMounted = true;
+    const loadMetrics = async () => {
+      try {
+        setLoading(true);
+        setError('');
+        const txs = await readAllTransactionsInRange(start, end);
+        
+        if (!isMounted) return;
+
+        const m = txs.reduce((acc, t) => {
+          if (t.method === 'cash') acc.cash += t.amount;
+          else if (t.method === 'card') acc.card += t.amount;
+          else if (t.method === 'room-charge') acc.roomCharge += t.amount;
+          acc.count += 1; return acc;
+        }, { count: 0, cash: 0, card: 0, roomCharge: 0 });
+
+        setMetrics({ ...m, total: m.cash + m.card + m.roomCharge });
+        setLoading(false);
+      } catch (err: any) {
+        if (isMounted) {
+          setError('Failed to load report metrics');
+          setLoading(false);
+        }
+      }
+    };
+
+    loadMetrics();
+    return () => { isMounted = false; };
+  }, [start, end]);
 
   React.useEffect(() => {
     updateParams({ start, end, page: String(page) });
@@ -126,44 +220,45 @@ export const AllReportsPage: React.FC = () => {
 
   const [openingKey, setOpeningKey] = React.useState<string | null>(null);
 
-  const openReportNewTab = (key: string) => {
+  const openReportNewTab = async (key: string) => {
     setError(''); setOpeningKey(key);
     try {
       // Build the report content directly to avoid SPA routing issues causing blank pages
-      const businessDate = new Date().toISOString().slice(0,10);
-      const currentMonth = new Date().toISOString().slice(0,7);
+      const businessDateStr = new Date().toISOString().slice(0,10);
+      const currentMonthStr = new Date().toISOString().slice(0,7);
       let data: { title: string; columns: string[]; rows: any[] } | null = null;
       switch (key) {
         case 'pnl':
-          data = buildMonthlyPL(currentMonth);
+          data = await buildMonthlyPL(currentMonthStr);
           break;
         case 'daily-collection':
-          data = buildFlashReport(businessDate);
+          data = await buildFlashReport(businessDateStr);
           break;
         case 'journals':
-          data = buildPosReconciliation(businessDate);
+          data = await buildPosReconciliation(businessDateStr);
           break;
         case 'purchases':
-          data = buildPurchaseReceivingLog(businessDate);
+          data = await buildPurchaseReceivingLog(businessDateStr);
           break;
         case 'voids':
         case 'sales-summary':
         case 'sales-detail':
-          data = buildPosReconciliation(businessDate);
+          data = await buildPosReconciliation(businessDateStr);
           break;
         case 'stock-movement':
         case 'stock-adjust':
-          data = buildInventoryCOGS(currentMonth);
+          data = await buildInventoryCOGS(currentMonthStr);
           break;
         case 'recon-summary':
-          data = buildFlashReport(businessDate);
+          data = await buildFlashReport(businessDateStr);
           break;
         case 'menu-cos':
-          data = buildPosReconciliation(businessDate);
+          data = await buildPosReconciliation(businessDateStr);
           break;
         default:
-          data = buildFlashReport(businessDate);
+          data = await buildFlashReport(businessDateStr);
       }
+      if (!data) throw new Error('no_data');
       const html = generateReportHTML(data.title, data.columns, data.rows);
       // First attempt: open a blank tab and write HTML
       try {
@@ -224,29 +319,32 @@ export const AllReportsPage: React.FC = () => {
       )}
 
       {!loading && !error && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="ds-table-container">
+          <table className="ds-table">
             <thead>
-              <tr className="border-b">
-                <th className="p-2 text-left">Report</th>
-                <th className="p-2 text-left">Description</th>
-                <th className="p-2 text-right">Transactions</th>
-                <th className="p-2 text-right">Total Sales</th>
+              <tr>
+                <th className="p-2 text-left">Report Name</th>
+                <th className="p-2 text-left hide-on-mobile">Description</th>
+                <th className="p-2 text-left">Category</th>
                 <th className="p-2 text-left">Actions</th>
               </tr>
             </thead>
             <tbody>
               {rows.map(r => (
-                <tr key={r.key} className="border-b hover:bg-gray-50">
-                  <td className="p-2 font-medium">{r.name}</td>
-                  <td className="p-2 text-gray-600">{r.description}</td>
-                  <td className="p-2 text-right">{metrics.count}</td>
-                  <td className="p-2 text-right">${Number(metrics.total || 0).toFixed(2)}</td>
+                <tr key={r.key} className="hover:bg-gray-50 group">
+                  <td className="p-2 font-medium text-blue-700 group-hover:text-blue-900 transition-colors">{String(r.name)}</td>
+                  <td className="p-2 text-gray-600 max-w-xs truncate hide-on-mobile">{String(r.description)}</td>
+                  <td className="p-2">
+                    <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-full text-[10px] uppercase font-bold tracking-wider">
+                      {String(r.type)}
+                    </span>
+                  </td>
                   <td className="p-2">
                     <div className="flex items-center gap-2">
-                      <Button variant="outline" onClick={() => quickPrint(r.key)} className="hover:bg-gray-100 active:scale-[0.99]">Quick Print</Button>
+                      <Button variant="outline" size="sm" onClick={() => quickPrint(r.key)} className="hover:bg-gray-100 active:scale-[0.99] whitespace-nowrap">Quick Print</Button>
                       <Button
                         variant="outline"
+                        size="sm"
                         onClick={() => openReportNewTab(r.key)}
                         className={`hover:bg-gray-100 active:scale-[0.99] ${openingKey===r.key ? 'opacity-60 cursor-wait' : ''}`}
                         disabled={openingKey===r.key}
@@ -263,12 +361,14 @@ export const AllReportsPage: React.FC = () => {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <div className="text-xs text-gray-600">Showing {Math.min(total, startIdx + rows.length)} of {total} reports · Tx: {metrics.count} · Cash: ${metrics.cash.toFixed(2)} · Card: ${metrics.card.toFixed(2)} · Room: ${metrics.roomCharge.toFixed(2)}</div>
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+        <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded border w-full sm:w-auto">
+          Showing {Math.min(total, startIdx + rows.length)} of {total} reports · Tx: {metrics.count} · Cash: ${metrics.cash.toFixed(2)} · Card: ${metrics.card.toFixed(2)} · Room: ${metrics.roomCharge.toFixed(2)}
+        </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setPage(p => Math.max(1, p-1))} disabled={page===1}>Prev</Button>
-          <div className="text-sm">Page {page}</div>
-          <Button variant="outline" onClick={() => setPage(p => (startIdx + pageSize) < total ? p+1 : p)} disabled={(startIdx + pageSize) >= total}>Next</Button>
+          <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p-1))} disabled={page===1}>Prev</Button>
+          <div className="text-sm font-medium">Page {page}</div>
+          <Button variant="outline" size="sm" onClick={() => setPage(p => (startIdx + pageSize) < total ? p+1 : p)} disabled={(startIdx + pageSize) >= total}>Next</Button>
         </div>
       </div>
     </div>
@@ -276,46 +376,3 @@ export const AllReportsPage: React.FC = () => {
 };
 
 export default AllReportsPage;
-  const businessDate = new Date().toISOString().slice(0,10);
-  const currentMonth = new Date().toISOString().slice(0,7);
-  const quickPrint = (key: string) => {
-    try {
-      let data: { title: string; columns: string[]; rows: any[] } | null = null;
-      switch (key) {
-        case 'pnl':
-          data = buildMonthlyPL(currentMonth);
-          break;
-        case 'daily-collection':
-          data = buildFlashReport(businessDate);
-          break;
-        case 'journals':
-          data = buildPosReconciliation(businessDate);
-          break;
-        case 'purchases':
-          data = buildPurchaseReceivingLog(businessDate);
-          break;
-        case 'voids':
-        case 'sales-summary':
-        case 'sales-detail':
-          data = buildPosReconciliation(businessDate);
-          break;
-        case 'stock-movement':
-        case 'stock-adjust':
-          data = buildInventoryCOGS(currentMonth);
-          break;
-        case 'recon-summary':
-          data = buildFlashReport(businessDate);
-          break;
-        case 'menu-cos':
-          data = buildPosReconciliation(businessDate);
-          break;
-        default:
-          data = buildFlashReport(businessDate);
-      }
-      const html = generateReportHTML(data.title, data.columns, data.rows);
-      printDocument(html, data.title, true);
-    } catch (e) {
-      console.error('Quick Print failed', e);
-      alert('Quick Print is not available for this report yet.');
-    }
-  };

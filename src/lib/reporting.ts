@@ -3,6 +3,7 @@ import { readReceiptBranding } from './printSettings';
 import roomSvc from '@/lib/roomService';
 import expenseSvc from '@/lib/expenseService';
 import { syncNightAuditRunToLocalStorage } from './dbSync';
+import { db } from './db';
 
 export type ReportType = 'flash' | 'pos-recon' | 'purchase-log' | 'pl' | 'aged-ar' | 'inventory-cogs' | 'housekeeping' | 'daily-tax' | 'cash-bank' | 'trial-balance' | 'dept-summary' | 'arrivals-departures' | 'high-balance' | 'proc-variance' | 'fa-recon' | 'open-bills' | 'aged-payables' | 'po-history' | 'payment-history' | 'vendor-payment-summary' | 'expenses-by-dept' | 'expense-summary-daily' | 'expense-summary-monthly' | 'line-item-export';
 
@@ -53,10 +54,101 @@ export const getSameDateLastYear = (dateStr: string): string => {
 };
 
 // Daily Manager's Flash Report with Year-over-Year Comparison
-export const buildFlashReport = (forDate?: string) => {
-  const b = getLastNightAuditBundle();
-  const date = forDate || b?.date || getBusinessDate();
-  const cashCard = readJSON<Record<string, number>>('corepms_shift_totals', { cash: 0, card: 0 });
+export const buildFlashReport = async (forDate?: string) => {
+  // --- PRIMARY SOURCE: DB night_audit_runs table ---
+  // Always prefer the database record for the requested date, falling back to localStorage.
+  let dbAuditBundle: any = null;
+  const targetDate = forDate || getBusinessDate();
+
+  try {
+    const auditRes = await db.query<any>(
+      `SELECT business_date::date::text as date,
+              room_revenue, total_revenue, occupancy_percent as occupancy,
+              adr as "avgDailyRate", revpar, rooms_posted,
+              reports_snapshot
+       FROM night_audit_runs
+       WHERE business_date::date <= $1::date
+       ORDER BY business_date DESC
+       LIMIT 1`,
+      [targetDate]
+    );
+    if ('rows' in auditRes && auditRes.rows.length > 0) {
+      const row = auditRes.rows[0];
+      const snap = row.reports_snapshot || {};
+      dbAuditBundle = {
+        date: row.date,
+        roomRevenue: Number(row.room_revenue || 0),
+        fbRevenue: Number(snap.fbRevenue || (Number(row.total_revenue || 0) - Number(row.room_revenue || 0))),
+        totalRevenue: Number(row.total_revenue || 0),
+        occupancy: Number(row.occupancy || 0),
+        avgDailyRate: Number(row.avgDailyRate || 0),
+        revPAR: Number(row.revpar || 0),
+      };
+      // Also hydrate localStorage so other consumers get up-to-date data
+      try {
+        const lsKey = `corepms_nightAudit_reports_${row.date}`;
+        if (!localStorage.getItem(lsKey)) {
+          localStorage.setItem(lsKey, JSON.stringify(dbAuditBundle));
+        }
+        if (!localStorage.getItem('corepms_nightAudit_lastReports')) {
+          localStorage.setItem('corepms_nightAudit_lastReports', JSON.stringify(dbAuditBundle));
+        }
+      } catch { /* non-fatal */ }
+    }
+  } catch (err) {
+    console.warn('[Reporting] DB audit bundle query failed, using localStorage:', err);
+  }
+
+  const b = dbAuditBundle || getLastNightAuditBundle();
+  const date = forDate || b?.date || targetDate;
+
+  // ── REAL-TIME room revenue for current business day (no audit yet) ──
+  // If there's no completed audit for this date, pull live room revenue from folio_charges
+  let realtimeRoomRevenue: number | null = null;
+  try {
+    const todayAuditRes = await db.query<any>(
+      `SELECT room_revenue FROM night_audit_runs WHERE business_date::date = $1 AND status='completed' LIMIT 1`,
+      [date]
+    );
+    if ('rows' in todayAuditRes && todayAuditRes.rows.length > 0) {
+      // Audit ran for this exact date — authoritative
+      realtimeRoomRevenue = Number(todayAuditRes.rows[0].room_revenue || 0);
+    } else {
+      // No audit yet — sum today's room charges live from DB
+      const liveRoomRes = await db.query<any>(
+        `SELECT COALESCE(SUM(amount),0) as total FROM folio_charges
+         WHERE LOWER(category) IN ('room','accommodation','room charge','room rate')
+           AND is_voided = false AND business_date::date = $1`,
+        [date]
+      );
+      if ('rows' in liveRoomRes && liveRoomRes.rows.length > 0) {
+        realtimeRoomRevenue = Number(liveRoomRes.rows[0].total || 0);
+      }
+    }
+  } catch (_) { /* non-fatal — fall back to bundle */ }
+
+  // Use real-time room revenue if available, otherwise use last audit bundle
+  const effectiveRoomRevenue = realtimeRoomRevenue !== null
+    ? realtimeRoomRevenue
+    : Number(b?.roomRevenue || 0);
+
+  // ── REAL-TIME shift cash/card totals from DB ──
+  let cashCard = readJSON<Record<string, number>>('corepms_shift_totals', { cash: 0, card: 0 });
+  try {
+    const shiftTotalsRes = await db.query<any>(
+      `SELECT COALESCE(SUM(total_cash),0) as cash, COALESCE(SUM(total_card),0) as card
+       FROM pos_shifts WHERE business_date::date = $1`,
+      [date]
+    );
+    if ('rows' in shiftTotalsRes && shiftTotalsRes.rows.length > 0) {
+      const row = shiftTotalsRes.rows[0];
+      const dbCash = Number(row.cash || 0);
+      const dbCard = Number(row.card || 0);
+      if (dbCash > 0 || dbCard > 0) {
+        cashCard = { cash: dbCash, card: dbCard };
+      }
+    }
+  } catch (_) { /* non-fatal */ }
 
   // Get year-over-year comparison data
   const lastYearDate = getSameDateLastYear(date);
@@ -85,7 +177,46 @@ export const buildFlashReport = (forDate?: string) => {
   );
 
   // Separate Food and Bar revenue based on POS categories and descriptions
-  // This logic ensures no double-counting by processing charges in a specific order
+  // NEW: Try to get detailed breakdown from database if possible
+  let dbFoodRevenue = 0;
+  let dbBarRevenue = 0;
+  let dbPosTotal = 0;
+
+  try {
+    const posRes = await db.query<any>(
+      `SELECT items, total_amount FROM pos_orders WHERE status='closed' AND created_at::date = $1`,
+      [date]
+    );
+    const posOrders = 'rows' in posRes ? (posRes.rows || []) : [];
+    
+    posOrders.forEach((order: any) => {
+      const total = Number(order.total_amount || 0);
+      dbPosTotal += total;
+
+      const items = typeof order.items === 'string' ? JSON.parse(order.items) : (order.items || []);
+      if (Array.isArray(items)) {
+        items.forEach((item: any) => {
+          const itemPrice = Number(item.price || item.menuItem?.price || 0);
+          const itemQty = Number(item.quantity || 1);
+          const itemAmt = itemPrice * itemQty;
+          
+          const name = String(item.name || item.menuItem?.name || '').toLowerCase();
+          const cat = String(item.category || item.menuItem?.category || '').toLowerCase();
+          
+          const isBar = cat.includes('bar') || cat.includes('beverage') || cat.includes('liquor') || 
+                        name.includes('beer') || name.includes('wine') || name.includes('spirit') || 
+                        name.includes('cocktail') || name.includes('drink');
+          
+          if (isBar) dbBarRevenue += itemAmt;
+          else dbFoodRevenue += itemAmt;
+        });
+      } else {
+        dbFoodRevenue += total;
+      }
+    });
+  } catch (err) {
+    console.warn('[Reporting] Database POS breakdown failed, falling back to heuristics:', err);
+  }
 
   // First, identify all F&B charges for the business date
   const fbCharges = todaysCharges.filter((c: any) =>
@@ -118,7 +249,7 @@ export const buildFlashReport = (forDate?: string) => {
         desc.includes('dessert') ||
         desc.includes('snack') ||
         desc.includes('buffet') ||
-        desc.includes('room service meal'); // More specific room service
+        desc.includes('room service meal');
 
       // Explicitly bar-related keywords (to exclude from food)
       const isExplicitlyBar =
@@ -199,11 +330,10 @@ export const buildFlashReport = (forDate?: string) => {
     })
     .reduce((sum: number, c: any) => sum + Number(c.amount || 0), 0);
 
-  // Add remaining revenue to food (conservative approach)
-  const finalFoodRevenue = foodRevenue + remainingFbRevenue;
-
-  // Use the already calculated values
-  const finalBarRevenue = barRevenue;
+  // Combine DB values with folio charge values (ensuring no double count if possible, 
+  // but DB is usually more accurate for today's POS)
+  const finalFoodRevenue = dbPosTotal > 0 ? dbFoodRevenue : (foodRevenue + remainingFbRevenue);
+  const finalBarRevenue = dbPosTotal > 0 ? dbBarRevenue : barRevenue;
 
   // Calculate last year's F&B breakdown using the same logic
   const lastYearFbCharges = lastYearCharges.filter((c: any) =>
@@ -312,10 +442,26 @@ export const buildFlashReport = (forDate?: string) => {
   const finalLastYearFoodRevenue = lastYearFoodRevenue + lastYearRemainingFbRevenue;
   const finalLastYearBarRevenue = lastYearBarRevenue;
 
-  // Calculate last year's departmental expenses
-  const lastYearDeptExpenses = lastYearBundle ?
-    (lastYearBundle.roomRevenue + lastYearBundle.fbRevenue) * 0.35 :
-    0;
+  // Calculate last year's departmental expenses from GL ledger for that date
+  // No hardcoded heuristics — return 0 if no real data found for last year
+  const lastYearDeptExpenses = (() => {
+    if (!lastYearBundle) return 0;
+    try {
+      const lastYearLedger = gl.getLedger().filter(e => e.date === lastYearDate);
+      const accs = gl.getAccounts();
+      const expTotal = lastYearLedger
+        .flatMap(e => e.lines)
+        .filter(l => { const acc = accs.find(a => a.id === l.accountId); return acc?.category === 'Expense'; })
+        .reduce((s, l) => s + (l.debit || 0), 0);
+      if (expTotal > 0) return expTotal;
+    } catch { /* fall through */ }
+    // Fallback: check dated expense cache in localStorage
+    try {
+      const storedYoy = readJSON<number>(`corepms_dept_expenses_total_${lastYearDate}`, 0);
+      if (storedYoy > 0) return storedYoy;
+    } catch { /* ignore */ }
+    return 0; // Unknown — report as 0, not a fabricated estimate
+  })();
 
   // Calculate total departmental expenses from GL ledger
   // These are now populated real-time when vendor expenses are created
@@ -338,9 +484,8 @@ export const buildFlashReport = (forDate?: string) => {
     const storedExpenses = readJSON<number>('corepms_dept_expenses_total', 0);
     if (storedExpenses > 0) return storedExpenses;
 
-    // Last resort: estimate based on revenue (35% industry average)
-    const totalRevenueEstimate = Number(b?.roomRevenue || 0) + finalFoodRevenue + finalBarRevenue;
-    return totalRevenueEstimate * 0.35;
+    // No hardcoded heuristics — return 0 if no real data found
+    return 0;
   })();
 
   // Validate that our separated revenues match the original F&B total
@@ -358,26 +503,39 @@ export const buildFlashReport = (forDate?: string) => {
     });
   }
 
-  // Calculate totals for current period
-  const currentTotalRevenue = Number(b?.roomRevenue || 0) + calculatedFbTotal;
+  // Calculate totals for current period — use real-time room revenue
+  const currentTotalRevenue = effectiveRoomRevenue + calculatedFbTotal;
 
   // Calculate totals for last year
   const lastYearTotalFbRevenue = finalLastYearFoodRevenue + finalLastYearBarRevenue;
   const lastYearTotalRevenue = lastYearBundle ?
     (Number(lastYearBundle.roomRevenue || 0) + lastYearTotalFbRevenue) : 0;
 
-  // Get last year's cash/card data
-  const lastYearCashCard = lastYearBundle ?
+  // Get last year's cash/card data — try DB first
+  let lastYearCashCard = lastYearBundle ?
     readJSON<Record<string, number>>(`corepms_shift_totals_${lastYearDate}`, { cash: 0, card: 0 }) :
     { cash: 0, card: 0 };
+  try {
+    const lyShiftRes = await db.query<any>(
+      `SELECT COALESCE(SUM(total_cash),0) as cash, COALESCE(SUM(total_card),0) as card
+       FROM pos_shifts WHERE business_date::date = $1`,
+      [lastYearDate]
+    );
+    if ('rows' in lyShiftRes && lyShiftRes.rows.length > 0) {
+      const lyRow = lyShiftRes.rows[0];
+      if (Number(lyRow.cash) > 0 || Number(lyRow.card) > 0) {
+        lastYearCashCard = { cash: Number(lyRow.cash || 0), card: Number(lyRow.card || 0) };
+      }
+    }
+  } catch { /* non-fatal */ }
 
   const rows = [
-    // Room Revenue with YoY comparison
+    // Room Revenue with YoY comparison — uses real-time effectiveRoomRevenue
     {
       metric: 'Room Revenue',
-      today: Number(b?.roomRevenue || 0),
+      today: Number(effectiveRoomRevenue.toFixed(2)),
       lastYear: Number(lastYearBundle?.roomRevenue || 0),
-      difference: Number(b?.roomRevenue || 0) - Number(lastYearBundle?.roomRevenue || 0)
+      difference: Number(effectiveRoomRevenue.toFixed(2)) - Number(lastYearBundle?.roomRevenue || 0)
     },
     // Food Revenue with YoY comparison
     {
@@ -477,15 +635,55 @@ export const buildFlashReport = (forDate?: string) => {
 };
 
 // POS Sales/Cashier Reconciliation
-export const buildPosReconciliation = (forDate?: string) => {
-  const ended = readJSON<any[]>('corepms_endedShifts', []);
-  const rows = ended.map(s => ({ cashier: s.openedBy || s.id, outlet: s.department || 'POS', sales: Number(s.totals?.total || s.totalSales || 0), cash: Number(s.totals?.cash || s.cashPayments || 0), card: Number(s.totals?.card || s.cardPayments || 0), overShort: Number((s.report_data?.cashDifference || 0)) }));
+export const buildPosReconciliation = async (forDate?: string) => {
   const date = forDate || getBusinessDate();
+  
+  try {
+    const { db } = await import('@/lib/db');
+    // Fetch shifts for the given date
+    const shiftRes = await db.query<any>(
+      `SELECT s.*, 
+       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed') as total_sales,
+       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"cash"%') as cash_sales,
+       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"card"%') as card_sales
+       FROM pos_shifts s 
+       WHERE s.opened_at::date = $1`,
+      [date]
+    );
+
+    if ('rows' in shiftRes && shiftRes.rows.length > 0) {
+      const rows = shiftRes.rows.map((s: any) => {
+        const metadata = typeof s.metadata === 'string' ? JSON.parse(s.metadata) : (s.metadata || {});
+        return {
+          cashier: s.opened_by || s.id,
+          outlet: metadata.department || 'POS',
+          sales: Number(s.total_sales || 0),
+          cash: Number(s.cash_sales || 0),
+          card: Number(s.card_sales || 0),
+          overShort: Number(s.actual_cash || 0) - (Number(s.starting_cash || 0) + Number(s.cash_sales || 0))
+        };
+      });
+      return { title: `POS Sales & Cashier Reconciliation — ${date}`, columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'Card', 'Over/Short'], rows };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildPosReconciliation DB query failed:', err);
+  }
+
+  // Fallback to localStorage
+  const ended = readJSON<any[]>('corepms_endedShifts', []);
+  const rows = ended.map(s => ({ 
+    cashier: s.openedBy || s.id, 
+    outlet: s.department || 'POS', 
+    sales: Number(s.totals?.total || s.totalSales || 0), 
+    cash: Number(s.totals?.cash || s.cashPayments || 0), 
+    card: Number(s.totals?.card || s.cardPayments || 0), 
+    overShort: Number((s.report_data?.cashDifference || 0)) 
+  }));
   return { title: `POS Sales & Cashier Reconciliation — ${date}`, columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'Card', 'Over/Short'], rows };
 };
 
 // Daily Purchase & Receiving Log (simple placeholder using expenses and vendors if present)
-export const buildPurchaseReceivingLog = (forDate?: string) => {
+export const buildPurchaseReceivingLog = async (forDate?: string) => {
   const purchases = readJSON<any[]>('corepms_purchases', []);
   const date = forDate || getBusinessDate();
   const rows = purchases.filter(p => p.date === date).map(p => ({ item: p.itemName || p.item || 'Item', vendor: p.vendorName || p.vendorId || 'Vendor', po: p.poId || p.po || '-', unitCost: Number(p.unitCost || 0), qty: Number(p.quantity || 0), total: Number((Number(p.unitCost || 0) * Number(p.quantity || 0)).toFixed(2)) }));
@@ -493,7 +691,7 @@ export const buildPurchaseReceivingLog = (forDate?: string) => {
 };
 
 // Housekeeping Status (daily snapshot from room service)
-export const buildHousekeepingStatus = () => {
+export const buildHousekeepingStatus = async () => {
   const rooms = roomSvc.getRooms();
   const byStatus: Record<string, number> = {};
   rooms.forEach(r => { byStatus[r.status] = (byStatus[r.status] || 0) + 1; });
@@ -503,7 +701,7 @@ export const buildHousekeepingStatus = () => {
 };
 
 // Daily Tax Report (sum of TAX account for date from GL)
-export const buildDailyTax = (forDate?: string) => {
+export const buildDailyTax = async (forDate?: string) => {
   const date = forDate || new Date().toISOString().slice(0, 10);
   const ledger = gl.getLedger().filter(e => e.date === date);
   const taxAcc = gl.getMappings().TAX || 'TAX';
@@ -513,7 +711,7 @@ export const buildDailyTax = (forDate?: string) => {
 };
 
 // Cash & Bank Deposits (daily totals for CASH/BANK accounts)
-export const buildCashBankDeposits = (forDate?: string) => {
+export const buildCashBankDeposits = async (forDate?: string) => {
   const date = forDate || new Date().toISOString().slice(0, 10);
   const ledger = gl.getLedger().filter(e => e.date === date);
   const cashAcc = gl.getMappings().CASH || '1000';
@@ -529,7 +727,7 @@ export const buildCashBankDeposits = (forDate?: string) => {
 };
 
 // Trial Balance (monthly)
-export const buildTrialBalance = (monthISO: string) => {
+export const buildTrialBalance = async (monthISO: string) => {
   const [y, m] = monthISO.split('-');
   const start = `${y}-${m}-01`;
   const endDate = new Date(Number(y), Number(m));
@@ -558,35 +756,114 @@ export const buildDepartmentalSummary = async (monthISO: string) => {
   return { title: `Operating Departmental Summary (USALI) — ${monthISO}`, columns: ['Section', 'Metric', 'Amount'], rows };
 };
 
-// Arrivals / Departures (daily)
-export const buildArrivalsDepartures = (forDate?: string) => {
+// Arrivals / Departures (daily) — DB-driven
+export const buildArrivalsDepartures = async (forDate?: string) => {
   const date = forDate || getBusinessDate();
+
+  try {
+    const { db: dbMod } = await import('@/lib/db');
+    const res = await dbMod.query<any>(
+      `SELECT r.status,
+              COALESCE(g.full_name, r.booking_name, 'Unknown') as guest_name,
+              ro.number as room_number,
+              r.room_type,
+              r.check_in_date::text as check_in,
+              r.check_out_date::text as check_out
+       FROM reservations r
+       LEFT JOIN guests g ON r.guest_id = g.id
+       LEFT JOIN rooms ro ON r.room_id = ro.id
+       WHERE r.check_in_date::date = $1 OR r.check_out_date::date = $1
+       ORDER BY r.status, g.full_name`,
+      [date]
+    );
+
+    if ('rows' in res && res.rows.length > 0) {
+      const rows = res.rows.map((r: any) => ({
+        type: r.check_in === date ? 'Arrival' : 'Departure',
+        guest: r.guest_name || '—',
+        room: r.room_number || r.room_type || '—',
+        status: r.status || '—',
+        date: r.check_in === date ? r.check_in : r.check_out
+      }));
+      return { title: `Arrivals & Departures — ${date}`, columns: ['Type', 'Guest', 'Room', 'Status', 'Date'], rows };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildArrivalsDepartures DB query failed, using localStorage:', err);
+  }
+
+  // Fallback to localStorage
   const reservations = readJSON<any[]>('corepms_reservations', []);
-  const arrivals = reservations.filter(r => (r.checkIn || '').slice(0, 10) === date);
-  const departures = reservations.filter(r => (r.checkOut || '').slice(0, 10) === date);
+  const arrivals = reservations.filter(r => (r.checkIn || r.check_in_date || '').slice(0, 10) === date);
+  const departures = reservations.filter(r => (r.checkOut || r.check_out_date || '').slice(0, 10) === date);
   const rows = [
-    ...arrivals.map(r => ({ type: 'Arrival', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', time: (r.checkIn || '').slice(11, 16) || '—' })),
-    ...departures.map(r => ({ type: 'Departure', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', time: (r.checkOut || '').slice(11, 16) || '—' }))
+    ...arrivals.map(r => ({ type: 'Arrival', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', status: r.status || '—', date })),
+    ...departures.map(r => ({ type: 'Departure', guest: r.guestName || r.bookingName || '—', room: r.roomType || r.roomNumber || '—', status: r.status || '—', date }))
   ];
-  return { title: `Arrivals & Departures — ${date}`, columns: ['Type', 'Guest', 'Room', 'Time'], rows };
+  return { title: `Arrivals & Departures — ${date}`, columns: ['Type', 'Guest', 'Room', 'Status', 'Date'], rows };
 };
 
-// High Balance (daily) across folios and city ledger transfers
-export const buildHighBalance = (threshold?: number, forDate?: string) => {
+// High Balance (daily) — DB-driven from folios + city_ledger_accounts
+export const buildHighBalance = async (threshold?: number, forDate?: string) => {
   const date = forDate || getBusinessDate();
   const th = typeof threshold === 'number' ? threshold : readJSON<number>('corepms_high_balance_threshold', 500);
+
+  try {
+    const { db: dbMod } = await import('@/lib/db');
+
+    // Query open folios with high balance from DB
+    const folioRes = await dbMod.query<any>(
+      `SELECT f.id, f.balance, f.room_number,
+              COALESCE(g.full_name, r.booking_name, 'Unknown') as guest_name
+       FROM folios f
+       LEFT JOIN guests g ON f.guest_id = g.id
+       LEFT JOIN reservations r ON f.reservation_id = r.id
+       WHERE f.status = 'open' AND f.balance >= $1
+       ORDER BY f.balance DESC`,
+      [th]
+    );
+
+    // Query city ledger accounts with high balance
+    const ledgerRes = await dbMod.query<any>(
+      `SELECT account_name, current_balance FROM city_ledger_accounts
+       WHERE current_balance >= $1 AND status = 'Active'
+       ORDER BY current_balance DESC`,
+      [th]
+    );
+
+    const folioRows = ('rows' in folioRes ? folioRes.rows : []).map((f: any) => ({
+      source: 'Folio',
+      id: f.id || '—',
+      name: f.guest_name || '—',
+      room: f.room_number || '—',
+      balance: Number(Number(f.balance || 0).toFixed(2))
+    }));
+
+    const ledgerRows = ('rows' in ledgerRes ? ledgerRes.rows : []).map((l: any) => ({
+      source: 'City Ledger',
+      id: l.account_name,
+      name: l.account_name,
+      room: '—',
+      balance: Number(Number(l.current_balance || 0).toFixed(2))
+    }));
+
+    const rows = [...folioRows, ...ledgerRows];
+    return { title: `High Balance — ${date} (Threshold: $${th})`, columns: ['Source', 'ID', 'Name', 'Room', 'Balance'], rows };
+  } catch (err) {
+    console.warn('[Reporting] buildHighBalance DB query failed:', err);
+  }
+
+  // Fallback to localStorage
   const folios = readJSON<any[]>('corepms_folios', []);
   const cityLedger = readJSON<any[]>('corepms_city_ledger', []);
-  const folioRows = folios.filter(f => Number(f.balance || f.folioBalance || 0) >= th).map(f => ({ source: 'Folio', id: f.id || f.guestId || '—', name: f.guestName || f.name || '—', balance: Number((f.balance || f.folioBalance || 0).toFixed?.(2) ?? Number(f.balance || f.folioBalance || 0).toFixed(2)) }));
+  const folioRows = folios.filter(f => Number(f.balance || f.folioBalance || 0) >= th).map(f => ({ source: 'Folio', id: f.id || '—', name: f.guestName || f.name || '—', room: '—', balance: Number(Number(f.balance || f.folioBalance || 0).toFixed(2)) }));
   const ledgerAgg: Record<string, number> = {};
   cityLedger.forEach(tx => { const key = tx.guestId || tx.accountName || 'unknown'; ledgerAgg[key] = (ledgerAgg[key] || 0) + Number(tx.amount || 0); });
-  const ledgerRows = Object.entries(ledgerAgg).filter(([_, amt]) => amt >= th).map(([key, amt]) => ({ source: 'City Ledger', id: key, name: key, balance: Number(amt.toFixed(2)) }));
-  const rows = [...folioRows, ...ledgerRows];
-  return { title: `High Balance — ${date} (Threshold: $${th})`, columns: ['Source', 'ID', 'Name', 'Balance'], rows };
+  const ledgerRows = Object.entries(ledgerAgg).filter(([_, amt]) => amt >= th).map(([key, amt]) => ({ source: 'City Ledger', id: key, name: key, room: '—', balance: Number(amt.toFixed(2)) }));
+  return { title: `High Balance — ${date} (Threshold: $${th})`, columns: ['Source', 'ID', 'Name', 'Room', 'Balance'], rows: [...folioRows, ...ledgerRows] };
 };
 
 // Procurement Variance (monthly) using AP invoices vs Purchase Orders
-export const buildProcurementVariance = (monthISO: string) => {
+export const buildProcurementVariance = async (monthISO: string) => {
   const [y, m] = monthISO.split('-');
   const start = `${y}-${m}-01`;
   const endDate = new Date(Number(y), Number(m));
@@ -606,14 +883,14 @@ export const buildProcurementVariance = (monthISO: string) => {
 };
 
 // Fixed Asset Register Reconciliation (monthly stub)
-export const buildFixedAssetRecon = (monthISO: string) => {
+export const buildFixedAssetRecon = async (monthISO: string) => {
   const assets = readJSON<any[]>('corepms_fixed_assets', []);
   const rows = assets.length === 0 ? [{ assetId: '—', name: 'Dataset not available', status: 'N/A' }] : assets.map(a => ({ assetId: a.id || a.asset_id || '—', name: a.name || 'Asset', status: 'OK' }));
   return { title: `Fixed Asset Register Reconciliation — ${monthISO}`, columns: ['Asset ID', 'Name', 'Status'], rows };
 };
 
 // Monthly Profit & Loss (USALI-style summary using GL trial balance)
-export const buildMonthlyPL = (monthISO: string) => {
+export const buildMonthlyPL = async (monthISO: string) => {
   const [y, m] = monthISO.split('-');
   const start = `${y}-${m}-01`;
   const end = new Date(Number(y), Number(m)).toISOString().slice(0, 10); // first day of next month
@@ -628,7 +905,7 @@ export const buildMonthlyPL = (monthISO: string) => {
 };
 
 // Aged Accounts Receivable (City Ledger Aging)
-export const buildAgedAR = (asOf?: string) => {
+export const buildAgedAR = async (asOf?: string) => {
   const date = asOf || getBusinessDate();
   const ledger = readJSON<any[]>('corepms_city_ledger', []);
   const now = new Date(date);
@@ -637,8 +914,46 @@ export const buildAgedAR = (asOf?: string) => {
   return { title: `Aged Accounts Receivable — ${date}`, columns: ['Account', 'Reference', 'Date', 'Amount', 'Aging'], rows };
 };
 
-// Inventory & COGS (simple summary using purchases and opening/ending balances if present)
-export const buildInventoryCOGS = (monthISO: string) => {
+// Inventory & COGS — DB-driven using inventory_periods and transactions
+export const buildInventoryCOGS = async (monthISO: string) => {
+  try {
+    const { db: dbMod } = await import('@/lib/db');
+    const [year, month] = monthISO.split('-');
+
+    // Get period for this month
+    const periodRes = await dbMod.query<any>(
+      `SELECT id, period_name, opening_stock_value, closing_stock_value,
+              received_value, cogs_value, kitchen_cogs, cellar_cogs, status
+       FROM inventory_periods
+       WHERE period_year = $1 AND period_month = $2
+       LIMIT 1`,
+      [Number(year), Number(month)]
+    );
+
+    if ('rows' in periodRes && periodRes.rows.length > 0) {
+      const p = periodRes.rows[0];
+      const opening = Number(p.opening_stock_value || 0);
+      const purchases = Number(p.received_value || 0);
+      const ending = Number(p.closing_stock_value || 0);
+      const cogs = p.cogs_value ? Number(p.cogs_value) : Number((opening + purchases - ending).toFixed(2));
+
+      const rows = [
+        { metric: 'Period', value: p.period_name || monthISO },
+        { metric: 'Status', value: p.status || 'unknown' },
+        { metric: 'Opening Inventory', value: opening },
+        { metric: 'Purchases (Received)', value: purchases },
+        { metric: 'Ending Inventory', value: ending },
+        { metric: 'COGS', value: cogs },
+        { metric: 'Kitchen COGS', value: Number(p.kitchen_cogs || 0) },
+        { metric: 'Cellar COGS', value: Number(p.cellar_cogs || 0) },
+      ];
+      return { title: `Inventory & COGS — ${monthISO}`, columns: ['Metric', 'Value'], rows };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildInventoryCOGS DB query failed:', err);
+  }
+
+  // Fallback to localStorage
   const opening = readJSON<number>('corepms_inventory_opening', 0);
   const ending = readJSON<number>('corepms_inventory_ending', 0);
   const purchases = readJSON<any[]>('corepms_purchases', []).filter(p => (p.date || '').startsWith(monthISO));
@@ -658,7 +973,7 @@ export const buildInventoryCOGS = (monthISO: string) => {
 // ============================================================================
 
 // Open Bills Report — unpaid/partially-paid vendor expenses
-export const buildOpenBills = () => {
+export const buildOpenBills = async () => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const payments: any[] = readJSON('corepms_vendor_payments', []);
   const paymentsByVendor: Record<string, number> = {};
@@ -694,7 +1009,7 @@ export const buildOpenBills = () => {
 };
 
 // Aged Payables Summary — aging buckets: Current, 1-30, 31-60, 61-90, 90+
-export const buildAgedPayables = (asOfISO: string = new Date().toISOString().slice(0, 10)) => {
+export const buildAgedPayables = async (asOfISO: string = new Date().toISOString().slice(0, 10)) => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const asOf = new Date(asOfISO);
   const diffDays = (d: string) => Math.floor((asOf.getTime() - new Date(d).getTime()) / 86400000);
@@ -739,7 +1054,7 @@ export const buildAgedPayables = (asOfISO: string = new Date().toISOString().sli
 };
 
 // Purchase Order History (uses expense records as purchase proxies)
-export const buildPurchaseOrderHistory = (from: string, to: string) => {
+export const buildPurchaseOrderHistory = async (from: string, to: string) => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to)
     .sort((a, b) => b.expense_date.localeCompare(a.expense_date));
@@ -767,7 +1082,7 @@ export const buildPurchaseOrderHistory = (from: string, to: string) => {
 };
 
 // Payment History + Check Register
-export const buildPaymentHistory = (from: string, to: string) => {
+export const buildPaymentHistory = async (from: string, to: string) => {
   const payments: any[] = readJSON('corepms_vendor_payments', []);
   const filtered = payments.filter(p => {
     const d = typeof p.payment_date === 'string' ? p.payment_date : new Date(p.payment_date).toISOString().slice(0, 10);
@@ -794,7 +1109,7 @@ export const buildPaymentHistory = (from: string, to: string) => {
 };
 
 // Vendor Payment Summary — totals per vendor for a period
-export const buildVendorPaymentSummary = (from: string, to: string) => {
+export const buildVendorPaymentSummary = async (from: string, to: string) => {
   const payments: any[] = readJSON('corepms_vendor_payments', []);
   const filtered = payments.filter(p => {
     const d = typeof p.payment_date === 'string' ? p.payment_date : new Date(p.payment_date).toISOString().slice(0, 10);
@@ -829,7 +1144,7 @@ export const buildVendorPaymentSummary = (from: string, to: string) => {
 };
 
 // Expenses by Department / Date Range
-export const buildExpensesByDepartment = (from: string, to: string) => {
+export const buildExpensesByDepartment = async (from: string, to: string) => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to);
 
@@ -873,7 +1188,7 @@ export const buildExpensesByDepartment = (from: string, to: string) => {
 };
 
 // Daily / Monthly Expense Summaries
-export const buildExpenseSummary = (period: 'daily' | 'monthly', from: string, to: string) => {
+export const buildExpenseSummary = async (period: 'daily' | 'monthly', from: string, to: string) => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to);
 
@@ -904,7 +1219,7 @@ export const buildExpenseSummary = (period: 'daily' | 'monthly', from: string, t
 };
 
 // Detailed Line-Item Export — every expense row with all fields
-export const buildDetailedLineItemExport = (from: string, to: string) => {
+export const buildDetailedLineItemExport = async (from: string, to: string) => {
   const expenses: any[] = readJSON('corepms_vendor_expenses', []);
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to)
     .sort((a, b) => a.expense_date.localeCompare(b.expense_date));
@@ -986,11 +1301,11 @@ export const exportXLSMulti = (sheets: Array<{ name: string; columns: string[]; 
   const a = document.createElement('a'); a.href = url; a.download = filename.endsWith('.xls') ? filename : (filename + '.xls'); a.click(); URL.revokeObjectURL(url);
 };
 
-export const exportMonthlyWorkbookXLS = (monthISO: string, filename?: string) => {
-  const pl = buildMonthlyPL(monthISO);
-  const ar = buildAgedAR(`${monthISO}-01`); // use first day as as-of
-  const inv = buildInventoryCOGS(monthISO);
-  const tb = buildTrialBalance(monthISO);
+export const exportMonthlyWorkbookXLS = async (monthISO: string, filename?: string) => {
+  const pl = await buildMonthlyPL(monthISO);
+  const ar = await buildAgedAR(`${monthISO}-01`); // use first day as as-of
+  const inv = await buildInventoryCOGS(monthISO);
+  const tb = await buildTrialBalance(monthISO);
   exportXLSMulti([
     { name: 'P&L', columns: pl.columns, rows: pl.rows },
     { name: 'Aged AR', columns: ar.columns, rows: ar.rows },

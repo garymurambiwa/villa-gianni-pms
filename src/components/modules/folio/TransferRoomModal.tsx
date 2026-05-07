@@ -26,7 +26,7 @@ export const TransferRoomModal: React.FC<TransferRoomModalProps> = ({
     currentRoomId,
     onSuccess
 }) => {
-    const { rooms } = useData();
+    const { rooms, loadAllData } = useData() as any;
     const [targetRoomId, setTargetRoomId] = useState<string>('');
     const [reason, setReason] = useState<string>('');
     const [markOldAsOOO, setMarkOldAsOOO] = useState<boolean>(false);
@@ -77,7 +77,14 @@ export const TransferRoomModal: React.FC<TransferRoomModalProps> = ({
             );
 
             if (result.ok) {
-                toast.success('Guest transferred successfully');
+                const msg = result.oldRoomNumber && result.newRoomNumber
+                    ? `Guest moved from Room ${result.oldRoomNumber} to Room ${result.newRoomNumber}`
+                    : 'Guest transferred successfully';
+                toast.success(msg);
+                // Force data reload so room grid, folio, and all UI reflect the new state
+                if (typeof loadAllData === 'function') {
+                    await loadAllData();
+                }
                 onSuccess();
                 onClose();
             } else {

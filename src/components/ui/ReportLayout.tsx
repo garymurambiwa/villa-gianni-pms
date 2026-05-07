@@ -548,7 +548,7 @@ export const ReportTable: React.FC<{
   footer?: React.ReactNode;
   className?: string;
 }> = ({ headers, children, footer, className = '' }) => (
-  <table className={`report-table w-full border-collapse text-sm ${className}`}>
+  <table className={`report-table w-full border-collapse text-xs sm:text-sm ${className}`}>
     <thead>
       <tr>
         {headers.map((h, idx) => (

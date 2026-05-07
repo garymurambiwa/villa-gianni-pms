@@ -231,29 +231,153 @@ export async function syncProductToDb(item: ProductRecord): Promise<SyncResult> 
 }
 
 /**
+ * Pull all products from DB and sync to localStorage
+ * This ensures localStorage stays in sync with the source of truth (DB)
+ */
+export async function pullProductsToLocalStorage(): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+
+    const res = await db.query('SELECT * FROM products');
+    if (!('rows' in res)) return { success: false, error: 'Failed to fetch products' };
+
+    const dbProducts = res.rows || [];
+
+    // Only update localStorage if DB returned actual products — never overwrite with empty array
+    if (dbProducts.length === 0) {
+      console.log('[dbSync] products table is empty — keeping existing localStorage');
+      return { success: true, synced: 0 };
+    }
+
+    // Map DB products back to the complete camelCase POS format for corepms_pos_items
+    // CRITICAL: costCenter MUST be restored from products.category (where syncPosItemToDb stores it)
+    const posItems = dbProducts.map((p: any) => {
+      let visibility: any = {};
+      try { visibility = typeof p.visibility === 'string' ? JSON.parse(p.visibility) : (p.visibility || {}); } catch { }
+
+      let barcodes: any[] = [];
+      try { barcodes = typeof p.barcodes === 'string' ? JSON.parse(p.barcodes) : (p.barcodes || []); } catch { }
+
+      return {
+        id: p.id,
+        name: p.name,
+        // ── costCenter restored from products.category (stored there by syncPosItemToDb) ──
+        costCenter:     p.category || p.department || 'restaurant',
+        category:       p.category,
+        department:     p.department,
+        type:           p.department, // 'Bar' or 'Restaurant' — used by POS.tsx for category detection
+        // ── Prices (DB field names → frontend camelCase) ──────────────────────
+        sellingPrice:   Number(p.price || 0),      // products.price = selling price
+        costPrice:      Number(p.cost_price || 0), // products.cost_price = cost
+        // ── Stock ─────────────────────────────────────────────────────────────
+        qtyInStock:     Number(p.stock_level || 0),
+        qtyReceived:    Number(p.qty_received || 0),
+        unit:           p.unit || 'units',
+        // ── Flags ─────────────────────────────────────────────────────────────
+        available:      p.active !== false,
+        is_stock_item:  p.is_stock_item !== false,
+        // ── Category linking ──────────────────────────────────────────────────
+        category_id:    p.category_id || null,
+        sub_id:         p.sub_id || null,
+        parent_sub_id:  p.parent_sub_id || null,
+        // ── Visibility toggles ────────────────────────────────────────────────
+        visibility,
+        bar_visibility:          p.bar_visibility !== false,
+        restaurant_visibility:   p.restaurant_visibility !== false,
+        inventoryCategory: p.department?.toLowerCase() === 'bar' ? 'cellar' : 'kitchen',
+        // ── Financial metrics ─────────────────────────────────────────────────
+        cosPercent:     Number(p.cos_percent || 0),
+        gpPercent:      Number(p.gp_percent || 0),
+        gpAmount:       Number(p.gp_amount || 0),
+        // ── Misc ──────────────────────────────────────────────────────────────
+        notes:          p.notes || '',
+        barcodes,
+        imageBgColor:   p.image_bg_color || null,
+        pictureData:    p.picture_data || null,
+      };
+    });
+
+    localStorage.setItem('corepms_pos_items', JSON.stringify(posItems));
+    console.log(`[dbSync] Pulled ${posItems.length} products to localStorage with correct field mapping`);
+    
+    // Also broadcast update event
+    window.dispatchEvent(new CustomEvent('pos:data:updated'));
+    
+    return { success: true, synced: posItems.length };
+  } catch (err: any) {
+    console.error('[dbSync] Pull products error:', err);
+    return { success: false, error: String(err) };
+  }
+}
+
+/**
  * Delete a product from the database
  */
 export async function deleteProductFromDb(itemId: string): Promise<SyncResult> {
   try {
     const isConfigured = await db.isConfigured();
-    if (!isConfigured) {
-      return { success: true, synced: 0 };
+    if (!isConfigured) return { success: true, synced: 0 };
+
+    console.log('[dbSync] Deleting product from DB (all tables):', itemId);
+
+    // Delete from all potential inventory-related tables to ensure consistency
+    const operations = [
+      { sql: `DELETE FROM products WHERE id = $1`, params: [itemId] },
+      { sql: `DELETE FROM inventory_items WHERE id = $1`, params: [itemId] },
+      { sql: `DELETE FROM menu_items WHERE id = $1`, params: [itemId] }
+    ];
+
+    const result = await db.transaction(operations);
+
+    if (!result.ok) {
+      throw new Error((result as any).error || 'Transaction failed');
     }
 
-    const sql = `DELETE FROM products WHERE id = $1`;
-    const result = await db.query(sql, [itemId]);
-
-    if ('error' in result) {
-      console.error('[dbSync] Product delete failed:', (result as any).error);
-      return { success: false, error: (result as any).error };
-    }
-
-    console.log('[dbSync] Product deleted from DB:', itemId);
+    console.log('[dbSync] Successfully deleted product from all tables:', itemId);
     return { success: true, synced: 1 };
   } catch (err: any) {
-    console.error('[dbSync] Product delete error:', err?.message || err);
-    return { success: false, error: err?.message || String(err) };
+    const msg = err?.message || String(err);
+    console.error('[dbSync] Delete product error:', msg);
+    return { success: false, error: msg };
   }
+}
+
+/**
+ * Bulk delete products from the database
+ */
+export async function bulkDeleteProductsFromDb(itemIds: string[]): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+    if (!itemIds.length) return { success: true, synced: 0 };
+
+    console.log(`[dbSync] Bulk deleting ${itemIds.length} products from DB (atomic)...`);
+
+    // Use array-based WHERE IN clause for efficiency — single statement per table
+    // instead of N individual deletes. This is atomic via transaction.
+    const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(', ');
+
+    const operations: { sql: string; params: any[] }[] = [
+      { sql: `DELETE FROM products WHERE id IN (${placeholders})`, params: itemIds },
+      { sql: `DELETE FROM inventory_items WHERE id IN (${placeholders})`, params: itemIds },
+      { sql: `DELETE FROM menu_items WHERE id IN (${placeholders})`, params: itemIds },
+    ];
+
+    const result = await db.transaction(operations);
+    if (!result.ok) throw new Error((result as any).error || 'Bulk delete transaction failed');
+
+    console.log(`[dbSync] Successfully bulk deleted ${itemIds.length} products.`);
+    return { success: true, synced: itemIds.length };
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    console.error('[dbSync] Bulk delete products error:', msg);
+    return { success: false, error: msg };
+  }
+}
+
+export async function deletePosItemsFromDb(itemIds: string[]): Promise<SyncResult> {
+  return bulkDeleteProductsFromDb(itemIds);
 }
 
 // ============================================================================
@@ -264,49 +388,62 @@ export async function deleteProductFromDb(itemId: string): Promise<SyncResult> {
  * Sync a single menu item to the database (Updated to use products table)
  */
 export async function syncMenuItemToDb(item: MenuItemRecord): Promise<SyncResult> {
-  // Bridge to new syncProductToDb
-  // We need to fetch existing product first to preserve stock/cost if possible, 
-  // or just upsert blindly since syncProductToDb handles upsert and partial updates via COALESCE logic if we had it,
-  // but here syncProductToDb does a full replace on conflict for fields provided.
-  // Actually, syncProductToDb replaced fields. We should try to read existing if we want to be safe, 
-  // but for now let's map what we have.
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
 
-  const product: ProductRecord = {
-    id: item.id,
-    name: item.name,
-    category: item.category,
-    department: item.department || item.category || 'Restaurant', // Preserve actual department
-    price: item.price,
-    active: item.active !== false,
-    cost_price: item.cost_price || 0,
-    stock_level: 0, // Menu items don't usually have stock, but we need to provide something. 
-    // Issue: If we pass 0, we might overwrite existing stock.
-    // Solution: We should probably fetch the existing product first 
-    // OR update syncProductToDb to use dynamic building of SET clause...
-    // For now, let's just assume if it's a menu sync, we might not want to touch stock?
-    // But syncProductToDb expects a full record.
+    // SAFE: Use a partial UPDATE that does NOT touch stock_level.
+    // This prevents a price/name change from zeroing out existing stock.
+    const sql = `
+      INSERT INTO products (
+        id, name, category, department, price, cost_price, active, visibility,
+        bar_visibility, restaurant_visibility, is_stock_item, category_id, sub_id,
+        unit, inserted_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'units', NOW(), NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        category = EXCLUDED.category,
+        department = EXCLUDED.department,
+        price = EXCLUDED.price,
+        cost_price = EXCLUDED.cost_price,
+        active = EXCLUDED.active,
+        visibility = EXCLUDED.visibility,
+        bar_visibility = EXCLUDED.bar_visibility,
+        restaurant_visibility = EXCLUDED.restaurant_visibility,
+        category_id = COALESCE(EXCLUDED.category_id, products.category_id),
+        sub_id = COALESCE(EXCLUDED.sub_id, products.sub_id),
+        updated_at = NOW()
+        -- NOTE: stock_level intentionally NOT updated here to prevent data loss
+    `;
 
-    // To do this right without reading, we'd need a partial update function.
-    // For this migration, let's implement a 'partialSyncProduct' or just update logical flow.
-    // Simpler approach: Map what we know. If it's a menu item, stock is likely not managed here.
-    // But if we overwrite stock with 0, that's bad.
+    const vis = item.visibility || {};
+    const visJson = typeof vis === 'string' ? vis : JSON.stringify(vis);
+    const visObj = typeof vis === 'string' ? JSON.parse(vis) : vis;
 
-    // Let's rely on the fact that syncPosItemToDb calls BOTH menu and inventory syncs.
-    // But standalone updates might be an issue.
-    // Let's modify syncProductToDb to treat undefined/nulls as "do not update" if possible? 
-    // The current SQL does `stock_level = EXCLUDED.stock_level`, which takes the value passed.
+    const params = [
+      item.id,
+      item.name,
+      item.category,
+      item.department || 'Restaurant',
+      item.price || 0,
+      item.cost_price || 0,
+      item.active !== false,
+      visJson,
+      visObj.bar !== false,      // bar_visibility
+      visObj.restaurant !== false, // restaurant_visibility
+      false,                     // is_stock_item = false for menu-only items
+      item.category_id || null,
+      item.sub_id || null,
+    ];
 
-    // SAFE FIX: Read before write is best pattern for partial updates without dynamic SQL.
-    unit: 'units',
-    is_stock_item: false,
-    visibility: JSON.stringify(item.visibility || {})
-  };
+    const result = await db.query(sql, params);
+    if ('error' in result) return { success: false, error: (result as any).error };
 
-  // However, since we are moving to a unified system, we should encourage using syncPosItemToDb (which has both info)
-  // or syncProductToDb directly.
-  // For legacy compatibility, let's try to pass the fields we have.
-
-  return syncProductToDb(product);
+    return { success: true, synced: 1 };
+  } catch (err: any) {
+    console.error('[dbSync] syncMenuItemToDb error:', err?.message || err);
+    return { success: false, error: err?.message || String(err) };
+  }
 }
 
 
@@ -398,20 +535,28 @@ export async function syncAllMenuItemsToDb(): Promise<SyncResult> {
  * Sync a single inventory item to the database (Updated to use products table)
  */
 export async function syncInventoryItemToDb(item: InventoryItemRecord): Promise<SyncResult> {
-  // Bridge to new syncProductToDb
+  // Bridge to unified products table.
+  // IMPORTANT: item.price = selling price, item.cost_price = cost price.
+  // Both must be mapped correctly to avoid wrong GP calculations.
+
+  const vis = item.visibility || { bar: true, restaurant: true };
+  const visJson = JSON.stringify(vis);
 
   const product: ProductRecord = {
     id: item.id,
     name: item.name,
     category: item.category,
-    department: (item as any).department || 'Restaurant', // Preserve actual department if provided
-    price: item.price,
-    active: true, // Inventory items usually active if they exist
-    cost_price: item.cost_price || 0,
-    stock_level: Number(item.stock_level),
+    department: (item as any).department || 'Restaurant',
+    price: item.price || 0,                        // selling price
+    cost_price: item.cost_price || item.price || 0, // cost price (use price as fallback for backward compat)
+    active: true,
+    stock_level: Number(item.stock_level ?? 0),
     unit: item.unit || 'units',
     is_stock_item: true,
-    visibility: JSON.stringify(item.visibility || {})
+    visibility: visJson,
+    bar_visibility: vis.bar !== false,
+    restaurant_visibility: vis.restaurant !== false,
+    reorder_level: (item as any).reorder_level || 0
   };
 
   return syncProductToDb(product);
@@ -607,15 +752,14 @@ export async function syncPosItemToDb(item: any): Promise<SyncResult> {
     const rawDeptPos = String(item.type || item.department || item.costCenter || '').toLowerCase();
     const deptPos = rawDeptPos.includes('bar') ? 'Bar' : 'Restaurant';
 
-    // Extract and validate prices
-    let price = Number(item.sellingPrice || 0);
-    const costPrice = Number(item.costPrice || 0);
-    
-    // Validate that sellingPrice is not less than costPrice
-    if (price < costPrice) {
-      console.warn(`[dbSync] Invalid price detected for item ${item.name || item.id}: sellingPrice (${price}) < costPrice (${costPrice}). Auto-correcting to maintain 10% margin.`);
-      // Auto-correct by setting sellingPrice to at least costPrice * 1.1 (10% margin)
-      price = costPrice * 1.1;
+    // Extract prices exactly as set — no silent auto-corrections
+    // The user's prescribed selling price must always be respected.
+    const price = Number(item.sellingPrice || item.price || 0);
+    const costPrice = Number(item.costPrice || item.cost_price || 0);
+    // NOTE: selling price CAN legitimately be lower than cost (promotional/staff pricing)
+    // Do NOT silently mutate the user's price. Log a warning only.
+    if (price > 0 && costPrice > 0 && price < costPrice) {
+      console.warn(`[dbSync] Notice: ${item.name} selling price ($${price}) < cost price ($${costPrice}). Saving as-is per user intent.`);
     }
 
     const product: ProductRecord = {
@@ -717,9 +861,19 @@ export async function deletePosItemFromDb(itemId: string): Promise<SyncResult> {
  * Perform a full sync of all POS items to the database
  * Called on app startup or manual sync request
  */
+/**
+ * Perform a full sync — DB is source of truth.
+ *
+ * DIRECTION: DB → localStorage (pull), NOT localStorage → DB (push)
+ *
+ * Why: pushing localStorage → DB can resurrect deleted items if localStorage
+ * was not properly cleaned up after deletion. The DB delete is authoritative.
+ *
+ * Use case: called on app startup to hydrate localStorage from the canonical DB state.
+ */
 export async function performFullSync(): Promise<SyncResult> {
   try {
-    console.log('[dbSync] Starting full database sync...');
+    console.log('[dbSync] performFullSync: pulling from DB → localStorage');
 
     const isConfigured = await db.isConfigured();
     if (!isConfigured) {
@@ -727,21 +881,33 @@ export async function performFullSync(): Promise<SyncResult> {
       return { success: true, synced: 0 };
     }
 
-    const menuResult = await syncAllMenuItemsToDb();
-    const invResult = await syncAllInventoryItemsToDb();
+    // Pull products from DB (authoritative source) into localStorage
+    const pullResult = await pullProductsToLocalStorage();
+    console.log(`[dbSync] Full sync pulled ${pullResult.synced || 0} items from DB`);
+    return pullResult;
 
-    const totalSynced = (menuResult.synced || 0) + (invResult.synced || 0);
-    const errors = [menuResult.error, invResult.error].filter(Boolean);
-
-    console.log(`[dbSync] Full sync complete: ${totalSynced} items synced`);
-
-    if (errors.length > 0) {
-      return { success: false, error: errors.join('; '), synced: totalSynced };
-    }
-
-    return { success: true, synced: totalSynced };
   } catch (err: any) {
     console.error('[dbSync] Full sync CRITICAL FAILURE:', err?.message || err);
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Push all localStorage items to DB.
+ * WARNING: Only call this for initial data migration or CSV import.
+ * Do NOT call on normal app startup — it can resurrect deleted items.
+ */
+export async function pushLocalStorageToDb(): Promise<SyncResult> {
+  try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { success: true, synced: 0 };
+    const menuResult = await syncAllMenuItemsToDb();
+    const invResult = await syncAllInventoryItemsToDb();
+    const totalSynced = (menuResult.synced || 0) + (invResult.synced || 0);
+    const errors = [menuResult.error, invResult.error].filter(Boolean);
+    if (errors.length > 0) return { success: false, error: errors.join('; '), synced: totalSynced };
+    return { success: true, synced: totalSynced };
+  } catch (err: any) {
     return { success: false, error: err?.message || String(err) };
   }
 }
@@ -897,6 +1063,9 @@ export async function ensureTablesExist(): Promise<boolean> {
         category VARCHAR(50),
         stock_level NUMERIC NOT NULL DEFAULT 0,
         price NUMERIC(12,2) NOT NULL DEFAULT 0,
+        cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+        unit TEXT DEFAULT 'units',
+        visibility TEXT,
         inserted_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
@@ -974,11 +1143,14 @@ export async function ensureTablesExist(): Promise<boolean> {
       console.warn('[dbSync] Failed to add updated_at column to menu_items:', e);
     }
 
-    // Ensure inventory_items table has updated_at column
+    // Ensure inventory_items table has expected columns
     try {
       await db.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();`);
+      await db.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS cost NUMERIC(12,2) DEFAULT 0;`);
+      await db.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS unit TEXT DEFAULT 'units';`);
+      await db.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS visibility TEXT;`);
     } catch (e) {
-      console.warn('[dbSync] Failed to add updated_at column to inventory_items:', e);
+      console.warn('[dbSync] Failed to patch inventory_items table:', e);
     }
 
     // Create app_users table if not exists (for Browser Auth)
@@ -1704,8 +1876,12 @@ export async function syncNightAuditRunToLocalStorage(businessDate: string): Pro
       return { success: true, synced: 0 };
     }
 
+    // Use ::date cast to handle timezone-stored timestamps correctly
     const result = await db.query(
-      `SELECT * FROM night_audit_runs WHERE business_date = $1`,
+      `SELECT *, business_date::date::text as biz_date_str
+       FROM night_audit_runs
+       WHERE business_date::date = $1::date
+       ORDER BY inserted_at DESC LIMIT 1`,
       [businessDate]
     );
 
@@ -1714,22 +1890,30 @@ export async function syncNightAuditRunToLocalStorage(businessDate: string): Pro
     }
 
     const row = result.rows[0];
+    const snap = row.reports_snapshot || {};
+    // Prefer snapshot fbRevenue (accurate) over subtraction (which gives wrong values when cumulative)
+    const fbRevenue = snap.fbRevenue !== undefined
+      ? Number(snap.fbRevenue)
+      : Number(row.total_revenue || 0) - Number(row.room_revenue || 0);
+
     const bundle = {
-      date: row.business_date,
+      date: row.biz_date_str || businessDate,
       roomRevenue: Number(row.room_revenue || 0),
-      fbRevenue: Number(row.total_revenue || 0) - Number(row.room_revenue || 0),
+      fbRevenue: Number(fbRevenue.toFixed(2)),
       totalRevenue: Number(row.total_revenue || 0),
       occupancy: Number(row.occupancy_percent || 0),
       avgDailyRate: Number(row.adr || 0),
-      revPAR: Number(row.revpar || 0)
+      revPAR: Number(row.revpar || 0),
+      postingsCount: snap.postingsCount || Number(row.rooms_posted || 0),
+      cityLedgerCount: snap.cityLedgerCount || 0,
     };
 
     // Store in localStorage
     const writeJSON = (key: string, value: any) => {
       try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
     };
-    
-    writeJSON(`corepms_nightAudit_reports_${businessDate}`, bundle);
+
+    writeJSON(`corepms_nightAudit_reports_${bundle.date}`, bundle);
     writeJSON('corepms_nightAudit_lastReports', bundle);
 
     console.log('[dbSync] Synced night audit run to localStorage:', businessDate);

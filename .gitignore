@@ -1,3 +1,6 @@
+# Runtime night audit report files (filesystem, not git-tracked)
+server/Night Audit/
+
 # Logs
 logs
 *.log

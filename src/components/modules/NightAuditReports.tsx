@@ -5,7 +5,7 @@ import {
   Calendar, Moon, BarChart2, Hotel, Coffee, CheckCircle2, Download
 } from 'lucide-react';
 
-const API = 'http://localhost:3001';
+const API = '';
 
 interface ReportEntry { date: string; files: string[] }
 

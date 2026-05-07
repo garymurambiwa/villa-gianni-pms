@@ -160,7 +160,7 @@ class OfflineSync {
     }
 
     async getPendingCount(): Promise<number> {
-        return offlineCache.getOperationCount();
+        return await offlineCache.getPendingCount();
     }
 
     async clearPending(): Promise<void> {

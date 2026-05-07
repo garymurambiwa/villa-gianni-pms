@@ -240,14 +240,28 @@ export const sendHeartbeat = async (userId: string): Promise<void> => {
   }
 };
 
-// --- Session Management (Local Storage) ---
-// Kept for seamless UI integration with AuthContext
-export const createSession = (user: UserRecord, minutes: number = 5): Session => {
+// ─── Session / Inactivity Management ───────────────────────────────────────
+// POLICY: user is logged out after INACTIVITY_MINUTES of zero interaction.
+// Activity = any mousemove / keydown / touchstart / click / scroll.
+// touchSession() is called by AuthContext on every activity event and resets
+// the inactivity deadline forward by INACTIVITY_MINUTES from NOW.
+
+export const INACTIVITY_MINUTES = 5;  // ← single source of truth: change here only
+const INACTIVITY_WARNING_SECONDS = 60; // warn this many seconds before logout
+
+export const createSession = (user: UserRecord): Session => {
   const token = `SESS_${Math.random().toString(36).slice(2)}`;
   const now = new Date();
-  const expires = new Date(now.getTime() + minutes * 60 * 1000);
-  console.log('Creating session for user', user.username, 'expiresAt =', expires.toISOString(), 'minutes =', minutes);
-  const sess: Session = { token, userId: user.id, role: user.role, permissions: user.permissions || [], expiresAt: expires.toISOString(), lastActiveAt: now.toISOString() };
+  // expiresAt = now + INACTIVITY_MINUTES (reset on every activity via touchSession)
+  const expires = new Date(now.getTime() + INACTIVITY_MINUTES * 60 * 1000);
+  const sess: Session = {
+    token,
+    userId: user.id,
+    role: user.role,
+    permissions: user.permissions || [],
+    expiresAt: expires.toISOString(),
+    lastActiveAt: now.toISOString(),
+  };
   writeJSON(K_SESSION, sess);
   return sess;
 };
@@ -255,28 +269,37 @@ export const createSession = (user: UserRecord, minutes: number = 5): Session =>
 export const getSession = (): Session | null => {
   const sess = readJSON<Session | null>(K_SESSION, null);
   if (!sess) return null;
+  // Expired = inactivity deadline has passed
   if (new Date() > new Date(sess.expiresAt)) {
-    console.log('Session expired, logging out. expiresAt =', sess.expiresAt, 'now =', new Date().toISOString());
     logout();
     return null;
   }
   return sess;
 };
 
+/** Call on every user activity event. Pushes the inactivity deadline forward. */
 export const touchSession = () => {
-  const sess = getSession(); 
+  const sess = getSession();
   if (!sess) return;
-  
   const now = new Date();
-  const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
-  
   sess.lastActiveAt = now.toISOString();
-  sess.expiresAt = fiveMinutesFromNow.toISOString();
-  
+  // Extend by exactly INACTIVITY_MINUTES from right now
+  sess.expiresAt = new Date(now.getTime() + INACTIVITY_MINUTES * 60 * 1000).toISOString();
   writeJSON(K_SESSION, sess);
 };
 
+/** Returns seconds remaining until session expires. 0 = expired. */
+export const sessionSecondsRemaining = (): number => {
+  const sess = readJSON<Session | null>(K_SESSION, null);
+  if (!sess) return 0;
+  const ms = new Date(sess.expiresAt).getTime() - Date.now();
+  return Math.max(0, Math.floor(ms / 1000));
+};
+
+export { INACTIVITY_WARNING_SECONDS };
+
 export const logout = () => { localStorage.removeItem(K_SESSION); };
+
 
 // --- Compatibility Aliases ---
 export const updateProfile = (id: string, patch: any) => updateUser(id, patch);

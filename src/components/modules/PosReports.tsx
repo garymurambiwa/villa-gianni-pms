@@ -48,15 +48,15 @@ const VoidsReportView: React.FC<{ voidsRows: any[] }> = ({ voidsRows }) => {
         <Button variant={voidsFilter==='kitchen'?'secondary':'outline'} onClick={()=>setVoidsFilter('kitchen')}>Kitchen</Button>
         <Button variant={voidsFilter==='cellar'?'secondary':'outline'} onClick={()=>setVoidsFilter('cellar')}>Cellar</Button>
       </div>
-      <div className="overflow-x-auto">
+      <div className="ds-table-container">
         <table className="ds-table">
           <thead><tr><th className="p-2 text-left">Time</th><th className="p-2">Action</th><th className="p-2">Details</th></tr></thead>
           <tbody>
             {filtered.map((v, i) => (
               <tr key={i}>
-                <td className="p-2">{new Date(v.voided_at || v.timestamp).toLocaleString()}</td>
-                <td className="p-2">VOID</td>
-                <td className="p-2">{formatDetailsText(v.items || v.details)}</td>
+                <td className="p-2 text-xs">{String(new Date(v.voided_at || v.timestamp).toLocaleString())}</td>
+                <td className="p-2 text-center">VOID</td>
+                <td className="p-2 text-xs">{String(formatDetailsText(v.items || v.details))}</td>
               </tr>
             ))}
             {!filtered.length && (<tr><td className="p-2 text-center" colSpan={3}>No voids found.</td></tr>)}
@@ -71,16 +71,16 @@ const StockMovementReportView: React.FC<{ movementRows: any[] }> = ({ movementRo
   return (
     <div className="mb-6">
       <h3 className="text-lg font-semibold mb-2">Stock Movement DB</h3>
-      <div className="overflow-x-auto">
+      <div className="ds-table-container">
         <table className="ds-table">
           <thead><tr><th className="p-2 text-left">Time</th><th className="p-2">Type</th><th className="p-2">Item</th><th className="p-2">Change</th></tr></thead>
           <tbody>
             {movementRows.map((m, i) => (
               <tr key={i}>
-                <td className="p-2">{new Date(m.inserted_at).toLocaleString()}</td>
-                <td className="p-2">DEPLETION</td>
-                <td className="p-2">{m.name || m.item_id}</td>
-                <td className="p-2">{m.delta}</td>
+                <td className="p-2 text-xs">{String(new Date(m.inserted_at).toLocaleString())}</td>
+                <td className="p-2 text-center">DEPLETION</td>
+                <td className="p-2">{String(m.name || m.item_id)}</td>
+                <td className="p-2 text-center">{String(m.delta)}</td>
               </tr>
             ))}
             {!movementRows.length && (<tr><td className="p-2 text-center" colSpan={4}>No movements in range.</td></tr>)}
@@ -134,11 +134,18 @@ const GoodsReceivedReportView: React.FC<{ rangeText: string; grnRows: any[] }> =
         <div className="border rounded p-2">Total GRNs: {grvFiltered.length}</div>
         <div className="border rounded p-2">Total Value: {formatCurrency(Number.isNaN(Number(grvTotals.cost)) ? 0 : Number(grvTotals.cost))}</div>
       </div>
-      <div className="overflow-x-auto">
+      <div className="ds-table-container">
         <table className="ds-table">
-          <thead><tr><th className="p-2 text-left">GRN Number</th><th className="p-2">Date</th><th className="p-2">Supplier</th><th className="p-2 text-right">Value</th></tr></thead>
+          <thead><tr><th className="p-2 text-left">GRN Number</th><th className="p-2">Date</th><th className="p-2 hide-on-mobile">Supplier</th><th className="p-2 text-right">Value</th></tr></thead>
           <tbody>
-             {grvFiltered.map((r, i) => (<tr key={i}><td className="p-2">{r.grn_number}</td><td className="p-2">{new Date(r.inserted_at).toLocaleDateString()}</td><td className="p-2">{r.supplier_name}</td><td className="p-2 text-right">{formatCurrency(Number(r.total_value || 0))}</td></tr>))}
+             {grvFiltered.map((r, i) => (
+                <tr key={i} className="hover:bg-gray-50">
+                  <td className="p-2 font-mono text-xs">{String(r.grn_number)}</td>
+                  <td className="p-2 text-xs">{String(new Date(r.inserted_at).toLocaleDateString())}</td>
+                  <td className="p-2 hide-on-mobile">{String(r.supplier_name)}</td>
+                  <td className="p-2 text-right font-mono">{formatCurrency(Number(r.total_value || 0))}</td>
+                </tr>
+             ))}
           </tbody>
         </table>
       </div>
@@ -166,27 +173,27 @@ const ItemSalesReportView: React.FC<{ itemsRows: any[] }> = ({ itemsRows }) => {
         <Button variant={itemSort==='revenue'?'secondary':'outline'} onClick={()=>setItemSort('revenue')}>Sort by Revenue</Button>
         <Button variant={itemSort==='profit'?'secondary':'outline'} onClick={()=>setItemSort('profit')}>Sort by Profit</Button>
       </div>
-      <div className="overflow-x-auto">
+      <div className="ds-table-container">
         <table className="ds-table">
           <thead>
             <tr>
               <th className="p-2 text-left">Item Name</th>
               <th className="p-2 text-right">Qty Sold</th>
               <th className="p-2 text-right">Revenue</th>
-              <th className="p-2 text-right">Cost (COGS)</th>
-              <th className="p-2 text-right">Profit</th>
-              <th className="p-2 text-right">Margin</th>
+              <th className="p-2 text-right hide-on-mobile">Cost (COGS)</th>
+              <th className="p-2 text-right font-bold">Profit</th>
+              <th className="p-2 text-right hide-on-mobile">Margin</th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((r, i) => (
               <tr key={i}>
-                <td className="p-2 font-medium">{r.name}</td>
-                <td className="p-2 text-right">{r.qty}</td>
-                <td className="p-2 text-right">{formatCurrency(r.revenue)}</td>
-                <td className="p-2 text-right text-red-600">{formatCurrency(r.cost)}</td>
-                <td className="p-2 text-right font-bold text-green-600">{formatCurrency(r.profit)}</td>
-                <td className="p-2 text-right">{r.revenue ? ((r.profit / r.revenue) * 100).toFixed(1) : 0}%</td>
+                <td className="p-2 font-medium text-xs sm:text-sm">{String(r.name)}</td>
+                <td className="p-2 text-right">{String(r.qty)}</td>
+                <td className="p-2 text-right font-mono">{formatCurrency(r.revenue)}</td>
+                <td className="p-2 text-right text-red-600 font-mono hide-on-mobile">{formatCurrency(r.cost)}</td>
+                <td className="p-2 text-right font-bold text-green-600 font-mono">{formatCurrency(r.profit)}</td>
+                <td className="p-2 text-right text-xs hide-on-mobile">{String(r.revenue ? ((r.profit / r.revenue) * 100).toFixed(1) : 0)}%</td>
               </tr>
             ))}
             {!sorted.length && (<tr><td className="p-2 text-center" colSpan={6}>No item sales found.</td></tr>)}
@@ -217,8 +224,8 @@ export const PosReports: React.FC = () => {
   const [dbGrns, setDbGrns] = React.useState<any[]>([]);
   const [dbMovements, setDbMovements] = React.useState<any[]>([]);
 
-  React.useEffect(() => {
-    const fetchData = async () => {
+  const fetchData = React.useCallback(async () => {
+
       setLoading(true);
       try {
         const isConfigured = await db.isConfigured();
@@ -238,75 +245,76 @@ export const PosReports: React.FC = () => {
 
         const processedBills = [];
         
-        if(!('error' in billsRes)) {
-          (billsRes.rows || []).forEach((row: any) => {
-            processedBills.push({
-              ...row,
-              id: row.id,
-              outlet: row.outlet || 'Restaurant',
-              opened_at: row.opened_at,
-              items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
-              total_amount: Number(row.total_amount || 0),
-              is_voided: !!row.is_voided,
-              staff: row.opened_by || 'System',
-              shift_id: row.shift_id
-            });
-          });
-        }
+if(!('error' in billsRes)) {
+  (billsRes.rows || []).forEach((row: any) => {
+    processedBills.push({
+      ...row,
+      id: row.id,
+      outlet: row.outlet || 'Restaurant',
+      opened_at: row.opened_at,
+      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      total_amount: Number(row.total_amount || 0),
+      is_voided: !!row.is_voided,
+      staff: row.opened_by || 'System',
+      shift_id: row.shift_id,
+      payment_method: row.payment_method || null
+    });
+  });
+}
 
-        if(!('error' in ordersRes)) {
-          (ordersRes.rows || []).forEach((row: any) => {
-            processedBills.push({
-              ...row,
-              id: row.id,
-              outlet: row.cost_center || 'Restaurant',
-              opened_at: row.created_at, // Map created_at to opened_at
-              items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
-              total_amount: Number(row.total_amount || 0),
-              is_voided: false, // Orders table doesn't have voided flag usually
-              staff: 'System', // Orders table doesn't have staff usually
-              shift_id: row.shift_id
-            });
-          });
-        }
-        setDbPosBills(processedBills);
+if(!('error' in ordersRes)) {
+  (ordersRes.rows || []).forEach((row: any) => {
+    processedBills.push({
+      ...row,
+      id: row.id,
+      outlet: row.cost_center || 'Restaurant',
+      opened_at: row.created_at, // Map created_at to opened_at
+      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      total_amount: Number(row.total_amount || 0),
+      is_voided: false, // Orders table doesn't have voided flag usually
+      staff: 'System', // Orders table doesn't have staff usually
+      shift_id: row.shift_id,
+      payment_method: row.payment_method || null
+    });
+  });
+}
+      setDbPosBills(processedBills);
 
-        // Fetch GRNs
-        const grnsRes = await db.query(
-          `SELECT * FROM inv_grn_headers WHERE DATE(inserted_at) >= $1 AND DATE(inserted_at) <= $2`,
-          [range.start, range.end]
-        );
-        if(!('error' in grnsRes)) setDbGrns(grnsRes.rows || []);
+      // Fetch GRNs
+      const grnsRes = await db.query(
+        `SELECT * FROM inv_grn_headers WHERE DATE(inserted_at) >= $1 AND DATE(inserted_at) <= $2`,
+        [range.start, range.end]
+      );
+      if(!('error' in grnsRes)) setDbGrns(grnsRes.rows || []);
 
-        // Fetch Movements from New Stock Ledger (v11)
-        const movRes = await db.query(
-          `SELECT l.*, i.name FROM inv_stock_ledger l 
-           LEFT JOIN inv_items i ON l.item_id = i.id 
-           WHERE DATE(l.inserted_at) >= $1 AND DATE(l.inserted_at) <= $2`,
-          [range.start, range.end]
-        );
-        if(!('error' in movRes)) {
-          // Normalize v11 ledger to old movement format for UI
-          const normalizedMovs = (movRes.rows || []).map((l: any) => ({
-            ...l,
-            delta: l.quantity_change,
-            inserted_at: l.inserted_at
-          }));
-          setDbMovements(normalizedMovs);
-        }
-
-        // Fetch items from New Inventory (v11)
-        const invRes = await db.query(`SELECT id, name, weighted_avg_cost as cost FROM inv_items`);
-        if(!('error' in invRes)) setDbInventoryItems(invRes.rows || []);
-
-      } catch (err) {
-        console.error('Failed to fetch report data from DB', err);
-      } finally {
-        setLoading(false);
+      // Fetch Movements from New Stock Ledger (v11)
+      const movRes = await db.query(
+        `SELECT l.*, i.name FROM inv_stock_ledger l 
+         LEFT JOIN inv_items i ON l.item_id = i.id 
+         WHERE DATE(l.inserted_at) >= $1 AND DATE(l.inserted_at) <= $2`,
+        [range.start, range.end]
+      );
+      if(!('error' in movRes)) {
+        // Normalize v11 ledger to old movement format for UI
+        const normalizedMovs = (movRes.rows || []).map((l: any) => ({
+          ...l,
+          delta: l.quantity_change,
+          inserted_at: l.inserted_at
+        }));
+        setDbMovements(normalizedMovs);
       }
-    };
-    fetchData();
+
+      // Fetch items from New Inventory (v11)
+      const invRes = await db.query(`SELECT id, name, weighted_avg_cost as cost FROM inv_items`);
+      if(!('error' in invRes)) setDbInventoryItems(invRes.rows || []);
+
+    } catch (err) {
+      console.error('Failed to fetch report data from DB', err);
+    } finally {
+      setLoading(false);
+    }
   }, [range]);
+
 
   const itemIndexByName = React.useMemo(() => {
     const map = new Map<string, any>();
@@ -426,7 +434,7 @@ export const PosReports: React.FC = () => {
     return groups;
   }, [nonVoidedBills]);
 
-  React.useEffect(() => {
+  const fetchCocktailUsage = React.useCallback(async () => {
     const fetchUsage = async () => {
       try {
         const u = await cocktailEng.listUsageInRange(range.start, range.end) || [];
@@ -446,6 +454,11 @@ export const PosReports: React.FC = () => {
     };
     fetchUsage();
   }, [range]);
+
+  React.useEffect(() => {
+    fetchData();
+    fetchCocktailUsage();
+  }, [fetchData, fetchCocktailUsage]);
 
 
   if (!isManager) return <div className="p-6 text-center">Manager Access Required</div>;
@@ -477,8 +490,29 @@ export const PosReports: React.FC = () => {
             <SelectContent><SelectItem value="all">All</SelectItem>{availableShifts.map((s: any) => (<SelectItem key={String(s)} value={String(s)}>{String(s)}</SelectItem>))}</SelectContent>
           </Select>
         </div>
+        <div className="flex gap-2 ml-auto no-print">
+          <Button variant="outline" size="sm" onClick={() => fetchData()} disabled={loading}>
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+          <Button size="sm" onClick={() => window.print()}>
+            <Printer className="w-4 h-4 mr-2" />
+            Print
+          </Button>
+        </div>
       </div>
       
+      <style>{`
+        @media print {
+          .no-print { display: none !important; }
+          body { background: white !important; }
+          .ds-card { border: none !important; box-shadow: none !important; padding: 0 !important; }
+          .ds-table { border-collapse: collapse !important; width: 100% !important; }
+          .ds-table th, .ds-table td { border: 1px solid #ddd !important; padding: 8px !important; }
+          thead { display: table-header-group; }
+          tr { page-break-inside: avoid; }
+        }
+      `}</style>
       {loading && <div className="py-8 text-center text-gray-500">Loading Database Records...</div>}
       
       {!loading && selectedReport === 'x-summary' && (
@@ -500,7 +534,12 @@ export const PosReports: React.FC = () => {
           <table className="ds-table">
             <thead><tr><th>Method</th><th className="right">Total Expected</th></tr></thead>
             <tbody>
-              {paymentSummary.map(p => (<tr key={p.method}><td>{p.method}</td><td className="right font-bold">{formatCurrency(p.total)}</td></tr>))}
+              {paymentSummary.map(p => (
+                <tr key={p.method} className="border-b">
+                  <td>{String(p.method)}</td>
+                  <td className="right font-bold">{formatCurrency(p.total)}</td>
+                </tr>
+              ))}
               {paymentSummary.length === 0 && <tr><td colSpan={2} className="text-center p-4">No payments recorded</td></tr>}
             </tbody>
           </table>
@@ -518,7 +557,13 @@ export const PosReports: React.FC = () => {
           <table className="ds-table">
             <thead><tr><th>Staff Member (Opened By)</th><th className="right">Total Bills Handled</th><th className="right">Total Sales Captured</th></tr></thead>
             <tbody>
-              {staffSummary.map(([staff, data]) => (<tr key={staff}><td>{staff}</td><td className="right">{data.bills}</td><td className="right font-bold">{formatCurrency(data.totalSales)}</td></tr>))}
+              {staffSummary.map(([staff, data]) => (
+                <tr key={staff} className="border-b">
+                  <td>{String(staff)}</td>
+                  <td className="right">{String(data.bills)}</td>
+                  <td className="right font-bold">{formatCurrency(data.totalSales)}</td>
+                </tr>
+              ))}
               {staffSummary.length === 0 && <tr><td colSpan={3} className="text-center p-4">No staff sales recorded</td></tr>}
             </tbody>
           </table>
@@ -533,7 +578,14 @@ export const PosReports: React.FC = () => {
               <div className="font-semibold bg-gray-50 p-1">{cat}</div>
               <table className="ds-table">
                 <tbody>
-                  {rows.map((r, i) => (<tr key={i}><td className="text-xs">{new Date(r.ts).toLocaleString()}</td><td>{r.desc}</td><td className="right">{r.qty}</td><td className="right">{formatCurrency(r.total)}</td></tr>))}
+                  {rows.map((r, i) => (
+                    <tr key={i} className="border-b hover:bg-gray-50">
+                      <td className="text-xs">{String(new Date(r.ts).toLocaleString())}</td>
+                      <td>{String(r.desc)}</td>
+                      <td className="right">{String(r.qty)}</td>
+                      <td className="right">{formatCurrency(r.total)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -545,7 +597,15 @@ export const PosReports: React.FC = () => {
       {!loading && selectedReport === 'cocktail-usage' && (
         <table className="ds-table">
           <thead><tr><th>Ingredient</th><th>Unit</th><th className="right">Used</th></tr></thead>
-          <tbody>{cocktailUsageData.usageRows.map((r, i) => (<tr key={i}><td>{r.name}</td><td>{r.unit}</td><td className="right">{r.used.toFixed(2)}</td></tr>))}</tbody>
+          <tbody>
+            {cocktailUsageData.usageRows.map((r, i) => (
+              <tr key={i} className="border-b">
+                <td>{String(r.name)}</td>
+                <td>{String(r.unit)}</td>
+                <td className="right">{String(r.used.toFixed(2))}</td>
+              </tr>
+            ))}
+          </tbody>
         </table>
       )}
 

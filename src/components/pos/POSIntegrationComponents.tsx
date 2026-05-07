@@ -578,18 +578,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           {paymentMethod === 'room-charge' && (
             <>
               <div>
-                <Label htmlFor="customerName">Guest Name *</Label>
+                <Label htmlFor="customerName" className="text-[10px] uppercase font-bold text-gray-500">Guest Name *</Label>
                 <Input
                   id="customerName"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   placeholder="Enter guest name"
                   required
-                  className="mt-1 border-2 focus:border-purple-600"
+                  className="mt-1 ds-input-compact border-2 focus:border-purple-600"
                 />
               </div>
               <div>
-                <Label htmlFor="roomNumber">Room Number *</Label>
+                <Label htmlFor="roomNumber" className="text-[10px] uppercase font-bold text-gray-500">Room Number *</Label>
                 <Input
                   id="roomNumber"
                   value={roomNumber}
@@ -605,7 +605,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   }}
                   placeholder="Enter room number"
                   required
-                  className="mt-1 border-2 focus:border-purple-600"
+                  className="mt-1 ds-input-compact border-2 focus:border-purple-600"
                 />
               </div>
             </>
@@ -613,14 +613,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
           {/* Email Receipt */}
           <div>
-            <Label htmlFor="emailReceipt">Email Receipt (Optional)</Label>
+            <Label htmlFor="emailReceipt" className="text-[10px] uppercase font-bold text-gray-500">Email Receipt (Optional)</Label>
             <Input
               id="emailReceipt"
               type="email"
               value={emailReceipt}
               onChange={(e) => setEmailReceipt(e.target.value)}
               placeholder="customer@email.com"
-              className="mt-1 border-2 focus:border-purple-600"
+              className="mt-1 ds-input-compact border-2 focus:border-purple-600"
             />
           </div>
 
@@ -628,12 +628,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           <div>
             <Label>Pre-Payment Options</Label>
             <Tabs value={activePreTab} onValueChange={(v)=> setActivePreTab(v as any)}>
-              <TabsList className="mt-1">
-                <TabsTrigger value="none">None</TabsTrigger>
-                <TabsTrigger value="split">Split Bill</TabsTrigger>
-                <TabsTrigger value="transfer">Transfer</TabsTrigger>
-                <TabsTrigger value="discount">Apply Discount</TabsTrigger>
-                <TabsTrigger value="void">Void Transaction</TabsTrigger>
+              <TabsList className="mt-1 w-full grid grid-cols-3 sm:grid-cols-5 h-auto p-1">
+                <TabsTrigger value="none" className="text-[10px] sm:text-xs">None</TabsTrigger>
+                <TabsTrigger value="split" className="text-[10px] sm:text-xs">Split</TabsTrigger>
+                <TabsTrigger value="transfer" className="text-[10px] sm:text-xs">Xfer</TabsTrigger>
+                <TabsTrigger value="discount" className="text-[10px] sm:text-xs">Disc</TabsTrigger>
+                <TabsTrigger value="void" className="text-[10px] sm:text-xs">Void</TabsTrigger>
               </TabsList>
             </Tabs>
           </div>
@@ -1140,34 +1140,34 @@ export const BillSummary: React.FC<BillSummaryProps> = ({
         </CardTitle>
         {(bill.customerName || bill.roomNumber) && (
           <div className="text-sm text-gray-600">
-            {bill.customerName && <div>Guest: {bill.customerName}</div>}
-            {bill.roomNumber && <div>Room: {bill.roomNumber}</div>}
+            {bill.customerName && <div>Guest: {String(bill.customerName)}</div>}
+            {bill.roomNumber && <div>Room: {String(bill.roomNumber)}</div>}
           </div>
         )}
       </CardHeader>
       <CardContent>
         {showDetails && (
-          <div className="space-y-2 mb-4">
+          <div className="space-y-1 mb-4">
             {bill.items.map((item, index) => (
-              <div key={index} className="flex justify-between items-center py-2 border-b">
-                <div className="flex-1">
-                  <div className="font-medium">{item.name}</div>
+              <div key={index} className="flex justify-between items-start py-1 border-b text-xs">
+                <div className="flex-1 min-w-0 pr-2">
+                  <div className="font-semibold truncate">{String(item.name)}</div>
                   {('preparation_level' in item || 'manual_notes' in item) && (
-                    <div className="text-xs italic text-gray-500">
+                    <div className="text-[10px] italic text-gray-500 leading-tight">
                       {String((item as any).preparation_level || '')}{(item as any).preparation_level && (item as any).manual_notes ? ' • ' : ''}{String((item as any).manual_notes || '')}
                     </div>
                   )}
                   {item.category && (
-                    <div className="text-xs text-gray-500">{item.category}</div>
+                    <div className="text-[10px] text-gray-400">{String(item.category)}</div>
                   )}
                 </div>
-                <div className="text-center px-4">
-                  <span className="text-sm">x{item.quantity}</span>
+                <div className="text-center px-2">
+                  <span className="text-[10px] font-bold">x{item.quantity}</span>
                 </div>
-                <div className="text-right">
-                  <div>{formatCurrency(item.subtotal)}</div>
-                  <div className="text-xs text-gray-500">
-                    @ {formatCurrency(item.price)}
+                <div className="text-right whitespace-nowrap">
+                  <div className="font-mono">{formatCurrency(item.subtotal)}</div>
+                  <div className="text-[10px] text-gray-400">
+                    @{formatCurrency(item.price)}
                   </div>
                 </div>
                 {editable && onRemoveItem && (
@@ -1175,7 +1175,7 @@ export const BillSummary: React.FC<BillSummaryProps> = ({
                     variant="ghost"
                     size="sm"
                     onClick={() => onRemoveItem(index)}
-                    className="ml-2 text-red-600 hover:text-red-800"
+                    className="h-6 w-6 p-0 ml-1 text-red-500 hover:text-red-700 hover:bg-red-50"
                   >
                     ×
                   </Button>

@@ -168,22 +168,47 @@ export class RealTimeSyncService {
    * Perform a single synchronization cycle
    */
   private async performSync(): Promise<void> {
-    console.log('[RealTimeSync] Starting sync cycle...');
-    
+    // First check if the API is reachable — if it returns HTML instead of JSON, bail early
+    // to prevent cascading "Unexpected token" errors across all modules.
+    try {
+      const testRes = await fetch('/api/db/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+      const contentType = testRes.headers.get('content-type') || '';
+      if (!contentType.includes('application/json') && !contentType.includes('json')) {
+        // Server is returning HTML (404/503 page) — skip this cycle silently
+        console.warn('[RealTimeSync] API unavailable (non-JSON response), skipping sync cycle');
+        return;
+      }
+      const health = await testRes.json();
+      if (!health?.ok) {
+        console.warn('[RealTimeSync] API health check failed, skipping sync cycle:', health?.error);
+        return;
+      }
+    } catch (_healthErr) {
+      // Network failure or parse error — skip silently
+      console.warn('[RealTimeSync] API health check network error, skipping sync cycle');
+      return;
+    }
+
     const promises: Promise<void>[] = [];
 
-    // Sync each enabled module
+    // Sync each enabled module — each wrapped to never throw
     for (const [moduleName, isEnabled] of Object.entries(this.config.enabledModules)) {
       if (isEnabled) {
-        promises.push(this.syncModule(moduleName));
+        promises.push(this.syncModule(moduleName).catch(err => {
+          console.warn(`[RealTimeSync] ${moduleName} sync silently failed:`, err?.message || err);
+        }));
       }
     }
 
     try {
       await Promise.all(promises);
-      console.log('[RealTimeSync] Sync cycle completed successfully');
     } catch (error) {
-      console.error('[RealTimeSync] Error during sync cycle:', error);
+      // Should not reach here due to individual catch above, but safety net
+      console.warn('[RealTimeSync] Sync cycle had errors (suppressed)');
     }
   }
 
@@ -332,20 +357,65 @@ export class RealTimeSyncService {
   }
 
   /**
-   * Sync inventory data
+   * Sync inventory/products data
+   * FIX: Read from 'products' table (unified source of truth), NOT 'inventory_items' (old/legacy).
+   * Also maps DB fields to the camelCase format PosSettings/POS.tsx expects.
    */
   private async syncInventory(): Promise<void> {
-    const result = await db.query('SELECT * FROM inventory_items ORDER BY name');
+    // Primary: products table (unified POS + inventory)
+    const result = await db.query(
+      `SELECT id, name, category, department, price, cost_price, stock_level, unit,
+              active, visibility, bar_visibility, restaurant_visibility, is_stock_item,
+              category_id, sub_id, cos_percent, gp_percent, gp_amount, qty_received,
+              image_bg_color, notes, updated_at
+       FROM products
+       ORDER BY name ASC`
+    );
     if ('error' in result) {
-      throw new Error(`Inventory sync failed: ${(result as any).error}`);
+      // Fallback to inventory_items if products table doesn't exist yet
+      const fallback = await db.query('SELECT * FROM inventory_items ORDER BY name');
+      if ('error' in fallback) {
+        throw new Error(`Inventory sync failed: ${(result as any).error}`);
+      }
+      try {
+        localStorage.setItem('corepms_inventory_sync', JSON.stringify({ data: fallback.rows || [], timestamp: new Date().toISOString() }));
+      } catch { }
+      return;
     }
-    
-    // Store in localStorage for immediate availability
+
+    // Map DB rows to the camelCase format used throughout the frontend
+    const mapped = (result.rows || []).map((p: any) => {
+      let vis: any = {};
+      try { vis = typeof p.visibility === 'string' ? JSON.parse(p.visibility) : (p.visibility || {}); } catch { }
+      return {
+        ...p,
+        sellingPrice:         Number(p.price || 0),
+        costPrice:            Number(p.cost_price || 0),
+        qtyInStock:           Number(p.stock_level || 0),
+        qtyReceived:          Number(p.qty_received || 0),
+        costCenter:           p.category || p.department || 'restaurant',
+        inventoryCategory:    p.department?.toLowerCase() === 'bar' ? 'cellar' : 'kitchen',
+        visibility:           vis,
+        cosPercent:           Number(p.cos_percent || 0),
+        gpPercent:            Number(p.gp_percent || 0),
+        gpAmount:             Number(p.gp_amount || 0),
+        imageBgColor:         p.image_bg_color || null,
+        available:            p.active !== false,
+        type:                 p.department,
+      };
+    });
+
+    // Update corepms_pos_items only if DB returned non-empty data
+    // NEVER overwrite with an empty array — that would wipe user's saved items
+    if (mapped.length > 0) {
+      try {
+        localStorage.setItem('corepms_pos_items', JSON.stringify(mapped));
+        window.dispatchEvent(new Event('storage'));
+      } catch { }
+    }
+
     try {
-      localStorage.setItem('corepms_inventory_sync', JSON.stringify({
-        data: result.rows || [],
-        timestamp: new Date().toISOString()
-      }));
+      localStorage.setItem('corepms_inventory_sync', JSON.stringify({ data: mapped, timestamp: new Date().toISOString() }));
     } catch (e) {
       console.warn('Could not cache inventory data to localStorage:', e);
     }

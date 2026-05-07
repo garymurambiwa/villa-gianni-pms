@@ -136,66 +136,172 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
     <div className="space-y-3" aria-labelledby="stock-tab-title">
       <div id="stock-tab-title" className="ds-subheader">Stock List</div>
       <div className="ds-toolbar" role="toolbar" aria-label="Stock filters">
-        <Input aria-label="Search by name" placeholder="Search name" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="w-48" />
-        <Select value={center} onValueChange={(v) => { setCenter(v as any); setPage(1); }}>
-          <SelectTrigger className="w-36"><SelectValue placeholder="Center" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="bar">Bar</SelectItem>
-            <SelectItem value="restaurant">Restaurant</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={severity} onValueChange={(v) => { setSeverity(v as any); setPage(1); }}>
-          <SelectTrigger className="w-40"><SelectValue placeholder="Severity" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All severity</SelectItem>
-            <SelectItem value="low">Low</SelectItem>
-            <SelectItem value="medium">Medium</SelectItem>
-            <SelectItem value="high">High</SelectItem>
-          </SelectContent>
-        </Select>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" aria-label="Attention only" checked={attentionOnly} onChange={(e) => { setAttentionOnly(e.target.checked); setPage(1); }} />
-          Attention only
-        </label>
-        <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
-          <SelectTrigger className="w-28"><SelectValue placeholder="Page size" /></SelectTrigger>
-          <SelectContent>
-            {[25, 50, 100].map(n => (<SelectItem key={n} value={String(n)}>{n}/page</SelectItem>))}
-          </SelectContent>
-        </Select>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={virtualize} onChange={(e) => setVirtualize(e.target.checked)} aria-label="Enable virtualization" />
-          Virtualize
-        </label>
+        <div className="flex flex-wrap gap-2 w-full">
+          <Input aria-label="Search by name" placeholder="Search name" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="ds-input-compact w-full sm:w-48" />
+          <Select value={center} onValueChange={(v) => { setCenter(v as any); setPage(1); }}>
+            <SelectTrigger className="ds-select-compact w-full sm:w-36"><SelectValue placeholder="Center" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="bar">Bar</SelectItem>
+              <SelectItem value="restaurant">Restaurant</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={severity} onValueChange={(v) => { setSeverity(v as any); setPage(1); }}>
+            <SelectTrigger className="ds-select-compact w-full sm:w-40"><SelectValue placeholder="Severity" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All severity</SelectItem>
+              <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="flex items-center gap-4 w-full sm:w-auto">
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" aria-label="Attention only" checked={attentionOnly} onChange={(e) => { setAttentionOnly(e.target.checked); setPage(1); }} />
+              Attention
+            </label>
+            <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+              <SelectTrigger className="ds-select-compact w-24"><SelectValue placeholder="Page size" /></SelectTrigger>
+              <SelectContent>
+                {[25, 50, 100].map(n => (<SelectItem key={n} value={String(n)}>{n}/page</SelectItem>))}
+              </SelectContent>
+            </Select>
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={virtualize} onChange={(e) => setVirtualize(e.target.checked)} aria-label="Enable virtualization" />
+              Virtualize
+            </label>
+          </div>
+        </div>
       </div>
 
       {/* Bulk actions */}
-      <div className="ds-toolbar text-sm">
-        <Button variant="outline" onClick={() => {
+      <div className="ds-toolbar text-xs overflow-x-auto pb-1 flex flex-wrap gap-1">
+        <Button variant="outline" className="ds-button-compact" onClick={() => {
           const ids = Array.from(selectedIds);
           if (!ids.length) return;
-          // Delete selected locally
-          const next = allItems.filter((it: any) => !ids.includes(it.id));
-          setAllItems(next);
-          setSelectedIds(new Set());
+          if (confirm(`Are you sure you want to delete ${ids.length} item(s)? This cannot be undone.`)) {
+            if (onBulkDelete) {
+              onBulkDelete(ids);
+            } else {
+              ids.forEach(id => onDeleteItem?.(id));
+            }
+            setSelectedIds(new Set());
+            setAllItems(prev => prev.filter((it: any) => !ids.includes(it.id)));
+          }
         }}>Delete Selected</Button>
-        <Button variant="outline" onClick={() => {
+
+        {/* Bar visibility controls */}
+        <Button variant="outline" className="ds-button-compact" onClick={() => {
           const ids = Array.from(selectedIds); if (!ids.length) return;
-          const next = allItems.map((it: any) => ids.includes(it.id) ? { ...it, visibility: { ...(it.visibility || {}), bar: true } } : it);
+          const updates = { bar: true };
+          const next = allItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), bar: true }, bar_visibility: true }
+            : it);
           setAllItems(next);
-        }}>Set Bar Visible</Button>
-        <Button variant="outline" onClick={() => {
+          if (onBulkSetVisibility) onBulkSetVisibility(ids, updates);
+          else {
+            // Persist locally and to DB via dbSync
+            import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+              ids.forEach(id => {
+                const item = allItems.find((it: any) => it.id === id);
+                if (item) {
+                  const vis = { bar: true, restaurant: item.visibility?.restaurant !== false };
+                  fixItemVisibility(id, item.costCenter || 'restaurant', vis);
+                }
+              });
+            });
+          }
+          // Persist to localStorage
+          const storedItems = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+          const updated = storedItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), bar: true } } : it);
+          localStorage.setItem('corepms_pos_items', JSON.stringify(updated));
+        }}>✓ Bar Visible</Button>
+
+        <Button variant="outline" className="ds-button-compact" onClick={() => {
           const ids = Array.from(selectedIds); if (!ids.length) return;
-          const next = allItems.map((it: any) => ids.includes(it.id) ? { ...it, visibility: { ...(it.visibility || {}), restaurant: true } } : it);
+          const updates = { bar: false };
+          const next = allItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), bar: false }, bar_visibility: false }
+            : it);
           setAllItems(next);
-        }}>Set Restaurant Visible</Button>
-        <div className="text-xs text-gray-600 ml-2">Selected: {selectedIds.size}</div>
+          if (onBulkSetVisibility) onBulkSetVisibility(ids, updates);
+          else {
+            import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+              ids.forEach(id => {
+                const item = allItems.find((it: any) => it.id === id);
+                if (item) {
+                  const vis = { bar: false, restaurant: item.visibility?.restaurant !== false };
+                  fixItemVisibility(id, item.costCenter || 'restaurant', vis);
+                }
+              });
+            });
+          }
+          const storedItems = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+          const updated = storedItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), bar: false } } : it);
+          localStorage.setItem('corepms_pos_items', JSON.stringify(updated));
+        }}>✗ Bar Hidden</Button>
+
+        {/* Restaurant visibility controls */}
+        <Button variant="outline" className="ds-button-compact" onClick={() => {
+          const ids = Array.from(selectedIds); if (!ids.length) return;
+          const updates = { restaurant: true };
+          const next = allItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), restaurant: true }, restaurant_visibility: true }
+            : it);
+          setAllItems(next);
+          if (onBulkSetVisibility) onBulkSetVisibility(ids, updates);
+          else {
+            import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+              ids.forEach(id => {
+                const item = allItems.find((it: any) => it.id === id);
+                if (item) {
+                  const vis = { bar: item.visibility?.bar !== false, restaurant: true };
+                  fixItemVisibility(id, item.costCenter || 'restaurant', vis);
+                }
+              });
+            });
+          }
+          const storedItems = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+          const updated = storedItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), restaurant: true } } : it);
+          localStorage.setItem('corepms_pos_items', JSON.stringify(updated));
+        }}>✓ Restaurant Visible</Button>
+
+        <Button variant="outline" className="ds-button-compact" onClick={() => {
+          const ids = Array.from(selectedIds); if (!ids.length) return;
+          const updates = { restaurant: false };
+          const next = allItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), restaurant: false }, restaurant_visibility: false }
+            : it);
+          setAllItems(next);
+          if (onBulkSetVisibility) onBulkSetVisibility(ids, updates);
+          else {
+            import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+              ids.forEach(id => {
+                const item = allItems.find((it: any) => it.id === id);
+                if (item) {
+                  const vis = { bar: item.visibility?.bar !== false, restaurant: false };
+                  fixItemVisibility(id, item.costCenter || 'restaurant', vis);
+                }
+              });
+            });
+          }
+          const storedItems = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+          const updated = storedItems.map((it: any) => ids.includes(it.id)
+            ? { ...it, visibility: { ...(it.visibility || {}), restaurant: false } } : it);
+          localStorage.setItem('corepms_pos_items', JSON.stringify(updated));
+        }}>✗ Restaurant Hidden</Button>
+
+        <div className="text-xs text-gray-500 ml-2 whitespace-nowrap self-center">
+          {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select items to bulk-edit'}
+        </div>
       </div>
 
       {loading && (<div role="status" aria-live="polite" className="text-xs text-gray-600">Filtering…</div>)}
 
-      <div className="overflow-x-auto" role="region" aria-label="Stock table">
+      <div className="ds-table-container" role="region" aria-label="Stock table">
         <table className="ds-table" role="table" aria-label="Stock items">
           <thead>
             <tr>
@@ -204,12 +310,12 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
                 else setSelectedIds(new Set());
               }} /></th>
               <th scope="col" className="text-left">Name</th>
-              <th scope="col">Center</th>
+              <th scope="col" className="hide-on-mobile">Center</th>
               <th scope="col" className="text-right">Price</th>
-              <th scope="col" className="text-right">GP%</th>
+              <th scope="col" className="text-right hide-on-mobile">GP%</th>
               <th scope="col">Issues</th>
-              <th scope="col">Visibility</th>
-              <th scope="col">Actions</th>
+              <th scope="col" className="hide-on-mobile">Visibility</th>
+              <th scope="col" className="text-center">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -226,26 +332,81 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
                     if (e.target.checked) next.add(it.id); else next.delete(it.id);
                     setSelectedIds(next);
                   }} aria-label={`Select ${it.name}`} /></td>
-                  <td className="text-left">{it.name}</td>
-                  <td className="capitalize">{it.costCenter || '—'}</td>
-                  <td className="text-right">${Number(it.sellingPrice || 0).toFixed(2)}</td>
-                  <td className="text-right">{gp}%</td>
+                  <td className="text-left font-medium max-w-[120px] sm:max-w-none truncate">{it.name}</td>
+                  <td className="capitalize hide-on-mobile">{it.costCenter || '—'}</td>
+                  <td className="text-right font-mono">${Number(it.sellingPrice || 0).toFixed(2)}</td>
+                  <td className="text-right font-mono hide-on-mobile">{gp}%</td>
                   <td>
                     {issues.length ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-red-700 bg-red-100 px-2 py-1 rounded" aria-label={`${issues.length} issues`}>{issues.length} issues</span>
+                      <span className="inline-flex items-center gap-1 text-[10px] sm:text-xs text-red-700 bg-red-100 px-2 py-0.5 rounded" aria-label={`${issues.length} issues`}>{issues.length}</span>
                     ) : (
-                      <span className="text-xs text-green-700 bg-green-100 px-2 py-1 rounded" aria-label="OK">OK</span>
+                      <span className="text-[10px] sm:text-xs text-green-700 bg-green-100 px-2 py-0.5 rounded" aria-label="OK">OK</span>
                     )}
                   </td>
-                  <td>
-                    <span className="text-xs bg-gray-200 rounded px-2 py-1 mr-1">Bar: {it.visibility?.bar ? 'Yes' : 'No'}</span>
-                    <span className="text-xs bg-gray-200 rounded px-2 py-1">Restaurant: {it.visibility?.restaurant ? 'Yes' : 'No'}</span>
+                  <td className="hide-on-mobile">
+                    <div className="flex gap-1 flex-wrap">
+                      {/* Bar visibility toggle */}
+                      <button
+                        onClick={() => {
+                          const newBarVis = !((it.visibility?.bar !== false) && it.bar_visibility !== false);
+                          const next = allItems.map((item: any) => item.id === it.id
+                            ? { ...item, visibility: { ...(item.visibility || {}), bar: newBarVis }, bar_visibility: newBarVis }
+                            : item);
+                          setAllItems(next);
+                          cacheRef.current.clear();
+                          // Persist to DB and localStorage
+                          import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+                            const vis = { bar: newBarVis, restaurant: it.visibility?.restaurant !== false };
+                            fixItemVisibility(it.id, it.costCenter || 'restaurant', vis);
+                          });
+                          const stored = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+                          localStorage.setItem('corepms_pos_items', JSON.stringify(
+                            stored.map((s: any) => s.id === it.id ? { ...s, visibility: { ...(s.visibility || {}), bar: newBarVis } } : s)
+                          ));
+                        }}
+                        title={`Toggle Bar visibility (currently ${it.visibility?.bar !== false ? 'visible' : 'hidden'})`}
+                        className={`text-[9px] px-1.5 py-0.5 rounded font-medium border transition-colors ${
+                          it.visibility?.bar !== false && it.bar_visibility !== false
+                            ? 'bg-blue-100 text-blue-700 border-blue-300'
+                            : 'bg-gray-100 text-gray-400 border-gray-300 line-through'
+                        }`}
+                      >
+                        Bar
+                      </button>
+                      {/* Restaurant visibility toggle */}
+                      <button
+                        onClick={() => {
+                          const newRestVis = !((it.visibility?.restaurant !== false) && it.restaurant_visibility !== false);
+                          const next = allItems.map((item: any) => item.id === it.id
+                            ? { ...item, visibility: { ...(item.visibility || {}), restaurant: newRestVis }, restaurant_visibility: newRestVis }
+                            : item);
+                          setAllItems(next);
+                          cacheRef.current.clear();
+                          import('@/lib/dbSync').then(({ fixItemVisibility }) => {
+                            const vis = { bar: it.visibility?.bar !== false, restaurant: newRestVis };
+                            fixItemVisibility(it.id, it.costCenter || 'restaurant', vis);
+                          });
+                          const stored = JSON.parse(localStorage.getItem('corepms_pos_items') || '[]');
+                          localStorage.setItem('corepms_pos_items', JSON.stringify(
+                            stored.map((s: any) => s.id === it.id ? { ...s, visibility: { ...(s.visibility || {}), restaurant: newRestVis } } : s)
+                          ));
+                        }}
+                        title={`Toggle Restaurant visibility (currently ${it.visibility?.restaurant !== false ? 'visible' : 'hidden'})`}
+                        className={`text-[9px] px-1.5 py-0.5 rounded font-medium border transition-colors ${
+                          it.visibility?.restaurant !== false && it.restaurant_visibility !== false
+                            ? 'bg-green-100 text-green-700 border-green-300'
+                            : 'bg-gray-100 text-gray-400 border-gray-300 line-through'
+                        }`}
+                      >
+                        Rest
+                      </button>
+                    </div>
                   </td>
                   <td>
-                    <div className="flex gap-2">
-                      {canEdit && (<Button variant="outline" onClick={() => onEditItem?.(it)} aria-label={`Edit ${it.name}`}>Edit</Button>)}
-                      {canFix && (<Button variant="secondary" onClick={() => onFixItem?.(it)} aria-label={`Fix ${it.name}`}>Fix</Button>)}
-                      {canDelete && (<Button variant="destructive" onClick={() => onDeleteItem?.(it.id)} aria-label={`Delete ${it.name}`}>Delete</Button>)}
+                    <div className="flex gap-1 justify-center flex-wrap min-w-[100px] sm:min-w-0">
+                      {canEdit && (<Button variant="outline" className="ds-button-compact px-2" onClick={() => onEditItem?.(it)} aria-label={`Edit ${it.name}`}>Edit</Button>)}
+                      {canFix && (<Button variant="secondary" className="ds-button-compact px-2" onClick={() => onFixItem?.(it)} aria-label={`Fix ${it.name}`}>Fix</Button>)}
+                      {canDelete && (<Button variant="destructive" className="ds-button-compact px-2" onClick={() => onDeleteItem?.(it.id)} aria-label={`Delete ${it.name}`}>Del</Button>)}
                     </div>
                   </td>
                 </tr>
@@ -253,7 +414,7 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
             })}
             {virtualize && bottomPad > 0 && (<tr style={{ height: bottomPad }} aria-hidden="true"><td colSpan={8} /></tr>)}
             {!pageItems.length && (
-              <tr><td colSpan={7} className="py-2 text-gray-500">No items match current filters</td></tr>
+              <tr><td colSpan={8} className="py-2 text-gray-500 text-center">No items match current filters</td></tr>
             )}
           </tbody>
         </table>
