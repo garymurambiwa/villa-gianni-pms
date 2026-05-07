@@ -17,7 +17,7 @@ const ARTIFACTS_DIR = 'C:\\Users\\Infinity\\.gemini\\antigravity\\brain\\79a33b9
         await page.goto('http://localhost:8081', { waitUntil: 'networkidle0' });
         if (await page.$('input[type="text"]')) { // Assuming username field present
             await page.type('input[type="text"]', 'admin');
-            await page.type('input[type="password"]', 'admin123');
+            await page.type('input[type="password"]', 'test123');
             await Promise.all([
                 page.click('button[type="submit"]'),
                 page.waitForNavigation({ waitUntil: 'networkidle0' })

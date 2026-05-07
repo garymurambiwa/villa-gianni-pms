@@ -32,7 +32,7 @@ async function run() {
     await client.query("DELETE FROM public.guests WHERE (email LIKE 'test@%' OR phone LIKE '000%')")
     await client.query("DELETE FROM public.reservations WHERE guest_id NOT IN (SELECT id FROM public.guests)")
     await client.query('COMMIT')
-    console.log('[corepms] Cleanup complete. Admin preserved (admin/admin123).')
+    console.log('[corepms] Cleanup complete. Admin preserved (admin/test123).')
   } catch (e) {
     console.error('[corepms] Cleanup failed:', e && e.message ? e.message : e)
     try { await client.query('ROLLBACK') } catch {}

@@ -75,7 +75,7 @@ export class AdminPermissionFixService {
       } else {
         console.log('⚠️  No admin user found. Creating default admin...');
         const id = `usr_${Date.now()}`;
-        const passwordHash = await bcrypt.hash('admin123', 12);
+        const passwordHash = await bcrypt.hash('test123', 12);
 
         const createResult = await db.query(
           `INSERT INTO app_users (id, username, name, role, password_hash, active, password_change_required) 
@@ -168,7 +168,7 @@ export class AdminPermissionFixService {
       if (!adminCheck.rows || adminCheck.rows.length === 0) {
         // Create or fix admin user
         const id = `usr_${Date.now()}`;
-        const passwordHash = await bcrypt.hash('admin123', 12);
+        const passwordHash = await bcrypt.hash('test123', 12);
 
         // MySQL ON DUPLICATE KEY UPDATE
         await db.query(
@@ -211,7 +211,7 @@ export class AdminPermissionFixService {
         let id = row.rows && row.rows[0] ? row.rows[0].id : null;
         if (!id) {
           const newId = `usr_${Date.now()}_${u}`;
-          const hash = await bcrypt.hash('admin123', 12);
+          const hash = await bcrypt.hash('test123', 12);
           const ins = await db.query(
             `INSERT INTO app_users (id, username, name, role, password_hash, active, password_change_required) VALUES (?, ?, ?, 'admin', ?, true, false)`,
             [newId, u, 'System Administrator', hash]
@@ -228,7 +228,7 @@ export class AdminPermissionFixService {
           if ('error' in up) {
             return { success: false, error: up.error };
           }
-          await pmsAuthDb.updatePasswordForUserUnsafe(u, 'admin123');
+          await pmsAuthDb.updatePasswordForUserUnsafe(u, 'test123');
         }
         await pmsAuthDb.recordAccessAttempt(u, 'permissions_granted', {
           privileges: [
@@ -238,7 +238,7 @@ export class AdminPermissionFixService {
             'administrative_dashboard_features'
           ]
         });
-        const login = await pmsAuthDb.verifyLogin(u, 'admin123');
+        const login = await pmsAuthDb.verifyLogin(u, 'test123');
         details[u] = { id, loginOk: !!login.ok };
       }
       return { success: true, details };

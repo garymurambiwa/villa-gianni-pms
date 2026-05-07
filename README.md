@@ -69,7 +69,7 @@ The application automatically creates all required database tables on first conn
 When the application connects to PostgreSQL for the first time, it will:
 - Create all necessary tables (users, rooms, reservations, orders, etc.)
 - Set up indexes for optimal performance
-- Create the default admin user (username: `admin`, password: `admin123`)
+- Create the default admin user (username: `admin`, password: `test123`)
 
 ### Data Persistence
 
@@ -86,7 +86,7 @@ For network access within your local area network:
 ## Default Login
 
 - **Username**: `admin`
-- **Password**: `admin123`
+- **Password**: `test123`
 
 *Please change the default password after first login.*
 

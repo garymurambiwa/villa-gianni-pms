@@ -8,7 +8,7 @@ const client = new Client({
 
 const DEFAULT_USER = {
     username: 'admin',
-    password: 'admin123',
+    password: 'test123',
     role: 'admin',
     name: 'System Administrator'
 };

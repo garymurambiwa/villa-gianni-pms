@@ -245,7 +245,7 @@ const SuperAdminSettings: React.FC = () => {
       await pmsAuthDb.init();
       const res = await pmsAuthDb.cleanupTestData('admin');
       if (!res.ok) throw new Error(res.error || 'Cleanup failed');
-      const pw = await pmsAuthDb.updatePasswordForUserUnsafe('admin', 'admin123');
+      const pw = await pmsAuthDb.updatePasswordForUserUnsafe('admin', 'test123');
       if (!pw.ok) throw new Error(pw.error || 'Failed to set admin password');
       const dump = await db.exportSqlDump({ actorUserId: user?.id });
       if (!dump.ok) throw new Error(dump.error || 'Backup failed');
@@ -474,7 +474,7 @@ const SuperAdminSettings: React.FC = () => {
         <h3 className="text-xl font-semibold mb-2">Cleanup & Deployment Preparation</h3>
         {prepMsg && (<div className="p-3 mb-3 rounded bg-green-50 text-green-700">{prepMsg}</div>)}
         {prepErr && (<div className="p-3 mb-3 rounded bg-red-50 text-red-700">{prepErr}</div>)}
-        <p className="text-sm text-gray-600 mb-2">Removes test data, preserves the Super User Admin (username <code>admin</code>, password <code>admin123</code>), runs optimization, and creates a backup.</p>
+        <p className="text-sm text-gray-600 mb-2">Removes test data, preserves the Super User Admin (username <code>admin</code>, password <code>test123</code>), runs optimization, and creates a backup.</p>
         <div className="flex items-center gap-2">
           <Button onClick={runCleanup} disabled={prepBusy} className="bg-red-600 text-white hover:bg-red-700">{prepBusy ? 'Running…' : 'Run Cleanup'}</Button>
           <Button variant="outline" onClick={() => { setPrepMsg(''); setPrepErr(''); setPrepDetails(null); }}>Reset</Button>

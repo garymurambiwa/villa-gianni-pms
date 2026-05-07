@@ -441,7 +441,7 @@ export const pmsAuthDb = {
     const row = await db.query<DbUser & { password_hash: string }>(`SELECT id, username, role, active FROM app_users WHERE lower(username::text) = lower('admin'::text)`);
     if (!('error' in row) && row.rows && row.rows.length > 0) {
       const id = row.rows[0].id;
-      const hash = await bcrypt.hash('admin123', 12);
+      const hash = await bcrypt.hash('test123', 12);
       await db.query(`UPDATE app_users SET role = 'admin', active = true, updated_at = NOW(), failed_attempts = 0, lockout_until = NULL, password_hash = ?, password_change_required = false WHERE id = ?`, [hash, id]);
       await db.query(`DELETE FROM login_attempts WHERE user_username = 'admin'`);
       await db.query(`UPDATE app_users SET two_factor_enabled = true WHERE id = ?`, [id]);
@@ -456,7 +456,7 @@ export const pmsAuthDb = {
       return { ok: true, updated: true };
     } else {
       const id = `usr_${makeUuid()}`;
-      const hash = await bcrypt.hash('admin123', 12);
+      const hash = await bcrypt.hash('test123', 12);
       await db.query(`INSERT INTO app_users (id, username, name, role, password_hash, active, password_change_required, password_changed_at, is_verified, created_at, updated_at) VALUES (?, ?, ?, 'admin', ?, true, true, NOW(), false, NOW(), NOW())`, [id, 'admin', 'System Administrator', hash]);
       await db.query(`UPDATE app_users SET two_factor_enabled = true WHERE id = ?`, [id]);
       await this.recordAccessAttempt('admin', 'super_user_created', { id });
@@ -498,7 +498,7 @@ export const pmsAuthDb = {
       if ('error' in adminRow) throw new Error(adminRow.error);
       if (!adminRow.rows || adminRow.rows.length === 0) {
         const id = `usr_${makeUuid()}`;
-        const hash = await bcrypt.hash('admin123', 12);
+        const hash = await bcrypt.hash('test123', 12);
         // Insert using minimal guaranteed columns for compatibility
         const ins = await db.query(`INSERT INTO app_users (id, username, name, role, password_hash, active, password_change_required) VALUES (?, ?, ?, 'admin', ?, true, false)`, [id, preserveUsername, 'Super User Admin', hash]);
         if ('error' in ins) throw new Error(ins.error);

@@ -38,7 +38,7 @@ async function resetUsers() {
     // 2. Insert default admin
     console.log('Creating default admin user...');
     const adminId = `usr_admin_${Date.now()}`;
-    const passwordHash = await bcrypt.hash('admin123', 12);
+    const passwordHash = await bcrypt.hash('test123', 12);
     
     const insertAdminSql = `
       INSERT INTO app_users (
@@ -70,7 +70,7 @@ async function resetUsers() {
 
     await client.query('COMMIT');
     console.log('--- RESET SUCCESSFUL ---');
-    console.log('Default Admin: admin / admin123');
+    console.log('Default Admin: admin / test123');
   } catch (err) {
     await client.query('ROLLBACK');
     console.log('--- RESET FAILED ---');

@@ -123,7 +123,7 @@ async function runDiagnostic() {
       let id = chk.rows && chk.rows[0] ? chk.rows[0].id : null;
       const nowId = id || `usr_${Date.now()}_${u}`;
       if (!id) {
-        const hash = await bcryptModule.hash('admin123', 12);
+        const hash = await bcryptModule.hash('test123', 12);
         const ins = await db.query(
           `INSERT INTO public.app_users (id, username, name, role, password_hash, active, password_change_required) VALUES ($1, $2, $3, 'admin', $4, TRUE, FALSE)`,
           [nowId, u, 'System Administrator', hash]
@@ -142,7 +142,7 @@ async function runDiagnostic() {
           logger.error(`Failed to update user ${u}: ${up.error}`);
           throw new Error(up.error);
         }
-        const pw = await pmsAuthDbModule.updatePasswordForUserUnsafe(u, 'admin123');
+        const pw = await pmsAuthDbModule.updatePasswordForUserUnsafe(u, 'test123');
         if (!pw.ok) {
           logger.warning(`Password update failed for ${u}: ${pw.error}`);
         }
@@ -156,7 +156,7 @@ async function runDiagnostic() {
           'administrative_dashboard_features'
         ]
       });
-      const v = await pmsAuthDbModule.verifyLogin(u, 'admin123');
+      const v = await pmsAuthDbModule.verifyLogin(u, 'test123');
       if (v.ok) {
         logger.success(`Login verified for ${u}`);
       } else {
@@ -257,7 +257,7 @@ async function runDiagnostic() {
     logger.info('1. The cleanup process is now working correctly');
     logger.info('2. Admin permissions have been verified and fixed');
     logger.info('3. You can now use the Super Admin Settings in the application');
-    logger.info('4. Default admin credentials: username="admin", password="admin123"');
+    logger.info('4. Default admin credentials: username="admin", password="test123"');
 
   } catch (error) {
     logger.error(`\n❌ DIAGNOSTIC FAILED: ${error.message}`);

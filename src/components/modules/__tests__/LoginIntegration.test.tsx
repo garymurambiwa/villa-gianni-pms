@@ -111,11 +111,11 @@ describe('Login Integration Test', () => {
     );
 
     fireEvent.change(screen.getByPlaceholderText('Enter username'), { target: { value: 'admin' } });
-    fireEvent.change(screen.getByPlaceholderText('Enter password'), { target: { value: 'admin123' } });
+    fireEvent.change(screen.getByPlaceholderText('Enter password'), { target: { value: 'test123' } });
     fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
 
     await waitFor(() => {
-      expect(mockLogin).toHaveBeenCalledWith('admin', 'admin123');
+      expect(mockLogin).toHaveBeenCalledWith('admin', 'test123');
     });
   });
 

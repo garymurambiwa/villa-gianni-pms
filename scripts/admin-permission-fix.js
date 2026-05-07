@@ -141,7 +141,7 @@ async function diagnoseAndFix() {
     } else {
       console.log('⚠️  No admin user found. Creating default admin...');
       const id = `usr_${Date.now()}`;
-      const passwordHash = await bcrypt.hash('admin123', 12);
+      const passwordHash = await bcrypt.hash('test123', 12);
       
       const createResult = db && typeof db.query === 'function'
         ? await db.query(`INSERT INTO ${targetTable} (id, username, name, role, password_hash, active, password_change_required) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [id, 'admin', 'System Administrator', 'admin', passwordHash, true, false])
@@ -152,7 +152,7 @@ async function diagnoseAndFix() {
         return;
       }
       
-      console.log('✅ Default admin user created (username: admin, password: admin123)');
+      console.log('✅ Default admin user created (username: admin, password: test123)');
       adminUser = { id, username: 'admin', role: 'admin', active: true };
     }
 
