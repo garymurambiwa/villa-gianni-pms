@@ -641,7 +641,6 @@ export const Reservations: React.FC = () => {
     if (!formData.checkIn) errors.checkIn = 'Check-in date is required';
     if (!formData.checkOut) errors.checkOut = 'Check-out date is required';
     if (!formData.roomId) errors.roomId = 'Room assignment is required'; // Add this
-    if (!formData.originRegion) errors.originRegion = 'Origin region is required';
     if (!formData.roomType) errors.roomType = 'Room type is required';
     if ((formData.adults || 0) < 1) errors.adults = 'At least 1 adult is required';
     if ((formData.rate || 0) <= 0) errors.rate = 'Rate must be greater than 0';
@@ -652,10 +651,12 @@ export const Reservations: React.FC = () => {
       return;
     }
 
-    // Validate ID/Passport with nationality rules
-    if (!isValidIdDocumentNumber(formData.idDocumentNumber || '') || !isValidIdForNationality(formData.idDocumentNumber || '', formData.nationalityCode || '', formData.idDocumentType as any)) {
-      setFormError('Please provide a valid ID/Passport Number for the selected nationality/type');
-      return;
+    // Validate ID/Passport with nationality rules (only if ID number is provided)
+    if (formData.idDocumentNumber && formData.idDocumentNumber.trim()) {
+      if (!isValidIdDocumentNumber(formData.idDocumentNumber) || !isValidIdForNationality(formData.idDocumentNumber, formData.nationalityCode || '', formData.idDocumentType as any)) {
+        setFormError('Please provide a valid ID/Passport Number for the selected nationality/type');
+        return;
+      }
     }
 
     // Validate booking type and company name
@@ -949,17 +950,15 @@ export const Reservations: React.FC = () => {
                       }));
                     }}
                     label="Nationality"
-                    required
                   />
                   <div>
-                    <label htmlFor="idDocumentType" className="block text-sm font-medium text-gray-700 mb-1">ID Type *</label>
+                    <label htmlFor="idDocumentType" className="block text-sm font-medium text-gray-700 mb-1">ID Type</label>
                     <select
                       id="idDocumentType"
                       name="idDocumentType"
                       value={formData.idDocumentType}
                       onChange={handleInputChange}
                       className="w-full px-4 py-2 border rounded-lg"
-                      required
                     >
                       <option value="Passport">Passport</option>
                       <option value="ID Card">ID Card</option>
@@ -983,7 +982,7 @@ export const Reservations: React.FC = () => {
                   className="w-full px-4 py-2 border rounded-lg mb-2"
                 />
                 <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="idDocumentNumber">
-                  ID/Passport Number <span className="text-red-600" aria-hidden="true">*</span>
+                  ID/Passport Number
                 </label>
                 <input
                   id="idDocumentNumber"
@@ -993,11 +992,10 @@ export const Reservations: React.FC = () => {
                   onChange={handleInputChange}
                   placeholder="Enter ID or Passport number"
                   aria-label="ID or Passport Number"
-                  aria-required="true"
+                  aria-required="false"
                   aria-invalid={idDocError ? "true" : "false"}
                   aria-describedby="idDocHelp idDocError"
                   className={`w-full px-4 py-2 border rounded-lg ${idDocError ? 'border-red-500' : ''}`}
-                  required
                 />
                 <p id="idDocHelp" className="text-xs text-gray-500 mt-1">Please enter your valid ID or Passport number</p>
                 {idDocError && (

@@ -134,7 +134,7 @@ export const OriginRegionSelect: React.FC<OriginRegionSelectProps> = ({ value, o
 
   return (
     <div className="mb-2">
-      <label className="block text-sm font-medium text-gray-700 mb-1">Country/Region of Origin *</label>
+      <label className="block text-sm font-medium text-gray-700 mb-1">Country/Region of Origin</label>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
