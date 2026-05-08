@@ -208,13 +208,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setDataError(null);
       initializePriceSync();
 
-    } catch (error: any) {
-      console.error("Failed to load data:", error);
-      setDataError(error.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [initializePriceSync]);
+     } catch (error: any) {
+       console.error("Failed to load data:", error);
+       setDataError(error.message);
+     } finally {
+       // Load city ledger data
+       try {
+         await loadCityLedger();
+       } catch (clError) {
+         console.warn('Failed to load city ledger data in loadAllData:', clError);
+       }
+       setLoading(false);
+     }
+   }, [initializePriceSync, loadCityLedger]);
 
   const loadUsers = React.useCallback(async () => {
     try {
@@ -1228,19 +1234,19 @@ check_in_date = ?, check_out_date = ?, status = ?,
     }
   };
 
-  // Helper function to calculate account balance
-  const calculateAccountBalance = (accountId: string, transactions: any[]) => {
-    if (!transactions || transactions.length === 0) return 0;
+   // Helper function to calculate account balance
+   const calculateAccountBalance = (accountId: string, transactions: any[]) => {
+     if (!transactions || transactions.length === 0) return 0;
 
-    return transactions.reduce((balance, txn) => {
-      if (txn.debit) {
-        return balance + Number(txn.debit);
-      } else if (txn.credit) {
-        return balance - Number(txn.credit);
-      }
-      return balance;
-    }, 0);
-  };
+     return transactions.reduce((balance, txn) => {
+       if (txn.debit_amount) {
+         return balance + Number(txn.debit_amount);
+       } else if (txn.credit_amount) {
+         return balance - Number(txn.credit_amount);
+       }
+       return balance;
+     }, 0);
+   };
 
   // Helper function to determine transaction type based on data
   const determineTransactionType = (transactionData: any) => {
@@ -1522,15 +1528,17 @@ check_in_date = ?, check_out_date = ?, status = ?,
         // Constraint already exists, which is fine
       }
 
-      // Load all city ledger accounts
-      const accountsRes = await db.query('SELECT * FROM city_ledger_accounts ORDER BY account_name');
-      if ('rows' in accountsRes) {
-        const accounts = (accountsRes.rows || []).map((acc: any) => ({
-          ...acc,
-          // Load transactions for each account
-          transactions: [] as any[],
-          notes: [] as any[],
-        }));
+       // Load all city ledger accounts
+       const accountsRes = await db.query('SELECT * FROM city_ledger_accounts ORDER BY account_name');
+       if ('rows' in accountsRes) {
+         const accounts = (accountsRes.rows || []).map((acc: any) => ({
+           ...acc,
+           // Try to get name from either 'name' or 'account_name' column for compatibility
+           name: acc.name || acc.account_name || '',
+           // Load transactions for each account
+           transactions: [] as any[],
+           notes: [] as any[],
+         }));
 
         // Load all transactions
         const transactionsRes = await db.query('SELECT *, COALESCE(date_field, date) as date FROM city_ledger_transactions ORDER BY COALESCE(date_field, date) DESC');
