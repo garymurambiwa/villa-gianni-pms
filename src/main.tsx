@@ -61,9 +61,19 @@ if ((window as any).native) {
     return undefined;
   });
 } else {
-  // Fallback for web development
+  // Fallback for web development and production deployments
   import('@/lib/databaseInitializer').then(async ({ initializeDatabase }) => {
-    try { await initializeDatabase() } catch { }
+    try {
+      const result = await initializeDatabase()
+      if (!result.ok) {
+        console.log('[App] Database initialization failed:', result.error)
+        console.log('[App] Running in offline/demo mode')
+      }
+    } catch (e) {
+      console.log('[App] Database initialization exception:', e.message)
+      console.log('[App] Running in offline/demo mode')
+    }
+    // Always render the app, even if DB init fails
     createRoot(el).render(<App />)
   })
 }

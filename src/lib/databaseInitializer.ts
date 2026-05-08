@@ -7,10 +7,16 @@ import { databaseMigrationService } from './databaseMigrationService'
 export async function initializeDatabase(): Promise<{ ok: boolean; message?: string; error?: string }> {
   try {
     const configured = await db.isConfigured()
-    if (!configured) return { ok: false, error: 'DB_NOT_CONFIGURED' }
-    
+    if (!configured) {
+      console.log('[DatabaseInitializer] Database not configured - running in demo mode')
+      return { ok: false, error: 'DB_NOT_CONFIGURED' }
+    }
+
     const test = await db.testConnection()
-    if (!test.ok) return { ok: false, error: test.error || 'DB_CONNECTION_FAILED' }
+    if (!test.ok) {
+      console.log('[DatabaseInitializer] Database connection failed - running in demo mode:', test.error)
+      return { ok: false, error: test.error || 'DB_CONNECTION_FAILED' }
+    }
     
     try {
       const migrationResult = await databaseMigrationService.runMigrations()

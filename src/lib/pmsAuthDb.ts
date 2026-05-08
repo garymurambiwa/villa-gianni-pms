@@ -368,9 +368,13 @@ export const pmsAuthDb = {
   async getAllAppSettings(): Promise<Record<string, string>> {
     try {
       const res = await db.query<{ key: string; value: string }>(`SELECT key, value FROM app_settings`);
-      if ('error' in res || !res.rows) return {};
+      if ('error' in res || !res.rows) {
+        console.log('[pmsAuthDb] Settings query failed, using defaults:', res.error);
+        return {};
+      }
       return res.rows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {} as Record<string, string>);
-    } catch {
+    } catch (e) {
+      console.log('[pmsAuthDb] Settings API unavailable, using defaults:', e.message);
       return {};
     }
   },
