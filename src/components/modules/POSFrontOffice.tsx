@@ -764,7 +764,11 @@ export const POSFrontOffice: React.FC = () => {
 
     // Auto-deplete inventory for sold items
     try {
-      const soldItems = bill.items.map((i: any) => ({ name: i.menuItem.name, quantity: Number(i.quantity || 0) }));
+      const soldItems = (bill.items || []).map((i: any) => ({ 
+        id: i.menuItem?.id || i.id,
+        name: i.menuItem?.name || i.name, 
+        quantity: Number(i.quantity || 0) 
+      }));
       decrementInventory(soldItems, costCentre || 'Main Restaurant', shiftId || 'unknown');
     } catch (err) {
       console.warn('Inventory depletion failed:', err);

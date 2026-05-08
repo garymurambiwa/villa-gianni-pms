@@ -9,6 +9,7 @@ import menuCats from '@/lib/menuCategories';
 import cocktailEng from '@/lib/cocktailEngineering';
 import { useToast } from '@/hooks/use-toast';
 import db from '@/lib/db';
+import ReconciliationService, { ReconciliationReport } from '@/lib/ReconciliationService';
 
 type DateRange = { start: string; end: string };
 
@@ -87,6 +88,63 @@ const StockMovementReportView: React.FC<{ movementRows: any[] }> = ({ movementRo
           </tbody>
         </table>
       </div>
+    </div>
+  );
+};
+
+const DriftAuditReportView: React.FC<{ report: ReconciliationReport | null }> = ({ report }) => {
+  if (!report) return <div className="p-4 text-center text-gray-500">No audit data loaded</div>;
+
+  return (
+    <div className="mb-6">
+      <div className="flex justify-between items-end mb-4">
+        <h3 className="text-lg font-semibold">Inventory Drift Audit</h3>
+        <div className="text-right">
+          <div className="text-sm font-medium">Accuracy Rate: <span className={report.summary.accuracyRate < 95 ? 'text-red-600' : 'text-green-600'}>{report.summary.accuracyRate.toFixed(1)}%</span></div>
+          <div className="text-xs text-gray-500">{report.summary.totalDriftCount} items with discrepancies</div>
+        </div>
+      </div>
+      
+      <div className="ds-table-container">
+        <table className="ds-table">
+          <thead>
+            <tr>
+              <th className="p-2 text-left">Item Name</th>
+              <th className="p-2 text-center">Sold (POS)</th>
+              <th className="p-2 text-center">Ledger (Inv)</th>
+              <th className="p-2 text-center">Drift (Δ)</th>
+              <th className="p-2 text-center">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.discrepancies.map((d, i) => (
+              <tr key={i} className={Math.abs(d.drift) > 0 ? 'bg-red-50' : ''}>
+                <td className="p-2">{d.itemName}</td>
+                <td className="p-2 text-center font-mono">{d.soldQty}</td>
+                <td className="p-2 text-center font-mono">{d.ledgerQty}</td>
+                <td className={`p-2 text-center font-bold font-mono ${d.drift > 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                  {d.drift > 0 ? `+${d.drift}` : d.drift}
+                </td>
+                <td className="p-2 text-center text-xs">
+                  {d.drift > 0 ? '⚠️ Under-recorded' : '🔍 Over-recorded'}
+                </td>
+              </tr>
+            ))}
+            {!report.discrepancies.length && (
+              <tr>
+                <td colSpan={5} className="p-8 text-center text-green-600 font-medium">
+                  Perfect alignment! No inventory drift detected in this period.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-4 text-xs text-gray-500 italic">
+        * Drift represents the difference between items sold in POS and quantity decrements recorded in the inventory ledger. 
+        Positive drift (+) means items were sold but inventory wasn't decremented. 
+        Negative drift (-) means inventory was decremented more than what was recorded as sold.
+      </p>
     </div>
   );
 };
@@ -223,7 +281,7 @@ export const PosReports: React.FC = () => {
   const [dbInventoryItems, setDbInventoryItems] = React.useState<any[]>([]);
   const [dbGrns, setDbGrns] = React.useState<any[]>([]);
   const [dbMovements, setDbMovements] = React.useState<any[]>([]);
-
+  const [driftReport, setDriftReport] = React.useState<ReconciliationReport | null>(null);
   const fetchData = React.useCallback(async () => {
 
       setLoading(true);
@@ -311,9 +369,14 @@ if(!('error' in ordersRes)) {
     } catch (err) {
       console.error('Failed to fetch report data from DB', err);
     } finally {
+      if (selectedReport === 'drift-audit') {
+        const audit = await ReconciliationService.runAudit(range.start, range.end);
+        setDriftReport(audit);
+      }
+
       setLoading(false);
     }
-  }, [range]);
+  }, [range, selectedReport]);
 
 
   const itemIndexByName = React.useMemo(() => {
@@ -479,6 +542,7 @@ if(!('error' in ordersRes)) {
               <SelectItem value="goods-received">Goods Received</SelectItem>
               <SelectItem value="voids">Voids</SelectItem>
               <SelectItem value="stock-movement">Movement</SelectItem>
+              <SelectItem value="drift-audit">Inventory Drift Audit</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -612,6 +676,7 @@ if(!('error' in ordersRes)) {
       {!loading && selectedReport === 'goods-received' && <GoodsReceivedReportView rangeText={`${range.start} to ${range.end}`} grnRows={dbGrns} />}
       {!loading && selectedReport === 'voids' && <VoidsReportView voidsRows={voidedBills} />}
       {!loading && selectedReport === 'stock-movement' && <StockMovementReportView movementRows={dbMovements} />}
+      {!loading && selectedReport === 'drift-audit' && <DriftAuditReportView report={driftReport} />}
     </div>
   );
 };

@@ -168,6 +168,16 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
           updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
           PRIMARY KEY (period_id, product_id)
         );
+
+        CREATE TABLE IF NOT EXISTS pos_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+
+        INSERT INTO pos_settings (key, value) VALUES ('vat_rate', '0.10') ON CONFLICT DO NOTHING;
+        INSERT INTO pos_settings (key, value) VALUES ('service_charge', '0.00') ON CONFLICT DO NOTHING;
+        INSERT INTO pos_settings (key, value) VALUES ('currency_symbol', '$') ON CONFLICT DO NOTHING;
       `)
     } catch (e) { 
       console.log('Table creation note:', e)

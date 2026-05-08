@@ -59,7 +59,7 @@ export const validateRoomChargePayment = (
  */
 export const calculateTaxBreakdown = (
   total: number,
-  taxRate: number = 0.10
+  taxRate: number = 0.15 // Default to 15% VAT if not specified (Standard Zim rate)
 ): { subtotal: number; tax: number; total: number } => {
   const subtotal = total / (1 + taxRate);
   const tax = total - subtotal;
@@ -103,8 +103,38 @@ export const processPayment = (
 /**
  * Decrement inventory quantities based on sold items
  */
-export const decrementInventory = (soldItems: Array<{ name: string; quantity: number }>, costCenter?: string, shiftId?: string) => {
+/**
+ * Fetches POS settings from the database
+ */
+export const getPosSettings = async () => {
   try {
+    const isConfigured = await db.isConfigured();
+    if (!isConfigured) return { vat_rate: 0.10, service_charge: 0.00, currency_symbol: '$' };
+    
+    const res = await db.query(`SELECT key, value FROM pos_settings`);
+    if ('rows' in res && Array.isArray(res.rows)) {
+      const settings: any = {};
+      res.rows.forEach((r: any) => {
+        settings[r.key] = r.key.includes('rate') || r.key.includes('charge') ? Number(r.value) : r.value;
+      });
+      return {
+        vat_rate: settings.vat_rate ?? 0.10,
+        service_charge: settings.service_charge ?? 0.00,
+        currency_symbol: settings.currency_symbol ?? '$'
+      };
+    }
+  } catch (err) {
+    console.warn('[getPosSettings] Failed to fetch settings:', err);
+  }
+  return { vat_rate: 0.10, service_charge: 0.00, currency_symbol: '$' };
+};
+
+/**
+ * Decrement inventory quantities based on sold items
+ */
+export const decrementInventory = async (soldItems: Array<{ name: string; id?: string; quantity: number }>, costCenter?: string, shiftId?: string) => {
+  try {
+    // 1. Sync LocalStorage for immediate UI feedback (Legacy/Hybrid Support)
     const raw = localStorage.getItem('corepms_pos_items');
     const list = raw ? JSON.parse(raw) : [];
     const nameMap = new Map<string, number>();
@@ -115,20 +145,81 @@ export const decrementInventory = (soldItems: Array<{ name: string; quantity: nu
       return { ...it, qtyInStock: Math.max(0, Number(it.qtyInStock || 0) - q) };
     });
     localStorage.setItem('corepms_pos_items', JSON.stringify(next));
-    const audit = { id: `AUD_${Date.now()}`, action: 'INVENTORY_DEPLETION', entity: 'STOCK', timestamp: new Date().toISOString(), details: soldItems, cost_center: costCenter, shift_id: shiftId };
+
+    // 2. Local Audit Log
+    const audit = { 
+      id: `AUD_${Date.now()}`, 
+      action: 'INVENTORY_DEPLETION', 
+      entity: 'STOCK', 
+      timestamp: new Date().toISOString(), 
+      details: soldItems, 
+      cost_center: costCenter, 
+      shift_id: shiftId 
+    };
     const ar = localStorage.getItem('corepms_pos_audit');
     const al = ar ? JSON.parse(ar) : [];
     localStorage.setItem('corepms_pos_audit', JSON.stringify([audit, ...al].slice(0, 1000)));
-  } catch (err) { console.error('Failed to decrement inventory', err); }
-  (async () => {
-    try {
-      const isConfigured = await db.isConfigured();
-      if (!isConfigured) return;
-      for (const si of soldItems) {
-        await db.query(`UPDATE inventory_items SET stock_level = GREATEST(stock_level - ?, 0) WHERE LOWER(name::text) = LOWER(?::text)`, [Number(si.quantity || 0), String(si.name || '').toLowerCase()]);
+
+    // 3. Database Transactional Update (Multi-Source Sync)
+    const isConfigured = await db.isConfigured();
+    if (isConfigured) {
+      await db.query('BEGIN');
+      try {
+        for (const si of soldItems) {
+          const qty = Number(si.quantity || 0);
+          const name = String(si.name || '').toLowerCase();
+          const itemId = si.id;
+
+          // A. Update Legacy inventory_items table
+          await db.query(
+            `UPDATE inventory_items SET stock_level = GREATEST(stock_level - $1, 0) WHERE LOWER(name::text) = $2`, 
+            [qty, name]
+          );
+
+          // B. Update POS Menu Source (products table)
+          if (itemId) {
+            await db.query(
+              `UPDATE products SET stock_level = GREATEST(stock_level - $1, 0) WHERE id = $2`, 
+              [qty, itemId]
+            );
+          } else {
+            await db.query(
+              `UPDATE products SET stock_level = GREATEST(stock_level - $1, 0) WHERE LOWER(name) = $2`, 
+              [qty, name]
+            );
+          }
+
+          // C. Log to V11 Stock Ledger for Reporting
+          if (itemId) {
+             // Fetch base UOM for item if possible
+             const uomRes = await db.query(`SELECT category_id FROM products WHERE id = $1`, [itemId]);
+             const uom = ('rows' in uomRes && uomRes.rows[0]) ? uomRes.rows[0].category_id : 'pcs';
+
+             await db.query(`
+               INSERT INTO inv_stock_ledger (
+                 id, item_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by
+               ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+             `, [
+               `LEDGER_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+               itemId,
+               'POS_SALE',
+               shiftId || 'POS',
+               -qty,
+               uom,
+               'POS_SYSTEM'
+             ]);
+          }
+        }
+        await db.query('COMMIT');
+        console.log('[decrementInventory] Transaction committed successfully');
+      } catch (txErr) {
+        await db.query('ROLLBACK');
+        console.error('[decrementInventory] Transaction failed, rolled back:', txErr);
       }
-    } catch {}
-  })();
+    }
+  } catch (err) { 
+    console.error('[decrementInventory] Critical failure:', err); 
+  }
 };
 
 /**
@@ -358,7 +449,7 @@ export const processCardPayment = async (req: any): Promise<any> => {
 };
 
 export const updateEntity = (entities: any[], id: string, updates: any) => entities.map(e => e.id === id ? { ...e, ...updates } : e);
-export const calculateBillTotal = (items: any[], rate: number = 0.1) => Number((items.reduce((s, i) => s + i.subtotal, 0) * (1 + rate)).toFixed(2));
+export const calculateBillTotal = (items: any[], rate: number = 0.15) => Number((items.reduce((s, i) => s + (i.subtotal || (i.quantity * i.price)), 0) * (1 + rate)).toFixed(2));
 
 export default {
   validateRoomChargePayment, calculateTaxBreakdown, processPayment, generateReceiptHTML, printDocument,

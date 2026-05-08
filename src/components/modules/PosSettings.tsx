@@ -884,6 +884,97 @@ const ShiftReportingPanel: React.FC = () => {
   );
 };
 
+const PosConfigPanel: React.FC = () => {
+  const { toast } = useToast();
+  const [vatRate, setVatRate] = React.useState('15');
+  const [serviceCharge, setServiceCharge] = React.useState('0');
+  const [currency, setCurrency] = React.useState('$');
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    getPosSettings().then(s => {
+      setVatRate(String(s.vat_rate * 100));
+      setServiceCharge(String(s.service_charge * 100));
+      setCurrency(s.currency_symbol);
+      setLoading(false);
+    });
+  }, []);
+
+  const handleSave = async () => {
+    try {
+      const { db } = await import('@/lib/db');
+      const updates = [
+        { key: 'vat_rate', value: String(Number(vatRate) / 100) },
+        { key: 'service_charge', value: String(Number(serviceCharge) / 100) },
+        { key: 'currency_symbol', value: currency }
+      ];
+
+      for (const { key, value } of updates) {
+        await db.query(
+          `INSERT INTO pos_settings (key, value) VALUES ($1, $2)
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+          [key, value]
+        );
+      }
+
+      toast({ title: 'Settings Saved', description: 'POS configuration has been updated.' });
+    } catch (err) {
+      console.error('Failed to save POS settings:', err);
+      toast({ title: 'Error', description: 'Failed to save settings to database.', variant: 'destructive' });
+    }
+  };
+
+  if (loading) return <div className="p-4 text-center">Loading configuration...</div>;
+
+  return (
+    <div className="space-y-6 max-w-md">
+      <div className="grid gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="vat-rate">VAT Rate (%)</Label>
+          <Input 
+            id="vat-rate" 
+            type="number" 
+            value={vatRate} 
+            onChange={(e) => setVatRate(e.target.value)} 
+            placeholder="15" 
+          />
+          <p className="text-[10px] text-gray-500">Standard VAT rate applied to all POS items.</p>
+        </div>
+        
+        <div className="space-y-2">
+          <Label htmlFor="service-charge">Service Charge (%)</Label>
+          <Input 
+            id="service-charge" 
+            type="number" 
+            value={serviceCharge} 
+            onChange={(e) => setServiceCharge(e.target.value)} 
+            placeholder="0" 
+          />
+          <p className="text-[10px] text-gray-500">Optional service charge added to the total bill.</p>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="currency-symbol">Currency Symbol</Label>
+          <Select value={currency} onValueChange={setCurrency}>
+            <SelectTrigger id="currency-symbol">
+              <SelectValue placeholder="Select currency" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="$">USD ($)</SelectItem>
+              <SelectItem value="ZiG">ZiG</SelectItem>
+              <SelectItem value="R">ZAR (R)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <Button className="w-full bg-indigo-600 text-white" onClick={handleSave}>
+        Save POS Configuration
+      </Button>
+    </div>
+  );
+};
+
 export const PosSettings: React.FC = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -962,7 +1053,7 @@ export const PosSettings: React.FC = () => {
       { id: 'user-management',   label: '👤 POS Users' },
       { id: 'pos-user-rights',   label: '🔐 User Rights & PIN' },
       { id: 'shift-reporting',   label: '📊 Shift Reports' },
-      { id: 'pos-reporting-tools', label: '📈 Reporting Tools' },
+      { id: 'pos-configuration',  label: '⚙️ POS Configuration' },
       { id: 'category-gaps',     label: '⚠ Category Gaps' },
       { id: 'data-migration',    label: '🔄 Data Migration' },
     ],
@@ -2376,6 +2467,13 @@ export const PosSettings: React.FC = () => {
       {activeTab === 'admin' && activeSectionId === 'shift-reporting' && (
         <Section id="shift-reporting" title="Shift & Activity Reports">
           <ShiftReportingPanel />
+        </Section>
+      )}
+
+      {activeTab === 'admin' && activeSectionId === 'pos-configuration' && (
+        <Section id="pos-configuration" title="POS System Configuration">
+          <div className="text-xs text-gray-600 mb-4">Set global financial parameters for the POS system including tax rates and currency.</div>
+          <PosConfigPanel />
         </Section>
       )}
 

@@ -393,7 +393,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         let taxLinesMain: Array<{ name: string; amount: number }> = []
         let totalMain = Number(bill.total || 0)
         try {
-          const calcMain = await calculateTaxBreakdown(subMain)
+          const calcMain = await calculateTaxBreakdown(subMain, 'pos')
           taxLinesMain = calcMain.lines.map(l => ({ name: l.name, amount: l.amount }))
           totalMain = calcMain.total
         } catch {}
@@ -410,7 +410,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             const subSplit = Array.isArray(bill.items) ? bill.items.reduce((sum, i) => sum + Number(i.subtotal != null ? i.subtotal : (Number(i.quantity || 0) * Number(i.price || 0))), 0) * (s.amount / Number(bill.total || 1)) : s.amount
             let taxLinesSplit: Array<{ name: string; amount: number }> = []
             try {
-              const calcSplit = await calculateTaxBreakdown(subSplit)
+              const calcSplit = await calculateTaxBreakdown(subSplit, 'pos')
               taxLinesSplit = calcSplit.lines.map(l => ({ name: l.name, amount: l.amount }))
             } catch {}
              const html = generateReceiptHTML({ ...bill, total: s.amount, paymentMethod }, effectiveSettings, 'receipt', { showTaxBreakdown: effectiveSettings.show_tax_breakdown, serverName: currentUser?.name, taxLines: taxLinesSplit, subtotalOverride: subSplit, totalOverride: s.amount });

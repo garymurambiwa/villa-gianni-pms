@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { formatCurrency, getMenuItems } from '@/lib/posIntegration';
+import { formatCurrency, getMenuItems, getPosSettings } from '@/lib/posIntegration';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -43,6 +43,8 @@ export interface Bill {
   total: number;
   shift_id?: string;
   user_id?: string;
+  vat_amount?: number;
+  service_charge_amount?: number;
 }
 
 interface OrderModalProps {
@@ -65,7 +67,14 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [subPath, setSubPath] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [itemSize, setItemSize] = useState<'sm' | 'md' | 'lg'>('md');
+  const [posSettings, setPosSettings] = useState({ vat_rate: 0.15, service_charge: 0, currency_symbol: '$' });
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: MenuItem } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch POS settings on mount
+  useEffect(() => {
+    getPosSettings().then(setPosSettings);
+  }, []);
 
   // Close context menu when clicking elsewhere
   useEffect(() => {
@@ -220,7 +229,6 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   }, []);
 
   // Context Menu state for item editing
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: MenuItem } | null>(null);
   const [showItemEdit, setShowItemEdit] = useState(false);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [editItemPrice, setEditItemPrice] = useState('');
@@ -731,23 +739,47 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
             </div>
 
             <div className="border-t pt-4 mt-auto">
+              {/* Dynamic Tax Breakdown */}
+              <div className="space-y-1 mb-4 text-sm border-b pb-3">
+                <div className="flex justify-between text-gray-600">
+                  <span>Subtotal:</span>
+                  <span>{formatCurrency(total / (1 + posSettings.vat_rate))}</span>
+                </div>
+                <div className="flex justify-between text-gray-600">
+                  <span>VAT ({posSettings.vat_rate * 100}%):</span>
+                  <span>{formatCurrency(total - (total / (1 + posSettings.vat_rate)))}</span>
+                </div>
+                {posSettings.service_charge > 0 && (
+                  <div className="flex justify-between text-gray-600">
+                    <span>Service Charge:</span>
+                    <span>{formatCurrency(total * posSettings.service_charge)}</span>
+                  </div>
+                )}
+              </div>
+
               <div className="flex justify-between text-2xl font-bold mb-4">
                 <span>Total:</span>
-                <span className="text-purple-600">{formatCurrency(total)}</span>
+                <span className="text-purple-600">{formatCurrency(total * (1 + posSettings.service_charge))}</span>
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
                 <Button
                   onClick={() => {
+                    const finalTotal = total * (1 + posSettings.service_charge);
+                    const vatAmount = total - (total / (1 + posSettings.vat_rate));
+                    const scAmount = total * posSettings.service_charge;
+                    
                     onSave({
                       id: bill?.id || `bill-${Date.now()}`,
                       tableId: `t${tableNumber}`,
                       items,
                       status: 'open',
                       createdAt: new Date().toISOString(),
-                      total,
+                      total: finalTotal,
                       shift_id: activeShift?.id,
-                      user_id: user?.id
+                      user_id: user?.id,
+                      vat_amount: vatAmount,
+                      service_charge_amount: scAmount
                     });
                     onClose();
                   }}

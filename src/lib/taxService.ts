@@ -1,5 +1,6 @@
 import db from '@/lib/db'
 import { v4 as uuidv4 } from 'uuid'
+import { getPosSettings } from '@/lib/posIntegration'
 
 export type TaxRecord = {
   id: string
@@ -28,7 +29,25 @@ export const listTaxes = async (): Promise<TaxRecord[]> => {
 export const getActiveTaxes = async (category: 'all'|'accommodation'|'pos'|'services'): Promise<TaxRecord[]> => {
   const res = await db.query<TaxRecord>(`SELECT id, name, percentage, is_inclusive, applies_to, active FROM taxes WHERE active = true AND (applies_to = ? OR applies_to = 'all') ORDER BY name ASC`, [category])
   if ('error' in res) return []
-  return (res.rows || []).map(mapRow)
+  
+  const taxes = (res.rows || []).map(mapRow)
+  
+  // Fallback for POS if no taxes are configured in the main taxes table
+  if (category === 'pos' && taxes.length === 0) {
+    const settings = await getPosSettings();
+    if (settings.vat_rate > 0) {
+      taxes.push({
+        id: 'pos_default_vat',
+        name: 'VAT',
+        percentage: settings.vat_rate * 100,
+        is_inclusive: true,
+        applies_to: 'pos',
+        active: true
+      });
+    }
+  }
+  
+  return taxes
 }
 
 export const getTax = async (id: string): Promise<TaxRecord | null> => {
@@ -74,13 +93,23 @@ export const deleteTax = async (id: string): Promise<{ ok: boolean; error?: stri
 
 export const calculateTaxesForAmount = async (amount: number, category: 'all'|'accommodation'|'pos'|'services'): Promise<{ subtotal: number; taxTotal: number; total: number; lines: Array<{ id: string; name: string; amount: number; inclusive: boolean }> }> => {
   const taxes = await getActiveTaxes(category)
-  const total = Number(amount.toFixed(2))
+  let total = Number(amount.toFixed(2))
   let taxTotal = 0
   const lines: Array<{ id: string; name: string; amount: number; inclusive: boolean }> = []
   
+  // Handle POS Service Charge if applicable
+  let serviceChargeAmt = 0;
+  if (category === 'pos') {
+    const settings = await getPosSettings();
+    if (settings.service_charge > 0) {
+      serviceChargeAmt = Number((total * settings.service_charge).toFixed(2));
+      // total = total + serviceChargeAmt; // Wait, is total inclusive or exclusive of service charge?
+      // Usually, the 'amount' passed here is the items subtotal (including inclusive tax).
+      // If service charge is added on top, it increases the total.
+    }
+  }
+
   // For inclusive taxes, the formula is: Tax = Total * (Rate / (1 + Rate))
-  // We assume all taxes are additive to the base, so if there are multiple, 
-  // they share the same base: Total = Base * (1 + sum(Rates))
   const totalRate = taxes.reduce((acc, t) => acc + (Number(t.percentage || 0) / 100), 0)
   const subtotal = Number((total / (1 + totalRate)).toFixed(2))
   
@@ -89,6 +118,11 @@ export const calculateTaxesForAmount = async (amount: number, category: 'all'|'a
     const amt = Number((subtotal * rate).toFixed(2))
     taxTotal += amt
     lines.push({ id: t.id, name: t.name, amount: amt, inclusive: true })
+  }
+
+  if (serviceChargeAmt > 0) {
+    lines.push({ id: 'pos_service_charge', name: 'Service Charge', amount: serviceChargeAmt, inclusive: false });
+    total = Number((total + serviceChargeAmt).toFixed(2));
   }
   
   return { subtotal, taxTotal: Number(taxTotal.toFixed(2)), total, lines }
