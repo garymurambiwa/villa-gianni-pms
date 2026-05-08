@@ -1333,13 +1333,17 @@ export const localProvider: ReportsProvider = {
   inventoryCOGS: async (m) => buildInventoryCOGS(m)
 };
 
+import { fetchApi } from '@/lib/api';
+
+// ... rest of the file ...
+
 export const sqlProvider: ReportsProvider = {
-  flash: async (d) => (await (await fetch(`/api/reports/flash?date=${encodeURIComponent(d)}`)).json()),
-  posRecon: async (d) => (await (await fetch(`/api/reports/pos-recon?date=${encodeURIComponent(d)}`)).json()),
-  purchaseLog: async (d) => (await (await fetch(`/api/reports/purchase-log?date=${encodeURIComponent(d)}`)).json()),
-  pl: async (m) => (await (await fetch(`/api/reports/pl?month=${encodeURIComponent(m)}`)).json()),
-  agedAR: async (d) => (await (await fetch(`/api/reports/aged-ar?date=${encodeURIComponent(d)}`)).json()),
-  inventoryCOGS: async (m) => (await (await fetch(`/api/reports/inventory-cogs?month=${encodeURIComponent(m)}`)).json())
+  flash: async (d) => await fetchApi(`/api/reports/flash?date=${encodeURIComponent(d)}`),
+  posRecon: async (d) => await fetchApi(`/api/reports/pos-recon?date=${encodeURIComponent(d)}`),
+  purchaseLog: async (d) => await fetchApi(`/api/reports/purchase-log?date=${encodeURIComponent(d)}`),
+  pl: async (m) => await fetchApi(`/api/reports/pl?month=${encodeURIComponent(m)}`),
+  agedAR: async (d) => await fetchApi(`/api/reports/aged-ar?date=${encodeURIComponent(d)}`),
+  inventoryCOGS: async (m) => await fetchApi(`/api/reports/inventory-cogs?month=${encodeURIComponent(m)}`)
 };
 
 export const getProvider = (): ReportsProvider => {

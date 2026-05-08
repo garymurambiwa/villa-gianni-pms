@@ -7,15 +7,16 @@
  */
 import gl from './glAccounting';
 import { 
-  syncFolioChargeToDb, 
-  syncNightAuditPostingToDb, 
-  recordNightAuditRun, 
-  recordReconciliationLog,
-  recordVarianceJournalEntry,
-  FolioChargeRecord,
-  ReconciliationLogRecord,
-  VarianceJournalEntryRecord
-} from './dbSync';
+   syncFolioChargeToDb, 
+   syncNightAuditPostingToDb, 
+   recordNightAuditRun, 
+   recordReconciliationLog,
+   recordVarianceJournalEntry,
+   FolioChargeRecord,
+   ReconciliationLogRecord,
+   VarianceJournalEntryRecord
+ } from './dbSync';
+import { fetchApi } from '@/lib/api';
 
 export interface NightAuditContext {
   rooms: any[];
@@ -265,7 +266,7 @@ export const transferCityLedger = (ctx: NightAuditContext) => {
   return { count: transfers.length, transfers };
 };
 
-export const rolloverBusinessDate = () => {
+export const rolloverBusinessDate = async () => {
   const prevDate = readJSON<string>('corepms_business_date', todayISO());
   const next = new Date(prevDate);
   // If prev is invalid, use today
@@ -278,9 +279,8 @@ export const rolloverBusinessDate = () => {
   writeJSON('corepms_business_date', nextISO);
 
   // Sync new business date to backend so the scheduler stays in sync
-   fetch('/api/db/query', {
+  await fetchApi('/api/db/query', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       sql: `INSERT INTO system_configs (key, value, description, updated_at, updated_by)
             VALUES ('business_date', $1::jsonb, 'Current hotel business date', NOW(), 'frontend_rollover')
@@ -757,13 +757,13 @@ export const runNightAudit = async (ctx: NightAuditContext, options: ValidationO
       };
     }
     
-    console.log('[nightAudit] Auto-reconciliation complete:', autoReconcileResult);
-  }
-  
-  const rollover = rolloverBusinessDate();
-  const backup = backupSnapshot(ctx);
-  // Pass businessDateBefore (the AUDIT night) not rolled-forward date
-  const reports = generateReportsBundle(ctx, businessDateBefore);
+     console.log('[nightAudit] Auto-reconciliation complete:', autoReconcileResult);
+   }
+   
+   rolloverBusinessDate().catch(() => {}); // fire and forget
+   const backup = backupSnapshot(ctx);
+   // Pass businessDateBefore (the AUDIT night) not rolled-forward date
+   const reports = generateReportsBundle(ctx, businessDateBefore);
 
   // GL posting using the audit date (before rollover)
   try {
@@ -827,14 +827,14 @@ export const runNightAuditSync = (ctx: NightAuditContext) => {
     return { ok: false, step: 'prepare', issues: validation.issues };
   }
   
-  const businessDateBefore = readJSON<string>('corepms_business_date', todayISO());
-  const postings = postRoomAndTax(ctx);
-  const transfers = transferCityLedger(ctx);
-  const reconciliation = reconcileTotals(ctx);
-  const rollover = rolloverBusinessDate();
-  const backup = backupSnapshot(ctx);
-  // Pass businessDateBefore so reports reflect the AUDIT night (not rolled-forward next day)
-  const reports = generateReportsBundle(ctx, businessDateBefore);
+    const businessDateBefore = readJSON<string>('corepms_business_date', todayISO());
+    const postings = postRoomAndTax(ctx);
+    const transfers = transferCityLedger(ctx);
+    const reconciliation = reconcileTotals(ctx);
+    rolloverBusinessDate().catch(() => {}); // fire and forget
+    const backup = backupSnapshot(ctx);
+    // Pass businessDateBefore so reports reflect the AUDIT night (not rolled-forward next day)
+    const reports = generateReportsBundle(ctx, businessDateBefore);
 
   // GL posting using the audit business date (before rollover)
   try {
