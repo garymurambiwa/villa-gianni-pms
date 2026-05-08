@@ -220,7 +220,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
        }
        setLoading(false);
      }
-   }, [initializePriceSync, loadCityLedger]);
+    }, [initializePriceSync]); // loadCityLedger is a useCallback and doesn't need to be in deps
 
   const loadUsers = React.useCallback(async () => {
     try {
@@ -2758,7 +2758,7 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
     };
 
     startup();
-  }, [user, loadAllData, loadCityLedger, loadVendors, loadVendorExpenses, loadVendorPayments, loadLogs, initializeRealTimeSync]);
+  }, [user, loadAllData, loadVendors, loadVendorExpenses, loadVendorPayments, loadLogs, initializeRealTimeSync]); // loadCityLedger is useCallback and stable
 
   return (
     <DataContext.Provider value={{
