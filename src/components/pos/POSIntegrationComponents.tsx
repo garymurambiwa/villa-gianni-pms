@@ -110,13 +110,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   receiptSettings,
   voidContext
 }) => {
-   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'ecocash' | 'swipe' | 'room-charge'>(() => {
-     try {
-       const m = localStorage.getItem('corepms_pos_last_payment_method');
-       if (m === 'cash' || m === 'ecocash' || m === 'swipe' || m === 'room-charge') return m as any;
-     } catch {}
-     return 'cash';
-   });
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'ecocash' | 'swipe' | 'room-charge'>(() => {
+      try {
+        const m = localStorage.getItem('corepms_pos_last_payment_method');
+        if (m === 'cash' || m === 'ecocash' || m === 'swipe' || m === 'room-charge') return m as any;
+      } catch {}
+      return 'cash';
+    });
+  const [roomChargeType, setRoomChargeType] = useState<'folio' | 'city-ledger'>('folio');
   const [customerName, setCustomerName] = useState(bill.customerName || '');
   const [roomNumber, setRoomNumber] = useState(bill.roomNumber || '');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -148,6 +149,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const { toast } = useToast();
   const [clSearch, setClSearch] = useState('');
   const [selectedAccountId, setSelectedAccountId] = useState<string | undefined>(undefined);
+  const [clReference, setClReference] = useState('');
+  const [clContactNumber, setClContactNumber] = useState('');
+  const [clCompanyName, setClCompanyName] = useState('');
   const selectedAccount: any = (cityLedger || []).find((a: any) => a.id === selectedAccountId);
   const filteredAccounts: any[] = (cityLedger || []).filter((a: any) => {
     const q = clSearch.trim().toLowerCase();
@@ -216,6 +220,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       setApprovedBy(undefined);
       setClSearch('');
       setSelectedAccountId(undefined);
+      setClReference('');
+      setClContactNumber('');
+      setClCompanyName('');
     } else {
       initializedRef.current = false;
     }
@@ -295,9 +302,19 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const handlePayment = async () => {
     const nameTrim = (customerName || '').trim();
     const roomTrim = (roomNumber || '').trim();
-    if (!validateRoomChargePayment(paymentMethod as any, nameTrim, roomTrim)) {
+    if (paymentMethod === 'room-charge' && roomChargeType === 'folio' && !validateRoomChargePayment(paymentMethod as any, nameTrim, roomTrim)) {
       alert('Please provide customer name and room number for room charges.');
       return;
+    }
+    if (paymentMethod === 'room-charge' && roomChargeType === 'city-ledger') {
+      if (!selectedAccount) {
+        alert('Please select a City Ledger account.');
+        return;
+      }
+      if (!clReference.trim()) {
+        alert('Reference/Reason is required.');
+        return;
+      }
     }
 
 
@@ -315,9 +332,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       billId: bill.id,
       amount: discountedTotal,
       paymentMethod,
-      customerName: paymentMethod === 'room-charge' ? nameTrim : undefined,
-      roomNumber: paymentMethod === 'room-charge' ? roomTrim : undefined,
-      cityLedgerAccountId: paymentMethod === 'city-ledger' ? selectedAccount?.id : undefined,
+      customerName: (paymentMethod === 'room-charge' && roomChargeType === 'folio') ? nameTrim : undefined,
+      roomNumber: (paymentMethod === 'room-charge' && roomChargeType === 'folio') ? roomTrim : undefined,
+      cityLedgerAccountId: (paymentMethod === 'room-charge' && roomChargeType === 'city-ledger') ? selectedAccount?.id : (paymentMethod === 'city-ledger' ? selectedAccount?.id : undefined),
+      roomChargeType: paymentMethod === 'room-charge' ? roomChargeType : undefined,
+      cityLedgerDetails: isCityLedgerPosting ? {
+        reference: clReference,
+        contactNumber: clContactNumber || undefined,
+        companyName: clCompanyName || undefined,
+      } : undefined,
       emailReceipt: emailReceipt || undefined,
       processedBy: currentUser?.name,
       processedAt: new Date().toISOString(),
@@ -372,11 +395,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       return;
     }
 
-    if (paymentMethod === 'city-ledger' && selectedAccount) {
+    const isCityLedgerPosting = (paymentMethod === 'city-ledger' || (paymentMethod === 'room-charge' && roomChargeType === 'city-ledger')) && selectedAccount;
+    if (isCityLedgerPosting) {
       try {
         addCityLedgerTransaction(selectedAccount.id, {
           date: new Date().toISOString().slice(0,10),
-          reference: bill.id,
+          reference: clReference,
           description: 'Direct Bill Posting',
           debit: discountedTotal,
         });
@@ -397,12 +421,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           taxLinesMain = calcMain.lines.map(l => ({ name: l.name, amount: l.amount }))
           totalMain = calcMain.total
         } catch {}
-        const receiptHTML = generateReceiptHTML(
-           { ...bill, customerName: paymentMethod === 'room-charge' ? customerName : undefined, roomNumber: paymentMethod === 'room-charge' ? roomNumber : undefined, total: totalMain, paymentMethod },
-           effectiveSettings,
-           paymentMethod === 'room-charge' ? 'folio' : 'receipt',
-           { includeSignature: paymentMethod === 'room-charge', showTaxBreakdown: effectiveSettings.show_tax_breakdown, serverName: currentUser?.name, taxLines: taxLinesMain, subtotalOverride: subMain, totalOverride: totalMain }
-         );
+        const receiptType = paymentMethod === 'room-charge' && roomChargeType === 'folio' ? 'folio' : 'receipt';
+        const receiptHTML = isCityLedgerPosting && selectedAccount ?
+          generateCityLedgerReceiptHTML({ id: selectedAccount.id, name: selectedAccount.name }, `CL-${bill.id}`, [{ date: new Date().toISOString().slice(0,10), description: 'Bill Payment', debit: discountedTotal }], receiptSettings?.tax_rate) :
+          generateReceiptHTML(
+            { ...bill, customerName: (paymentMethod === 'room-charge' && roomChargeType === 'folio') ? customerName : undefined, roomNumber: (paymentMethod === 'room-charge' && roomChargeType === 'folio') ? roomNumber : undefined, total: totalMain, paymentMethod },
+            effectiveSettings,
+            receiptType,
+            { includeSignature: paymentMethod === 'room-charge' && roomChargeType === 'folio', showTaxBreakdown: effectiveSettings.show_tax_breakdown, serverName: currentUser?.name, taxLines: taxLinesMain, subtotalOverride: subMain, totalOverride: totalMain }
+          );
         printDocument(receiptHTML, `Receipt-${bill.id}`);
         if (splits.length) {
           for (let idx = 0; idx < splits.length; idx++) {
@@ -439,7 +466,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
     try {
       const entry = createAuditEntry(
-        paymentMethod === 'city-ledger' ? 'CITY_LEDGER_POST' : 'PAYMENT_COMPLETE',
+        isCityLedgerPosting ? 'CITY_LEDGER_POST' : 'PAYMENT_COMPLETE',
         'BILL',
         bill.id,
         currentUser?.id || 'unknown',
@@ -450,7 +477,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           workstation: window.location.hostname,
           userAgent: navigator.userAgent,
           department: deptHeuristic,
-          managerOverrideApplied: paymentMethod==='city-ledger' ? (managerOverride && canManagerOverride) : false,
+          managerOverrideApplied: isCityLedgerPosting ? (managerOverride && canManagerOverride) : false,
         }
       );
       const raw = localStorage.getItem('corepms_pos_audit');
@@ -578,36 +605,139 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           {paymentMethod === 'room-charge' && (
             <>
               <div>
-                <Label htmlFor="customerName" className="text-[10px] uppercase font-bold text-gray-500">Guest Name *</Label>
-                <Input
-                  id="customerName"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Enter guest name"
-                  required
-                  className="mt-1 ds-input-compact border-2 focus:border-purple-600"
-                />
+                <Label className="text-[10px] uppercase font-bold text-gray-500">Charge Type</Label>
+                <div className="flex gap-4 mt-2">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      value="folio"
+                      checked={roomChargeType === 'folio'}
+                      onChange={(e) => setRoomChargeType(e.target.value as 'folio')}
+                    />
+                    <span className="text-sm">Post to Guest Folio</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      value="city-ledger"
+                      checked={roomChargeType === 'city-ledger'}
+                      onChange={(e) => setRoomChargeType(e.target.value as 'city-ledger')}
+                    />
+                    <span className="text-sm">Post to City Ledger</span>
+                  </label>
+                </div>
               </div>
-              <div>
-                <Label htmlFor="roomNumber" className="text-[10px] uppercase font-bold text-gray-500">Room Number *</Label>
-                <Input
-                  id="roomNumber"
-                  value={roomNumber}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setRoomNumber(v);
-                    try {
-                      const logRaw = localStorage.getItem('corepms_pos_payment_logs');
-                      const list = logRaw ? JSON.parse(logRaw) : [];
-                      const entry = { billId: bill.id, field: 'roomNumber', value: v, at: new Date().toISOString() };
-                      localStorage.setItem('corepms_pos_payment_logs', JSON.stringify([entry, ...list].slice(0, 200)));
-                    } catch {}
-                  }}
-                  placeholder="Enter room number"
-                  required
-                  className="mt-1 ds-input-compact border-2 focus:border-purple-600"
-                />
-              </div>
+              {roomChargeType === 'folio' && (
+                <>
+                  <div>
+                    <Label htmlFor="customerName" className="text-[10px] uppercase font-bold text-gray-500">Guest Name *</Label>
+                    <Input
+                      id="customerName"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="Enter guest name"
+                      required
+                      className="mt-1 ds-input-compact border-2 focus:border-purple-600"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="roomNumber" className="text-[10px] uppercase font-bold text-gray-500">Room Number *</Label>
+                    <Input
+                      id="roomNumber"
+                      value={roomNumber}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setRoomNumber(v);
+                        try {
+                          const logRaw = localStorage.getItem('corepms_pos_payment_logs');
+                          const list = logRaw ? JSON.parse(logRaw) : [];
+                          const entry = { billId: bill.id, field: 'roomNumber', value: v, at: new Date().toISOString() };
+                          localStorage.setItem('corepms_pos_payment_logs', JSON.stringify([entry, ...list].slice(0, 200)));
+                        } catch {}
+                      }}
+                      placeholder="Enter room number"
+                      required
+                      className="mt-1 ds-input-compact border-2 focus:border-purple-600"
+                    />
+                  </div>
+                </>
+              )}
+              {roomChargeType === 'city-ledger' && (
+                <div className="space-y-2">
+                  <Label>City Ledger Account</Label>
+                  {suggestedAccounts.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-1">
+                      {suggestedAccounts.map((a:any) => (
+                        <button key={a.id} className="px-2 py-1 text-xs rounded border hover:bg-gray-100" onClick={()=> setSelectedAccountId(a.id)} title={`Balance ${formatCurrency(Number(a.balance||0))} / Limit ${formatCurrency(Number(a.creditLimit||0))}`}>
+                          {a.name} • {a.id}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <Input placeholder="Search account by name or ID" value={clSearch} onChange={(e)=> setClSearch(e.target.value)} />
+                  <Select value={selectedAccountId} onValueChange={(v)=> setSelectedAccountId(v)}>
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Select account"/></SelectTrigger>
+                    <SelectContent>
+                      {filteredAccounts.map((a: any) => {
+                        const bal = Number(a.balance||0);
+                        const lim = Number(a.creditLimit||0);
+                        const projected = bal + Number(bill.total||0);
+                        const warn = lim>0 && projected>lim;
+                        const label = `${a.name} — ${a.id} ${lim>0 ? `(${formatCurrency(bal)} / Limit ${formatCurrency(lim)})` : `(${formatCurrency(bal)})`}${warn?' ⚠️':''}`;
+                        return (<SelectItem key={a.id} value={a.id}>{label}</SelectItem>);
+                      })}
+                    </SelectContent>
+                  </Select>
+                  {selectedAccount && (
+                    <div className="grid grid-cols-3 gap-2 text-sm bg-gray-50 rounded p-2">
+                      <div><span className="text-gray-600">Account #</span><br/><span className="font-medium">{selectedAccount.id}</span></div>
+                      <div><span className="text-gray-600">Name</span><br/><span className="font-medium">{selectedAccount.name}</span></div>
+                      <div><span className="text-gray-600">Balance</span><br/><span className="font-medium">{formatCurrency(Number(selectedAccount.balance||0))}</span></div>
+                      {Number(selectedAccount.creditLimit||0)>0 && (
+                        <div className="col-span-3 text-xs text-gray-700">Credit Limit: {formatCurrency(Number(selectedAccount.creditLimit||0))} • After Posting: {formatCurrency(Number(selectedAccount.balance||0)+Number(bill.total||0))} { (Number(selectedAccount.creditLimit||0)>0 && (Number(selectedAccount.balance||0)+Number(bill.total||0) > Number(selectedAccount.creditLimit||0))) ? '• ⚠️ Exceeds limit' : '' }</div>
+                      )}
+                    </div>
+                  )}
+                  {!selectedAccount && (<div className="text-xs text-gray-600">Select an account to enable posting.</div>)}
+                  <div>
+                    <Label htmlFor="clReference" className="text-[10px] uppercase font-bold text-gray-500">Reference/Reason *</Label>
+                    <Input
+                      id="clReference"
+                      value={clReference}
+                      onChange={(e) => setClReference(e.target.value)}
+                      placeholder="Enter reference or reason"
+                      required
+                      className="mt-1 ds-input-compact border-2 focus:border-purple-600"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="clContactNumber" className="text-[10px] uppercase font-bold text-gray-500">Contact Number (Optional)</Label>
+                    <Input
+                      id="clContactNumber"
+                      value={clContactNumber}
+                      onChange={(e) => setClContactNumber(e.target.value)}
+                      placeholder="Enter contact number"
+                      className="mt-1 ds-input-compact border-2 focus:border-purple-600"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="clCompanyName" className="text-[10px] uppercase font-bold text-gray-500">Company Name (Optional)</Label>
+                    <Input
+                      id="clCompanyName"
+                      value={clCompanyName}
+                      onChange={(e) => setClCompanyName(e.target.value)}
+                      placeholder="Enter company name"
+                      className="mt-1 ds-input-compact border-2 focus:border-purple-600"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <input type="checkbox" id="managerOverride" checked={managerOverride} onChange={(e)=> setManagerOverride(e.target.checked)} disabled={!canManagerOverride} />
+                    <Label htmlFor="managerOverride">Manager override</Label>
+                    {!canManagerOverride && (<span className="text-xs text-gray-500">(Manager/Admin required)</span>)}
+                  </div>
+                  <div className="text-xs text-gray-600">Dept: {deptHeuristic}</div>
+                </div>
+              )}
             </>
           )}
 
