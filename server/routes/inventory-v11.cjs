@@ -164,78 +164,98 @@ router.post('/grn/:id/post', async (req, res) => {
     // Get lines
     const linesRes = await client.query(`SELECT * FROM public.inv_grn_lines WHERE grn_header_id = $1`, [id]);
 
-    // Create ledger entries
+    // FIX: Create ledger entries + correct WAC calculation
     for (const line of linesRes.rows) {
-      // Get base UOM
-      const itemRes = await client.query(`SELECT base_uom_id FROM public.inv_items WHERE id = $1`, [line.item_id]);
-      const baseUomId = itemRes.rows[0]?.base_uom_id || line.received_uom_id;
+      const itemRes = await client.query(
+        `SELECT base_uom_id, weighted_avg_cost, COALESCE(SUM(sl.quantity_change),0) as current_qty
+         FROM public.inv_items i
+         LEFT JOIN public.inv_stock_ledger sl ON sl.item_id = i.id AND sl.location_id = $2
+         WHERE i.id = $1
+         GROUP BY i.base_uom_id, i.weighted_avg_cost`,
+        [line.item_id, grn.destination_location_id]
+      );
+      const baseUomId    = itemRes.rows[0]?.base_uom_id || line.received_uom_id;
+      const existingQty  = Number(itemRes.rows[0]?.current_qty || 0);
+      const existingWac  = Number(itemRes.rows[0]?.weighted_avg_cost || 0);
+      const newQty       = Number(line.qty_received);
+      const newUnitCost  = Number(line.unit_cost);
 
-      // Create ledger entry
+      // ── Weighted Average Cost formula (industry standard) ──────────────────
+      // WAC = (existing_qty * existing_wac + received_qty * unit_cost) / (existing_qty + received_qty)
+      const newWac = (existingQty + newQty) > 0
+        ? ((existingQty * existingWac) + (newQty * newUnitCost)) / (existingQty + newQty)
+        : newUnitCost;
+
+      // Create GRN stock ledger entry
       await client.query(
-        `INSERT INTO public.inv_stock_ledger 
-        (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, cost_per_unit, total_cost, posted_by, gl_account_code, inserted_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-        [randomUUID(), line.item_id, grn.destination_location_id, 'GRN', grn.grn_number, line.qty_received, baseUomId, line.unit_cost, line.line_total, posted_by, 'INVENTORY_ASSET', new Date()]
+        `INSERT INTO public.inv_stock_ledger
+         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, cost_per_unit, total_cost, posted_by, gl_account_code, inserted_at)
+         VALUES ($1,$2,$3,'GRN',$4,$5,$6,$7,$8,$9,'INVENTORY_ASSET',NOW())`,
+        [randomUUID(), line.item_id, grn.destination_location_id, grn.grn_number,
+         newQty, baseUomId, newUnitCost, line.line_total, posted_by]
       );
 
-      // Update weighted average cost on inv_items
+      // ── Update inv_items: last_cost_price + correctly calculated weighted_avg_cost ──
       await client.query(
         `UPDATE public.inv_items SET
-           last_cost_price   = $1,
-           average_cost      = $1,
-           updated_at        = NOW()
-         WHERE id = $2`,
-        [line.unit_cost, line.item_id]
+           last_cost_price    = $1,
+           weighted_avg_cost  = $2,
+           average_cost       = $2,
+           updated_at         = NOW()
+         WHERE id = $3`,
+        [newUnitCost, parseFloat(newWac.toFixed(4)), line.item_id]
+      );
+
+      // ── Sync updated cost to products table ───────────────────────────────
+      await client.query(
+        `UPDATE public.products SET cost_price = $1, updated_at = NOW() WHERE id = $2`,
+        [newUnitCost, line.item_id]
       );
     }
 
-      // Update GRN status
-      await client.query(
-        `UPDATE public.inv_grn_headers SET status = $1, posted_by = $2, posted_at = $3 WHERE id = $4`,
-        ['posted', postedBy, new Date(), grnHeaderId]
-      );
-      
-      // ── Integrate with Inventory Reconciliation: Create inventory_transactions for active period ──
-      // Find the active period (open or reconciling) to which this GRN belongs (based on transaction_date)
-      const grnDate = new Date(grn.created_at).toISOString().split('T')[0];
-      const periodRes = await client.query(
-        `SELECT id FROM inventory_periods 
-         WHERE status IN ('open', 'reconciling') 
-           AND ? BETWEEN start_date AND end_date
-         LIMIT 1`,
-        [grnDate]
-      );
-      let periodId = null;
-      if (periodRes.rows && periodRes.rows.length > 0) {
-        periodId = periodRes.rows[0].id;
-      } else {
-        // No active period; will create inventory_transactions without period_id (reportable but not period‑aggregated)
-      }
-      
-      // Insert inventory_transactions for each GRN line
-      if (Array.isArray(lines) && lines.length > 0) {
-        for (const line of lines) {
-          const transaction_number = `GRN-${grn.grn_number}-L${line.line_number}`;
-          const total_value = (line.qty_received * line.unit_cost);
-          await client.query(
-            `INSERT INTO inventory_transactions 
-             (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, supplier_name, created_by, is_historical_backfill)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            ['grv', transaction_number, periodId, grnDate, 'Kitchen', line.qty_received, total_value, grn.supplier_name, postedBy, false]
-          );
-        }
-        // Also bump period received_value if period exists
-        if (periodId) {
-          const totalGrnValue = lines.reduce((sum, l) => sum + (l.qty_received * l.unit_cost), 0);
-          await client.query(
-            'UPDATE inventory_periods SET received_value = COALESCE(received_value,0) + ? WHERE id = ?',
-            [totalGrnValue, periodId]
-          );
-        }
-      }
+    // FIX: Use correct variable names (was postedBy/grnHeaderId — undefined!)
+    await client.query(
+      `UPDATE public.inv_grn_headers SET status = 'posted', posted_by = $1, posted_at = NOW() WHERE id = $2`,
+      [posted_by, id]
+    );
 
-      await client.query('COMMIT');
-      res.json({ ok: true, message: `GRN ${grn.grn_number} posted successfully` });
+    // ── Integrate with Inventory Reconciliation period (FIX: use $N placeholders) ──
+    const grnDate = new Date(grn.inserted_at || grn.created_at || Date.now()).toISOString().split('T')[0];
+    const periodRes = await client.query(
+      `SELECT id FROM inventory_periods
+       WHERE status IN ('open', 'reconciling')
+         AND $1 BETWEEN start_date AND end_date
+       LIMIT 1`,
+      [grnDate]
+    );
+    const periodId = periodRes.rows?.[0]?.id || null;
+
+    // Insert inventory_transactions for reconciliation period
+    for (const line of linesRes.rows) {
+      const txNum       = `GRN-${grn.grn_number}-L${line.line_number}`;
+      const totalValue  = Number(line.qty_received) * Number(line.unit_cost);
+      await client.query(
+        `INSERT INTO inventory_transactions
+         (transaction_type, transaction_number, period_id, transaction_date, department,
+          total_quantity, total_value, supplier_name, created_by, is_historical_backfill)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false)
+         ON CONFLICT (transaction_number) DO NOTHING`,
+        ['grv', txNum, periodId, grnDate, 'Kitchen',
+         line.qty_received, totalValue, grn.supplier_name, posted_by]
+      );
+    }
+
+    // FIX: use $N placeholders for period update
+    if (periodId) {
+      const totalGrnValue = linesRes.rows.reduce((s, l) => s + Number(l.qty_received) * Number(l.unit_cost), 0);
+      await client.query(
+        `UPDATE inventory_periods SET received_value = COALESCE(received_value,0) + $1 WHERE id = $2`,
+        [totalGrnValue, periodId]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, message: `GRN ${grn.grn_number} posted successfully` });
   } catch (error) {
     await client.query('ROLLBACK');
     res.status(500).json({ ok: false, error: error.message });
@@ -253,10 +273,15 @@ router.post('/grn/:id/post', async (req, res) => {
  * Create stock transfer
  */
 router.post('/transfer', async (req, res) => {
-  const { source_location_id, destination_location_id, created_by, reference_text, lines } = req.body;
+  // FIX: Accept both reference_note (frontend) and reference_text (legacy)
+  const { source_location_id, destination_location_id, created_by, lines } = req.body;
+  const reference_text = req.body.reference_text || req.body.reference_note || null;
 
   if (!source_location_id || !destination_location_id || !created_by) {
-    return res.status(400).json({ ok: false, error: 'Missing required fields' });
+    return res.status(400).json({ ok: false, error: 'Missing required fields: source_location_id, destination_location_id, created_by' });
+  }
+  if (source_location_id === destination_location_id) {
+    return res.status(400).json({ ok: false, error: 'Source and destination locations must be different' });
   }
 
   const client = await pool.connect();
@@ -354,27 +379,42 @@ router.post('/transfer/:id/approve', async (req, res) => {
 
       const balance = Number(balRes.rows[0]?.balance || 0);
 
-      if (Math.abs(balance) < line.qty_requested) {
-        throw new Error(`Insufficient stock for item ${line.item_id}`);
+      // FIX: Hard enforce — block transfer if insufficient balance (not just warn)
+      if (balance < Number(line.qty_requested)) {
+        throw new Error(
+          `Insufficient stock for item ${line.item_id}: available ${balance.toFixed(3)}, requested ${Number(line.qty_requested).toFixed(3)}`
+        );
       }
 
       // Create TRANSFER_OUT entry
       await client.query(
-        `INSERT INTO public.inv_stock_ledger 
-        (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
-        VALUES ($1, $2, $3, 'TRANSFER_OUT', $4, $5, $6, $7, $8)`,
-        [randomUUID(), line.item_id, transfer.source_location_id, transfer.transfer_number, -line.qty_requested, line.source_uom_id, approved_by, new Date()]
+        `INSERT INTO public.inv_stock_ledger
+         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
+         VALUES ($1,$2,$3,'TRANSFER_OUT',$4,$5,$6,$7,NOW())`,
+        [randomUUID(), line.item_id, transfer.source_location_id, transfer.transfer_number,
+         -Number(line.qty_requested), line.source_uom_id, approved_by]
       );
 
-      // Create TRANSFER_IN entry (with breakdown conversion if needed)
+      // FIX: breakdown_flag uses actual UOM conversion table, not hardcoded *30
+      let destQty   = Number(line.qty_requested);
       const destUomId = line.destination_uom_id || line.source_uom_id;
-      const destQty = line.breakdown_flag ? line.qty_requested * 30 : line.qty_requested; // Breakdown: 1 bottle = 30 tots
+      if (line.breakdown_flag && line.destination_uom_id && line.destination_uom_id !== line.source_uom_id) {
+        const convRes = await client.query(
+          `SELECT conversion_factor FROM public.inv_uom_conversions
+           WHERE item_id=$1 AND from_uom_id=$2 AND to_uom_id=$3`,
+          [line.item_id, line.source_uom_id, line.destination_uom_id]
+        );
+        if (convRes.rows.length) {
+          destQty = destQty * Number(convRes.rows[0].conversion_factor);
+        }
+      }
 
       await client.query(
-        `INSERT INTO public.inv_stock_ledger 
-        (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
-        VALUES ($1, $2, $3, 'TRANSFER_IN', $4, $5, $6, $7, $8)`,
-        [randomUUID(), line.item_id, transfer.destination_location_id, transfer.transfer_number, destQty, destUomId, approved_by, new Date()]
+        `INSERT INTO public.inv_stock_ledger
+         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
+         VALUES ($1,$2,$3,'TRANSFER_IN',$4,$5,$6,$7,NOW())`,
+        [randomUUID(), line.item_id, transfer.destination_location_id, transfer.transfer_number,
+         destQty, destUomId, approved_by]
       );
     }
 
@@ -864,41 +904,230 @@ router.post('/items', async (req, res) => {
   }
 });
 
-/** PUT /api/v1/inventory/items/:id — full update */
+/** PUT /api/v1/inventory/items/:id — full update (FIX: was broken router.handle pattern) */
 router.put('/items/:id', async (req, res) => {
-  req.body.id = req.params.id;
-  // reuse POST logic (upsert)
-  return router.handle({ ...req, method: 'POST', url: '/items' }, res, () => {});
-});
-
-/** DELETE /api/v1/inventory/items/:id — soft-delete */
-router.delete('/items/:id', async (req, res) => {
+  // Merge ID into body and forward to POST upsert handler properly
+  req.body = { ...req.body, id: req.params.id };
+  // Re-invoke POST handler logic inline (router.handle is unreliable)
+  const {
+    id, name, category, sub_category, base_uom_id, sku, barcode,
+    last_cost_price, selling_price, expiry_tracking, default_location_id, supplier_id,
+    media_url, notes, par_level, reorder_level, default_wastage_pct
+  } = req.body;
+  if (!name) return res.status(400).json({ ok: false, error: 'name is required' });
   try {
-    await pool.query(`UPDATE public.inv_items SET is_active=false, updated_at=NOW() WHERE id=$1`, [req.params.id]);
-    res.json({ ok: true });
+    const r = await pool.query(`
+      UPDATE public.inv_items SET
+        name               = $2,
+        category           = $3,
+        sub_category       = $4,
+        base_uom_id        = $5,
+        sku                = COALESCE($6, sku),
+        barcode            = $7,
+        last_cost_price    = $8,
+        expiry_tracking    = $9,
+        default_location_id= $10,
+        supplier_id        = $11,
+        media_url          = $12,
+        notes              = $13,
+        par_level          = $14,
+        reorder_level      = $15,
+        default_wastage_pct= $16,
+        updated_at         = NOW()
+      WHERE id = $1
+      RETURNING *
+    `, [id, name, category||'Food', sub_category||null, base_uom_id||'uom_unit',
+        sku||null, barcode||null, Number(last_cost_price||0),
+        !!expiry_tracking, default_location_id||null, supplier_id||null,
+        media_url||null, notes||null, Number(par_level||0), Number(reorder_level||0),
+        Number(default_wastage_pct||0)]);
+
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Item not found' });
+    const item = r.rows[0];
+
+    // Sync selling price and cost to products table
+    const isBeverage = String(category||'').toLowerCase().includes('beverage') ||
+                       String(category||'').toLowerCase().includes('bar');
+    const dept = isBeverage ? 'Bar' : 'Restaurant';
+    const uomRes = await pool.query(`SELECT code FROM public.inv_uom_definitions WHERE id=$1`, [base_uom_id||'uom_unit']);
+    const uomCode = uomRes.rows[0]?.code || 'units';
+    await pool.query(`
+      UPDATE public.products SET
+        name           = $2,
+        department     = $3,
+        category       = $4,
+        price          = CASE WHEN $5 > 0 THEN $5 ELSE price END,
+        cost_price     = $6,
+        unit           = $7,
+        notes          = $8,
+        picture_data   = $9,
+        updated_at     = NOW()
+      WHERE id = $1
+    `, [item.id, name, dept, sub_category||(isBeverage?'bar':'restaurant'),
+        Number(selling_price||0), Number(last_cost_price||0), uomCode, notes||null, media_url||null]);
+
+    res.json({ ok: true, data: item });
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
+/** DELETE /api/v1/inventory/items/:id — soft-delete (FIX: also deactivates in products table) */
+router.delete('/items/:id', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Soft-delete in inv_items
+    const r = await client.query(
+      `UPDATE public.inv_items SET is_active=false, updated_at=NOW() WHERE id=$1 RETURNING id, name`,
+      [req.params.id]
+    );
+    if (!r.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ ok: false, error: 'Item not found' }); }
+    // FIX: Also deactivate in products so item disappears from POS menu
+    await client.query(`UPDATE public.products SET active=false, updated_at=NOW() WHERE id=$1`, [req.params.id]);
+    await client.query('COMMIT');
+    res.json({ ok: true, message: `${r.rows[0].name} deactivated from inventory and POS` });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ ok: false, error: err.message });
+  } finally { client.release(); }
+});
+
 // ============================================================================
-// LOCATIONS
+// LOCATIONS — Full CRUD
 // ============================================================================
 router.get('/locations', async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT id, name, location_type, parent_location_id, is_active
+      `SELECT id, name, location_type, parent_location_id, description, is_active
        FROM public.inv_locations WHERE is_active=true ORDER BY location_type, name`
     );
     res.json({ ok: true, data: r.rows });
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
+/** POST /api/v1/inventory/locations — create new location */
+router.post('/locations', async (req, res) => {
+  const { name, location_type, parent_location_id, description } = req.body;
+  if (!name || !location_type) return res.status(400).json({ ok: false, error: 'name and location_type required' });
+  if (!['Storage','Outlet'].includes(location_type)) return res.status(400).json({ ok: false, error: 'location_type must be Storage or Outlet' });
+  try {
+    // Generate a clean ID from name
+    const id = 'loc_' + name.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g,'_').slice(0,30) + '_' + Date.now().toString(36);
+    const r = await pool.query(
+      `INSERT INTO public.inv_locations (id, name, location_type, parent_location_id, description, is_active, inserted_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,true,NOW(),NOW()) RETURNING *`,
+      [id, name, location_type, parent_location_id||null, description||null]
+    );
+    res.json({ ok: true, data: r.rows[0] });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+/** PUT /api/v1/inventory/locations/:id — update location name/description */
+router.put('/locations/:id', async (req, res) => {
+  const { name, description, parent_location_id } = req.body;
+  if (!name) return res.status(400).json({ ok: false, error: 'name required' });
+  try {
+    const r = await pool.query(
+      `UPDATE public.inv_locations SET name=$2, description=$3, parent_location_id=$4, updated_at=NOW() WHERE id=$1 AND is_active=true RETURNING *`,
+      [req.params.id, name, description||null, parent_location_id||null]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Location not found' });
+    res.json({ ok: true, data: r.rows[0] });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+/** DELETE /api/v1/inventory/locations/:id — soft-delete with balance guard */
+router.delete('/locations/:id', async (req, res) => {
+  try {
+    // Guard: block deletion if location has active stock
+    const balCheck = await pool.query(
+      `SELECT COALESCE(SUM(quantity_change),0) as total_balance FROM public.inv_stock_ledger WHERE location_id=$1`,
+      [req.params.id]
+    );
+    const totalBalance = Number(balCheck.rows[0]?.total_balance || 0);
+    if (totalBalance > 0) {
+      return res.status(409).json({
+        ok: false,
+        error: `Cannot delete location with active stock (balance: ${totalBalance.toFixed(3)}). Transfer all stock out first.`
+      });
+    }
+    // Guard: block if there are open GRNs or transfers referencing this location
+    const openGrn = await pool.query(
+      `SELECT COUNT(*) as cnt FROM public.inv_grn_headers WHERE destination_location_id=$1 AND status='draft'`,
+      [req.params.id]
+    );
+    if (Number(openGrn.rows[0]?.cnt) > 0) {
+      return res.status(409).json({ ok: false, error: 'Cannot delete location with open (draft) GRNs' });
+    }
+    await pool.query(`UPDATE public.inv_locations SET is_active=false, updated_at=NOW() WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true, message: 'Location deactivated' });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
 // ============================================================================
-// UOM DEFINITIONS
+// UOM DEFINITIONS — Full CRUD
 // ============================================================================
 router.get('/uom', async (req, res) => {
   try {
-    const r = await pool.query(`SELECT id, code, name, category FROM public.inv_uom_definitions ORDER BY category, name`);
+    const r = await pool.query(`SELECT id, code, name, category, description FROM public.inv_uom_definitions ORDER BY category, name`);
     res.json({ ok: true, data: r.rows });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+/** POST /api/v1/inventory/uom — create new UOM */
+router.post('/uom', async (req, res) => {
+  const { code, name, category, description } = req.body;
+  if (!code || !name) return res.status(400).json({ ok: false, error: 'code and name required' });
+  if (!['Count','Volume','Weight'].includes(category||'Count')) {
+    return res.status(400).json({ ok: false, error: 'category must be Count, Volume or Weight' });
+  }
+  try {
+    const id = 'uom_' + code.toLowerCase().replace(/[^a-z0-9]/g,'_');
+    const r = await pool.query(
+      `INSERT INTO public.inv_uom_definitions (id, code, name, category, description, inserted_at)
+       VALUES ($1,$2,$3,$4,$5,NOW())
+       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, category=EXCLUDED.category, description=EXCLUDED.description
+       RETURNING *`,
+      [id, code.toUpperCase(), name, category||'Count', description||null]
+    );
+    res.json({ ok: true, data: r.rows[0] });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+/** PUT /api/v1/inventory/uom/:id — update UOM name/description (code is immutable) */
+router.put('/uom/:id', async (req, res) => {
+  const { name, description } = req.body;
+  if (!name) return res.status(400).json({ ok: false, error: 'name required' });
+  try {
+    const r = await pool.query(
+      `UPDATE public.inv_uom_definitions SET name=$2, description=$3 WHERE id=$1 RETURNING *`,
+      [req.params.id, name, description||null]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'UOM not found' });
+    res.json({ ok: true, data: r.rows[0] });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+/** DELETE /api/v1/inventory/uom/:id — block if items or conversions use this UOM */
+router.delete('/uom/:id', async (req, res) => {
+  try {
+    // Guard: UOM in use by items
+    const inUse = await pool.query(
+      `SELECT COUNT(*) as cnt FROM public.inv_items WHERE base_uom_id=$1 AND is_active=true`,
+      [req.params.id]
+    );
+    if (Number(inUse.rows[0]?.cnt) > 0) {
+      return res.status(409).json({ ok: false, error: `UOM is assigned to ${inUse.rows[0].cnt} active items. Reassign items first.` });
+    }
+    // Guard: UOM in use by conversions
+    const convInUse = await pool.query(
+      `SELECT COUNT(*) as cnt FROM public.inv_uom_conversions WHERE from_uom_id=$1 OR to_uom_id=$1`,
+      [req.params.id]
+    );
+    if (Number(convInUse.rows[0]?.cnt) > 0) {
+      return res.status(409).json({ ok: false, error: `UOM is used in ${convInUse.rows[0].cnt} conversion rules. Remove conversions first.` });
+    }
+    await pool.query(`DELETE FROM public.inv_uom_definitions WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true, message: 'UOM deleted' });
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 

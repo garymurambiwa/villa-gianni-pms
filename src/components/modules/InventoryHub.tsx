@@ -93,8 +93,18 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
 
   const save = async () => {
     if (!form.name?.trim()) { toast({ title: 'Name required', variant: 'destructive' }); return; }
+    if (!form.base_uom_id) { toast({ title: 'Base UOM required', variant: 'destructive' }); return; }
+    if (Number(form.selling_price || 0) < Number(form.last_cost_price || 0)) {
+      toast({ title: 'Warning', description: 'Selling price is below cost price — margin will be negative', variant: 'destructive' });
+    }
     setSaving(true);
-    const res = await apiPost('/items', { ...form, id: editItem?.id || undefined });
+    // Use PUT for edit, POST for create
+    const method = editItem?.id ? 'PUT' : 'POST';
+    const url    = editItem?.id ? `${API}/items/${editItem.id}` : `${API}/items`;
+    const res    = await fetch(url, {
+      method, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...form, id: editItem?.id || undefined })
+    }).then(r => r.json());
     setSaving(false);
     if (res.ok) { toast({ title: editItem?.id ? 'Item updated' : 'Item created' }); closeModal(); reload(); }
     else toast({ title: 'Error', description: res.error, variant: 'destructive' });
@@ -958,6 +968,246 @@ function RecipeBuilder({ data }: { data: ReturnType<typeof useInventoryData> }) 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TAB — LOCATIONS MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+function LocationsManager({ data }: { data: ReturnType<typeof useInventoryData> }) {
+  const { locations, reload } = data;
+  const { toast } = useToast();
+  const [showForm, setShowForm] = useState(false);
+  const [editLoc, setEditLoc] = useState<any|null>(null);
+  const [form, setForm] = useState<any>({});
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<string|null>(null);
+
+  const openNew = () => { setForm({ location_type: 'Storage' }); setEditLoc({}); setShowForm(true); };
+  const openEdit = (loc: any) => { setForm({ ...loc }); setEditLoc(loc); setShowForm(true); };
+  const close = () => { setShowForm(false); setEditLoc(null); setForm({}); };
+
+  const save = async () => {
+    if (!form.name?.trim()) { toast({ title: 'Name required', variant: 'destructive' }); return; }
+    setSaving(true);
+    const res = editLoc?.id
+      ? await apiPost(`/locations/${editLoc.id}`.replace('/locations/', '/locations/'), form)
+      : await fetch(`${API}/locations`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(form) }).then(r=>r.json());
+    setSaving(false);
+    if (res.ok) { toast({ title: editLoc?.id ? 'Location updated' : 'Location created' }); close(); reload(); }
+    else toast({ title: 'Error', description: res.error, variant: 'destructive' });
+  };
+
+  const del = async (id: string, name: string) => {
+    if (!confirm(`Deactivate "${name}"? This cannot be undone if stock exists.`)) return;
+    setDeleting(id);
+    const res = await fetch(`${API}/locations/${id}`, { method: 'DELETE' }).then(r=>r.json());
+    setDeleting(null);
+    if (res.ok) { toast({ title: `${name} deactivated` }); reload(); }
+    else toast({ title: 'Cannot delete', description: res.error, variant: 'destructive' });
+  };
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-base font-bold text-gray-700">Destination Stores & Outlets</h3>
+          <p className="text-xs text-gray-400">Storage = receiving locations. Outlet = cost centres (Bar, Kitchen, Restaurant).</p>
+        </div>
+        <Button onClick={openNew} className="bg-emerald-600 text-white hover:bg-emerald-700">＋ New Location</Button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+        {['Storage','Outlet'].map(type => (
+          <div key={type} className="border rounded-lg overflow-hidden">
+            <div className={`px-4 py-2 font-semibold text-sm ${type==='Storage'?'bg-blue-50 text-blue-800':'bg-orange-50 text-orange-800'}`}>
+              {type === 'Storage' ? '🏪 Storage Locations' : '🍽 Outlets / Cost Centres'}
+            </div>
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50"><tr>
+                <th className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500">Name</th>
+                <th className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500">Description</th>
+                <th className="px-3 py-1.5 text-xs">Actions</th>
+              </tr></thead>
+              <tbody className="divide-y divide-gray-100">
+                {locations.filter((l:any)=>l.location_type===type).map((loc:any)=>(
+                  <tr key={loc.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 font-medium">{loc.name}</td>
+                    <td className="px-3 py-2 text-gray-400 text-xs">{loc.description||'—'}</td>
+                    <td className="px-3 py-2 flex gap-1 justify-center">
+                      <Button variant="outline" size="sm" onClick={()=>openEdit(loc)}>Edit</Button>
+                      <Button variant="destructive" size="sm" disabled={deleting===loc.id}
+                        onClick={()=>del(loc.id, loc.name)}>
+                        {deleting===loc.id?'…':'Del'}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+                {locations.filter((l:any)=>l.location_type===type).length===0 && (
+                  <tr><td colSpan={3} className="px-3 py-4 text-center text-gray-400 text-xs">No {type.toLowerCase()} locations</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
+
+      {showForm && editLoc !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+            <h3 className="text-lg font-bold mb-4">{editLoc?.id ? 'Edit Location' : 'New Location'}</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Name *</label>
+                <Input value={form.name||''} onChange={e=>setForm((f:any)=>({...f,name:e.target.value}))} placeholder="e.g. Bar 2, Cold Room" />
+              </div>
+              {!editLoc?.id && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Type *</label>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.location_type||'Storage'} onChange={e=>setForm((f:any)=>({...f,location_type:e.target.value}))}>
+                    <option value="Storage">Storage (receiving dock, cellar, freezer)</option>
+                    <option value="Outlet">Outlet / Cost Centre (bar, kitchen, room service)</option>
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Description</label>
+                <Input value={form.description||''} onChange={e=>setForm((f:any)=>({...f,description:e.target.value}))} placeholder="Optional notes" />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5 justify-end">
+              <Button variant="outline" onClick={close}>Cancel</Button>
+              <Button onClick={save} disabled={saving} className="bg-emerald-600 text-white">{saving?'Saving…':'Save'}</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TAB — UOM MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+function UOMManager({ data }: { data: ReturnType<typeof useInventoryData> }) {
+  const { uoms, reload } = data;
+  const { toast } = useToast();
+  const [showForm, setShowForm] = useState(false);
+  const [editUom, setEditUom] = useState<any|null>(null);
+  const [form, setForm] = useState<any>({});
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<string|null>(null);
+
+  const openNew = () => { setForm({ category: 'Count' }); setEditUom({}); setShowForm(true); };
+  const openEdit = (u: any) => { setForm({ ...u }); setEditUom(u); setShowForm(true); };
+  const close = () => { setShowForm(false); setEditUom(null); setForm({}); };
+
+  const save = async () => {
+    if (!form.code?.trim() || !form.name?.trim()) { toast({ title: 'Code and Name required', variant: 'destructive' }); return; }
+    setSaving(true);
+    const res = editUom?.id
+      ? await fetch(`${API}/uom/${editUom.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(form) }).then(r=>r.json())
+      : await fetch(`${API}/uom`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(form) }).then(r=>r.json());
+    setSaving(false);
+    if (res.ok) { toast({ title: editUom?.id ? 'UOM updated' : 'UOM created' }); close(); reload(); }
+    else toast({ title: 'Error', description: res.error, variant: 'destructive' });
+  };
+
+  const del = async (id: string, code: string) => {
+    if (!confirm(`Delete UOM "${code}"? This will fail if any items use it.`)) return;
+    setDeleting(id);
+    const res = await fetch(`${API}/uom/${id}`, { method: 'DELETE' }).then(r=>r.json());
+    setDeleting(null);
+    if (res.ok) { toast({ title: `UOM ${code} deleted` }); reload(); }
+    else toast({ title: 'Cannot delete', description: res.error, variant: 'destructive' });
+  };
+
+  const grouped = ['Count','Volume','Weight'].map(cat => ({
+    cat, items: uoms.filter((u:any) => u.category === cat)
+  }));
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-base font-bold text-gray-700">Units of Measure</h3>
+          <p className="text-xs text-gray-400">Manage UOM codes used in GRNs, transfers and recipes. Code is immutable once items use it.</p>
+        </div>
+        <Button onClick={openNew} className="bg-violet-600 text-white hover:bg-violet-700">＋ New UOM</Button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {grouped.map(({ cat, items: uomItems }) => (
+          <div key={cat} className="border rounded-lg overflow-hidden">
+            <div className="px-4 py-2 bg-gray-50 font-semibold text-sm text-gray-700">{cat}</div>
+            <table className="min-w-full text-sm">
+              <thead><tr>
+                <th className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500">Code</th>
+                <th className="px-3 py-1.5 text-left text-xs font-semibold text-gray-500">Name</th>
+                <th className="px-3 py-1.5 text-xs">Actions</th>
+              </tr></thead>
+              <tbody className="divide-y divide-gray-100">
+                {uomItems.map((u:any) => (
+                  <tr key={u.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-1.5 font-mono font-bold text-violet-700">{u.code}</td>
+                    <td className="px-3 py-1.5">{u.name}</td>
+                    <td className="px-3 py-1.5 flex gap-1">
+                      <Button variant="outline" size="sm" onClick={()=>openEdit(u)} className="text-xs px-2">Edit</Button>
+                      <Button variant="destructive" size="sm" disabled={deleting===u.id}
+                        onClick={()=>del(u.id, u.code)} className="text-xs px-2">
+                        {deleting===u.id?'…':'×'}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+                {uomItems.length===0 && (
+                  <tr><td colSpan={3} className="px-3 py-3 text-center text-gray-400 text-xs">None</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
+
+      {showForm && editUom !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+            <h3 className="text-lg font-bold mb-4">{editUom?.id ? 'Edit UOM' : 'New Unit of Measure'}</h3>
+            <div className="space-y-3">
+              {!editUom?.id && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Code * <span className="font-normal text-gray-400">(e.g. BTL, ML, KG — immutable)</span></label>
+                  <Input value={form.code||''} onChange={e=>setForm((f:any)=>({...f,code:e.target.value.toUpperCase()}))} placeholder="BTL" maxLength={10} />
+                </div>
+              )}
+              {editUom?.id && <div className="text-sm text-gray-500">Code: <strong className="font-mono text-violet-700">{editUom.code}</strong> (cannot be changed)</div>}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Name *</label>
+                <Input value={form.name||''} onChange={e=>setForm((f:any)=>({...f,name:e.target.value}))} placeholder="e.g. Bottle" />
+              </div>
+              {!editUom?.id && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Category *</label>
+                  <select className="w-full border rounded-md px-3 py-2 text-sm" value={form.category||'Count'} onChange={e=>setForm((f:any)=>({...f,category:e.target.value}))}>
+                    <option value="Count">Count (Case, Bottle, Unit, Box…)</option>
+                    <option value="Volume">Volume (ML, L, Tot…)</option>
+                    <option value="Weight">Weight (G, KG…)</option>
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Description</label>
+                <Input value={form.description||''} onChange={e=>setForm((f:any)=>({...f,description:e.target.value}))} placeholder="Optional" />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5 justify-end">
+              <Button variant="outline" onClick={close}>Cancel</Button>
+              <Button onClick={save} disabled={saving} className="bg-violet-600 text-white">{saving?'Saving…':'Save'}</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TAB 5 — SUPPLIERS
 // ─────────────────────────────────────────────────────────────────────────────
 function Suppliers({ data }: { data: ReturnType<typeof useInventoryData> }) {
@@ -1208,12 +1458,14 @@ function VarianceReports({ data }: { data: ReturnType<typeof useInventoryData> }
 // MAIN HUB
 // ─────────────────────────────────────────────────────────────────────────────
 const TABS = [
-  { id: 'items',     label: '📦 Items',     desc: 'Item master & stock codes'  },
-  { id: 'suppliers', label: '🏢 Suppliers',  desc: 'Vendor management'          },
-  { id: 'grn',       label: '📥 GRN',        desc: 'Goods received notes'       },
-  { id: 'transfer',  label: '🔄 Transfer',   desc: 'Stock transfers'            },
-  { id: 'recipes',   label: '🍽 Recipes',    desc: 'Recipe builder & costing'   },
-  { id: 'reports',   label: '📊 Reports',    desc: 'Variance & stock reports'   },
+  { id: 'items',     label: '📦 Items',      desc: 'Item master & stock codes'       },
+  { id: 'suppliers', label: '🏢 Suppliers',   desc: 'Vendor management'               },
+  { id: 'grn',       label: '📥 GRN',         desc: 'Goods received notes'            },
+  { id: 'transfer',  label: '🔄 Transfer',    desc: 'Stock transfers'                 },
+  { id: 'recipes',   label: '🍽 Recipes',     desc: 'Recipe builder & costing'        },
+  { id: 'reports',   label: '📊 Reports',     desc: 'Variance & stock reports'        },
+  { id: 'locations', label: '🏪 Stores',      desc: 'Storage & outlet locations'      },
+  { id: 'uom',       label: '⚖ UOM',          desc: 'Units of measure'                },
 ] as const;
 type TabId = typeof TABS[number]['id'];
 
@@ -1223,12 +1475,14 @@ export const InventoryHub: React.FC = () => {
 
   const renderTab = () => {
     switch (activeTab) {
-      case 'items':     return <ItemMaster     data={data} />;
-      case 'suppliers': return <Suppliers      data={data} />;
-      case 'grn':       return <GRNModule      data={data} />;
-      case 'transfer':  return <StockTransfer  data={data} />;
-      case 'recipes':   return <RecipeBuilder  data={data} />;
+      case 'items':     return <ItemMaster      data={data} />;
+      case 'suppliers': return <Suppliers       data={data} />;
+      case 'grn':       return <GRNModule       data={data} />;
+      case 'transfer':  return <StockTransfer   data={data} />;
+      case 'recipes':   return <RecipeBuilder   data={data} />;
       case 'reports':   return <VarianceReports data={data} />;
+      case 'locations': return <LocationsManager data={data} />;
+      case 'uom':       return <UOMManager      data={data} />;
     }
   };
 
