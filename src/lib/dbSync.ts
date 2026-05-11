@@ -3079,33 +3079,74 @@ export async function loadPosShiftsFromDb(businessDate?: string): Promise<{ succ
 /**
  * Deduct stock from inventory based on POS sales
  */
-export async function deductInventoryStock(items: { id: string; qty: number }[]): Promise<SyncResult> {
+/**
+ * Deduct inventory stock after a POS sale completes.
+ *
+ * ARCHITECTURE: Two-phase, fully graceful:
+ *   Phase 1 — Critical path (awaited): update products.stock_level so POS UI stays accurate.
+ *   Phase 2 — Background (fire-and-forget): post SALE_DEPLETION to inv_stock_ledger
+ *             for recipe-aware costing. Failure here NEVER interrupts the POS.
+ *
+ * @param items     Cart items [{id, qty}]
+ * @param outlet    'bar' | 'restaurant' | 'room-charge' — used to map to inv_location
+ * @param billId    POS bill ID — used as idempotency key in inv_stock_ledger
+ * @param shiftId   Optional shift ID for audit trail
+ */
+export async function deductInventoryStock(
+  items: { id: string; qty: number }[],
+  outlet?: string,
+  billId?: string,
+  shiftId?: string
+): Promise<SyncResult> {
   const isConfigured = await db.isConfigured();
   if (!isConfigured) return { success: false, error: 'DB not configured' };
 
-  try {
-    // Basic aggregation to handle duplicate items in list if any
-    const updates = new Map<string, number>();
-    for (const item of items) {
-      if (item.id) {
-        updates.set(item.id, (updates.get(item.id) || 0) + item.qty);
-      }
-    }
+  // ── Aggregate duplicate items ─────────────────────────────────────────────
+  const updates = new Map<string, number>();
+  for (const item of items) {
+    if (item.id) updates.set(item.id, (updates.get(item.id) || 0) + item.qty);
+  }
+  if (updates.size === 0) return { success: true, synced: 0 };
 
+  // ── Phase 1 (Critical — awaited): Update products.stock_level ──────────────
+  // This is what POS UI reads for "on hand" display. Must complete synchronously.
+  try {
     const operations = Array.from(updates.entries()).map(([id, qty]) => ({
       sql: `UPDATE products SET stock_level = GREATEST(0, stock_level - $1), updated_at = NOW() WHERE id = $2`,
       params: [qty, id]
     }));
-
-    if (operations.length === 0) return { success: true, synced: 0 };
-
     const result = await db.transaction(operations);
-    if (!result.ok) throw new Error((result as any).error);
-
-    console.log(`[dbSync] Deducted stock for ${operations.length} items`);
-    return { success: true, synced: operations.length };
+    if (!result.ok) console.warn('[dbSync] products stock_level update partial failure:', (result as any).error);
   } catch (err: any) {
-    console.error('[dbSync] Deduct stock failed:', err);
-    return { success: false, error: err.message };
+    // Log but don't fail — POS must complete regardless
+    console.warn('[dbSync] products.stock_level deduction error (non-fatal):', err?.message);
   }
+
+  // ── Phase 2 (Background — fire-and-forget): Post to inv_stock_ledger ───────
+  // Never awaited. If this fails, POS is unaffected. Uses idempotency key on billId.
+  if (billId) {
+    const outletStr = String(outlet || 'restaurant').toLowerCase();
+    const locationId = outletStr.includes('bar')         ? 'loc_bar1'
+                     : outletStr.includes('room')        ? 'loc_room_service'
+                     : outletStr.includes('kitchen')     ? 'loc_kitchen'
+                     : 'loc_restaurant';
+
+    // Post to server endpoint asynchronously — no await
+    fetch('/api/v1/inventory/sale-depletion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bill_id:     billId,
+        shift_id:    shiftId || null,
+        location_id: locationId,
+        outlet,
+        items: Array.from(updates.entries()).map(([id, qty]) => ({ item_id: id, qty }))
+      })
+    }).catch(err => {
+      // Silent catch — background process failure must NOT bubble to POS
+      console.debug('[dbSync] inv_stock_ledger background depletion failed (non-fatal):', err?.message);
+    });
+  }
+
+  return { success: true, synced: updates.size };
 }

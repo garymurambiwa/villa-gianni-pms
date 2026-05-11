@@ -399,13 +399,25 @@ router.post('/transfer/:id/approve', async (req, res) => {
       let destQty   = Number(line.qty_requested);
       const destUomId = line.destination_uom_id || line.source_uom_id;
       if (line.breakdown_flag && line.destination_uom_id && line.destination_uom_id !== line.source_uom_id) {
+        // Look up conversion factor from inv_uom_conversions (uses breakdown_allowed column)
         const convRes = await client.query(
           `SELECT conversion_factor FROM public.inv_uom_conversions
-           WHERE item_id=$1 AND from_uom_id=$2 AND to_uom_id=$3`,
+           WHERE item_id=$1 AND from_uom_id=$2 AND to_uom_id=$3
+           AND breakdown_allowed = true`,
           [line.item_id, line.source_uom_id, line.destination_uom_id]
         );
         if (convRes.rows.length) {
           destQty = destQty * Number(convRes.rows[0].conversion_factor);
+        } else {
+          // Fallback: global conversion (any item, same UOM pair)
+          const globalConv = await client.query(
+            `SELECT conversion_factor FROM public.inv_uom_conversions
+             WHERE from_uom_id=$1 AND to_uom_id=$2 AND breakdown_allowed=true LIMIT 1`,
+            [line.source_uom_id, line.destination_uom_id]
+          );
+          if (globalConv.rows.length) {
+            destQty = destQty * Number(globalConv.rows[0].conversion_factor);
+          }
         }
       }
 
@@ -1303,6 +1315,167 @@ router.get('/stock-summary', async (req, res) => {
     sql += ` GROUP BY sl.item_id,i.name,i.category,i.sku,i.weighted_avg_cost,u.code,l.name
              HAVING SUM(CASE WHEN sl.ledger_type IN ('GRN','TRANSFER_IN','ADJUSTMENT_IN') THEN sl.quantity_change ELSE -sl.quantity_change END) > 0
              ORDER BY l.name, i.category, i.name`;
+    const r = await pool.query(sql, params);
+    res.json({ ok: true, data: r.rows });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+// ============================================================================
+// SALE DEPLETION — Called from POS on bill close (background, never blocks POS)
+// ============================================================================
+
+/**
+ * POST /api/v1/inventory/sale-depletion
+ *
+ * Posts SALE_DEPLETION entries to inv_stock_ledger for each sold item.
+ * Uses recipe lookup: if a recipe exists for the menu item, deducts INGREDIENTS;
+ * if not, deducts the menu item directly.
+ *
+ * DESIGN PRINCIPLES:
+ * - ALWAYS returns 200 OK (even on failure) so POS never sees an error
+ * - Uses ON CONFLICT DO NOTHING for idempotency (safe to call twice)
+ * - Never throws — all errors are caught and logged only
+ * - Uses a single DB transaction per bill for atomicity
+ *
+ * @body { bill_id, shift_id, location_id, outlet, items: [{item_id, qty}] }
+ */
+router.post('/sale-depletion', async (req, res) => {
+  // Always return 200 — POS must never see inventory errors
+  const { bill_id, shift_id, location_id, items } = req.body;
+
+  if (!bill_id || !Array.isArray(items) || items.length === 0) {
+    return res.json({ ok: true, skipped: true, reason: 'No items or bill_id' });
+  }
+
+  const locId = location_id || 'loc_restaurant';
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    let totalDeductions = 0;
+
+    for (const sold of items) {
+      const { item_id, qty } = sold;
+      if (!item_id || !qty || Number(qty) <= 0) continue;
+
+      // ── Look up current recipe for this menu item ─────────────────────────
+      // FIX: use actual column names from inv_recipe_lines
+      // columns: qty_required, prep_uom_id, wastage_pct (NOT quantity_required/uom_id/wastage_override)
+      const recipeRes = await client.query(
+        `SELECT rl.item_id AS ingredient_id, rl.qty_required, rl.prep_uom_id AS uom_id,
+                rl.wastage_pct, ii.base_uom_id, ii.weighted_avg_cost
+         FROM public.inv_recipes r
+         JOIN public.inv_recipe_lines rl ON rl.recipe_id = r.id
+         JOIN public.inv_items ii ON ii.id = rl.item_id
+         WHERE r.menu_item_id = $1 AND r.is_current = true AND ii.is_active = true`,
+        [item_id]
+      );
+
+      if (recipeRes.rows.length > 0) {
+        // ── Recipe-based depletion: deduct each ingredient ──────────────────
+        for (const ingredient of recipeRes.rows) {
+          const wasteFactor = 1 + (Number(ingredient.wastage_pct || 0) / 100);
+          const depletQty   = Number(ingredient.qty_required) * Number(qty) * wasteFactor;
+          const refNum      = `SALE-${bill_id}-${item_id}-${ingredient.ingredient_id}`;
+
+          // Idempotency: only insert if reference doesn't already exist (safe for retries)
+          const alreadyPosted = await client.query(
+            `SELECT 1 FROM public.inv_stock_ledger WHERE reference_number=$1 AND ledger_type='SALE_DEPLETION' LIMIT 1`,
+            [refNum]
+          );
+          if (!alreadyPosted.rows.length) {
+            await client.query(
+              `INSERT INTO public.inv_stock_ledger
+                 (id, item_id, location_id, ledger_type, reference_number, quantity_change,
+                  base_uom_id, cost_per_unit, total_cost, posted_by, inserted_at)
+               VALUES ($1,$2,$3,'SALE_DEPLETION',$4,$5,$6,$7,$8,'POS_SYSTEM',NOW())`,
+              [
+                randomUUID(),
+                ingredient.ingredient_id,
+                locId,
+                refNum,
+                -Math.abs(depletQty),
+                ingredient.uom_id || ingredient.base_uom_id,
+                Number(ingredient.weighted_avg_cost || 0),
+                Number(ingredient.weighted_avg_cost || 0) * depletQty
+              ]
+            );
+            totalDeductions++;
+          }
+        }
+      } else {
+        // ── Direct depletion: no recipe, deduct menu item itself ─────────────
+        // Only if item exists in inv_items
+        const itemCheck = await client.query(
+          `SELECT i.base_uom_id, i.weighted_avg_cost
+           FROM public.inv_items i WHERE i.id = $1 AND i.is_active = true`,
+          [item_id]
+        );
+
+        if (itemCheck.rows.length > 0) {
+          const item    = itemCheck.rows[0];
+          const refNum  = `SALE-${bill_id}-${item_id}`;
+
+          const alreadyPostedDirect = await client.query(
+            `SELECT 1 FROM public.inv_stock_ledger WHERE reference_number=$1 AND ledger_type='SALE_DEPLETION' LIMIT 1`,
+            [refNum]
+          );
+          if (!alreadyPostedDirect.rows.length) {
+          await client.query(
+            `INSERT INTO public.inv_stock_ledger
+               (id, item_id, location_id, ledger_type, reference_number, quantity_change,
+                base_uom_id, cost_per_unit, total_cost, posted_by, inserted_at)
+             VALUES ($1,$2,$3,'SALE_DEPLETION',$4,$5,$6,$7,$8,'POS_SYSTEM',NOW())`,
+            [
+              randomUUID(),
+              item_id,
+              locId,
+              refNum,
+              -Math.abs(Number(qty)),
+              item.base_uom_id || 'uom_unit',
+              Number(item.weighted_avg_cost || 0),
+              Number(item.weighted_avg_cost || 0) * Number(qty)
+            ]
+          );
+          totalDeductions++;
+          } // end idempotency check
+        }
+        // If item doesn't exist in inv_items, silently skip (POS item not in inventory)
+      }
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, bill_id, deductions: totalDeductions });
+
+  } catch (err) {
+    // Always rollback + respond OK — POS must not fail due to inventory issues
+    try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+    console.error('[Inventory] sale-depletion background error (non-fatal):', err?.message || err);
+    res.json({ ok: true, skipped: true, reason: 'Background inventory error — POS unaffected' });
+  } finally {
+    client.release();
+  }
+});
+
+// ============================================================================
+// STOCK-SUMMARY with balance check
+// ============================================================================
+router.get('/balance-check/:item_id', async (req, res) => {
+  const { item_id } = req.params;
+  const { location_id } = req.query;
+  try {
+    let sql = `SELECT sl.location_id, l.name as location_name,
+               COALESCE(SUM(sl.quantity_change),0) as balance,
+               i.base_uom_id, u.code as uom_code
+               FROM public.inv_stock_ledger sl
+               JOIN public.inv_items i ON i.id = sl.item_id
+               JOIN public.inv_locations l ON l.id = sl.location_id
+               LEFT JOIN public.inv_uom_definitions u ON u.id = i.base_uom_id
+               WHERE sl.item_id = $1`;
+    const params = [item_id];
+    if (location_id) { sql += ` AND sl.location_id = $2`; params.push(location_id); }
+    sql += ` GROUP BY sl.location_id, l.name, i.base_uom_id, u.code HAVING SUM(sl.quantity_change) != 0`;
     const r = await pool.query(sql, params);
     res.json({ ok: true, data: r.rows });
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
