@@ -358,11 +358,13 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         if (gw.status === 'declined') {
           logPaymentEvent({ type: 'payment_declined', data: { billId: bill.id, amount: discountedTotal } });
           alert('Card declined. Please try another payment method.');
+          setIsProcessing(false);
           return;
         }
         if (gw.status === 'timeout') {
           logPaymentEvent({ type: 'payment_timeout', data: { billId: bill.id, amount: discountedTotal } });
           alert('Payment timeout. Please retry.');
+          setIsProcessing(false);
           return;
         }
         paymentData.meta = { ...(paymentData.meta || {}), gatewayAuth: gw.authCode, gatewayRef: gw.reference };
@@ -373,6 +375,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         if (paymentMethod === 'room-charge' && result && result.folioChargeId && removeFolioCharge) {
           try { removeFolioCharge(result.folioChargeId); logPaymentEvent({ type: 'rollback', data: { billId: bill.id, folioChargeId: result.folioChargeId } }); } catch {}
         }
+        setIsProcessing(false);
         return;
       }
       if (paymentMethod === 'room-charge' && result && result.folioPosted !== true) {
@@ -392,6 +395,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           toast({ title: 'Multiple payment failures detected', description: 'Please check gateway/network connectivity.', variant: 'destructive' });
         }
       } catch {}
+      setIsProcessing(false);
       return;
     }
 
@@ -408,6 +412,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       } catch (e) {
         console.error('City Ledger post failed', e);
         toast({ title: 'City Ledger posting failed', description: 'Please try again or check account status.', variant: 'destructive' });
+        setIsProcessing(false);
       }
     }
 

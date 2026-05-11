@@ -17,7 +17,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [rooms, setRooms] = useState([]);
   const [guests, setGuests] = useState([]);
   const [reservations, setReservations] = useState([]);
-  const [posOrders, setPosOrders] = useState([]);
+  const [posOrders, setPosOrders] = useState(() => {
+    try {
+      const cached = localStorage.getItem('corepms_pos_orders_sync');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        return parsed.data || [];
+      }
+    } catch (e) {
+      console.warn('[DataContext] Failed to load posOrders from cache:', e);
+    }
+    return [];
+  });
   const [inventory, setInventory] = useState([]);
   const [folioCharges, setFolioCharges] = useState([]);
   const [cityLedger, setCityLedger] = useState<Record<string, unknown>[]>([]);
@@ -136,6 +147,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const guestRes = await db.query('SELECT * FROM guests');
       if ('rows' in guestRes) setGuests(guestRes.rows || []);
+
+      // Load POS orders (open table orders)
+      const posOrdersRes = await db.query('SELECT * FROM pos_orders WHERE LOWER(status::text) = LOWER(?::text)', ['open']);
+      if ('rows' in posOrdersRes) setPosOrders(posOrdersRes.rows || []);
 
       // FIX: Load from products table (unified source of truth for POS + Inventory)
       // Map ALL fields correctly including costCenter, category_id, visibility, prices
