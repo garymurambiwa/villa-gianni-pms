@@ -255,8 +255,7 @@ export const POS: React.FC = () => {
   };
 
   const handlePaymentComplete = async (paymentData: any) => {
-    // If room charge, post to folio
-    let folioPosted = false;
+    // If room charge, post to folio — fire-and-forget, non-blocking
     let folioChargeId: string | null = null;
     if (paymentData.paymentMethod === 'room-charge') {
       // Find guest by room number
@@ -264,20 +263,23 @@ export const POS: React.FC = () => {
       if (!guest) {
         alert('No checked-in guest found for this room number.');
       } else {
-        try {
-          // Use outlet-specific description with 4-digit bill number
-          const outletName = getOutletDisplayName();
-          const shortBillNum = formatBillNumber(bill.id);
-          folioChargeId = recordFolioCharge ? recordFolioCharge({
+        // Record folio charge in background, don't await
+        if (recordFolioCharge) {
+          recordFolioCharge({
             guestId: guest.id,
             amount: Number(total.toFixed(2)),
-            description: `${outletName} - bill-${shortBillNum}`,
+            description: `${getOutletDisplayName()} - bill-${formatBillNumber(bill.id)}`,
             date: new Date().toISOString().split('T')[0]
-          }) : null;
-          folioPosted = !!folioChargeId || true;
-        } catch (err) {
-          logPaymentError('folio_post', err, { guestId: guest.id, billId: bill.id });
-          console.error('Folio post error:', err);
+          }).then((chargeId) => {
+            if (chargeId) {
+              console.log('Folio charge posted successfully:', chargeId);
+            } else {
+              console.warn('Folio charge recording failed');
+            }
+          }).catch((err) => {
+            logPaymentError('folio_post', err, { guestId: guest.id, billId: bill.id });
+            console.error('Folio post error:', err);
+          });
         }
       }
     }
@@ -340,7 +342,7 @@ export const POS: React.FC = () => {
       console.error('Failed to sync POS bill to DB:', err);
     });
 
-    return { ok: true, method: paymentData.paymentMethod, billId: bill.id, folioPosted, folioChargeId };
+    return { ok: true, method: paymentData.paymentMethod, billId: bill.id, folioPosted: true, folioChargeId: null };
   };
 
   const actions = [

@@ -376,17 +376,22 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               }
               paymentData.meta = { ...(paymentData.meta || {}), gatewayAuth: gw.authCode, gatewayRef: gw.reference };
             }
-            const result: any = await onPaymentComplete(paymentData);
-            if (result && result.ok === false) {
-              alert('Payment could not be completed. Please try again.');
-              if (paymentMethod === 'room-charge' && result && result.folioChargeId && removeFolioCharge) {
-                try { removeFolioCharge(result.folioChargeId); logPaymentEvent({ type: 'rollback', data: { billId: bill.id, folioChargeId: result.folioChargeId } }); } catch {}
-              }
+            // Call payment completion handler (now non-blocking)
+            try {
+              onPaymentComplete(paymentData).then((result: any) => {
+                if (result && result.ok === false) {
+                  console.error('Payment completion failed:', result);
+                  // Don't show alert since modal is already closed
+                }
+              }).catch((error) => {
+                console.error('Payment completion error:', error);
+              });
+            } catch (immediateError) {
+              console.error('Payment completion handler failed immediately:', immediateError);
+              // Reset processing state if handler fails immediately
               setIsProcessing(false);
+              alert('Payment processing failed. Please try again.');
               return;
-            }
-            if (paymentMethod === 'room-charge' && result && result.folioPosted !== true) {
-              toast({ title: 'Folio update not confirmed', description: 'Charge posted status could not be verified.', variant: 'destructive' });
             }
             logPaymentEvent({ type: 'payment_success', data: { billId: bill.id, amount: discountedTotal, method: paymentMethod } });
           })(),
