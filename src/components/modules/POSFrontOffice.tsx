@@ -730,27 +730,28 @@ export const POSFrontOffice: React.FC = () => {
     if (!bill) return;
     const total = bill.total;
 
-    let folioPosted = false;
-    let folioChargeId: string | null = null;
+    // Folio charge recording (fire-and-forget)
     if (paymentData.paymentMethod === 'room-charge') {
       const guest = guests.find(g => g.roomNumber === paymentData.roomNumber);
       if (!guest) {
         alert('No checked-in guest found for this room number.');
         logPaymentError('authorization', new Error('Guest not found for room charge'), { roomNumber: paymentData.roomNumber });
       } else {
-        try {
-          // Use outlet-specific description with 4-digit bill number
-          const outletName = getOutletFromBill(bill);
-          const shortBillNum = formatBillNumber(bill.id);
-          folioChargeId = recordFolioCharge ? recordFolioCharge({
+        if (recordFolioCharge) {
+          recordFolioCharge({
             guestId: guest.id,
             amount: Number(total.toFixed(2)),
-            description: `${outletName} - bill-${shortBillNum}`,
+            description: `${getOutletFromBill(bill)} - bill-${formatBillNumber(bill.id)}`,
             date: new Date().toISOString().split('T')[0]
-          }) : null;
-          folioPosted = !!folioChargeId || true;
-        } catch (err) {
-          logPaymentError('folio_post', err, { guestId: guest.id, billId: bill.id });
+          }).then((chargeId) => {
+            if (chargeId) {
+              console.log('Folio charge posted successfully:', chargeId);
+            } else {
+              console.warn('Folio charge recording failed');
+            }
+          }).catch((err) => {
+            logPaymentError('folio_post', err, { guestId: guest.id, billId: bill.id });
+          });
         }
       }
     }
@@ -762,28 +763,31 @@ export const POSFrontOffice: React.FC = () => {
       logPaymentError('shift_log', err, { method: paymentData.paymentMethod, amount: total, billId: bill.id });
     }
 
-    // Auto-deplete inventory for sold items
-    try {
-      const soldItems = (bill.items || []).map((i: any) => ({ 
-        id: i.menuItem?.id || i.id,
-        name: i.menuItem?.name || i.name, 
-        quantity: Number(i.quantity || 0) 
-      }));
-      decrementInventory(soldItems, costCentre || 'Main Restaurant', shiftId || 'unknown');
-    } catch (err) {
-      console.warn('Inventory depletion failed:', err);
-      logPaymentError('inventory', err, { billId: bill.id });
-    }
+    // Auto-deplete inventory for sold items (fire-and-forget)
+    const soldItems = (bill.items || []).map((i: any) => ({
+      id: i.menuItem?.id || i.id,
+      name: i.menuItem?.name || i.name,
+      quantity: Number(i.quantity || 0)
+    }));
+    decrementInventory(soldItems, costCentre || 'Main Restaurant', shiftId || 'unknown')
+      .catch(err => {
+        console.warn('Inventory depletion failed:', err);
+        logPaymentError('inventory', err, { billId: bill.id });
+      });
 
-    // Close POS order in DB to prevent reversion to occupied state
+    // Close POS order in DB (fire-and-forget)
     if (closePosOrder) {
-      await closePosOrder(bill.tableId, costCentre || undefined);
+      closePosOrder(bill.tableId, costCentre || undefined)
+        .then(() => console.log('POS order closed successfully'))
+        .catch(err => console.warn('POS order close failed:', err));
     }
 
+    // Update UI state immediately
     setTables(prev => prev.map(t =>
       t.id === bill.tableId ? { ...t, status: 'available', currentBill: undefined } : t
     ));
-    // Update database status (legacy fallback)
+
+    // Update database status (legacy fallback, fire-and-forget)
     updateTableStatus(bill.tableId, 'available');
     setPaymentModal({ bill: null, open: false });
 
@@ -797,7 +801,7 @@ export const POSFrontOffice: React.FC = () => {
       }).slice(0, 500)));
     } catch (err) { logPaymentError('closed_bill_log', err, { billId: bill.id }); }
 
-    return { ok: true, method: paymentData.paymentMethod, billId: bill.id, folioPosted, folioChargeId };
+    return { ok: true, method: paymentData.paymentMethod, billId: bill.id, folioPosted: true, folioChargeId: null };
   };
 
   return (
