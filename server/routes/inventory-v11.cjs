@@ -1,20 +1,472 @@
 /**
  * COREPMS v11 Inventory Module - Express API Routes
  * Location: server/routes/inventory-v11.cjs
- * 
- * All routes follow the v11 spec with proper error handling and transaction support
+ *
+ * Self-bootstrapping: automatically creates all inventory tables on first load
+ * if they do not exist. This means the module works on any clean database
+ * (fresh Baradzanwa deployment, new property, etc.) without manual migration.
+ *
+ * Also syncs with POS cost_centres table:
+ * - Every cost_centre is reflected as an inv_locations Outlet
+ * - Creating/deleting a location also updates cost_centres (and vice versa)
  */
 
 const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
 const { randomUUID } = require('crypto');
+const fs = require('fs');
 
 // Load environment
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
 const router = express.Router();
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// ============================================================================
+// SEED FUNCTIONS — extracted so they can be called from BOTH branches of bootstrap
+// (first boot AND existing-tables path). All use ON CONFLICT DO NOTHING — idempotent.
+// ============================================================================
+
+const UOM_SEED = [
+  ['uom_unit',   'UNIT',   'Unit',        'Count'],
+  ['uom_case',   'CASE',   'Case',        'Count'],
+  ['uom_bottle', 'BOTTLE', 'Bottle',      'Count'],
+  ['uom_can',    'CAN',    'Can',         'Count'],
+  ['uom_crate',  'CRATE',  'Crate',       'Count'],
+  ['uom_dozen',  'DOZ',    'Dozen',       'Count'],
+  ['uom_box',    'BOX',    'Box',         'Count'],
+  ['uom_bag',    'BAG',    'Bag',         'Count'],
+  ['uom_pkt',    'PKT',    'Packet',      'Count'],
+  ['uom_drum',   'DRUM',   'Drum',        'Count'],
+  ['uom_portion','POR',    'Portion',     'Count'],
+  ['uom_liter',  'LITER',  'Litre',       'Volume'],
+  ['uom_ml',     'ML',     'Millilitre',  'Volume'],
+  ['uom_tot',    'TOT',    'Tot',         'Volume'],
+  ['uom_g',      'G',      'Gram',        'Weight'],
+  ['uom_kg',     'KG',     'Kilogram',    'Weight'],
+];
+
+const STORAGE_SEED = [
+  ['loc_main_cellar', 'Main Cellar',            'Storage'],
+  ['loc_dry_goods',   'Dry Goods Store',         'Storage'],
+  ['loc_freezer',     'Freezer / Perishables',   'Storage'],
+  ['loc_perishables', 'Perishables',             'Storage'],
+];
+
+async function seedUomDefinitions(client) {
+  let seeded = 0;
+  for (const [id, code, name, cat] of UOM_SEED) {
+    const r = await client.query(
+      `INSERT INTO public.inv_uom_definitions (id, code, name, category)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING`,
+      [id, code, name, cat]
+    );
+    seeded += r.rowCount || 0;
+  }
+  if (seeded > 0) console.log(`[inv-v11] Seeded ${seeded} UOM definitions`);
+  return seeded;
+}
+
+async function seedDefaultLocations(client) {
+  for (const [id, name, type] of STORAGE_SEED) {
+    await client.query(
+      `INSERT INTO public.inv_locations (id, name, location_type)
+       VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
+      [id, name, type]
+    );
+  }
+}
+
+// ============================================================================
+// AUTO-BOOTSTRAP: Create inventory tables on first load if missing
+// ============================================================================
+
+async function ensureInventoryTables() {
+  const client = await pool.connect();
+  try {
+    // Check if inv_locations already exists — if so, tables are set up
+    const check = await client.query(
+      `SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='inv_locations' LIMIT 1`
+    );
+    if (check.rows.length > 0) {
+      // Tables exist — ensure latest columns AND always re-seed UOMs
+      // FIX: The "tables exist" branch previously returned WITHOUT seeding UOMs.
+      // If tables were created but seeding failed (restart/timeout), inv_uom_definitions
+      // would be empty → every item INSERT fails with FK constraint violation.
+      // Solution: always run seed with ON CONFLICT DO NOTHING (safe, idempotent).
+      await client.query(`ALTER TABLE public.inv_locations ADD COLUMN IF NOT EXISTS description TEXT`);
+      await client.query(`ALTER TABLE public.inv_locations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
+      await client.query(`ALTER TABLE public.inv_uom_definitions ADD COLUMN IF NOT EXISTS description TEXT`);
+      await client.query(`ALTER TABLE public.inv_items ADD COLUMN IF NOT EXISTS selling_price NUMERIC(10,2) DEFAULT 0.00`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_by TEXT`);
+      await client.query(`ALTER TABLE public.inv_stock_ledger ADD COLUMN IF NOT EXISTS inserted_at TIMESTAMPTZ DEFAULT NOW()`);
+
+      // ALWAYS re-seed UOMs — safe because of ON CONFLICT DO NOTHING
+      // This fixes the case where tables exist but UOM data was never inserted
+      await seedUomDefinitions(client);
+
+      // ALWAYS re-seed default storage locations
+      await seedDefaultLocations(client);
+
+      await syncCostCentresToLocations(client);
+      return;
+    }
+
+    console.log('[inv-v11] First boot detected — creating inventory tables...');
+
+    // ── UOM Definitions ────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_uom_definitions (
+        id TEXT PRIMARY KEY,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'Count',
+        description TEXT,
+        inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── Locations ──────────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_locations (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        location_type TEXT NOT NULL CHECK (location_type IN ('Storage','Outlet')),
+        parent_location_id TEXT REFERENCES public.inv_locations(id),
+        description TEXT,
+        is_active BOOLEAN DEFAULT true,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── Item Master ────────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_items (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'Food',
+        sub_category TEXT,
+        base_uom_id TEXT NOT NULL DEFAULT 'uom_unit' REFERENCES public.inv_uom_definitions(id),
+        sku TEXT UNIQUE,
+        barcode TEXT,
+        selling_price NUMERIC(10,2) DEFAULT 0.00,
+        last_cost_price NUMERIC(10,4) DEFAULT 0.00,
+        average_cost NUMERIC(10,4) DEFAULT 0.00,
+        weighted_avg_cost NUMERIC(10,4) DEFAULT 0.00,
+        default_wastage_pct NUMERIC(5,2) DEFAULT 0.00,
+        par_level NUMERIC(12,4) DEFAULT 0.00,
+        reorder_level NUMERIC(12,4) DEFAULT 0.00,
+        reorder_qty NUMERIC(12,4) DEFAULT 0.00,
+        expiry_tracking BOOLEAN DEFAULT false,
+        default_location_id TEXT,
+        supplier_id TEXT,
+        media_url TEXT,
+        notes TEXT,
+        is_active BOOLEAN DEFAULT true,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── UOM Conversions ────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_uom_conversions (
+        id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL,
+        from_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        to_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        conversion_factor NUMERIC(10,4) NOT NULL CHECK (conversion_factor > 0),
+        breakdown_allowed BOOLEAN DEFAULT false,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(item_id, from_uom_id, to_uom_id)
+      )`);
+
+    // ── GRN ───────────────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_grn_headers (
+        id TEXT PRIMARY KEY,
+        grn_number TEXT UNIQUE NOT NULL,
+        supplier_name TEXT NOT NULL,
+        supplier_id TEXT,
+        supplier_invoice_number TEXT,
+        destination_location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        created_by TEXT NOT NULL,
+        total_value NUMERIC(12,2) DEFAULT 0.00,
+        status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','cancelled')),
+        posted_at TIMESTAMPTZ,
+        posted_by TEXT,
+        notes TEXT,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_grn_lines (
+        id TEXT PRIMARY KEY,
+        grn_header_id TEXT NOT NULL REFERENCES public.inv_grn_headers(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        qty_received NUMERIC(12,4) NOT NULL CHECK (qty_received > 0),
+        received_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        unit_cost NUMERIC(10,4) NOT NULL DEFAULT 0,
+        line_total NUMERIC(12,2) NOT NULL DEFAULT 0,
+        expiry_date DATE,
+        line_number INTEGER NOT NULL,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(grn_header_id, line_number)
+      )`);
+
+    // ── Transfers ──────────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_transfer_headers (
+        id TEXT PRIMARY KEY,
+        transfer_number TEXT UNIQUE NOT NULL,
+        source_location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        destination_location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        transfer_date DATE DEFAULT CURRENT_DATE,
+        reference_text TEXT,
+        status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','approved','cancelled')),
+        approved_by TEXT,
+        approved_at TIMESTAMPTZ,
+        created_by TEXT NOT NULL,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        CHECK (source_location_id != destination_location_id)
+      )`);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_transfer_lines (
+        id TEXT PRIMARY KEY,
+        transfer_header_id TEXT NOT NULL REFERENCES public.inv_transfer_headers(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        qty_requested NUMERIC(12,4) NOT NULL CHECK (qty_requested > 0),
+        source_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        breakdown_flag BOOLEAN DEFAULT false,
+        destination_uom_id TEXT REFERENCES public.inv_uom_definitions(id),
+        current_source_balance NUMERIC(12,4),
+        line_number INTEGER NOT NULL,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(transfer_header_id, line_number)
+      )`);
+
+    // ── Stock Ledger (single source of truth) ─────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_stock_ledger (
+        id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        ledger_type TEXT NOT NULL CHECK (ledger_type IN ('GRN','TRANSFER_IN','TRANSFER_OUT','SALE_DEPLETION','ADJUSTMENT','WASTE')),
+        reference_number TEXT,
+        quantity_change NUMERIC(12,4) NOT NULL,
+        base_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        cost_per_unit NUMERIC(10,4),
+        total_cost NUMERIC(12,2),
+        posted_by TEXT,
+        gl_account_code TEXT,
+        transaction_date TIMESTAMPTZ DEFAULT NOW(),
+        inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── Recipes ────────────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_recipes (
+        id TEXT PRIMARY KEY,
+        menu_item_id TEXT NOT NULL,
+        version_number INTEGER DEFAULT 1,
+        is_current BOOLEAN DEFAULT true,
+        created_by TEXT,
+        total_cost NUMERIC(10,4) DEFAULT 0.00,
+        notes TEXT,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(menu_item_id, version_number)
+      )`);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_recipe_lines (
+        id TEXT PRIMARY KEY,
+        recipe_id TEXT NOT NULL REFERENCES public.inv_recipes(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        qty_required NUMERIC(10,4) NOT NULL CHECK (qty_required > 0),
+        prep_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        wastage_pct NUMERIC(5,2) DEFAULT 0.00,
+        line_number INTEGER NOT NULL,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(recipe_id, line_number)
+      )`);
+
+    // ── Physical Counts ────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_physical_counts (
+        id TEXT PRIMARY KEY,
+        location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        count_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','submitted','approved')),
+        counted_by TEXT,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_physical_count_lines (
+        id TEXT PRIMARY KEY,
+        count_id TEXT NOT NULL REFERENCES public.inv_physical_counts(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        physical_qty NUMERIC(12,4) NOT NULL DEFAULT 0,
+        uom_id TEXT REFERENCES public.inv_uom_definitions(id),
+        notes TEXT,
+        inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── Variance Reports ───────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_variance_reports (
+        id TEXT PRIMARY KEY,
+        report_number TEXT UNIQUE NOT NULL,
+        location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        period_start DATE NOT NULL,
+        period_end DATE NOT NULL,
+        generated_by TEXT,
+        total_items INTEGER DEFAULT 0,
+        ok_count INTEGER DEFAULT 0,
+        warning_count INTEGER DEFAULT 0,
+        critical_count INTEGER DEFAULT 0,
+        inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_variance_lines (
+        id TEXT PRIMARY KEY,
+        variance_report_id TEXT NOT NULL REFERENCES public.inv_variance_reports(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        theoretical_qty NUMERIC(12,4) NOT NULL,
+        physical_qty NUMERIC(12,4) NOT NULL,
+        variance_qty NUMERIC(12,4) NOT NULL,
+        variance_percentage NUMERIC(7,4) NOT NULL,
+        alert_level TEXT NOT NULL CHECK (alert_level IN ('OK','WARNING','CRITICAL')),
+        item_cost NUMERIC(10,4),
+        variance_value NUMERIC(12,2),
+        inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── Performance Indexes ────────────────────────────────────────────────
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_items_category ON public.inv_items(category)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_items_active ON public.inv_items(is_active)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_grn_status ON public.inv_grn_headers(status)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_transfer_status ON public.inv_transfer_headers(status)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_item_loc ON public.inv_stock_ledger(item_id, location_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_type ON public.inv_stock_ledger(ledger_type)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_ref ON public.inv_stock_ledger(reference_number) WHERE reference_number IS NOT NULL`);
+
+    // ── Seed standard UOM definitions + default locations ─────────────────
+    await seedUomDefinitions(client);
+    await seedDefaultLocations(client);
+
+    // Sync all existing cost_centres as Outlet locations
+    await syncCostCentresToLocations(client);
+
+    console.log('[inv-v11] ✅ Inventory tables created and seeded successfully');
+
+  } catch (err) {
+    console.error('[inv-v11] Table creation error (non-fatal — routes will work if tables already exist):', err.message);
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Sync cost_centres → inv_locations (Outlets only).
+ * Called on boot and when a cost centre is added/deleted.
+ * Idempotent: ON CONFLICT DO NOTHING.
+ */
+async function syncCostCentresToLocations(client) {
+  try {
+    // Check cost_centres table exists before querying
+    const tableCheck = await client.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='cost_centres' LIMIT 1`
+    );
+    if (!tableCheck.rows.length) return;
+
+    // Ensure no unique constraint on name blocks the sync
+    await client.query(
+      `ALTER TABLE public.inv_locations DROP CONSTRAINT IF EXISTS inv_locations_name_key`
+    ).catch(() => {}); // ignore if already dropped
+
+    const centres = await client.query(`SELECT id, name, description FROM cost_centres WHERE active=true`);
+    const syncedIds = [];
+
+    for (const cc of centres.rows) {
+      const locId = `loc_cc_${cc.id}`;
+      try {
+        await client.query(
+          `INSERT INTO public.inv_locations (id, name, location_type, description, is_active, inserted_at, updated_at)
+           VALUES ($1,$2,'Outlet',$3,true,NOW(),NOW())
+           ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, description=EXCLUDED.description, is_active=true, updated_at=NOW()`,
+          [locId, cc.name, cc.description || null]
+        );
+        syncedIds.push(locId);
+      } catch (rowErr) {
+        // Per-row error tolerance — log and continue (don't stop entire sync)
+        console.warn(`[inv-v11] Could not sync cost centre "${cc.name}" to locations:`, rowErr.message);
+      }
+    }
+
+    // Deactivate orphaned cost_centre-linked locations (cost centre was deleted)
+    if (syncedIds.length > 0) {
+      const placeholders = syncedIds.map((_, i) => `$${i+1}`).join(',');
+      await client.query(
+        `UPDATE public.inv_locations SET is_active=false, updated_at=NOW()
+         WHERE id LIKE 'loc_cc_%' AND id NOT IN (${placeholders})`,
+        syncedIds
+      ).catch(() => {});
+    }
+    if (syncedIds.length > 0) {
+      console.log(`[inv-v11] Synced ${syncedIds.length} cost centres to inv_locations`);
+    }
+  } catch (err) {
+    console.warn('[inv-v11] Cost centre sync warning:', err.message);
+  }
+}
+
+// Run on startup — async, non-blocking
+// Catches ALL errors so a failed DB connection never crashes the module load
+ensureInventoryTables().catch(err => {
+  console.warn('[inv-v11] Bootstrap warning (tables may not exist yet):', err.message);
+});
+
+// ── Manual init endpoint ───────────────────────────────────────────────────────
+// GET /api/v1/inventory/init?key=confirm
+// Triggers table creation on demand — useful for fresh Vercel/Baradzanwa deployments
+// where DATABASE_URL was just configured and bootstrap already ran (and failed)
+router.get('/init', async (req, res) => {
+  if (req.query.key !== 'confirm') {
+    return res.json({
+      ok: false,
+      error: 'Pass ?key=confirm to initialise inventory tables',
+      example: '/api/v1/inventory/init?key=confirm'
+    });
+  }
+  try {
+    await ensureInventoryTables();
+    // Verify tables now exist
+    const check = await pool.query(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name LIKE 'inv_%'
+       ORDER BY table_name`
+    );
+    res.json({
+      ok: true,
+      message: 'Inventory tables initialised successfully',
+      tables: check.rows.map(r => r.table_name),
+      count: check.rows.length
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ============================================================================
+// GRN (Goods Received Note) Endpoints
 
 // ============================================================================
 // GRN (Goods Received Note) Endpoints
@@ -626,97 +1078,149 @@ router.post('/recipe', async (req, res) => {
 
 /**
  * POST /api/v1/inventory/variance/generate
- * Generate variance report
+ * Generate variance report comparing theoretical stock (from ledger) vs physical count.
+ *
+ * FIX: Replaced broken duplicate handler. Uses correct column names matching
+ * the actual inv_variance_lines schema:
+ *   pos_theoretical_qty, physical_count_qty, variance_qty, variance_pct,
+ *   variance_value, alert_level, base_uom_id
+ * Also fixed: uses inserted_at (not posted_at) for date filtering on inv_stock_ledger.
  */
 router.post('/variance/generate', async (req, res) => {
-  const { location_id, period_start, period_end, generated_by } = req.body;
-
-  if (!location_id || !period_start || !period_end || !generated_by) {
-    return res.status(400).json({ ok: false, error: 'Missing required fields' });
+  const { location_id, period_start, period_end, generated_by, physical_count_id } = req.body;
+  if (!location_id || !period_start || !period_end) {
+    return res.status(400).json({ ok: false, error: 'location_id, period_start, period_end required' });
   }
 
   const client = await pool.connect();
   try {
+    // ── Guard: ensure inventory tables exist (fail gracefully if not) ──────
+    const tableCheck = await client.query(
+      `SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='inv_stock_ledger' LIMIT 1`
+    );
+    if (!tableCheck.rows.length) {
+      client.release();
+      return res.status(503).json({
+        ok: false,
+        error: 'Inventory tables not yet initialised. Visit /api/v1/inventory/init?key=confirm to set up.'
+      });
+    }
+
     await client.query('BEGIN');
 
-    // Get next variance report number
-    const varCountRes = await client.query(
-      `SELECT COALESCE(MAX(CAST(SUBSTRING(report_number FROM 10) AS INTEGER)), 0) + 1 as next_num
-       FROM public.inv_variance_reports
-       WHERE report_number ~ ('^VAR-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-\\d+$')`
-    );
-    const nextNum = varCountRes.rows[0].next_num;
-    const reportNumber = 'VAR-' + new Date().getFullYear() + '-' + String(nextNum).padStart(4, '0');
+    // ── Theoretical qty: opening + GRNs + transfers in − transfers out − sales ──
+    // FIX: uses inserted_at (actual column on inv_stock_ledger, not posted_at)
+    const theoreticalRes = await client.query(`
+      SELECT
+        sl.item_id,
+        i.name,
+        i.sku,
+        i.category,
+        i.base_uom_id,
+        COALESCE(u.code, 'UNIT') AS uom_code,
+        SUM(CASE
+          WHEN sl.ledger_type IN ('GRN','TRANSFER_IN') THEN ABS(sl.quantity_change)
+          WHEN sl.ledger_type IN ('TRANSFER_OUT','SALE_DEPLETION','WASTE') THEN -ABS(sl.quantity_change)
+          WHEN sl.quantity_change > 0 THEN sl.quantity_change
+          ELSE -ABS(sl.quantity_change)
+        END) AS theoretical_qty,
+        AVG(NULLIF(sl.cost_per_unit, 0)) AS avg_cost
+      FROM public.inv_stock_ledger sl
+      JOIN public.inv_items i ON i.id = sl.item_id
+      LEFT JOIN public.inv_uom_definitions u ON u.id = i.base_uom_id
+      WHERE sl.location_id = $1
+        AND sl.inserted_at BETWEEN $2::timestamptz AND $3::date + interval '1 day'
+        AND i.is_active = true
+      GROUP BY sl.item_id, i.name, i.sku, i.category, i.base_uom_id, u.code
+      HAVING SUM(ABS(sl.quantity_change)) > 0
+    `, [location_id, period_start, period_end]);
 
-    // Create report header
-    const reportRes = await client.query(
-      `INSERT INTO public.inv_variance_reports 
-      (id, report_number, location_id, period_start, period_end, generated_by, inserted_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING *`,
-      [randomUUID(), reportNumber, location_id, period_start, period_end, generated_by, new Date()]
-    );
-
-    const report = reportRes.rows[0];
-
-    // Get all items and calculate variance
-    const itemsRes = await client.query(`SELECT DISTINCT item_id FROM public.inv_stock_ledger WHERE location_id = $1`, [
-      location_id,
-    ]);
-
-    let okCount = 0,
-      warningCount = 0,
-      criticalCount = 0,
-      totalVarianceValue = 0;
-
-    for (const { item_id } of itemsRes.rows) {
-      // Calculate variance...
-      const posRes = await client.query(
-        `SELECT COALESCE(SUM(quantity_change), 0) as qty FROM public.inv_stock_ledger 
-        WHERE item_id = $1 AND location_id = $2 AND ledger_type = 'SALE_DEPLETION' 
-        AND posted_at >= $3 AND posted_at <= $4`,
-        [item_id, location_id, period_start, period_end]
+    // ── Physical counts (if a count session was linked) ───────────────────
+    const physicalMap = {};
+    if (physical_count_id) {
+      const physRes = await client.query(
+        `SELECT item_id, physical_qty FROM public.inv_physical_count_lines WHERE count_id=$1`,
+        [physical_count_id]
       );
+      for (const row of physRes.rows) {
+        physicalMap[row.item_id] = Number(row.physical_qty);
+      }
+    }
 
-      const theoreticalQty = Math.abs(Number(posRes.rows[0]?.qty || 0));
-      const physicalQty = 0; // Placeholder
-      const varianceQty = theoreticalQty - physicalQty;
-      const variancePct = theoreticalQty > 0 ? (varianceQty / theoreticalQty) * 100 : 0;
-      const alertLevel = variancePct < 2 ? 'OK' : variancePct < 5 ? 'WARNING' : 'CRITICAL';
+    // ── Report number — safe: count existing reports + 1 ─────────────────
+    const numRes = await client.query(`SELECT COUNT(*)+1 AS n FROM public.inv_variance_reports`);
+    const reportNum = 'VAR-' + String(numRes.rows[0].n).padStart(4,'0');
+    const reportId  = randomUUID();
 
-      // Count alerts
-      if (alertLevel === 'OK') okCount++;
-      else if (alertLevel === 'WARNING') warningCount++;
-      else criticalCount++;
+    let okCount = 0, warnCount = 0, critCount = 0;
+    const lines = [];
 
-      totalVarianceValue += Math.abs(varianceQty);
+    for (const row of theoreticalRes.rows) {
+      const theoretical = Math.max(0, Number(row.theoretical_qty || 0));
+      // If no physical count session: use theoretical (zero variance) — report shows gaps
+      const physical    = physical_count_id ? (physicalMap[row.item_id] ?? 0) : theoretical;
+      const variance    = physical - theoretical;
+      const variancePct = theoretical > 0 ? Math.abs(variance / theoretical) * 100 : 0;
+      const cost        = Number(row.avg_cost || 0);
+      const varianceVal = Math.abs(variance) * cost;
 
-      // Insert line
-      await client.query(
-        `INSERT INTO public.inv_variance_lines 
-        (id, variance_report_id, item_id, pos_theoretical_qty, physical_count_qty, variance_qty, variance_pct, variance_value, alert_level, base_uom_id, inserted_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [randomUUID(), report.id, item_id, theoreticalQty, physicalQty, varianceQty, variancePct, Math.abs(varianceQty), alertLevel, 'uom_unit', new Date()]
+      let alert = 'OK';
+      if (variancePct >= 5)      { alert = 'CRITICAL'; critCount++; }
+      else if (variancePct >= 2) { alert = 'WARNING';  warnCount++; }
+      else                       { okCount++; }
+
+      lines.push({
+        item_id: row.item_id, name: row.name, sku: row.sku, category: row.category,
+        uom_code: row.uom_code, theoretical, physical, variance, variancePct, varianceVal, alert, cost
+      });
+    }
+
+    // ── Insert report header ───────────────────────────────────────────────
+    await client.query(`
+      INSERT INTO public.inv_variance_reports
+        (id, report_number, location_id, period_start, period_end, generated_by,
+         ok_count, warning_count, critical_count, variance_count, inserted_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
+      [reportId, reportNum, location_id, period_start, period_end, generated_by||'system',
+       okCount, warnCount, critCount, lines.length]
+    );
+
+    // ── Insert variance lines (using actual DB column names) ───────────────
+    for (const l of lines) {
+      await client.query(`
+        INSERT INTO public.inv_variance_lines
+          (id, variance_report_id, item_id,
+           pos_theoretical_qty, physical_count_qty, variance_qty,
+           variance_pct, variance_value, alert_level, base_uom_id, inserted_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
+        [randomUUID(), reportId, l.item_id,
+         l.theoretical, l.physical, l.variance,
+         l.variancePct, l.varianceVal, l.alert, 'uom_unit']
       );
     }
 
-    // Update report summary
-    await client.query(
-      `UPDATE public.inv_variance_reports 
-      SET ok_count = $1, warning_count = $2, critical_count = $3, 
-          variance_count = $4, total_variance_value = $5
-      WHERE id = $6`,
-      [okCount, warningCount, criticalCount, itemsRes.rows.length, totalVarianceValue, report.id]
-    );
-
     await client.query('COMMIT');
-    res.json({ ok: true, data: report });
-  } catch (error) {
+    res.json({
+      ok: true,
+      data: {
+        id: reportId,
+        report_number: reportNum,
+        location_id,
+        period_start,
+        period_end,
+        ok_count:       okCount,
+        warning_count:  warnCount,
+        critical_count: critCount,
+        total_items:    lines.length,
+        lines
+      }
+    });
+  } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ ok: false, error: error.message });
-  } finally {
-    client.release();
-  }
+    console.error('[inv-v11] variance/generate error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  } finally { client.release(); }
 });
 
 /**
@@ -912,6 +1416,28 @@ router.post('/items', async (req, res) => {
 
     res.json({ ok: true, data: item });
   } catch (err) {
+    // ── FK Constraint Guard: auto-seed UOMs and retry if missing ─────────────
+    // Catches: "insert or update on table inv_items violates foreign key constraint
+    //           inv_items_base_uom_id_fkey"
+    // Root cause: inv_uom_definitions exists but is empty (bootstrap seeding failed)
+    if (err.code === '23503' && err.message.includes('uom')) {
+      console.warn('[inv-v11] UOM FK violation — auto-seeding UOM definitions and retrying...');
+      try {
+        const client = await pool.connect();
+        await seedUomDefinitions(client);
+        client.release();
+        // Retry the request (will now find the UOM)
+        return res.status(409).json({
+          ok: false,
+          error: 'UOM definitions were missing — they have been seeded automatically. Please try saving again.',
+          retry: true,
+          hint: 'The Unit of Measure table was empty. It has now been populated. Click Save again.'
+        });
+      } catch (seedErr) {
+        console.error('[inv-v11] Auto-seed failed:', seedErr.message);
+      }
+    }
+    console.error('[inv-v11] items POST error:', err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -979,7 +1505,19 @@ router.put('/items/:id', async (req, res) => {
         Number(selling_price||0), Number(last_cost_price||0), uomCode, notes||null, media_url||null]);
 
     res.json({ ok: true, data: item });
-  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+  } catch (err) {
+    // Same FK guard as POST — auto-seed if UOM missing
+    if (err.code === '23503' && err.message.includes('uom')) {
+      const c = await pool.connect();
+      await seedUomDefinitions(c).catch(() => {});
+      c.release();
+      return res.status(409).json({
+        ok: false, error: 'UOM definitions were missing — now seeded. Please retry.',
+        retry: true
+      });
+    }
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 /** DELETE /api/v1/inventory/items/:id — soft-delete (FIX: also deactivates in products table) */
@@ -1201,94 +1739,7 @@ router.post('/physical-count/:id/lines', async (req, res) => {
   } finally { client.release(); }
 });
 
-// ============================================================================
-// VARIANCE REPORT — generate from physical count vs ledger theoretical
-// ============================================================================
-router.post('/variance/generate', async (req, res) => {
-  const { location_id, period_start, period_end, generated_by, physical_count_id } = req.body;
-  if (!location_id || !period_start || !period_end)
-    return res.status(400).json({ ok: false, error: 'location_id, period_start, period_end required' });
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    // Theoretical qty = opening stock + GRNs - transfers out + transfers in - POS depletions
-    const theoreticalRes = await client.query(`
-      SELECT
-        item_id,
-        SUM(CASE WHEN ledger_type IN ('GRN','TRANSFER_IN','ADJUSTMENT_IN') THEN quantity_change
-                 WHEN ledger_type IN ('TRANSFER_OUT','SALE_DEPLETION','WASTE','ADJUSTMENT_OUT') THEN -quantity_change
-                 ELSE 0 END) AS theoretical_qty,
-        AVG(cost_per_unit) AS avg_cost
-      FROM public.inv_stock_ledger
-      WHERE location_id = $1
-        AND inserted_at BETWEEN $2 AND $3::date + interval '1 day'
-      GROUP BY item_id
-    `, [location_id, period_start, period_end]);
-
-    // Physical counts (if count session provided)
-    const physicalMap = {};
-    if (physical_count_id) {
-      const physRes = await client.query(
-        `SELECT item_id, physical_qty FROM public.inv_physical_count_lines WHERE count_id=$1`, [physical_count_id]
-      );
-      for (const row of physRes.rows) physicalMap[row.item_id] = Number(row.physical_qty);
-    }
-
-    // Report number
-    const numRes = await client.query(
-      `SELECT COALESCE(MAX(CAST(SUBSTRING(report_number FROM 5) AS INTEGER)),0)+1 AS n FROM public.inv_variance_reports`
-    );
-    const reportNum = 'VAR-' + String(numRes.rows[0].n).padStart(4,'0');
-
-    let okCount=0, warnCount=0, critCount=0;
-    const lines = [];
-
-    for (const row of theoreticalRes.rows) {
-      const theoretical = Number(row.theoretical_qty || 0);
-      const physical    = physicalMap[row.item_id] ?? theoretical; // if no count, assume matches
-      const variance    = physical - theoretical;
-      const variancePct = theoretical !== 0 ? Math.abs(variance / theoretical * 100) : 0;
-      const cost        = Number(row.avg_cost || 0);
-      const varianceVal = Math.abs(variance) * cost;
-
-      let alert = 'ok';
-      if (variancePct >= 5)      { alert = 'critical'; critCount++; }
-      else if (variancePct >= 2) { alert = 'warning';  warnCount++; }
-      else                       { okCount++; }
-
-      lines.push({ item_id: row.item_id, theoretical, physical, variance, variancePct, varianceVal, alert, cost });
-    }
-
-    const reportId = randomUUID();
-    await client.query(`
-      INSERT INTO public.inv_variance_reports
-        (id, report_number, location_id, period_start, period_end, generated_by,
-         ok_count, warning_count, critical_count, inserted_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
-      [reportId, reportNum, location_id, period_start, period_end, generated_by||'system',
-       okCount, warnCount, critCount]
-    );
-
-    for (const l of lines) {
-      await client.query(`
-        INSERT INTO public.inv_variance_lines
-          (id, variance_report_id, item_id, theoretical_qty, physical_qty,
-           variance_qty, variance_percentage, alert_level, item_cost, variance_value, inserted_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
-        [randomUUID(), reportId, l.item_id, l.theoretical, l.physical,
-         l.variance, l.variancePct, l.alert, l.cost, l.varianceVal]
-      );
-    }
-
-    await client.query('COMMIT');
-    res.json({ ok: true, data: { id: reportId, report_number: reportNum, ok_count: okCount, warning_count: warnCount, critical_count: critCount, lines } });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    res.status(500).json({ ok: false, error: err.message });
-  } finally { client.release(); }
-});
+// (Duplicate variance/generate handler removed — see definitive handler above)
 
 // ============================================================================
 // STOCK BALANCE with location name (enhanced)

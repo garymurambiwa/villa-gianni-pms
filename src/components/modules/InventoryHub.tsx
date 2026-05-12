@@ -94,20 +94,43 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const save = async () => {
     if (!form.name?.trim()) { toast({ title: 'Name required', variant: 'destructive' }); return; }
     if (!form.base_uom_id) { toast({ title: 'Base UOM required', variant: 'destructive' }); return; }
-    if (Number(form.selling_price || 0) < Number(form.last_cost_price || 0)) {
+    if (Number(form.selling_price || 0) > 0 && Number(form.last_cost_price || 0) > 0 &&
+        Number(form.selling_price) < Number(form.last_cost_price)) {
       toast({ title: 'Warning', description: 'Selling price is below cost price — margin will be negative', variant: 'destructive' });
     }
     setSaving(true);
-    // Use PUT for edit, POST for create
-    const method = editItem?.id ? 'PUT' : 'POST';
-    const url    = editItem?.id ? `${API}/items/${editItem.id}` : `${API}/items`;
-    const res    = await fetch(url, {
-      method, headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, id: editItem?.id || undefined })
-    }).then(r => r.json());
+    try {
+      const method  = editItem?.id ? 'PUT' : 'POST';
+      const url     = editItem?.id ? `${API}/items/${editItem.id}` : `${API}/items`;
+      const payload = { ...form, id: editItem?.id || undefined };
+
+      let res = await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(r => r.json());
+
+      // ── Auto-retry if server auto-seeded UOMs (FK constraint was missing data) ──
+      // Server returns retry:true when it detected and fixed an empty UOM table
+      if (!res.ok && res.retry) {
+        toast({ title: 'Fixing data…', description: res.hint || 'Re-initialising inventory data. Retrying…' });
+        await new Promise(resolve => setTimeout(resolve, 1200)); // brief pause for seeding
+        res = await fetch(url, {
+          method, headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }).then(r => r.json());
+      }
+
+      if (res.ok) {
+        toast({ title: editItem?.id ? 'Item updated' : 'Item created' });
+        closeModal();
+        reload();
+      } else {
+        toast({ title: 'Save failed', description: res.error || 'Unknown error', variant: 'destructive' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Network error', description: e?.message || 'Could not save item', variant: 'destructive' });
+    }
     setSaving(false);
-    if (res.ok) { toast({ title: editItem?.id ? 'Item updated' : 'Item created' }); closeModal(); reload(); }
-    else toast({ title: 'Error', description: res.error, variant: 'destructive' });
   };
 
   const handleImg = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -170,11 +193,16 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
         </table>
       </div>
 
-      {/* Item Edit/Create Modal */}
+      {/* Item Edit/Create Modal — SINGLE SOURCE OF TRUTH */}
       {editItem !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
-            <h3 className="text-lg font-bold mb-5">{editItem?.id ? 'Edit Item' : 'New Stock Item'}</h3>
+            <h3 className="text-lg font-bold mb-1">{editItem?.id ? 'Edit Item' : 'New Stock Item'}</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              {editItem?.id
+                ? 'Changes sync to POS menu automatically.'
+                : '📦 Inventory is the source of truth. Once saved, this item will appear in the POS stock list and can be received via GRN.'}
+            </p>
 
             <div className="grid grid-cols-2 gap-4">
               {/* Name */}
@@ -986,12 +1014,31 @@ function LocationsManager({ data }: { data: ReturnType<typeof useInventoryData> 
   const save = async () => {
     if (!form.name?.trim()) { toast({ title: 'Name required', variant: 'destructive' }); return; }
     setSaving(true);
-    const res = editLoc?.id
-      ? await apiPost(`/locations/${editLoc.id}`.replace('/locations/', '/locations/'), form)
-      : await fetch(`${API}/locations`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(form) }).then(r=>r.json());
+    try {
+      const isEdit = !!editLoc?.id;
+      const url    = isEdit ? `${API}/locations/${editLoc.id}` : `${API}/locations`;
+      const method = isEdit ? 'PUT' : 'POST';
+      const res    = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(form) }).then(r=>r.json());
+
+      if (res.ok) {
+        // ── If new Outlet location, also create corresponding POS cost centre ──
+        // So POS station selector immediately shows the new outlet without extra steps
+        if (!isEdit && form.location_type === 'Outlet') {
+          try {
+            const pmsAuthDb = (await import('@/lib/pmsAuthDb')).default;
+            await pmsAuthDb.addCostCentre(form.name.trim(), form.description || undefined);
+          } catch { /* non-fatal — location was already created */ }
+        }
+        toast({ title: isEdit ? 'Location updated' : `${form.location_type} location created` });
+        close();
+        reload();
+      } else {
+        toast({ title: 'Error', description: res.error, variant: 'destructive' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Error', description: e?.message || 'Save failed', variant: 'destructive' });
+    }
     setSaving(false);
-    if (res.ok) { toast({ title: editLoc?.id ? 'Location updated' : 'Location created' }); close(); reload(); }
-    else toast({ title: 'Error', description: res.error, variant: 'destructive' });
   };
 
   const del = async (id: string, name: string) => {
@@ -1472,6 +1519,18 @@ type TabId = typeof TABS[number]['id'];
 export const InventoryHub: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('items');
   const data = useInventoryData();
+
+  // Listen for navigation events from other modules (e.g. POS Settings "Add Item" button)
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { module?: string; tab?: TabId };
+      if (detail.module === 'inventory' && detail.tab) {
+        setActiveTab(detail.tab);
+      }
+    };
+    window.addEventListener('navigateToModule', handler as EventListener);
+    return () => window.removeEventListener('navigateToModule', handler as EventListener);
+  }, []);
 
   const renderTab = () => {
     switch (activeTab) {
