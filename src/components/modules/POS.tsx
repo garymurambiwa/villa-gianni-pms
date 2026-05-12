@@ -295,55 +295,50 @@ export const POS: React.FC = () => {
     setCustomerName('');
 
 
-    // Deduct Stock — passes outlet + billId for inventory ledger (background, non-blocking)
-    try {
-      const deductionItems = bill.items.map((item: any) => ({
-        id: item.id,
-        qty: item.quantity
-      }));
-      await deductInventoryStock(
-        deductionItems,
-        activeCategory, // 'bar' | 'restaurant'
-        bill.id,        // idempotency key for inv_stock_ledger
-        activeShift?.id // shift reference for audit trail
-      );
-    } catch (err) {
-      // Non-fatal — POS bill already complete, this is background cleanup
-      console.warn('[POS] Stock deduction warning (non-fatal):', err);
-    }
+    // Deduct Stock — fire-and-forget, non-blocking (POS must complete immediately)
+    const deductionItems = bill.items.map((item: any) => ({
+      id: item.id,
+      qty: item.quantity
+    }));
+    deductInventoryStock(
+      deductionItems,
+      activeCategory, // 'bar' | 'restaurant'
+      bill.id,        // idempotency key for inv_stock_ledger
+      activeShift?.id // shift reference for audit trail
+    ).catch(err => {
+      console.warn('[POS] Stock deduction failed (non-fatal):', err);
+    });
 
-    // Sync POS Bill to DB
-    try {
-      const dbBill = {
-        id: bill.id,
-        bill_number: formatBillNumber(bill.id),
-        outlet: activeCategory === 'bar' ? 'Bar' : 'Restaurant',
-        table_number: null,
-        guest_id: paymentData.paymentMethod === 'room-charge' ? (guests.find((g: any) => g.roomNumber === paymentData.roomNumber)?.id || null) : null,
-        folio_id: folioChargeId || null,
-        room_number: paymentData.roomNumber || null,
-        subtotal: bill.subtotal,
-        tax_amount: bill.tax,
-        discount_amount: 0,
-        service_charge: 0,
-        total_amount: bill.total,
-        items: bill.items,
-        payment_method: paymentData.paymentMethod,
-        payment_status: paymentData.paymentMethod === 'room-charge' ? 'charged_to_room' : 'paid',
-        amount_paid: bill.total,
-        change_amount: 0,
-        business_date: activeShift?.date || new Date().toISOString().slice(0, 10),
-        opened_at: bill.createdAt,
-        closed_at: new Date().toISOString(),
-        opened_by: user?.username || 'system',
-        closed_by: user?.username || 'system',
-        is_voided: false,
-        shift_id: activeShift?.id || null
-      };
-      await syncPosBillToDb(dbBill as any);
-    } catch (err) {
+    // Sync POS Bill to DB — fire-and-forget, non-blocking
+    const dbBill = {
+      id: bill.id,
+      bill_number: formatBillNumber(bill.id),
+      outlet: activeCategory === 'bar' ? 'Bar' : 'Restaurant',
+      table_number: null,
+      guest_id: paymentData.paymentMethod === 'room-charge' ? (guests.find((g: any) => g.roomNumber === paymentData.roomNumber)?.id || null) : null,
+      folio_id: folioChargeId || null,
+      room_number: paymentData.roomNumber || null,
+      subtotal: bill.subtotal,
+      tax_amount: bill.tax,
+      discount_amount: 0,
+      service_charge: 0,
+      total_amount: bill.total,
+      items: bill.items,
+      payment_method: paymentData.paymentMethod,
+      payment_status: paymentData.paymentMethod === 'room-charge' ? 'charged_to_room' : 'paid',
+      amount_paid: bill.total,
+      change_amount: 0,
+      business_date: activeShift?.date || new Date().toISOString().slice(0, 10),
+      opened_at: bill.createdAt,
+      closed_at: new Date().toISOString(),
+      opened_by: user?.username || 'system',
+      closed_by: user?.username || 'system',
+      is_voided: false,
+      shift_id: activeShift?.id || null
+    };
+    syncPosBillToDb(dbBill as any).catch(err => {
       console.error('Failed to sync POS bill to DB:', err);
-    }
+    });
 
     return { ok: true, method: paymentData.paymentMethod, billId: bill.id, folioPosted, folioChargeId };
   };
