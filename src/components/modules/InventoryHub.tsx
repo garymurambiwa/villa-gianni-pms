@@ -94,20 +94,43 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const save = async () => {
     if (!form.name?.trim()) { toast({ title: 'Name required', variant: 'destructive' }); return; }
     if (!form.base_uom_id) { toast({ title: 'Base UOM required', variant: 'destructive' }); return; }
-    if (Number(form.selling_price || 0) < Number(form.last_cost_price || 0)) {
+    if (Number(form.selling_price || 0) > 0 && Number(form.last_cost_price || 0) > 0 &&
+        Number(form.selling_price) < Number(form.last_cost_price)) {
       toast({ title: 'Warning', description: 'Selling price is below cost price — margin will be negative', variant: 'destructive' });
     }
     setSaving(true);
-    // Use PUT for edit, POST for create
-    const method = editItem?.id ? 'PUT' : 'POST';
-    const url    = editItem?.id ? `${API}/items/${editItem.id}` : `${API}/items`;
-    const res    = await fetch(url, {
-      method, headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, id: editItem?.id || undefined })
-    }).then(r => r.json());
+    try {
+      const method  = editItem?.id ? 'PUT' : 'POST';
+      const url     = editItem?.id ? `${API}/items/${editItem.id}` : `${API}/items`;
+      const payload = { ...form, id: editItem?.id || undefined };
+
+      let res = await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(r => r.json());
+
+      // ── Auto-retry if server auto-seeded UOMs (FK constraint was missing data) ──
+      // Server returns retry:true when it detected and fixed an empty UOM table
+      if (!res.ok && res.retry) {
+        toast({ title: 'Fixing data…', description: res.hint || 'Re-initialising inventory data. Retrying…' });
+        await new Promise(resolve => setTimeout(resolve, 1200)); // brief pause for seeding
+        res = await fetch(url, {
+          method, headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }).then(r => r.json());
+      }
+
+      if (res.ok) {
+        toast({ title: editItem?.id ? 'Item updated' : 'Item created' });
+        closeModal();
+        reload();
+      } else {
+        toast({ title: 'Save failed', description: res.error || 'Unknown error', variant: 'destructive' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Network error', description: e?.message || 'Could not save item', variant: 'destructive' });
+    }
     setSaving(false);
-    if (res.ok) { toast({ title: editItem?.id ? 'Item updated' : 'Item created' }); closeModal(); reload(); }
-    else toast({ title: 'Error', description: res.error, variant: 'destructive' });
   };
 
   const handleImg = (e: React.ChangeEvent<HTMLInputElement>) => {

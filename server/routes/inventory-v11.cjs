@@ -24,6 +24,61 @@ const router = express.Router();
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 // ============================================================================
+// SEED FUNCTIONS — extracted so they can be called from BOTH branches of bootstrap
+// (first boot AND existing-tables path). All use ON CONFLICT DO NOTHING — idempotent.
+// ============================================================================
+
+const UOM_SEED = [
+  ['uom_unit',   'UNIT',   'Unit',        'Count'],
+  ['uom_case',   'CASE',   'Case',        'Count'],
+  ['uom_bottle', 'BOTTLE', 'Bottle',      'Count'],
+  ['uom_can',    'CAN',    'Can',         'Count'],
+  ['uom_crate',  'CRATE',  'Crate',       'Count'],
+  ['uom_dozen',  'DOZ',    'Dozen',       'Count'],
+  ['uom_box',    'BOX',    'Box',         'Count'],
+  ['uom_bag',    'BAG',    'Bag',         'Count'],
+  ['uom_pkt',    'PKT',    'Packet',      'Count'],
+  ['uom_drum',   'DRUM',   'Drum',        'Count'],
+  ['uom_portion','POR',    'Portion',     'Count'],
+  ['uom_liter',  'LITER',  'Litre',       'Volume'],
+  ['uom_ml',     'ML',     'Millilitre',  'Volume'],
+  ['uom_tot',    'TOT',    'Tot',         'Volume'],
+  ['uom_g',      'G',      'Gram',        'Weight'],
+  ['uom_kg',     'KG',     'Kilogram',    'Weight'],
+];
+
+const STORAGE_SEED = [
+  ['loc_main_cellar', 'Main Cellar',            'Storage'],
+  ['loc_dry_goods',   'Dry Goods Store',         'Storage'],
+  ['loc_freezer',     'Freezer / Perishables',   'Storage'],
+  ['loc_perishables', 'Perishables',             'Storage'],
+];
+
+async function seedUomDefinitions(client) {
+  let seeded = 0;
+  for (const [id, code, name, cat] of UOM_SEED) {
+    const r = await client.query(
+      `INSERT INTO public.inv_uom_definitions (id, code, name, category)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING`,
+      [id, code, name, cat]
+    );
+    seeded += r.rowCount || 0;
+  }
+  if (seeded > 0) console.log(`[inv-v11] Seeded ${seeded} UOM definitions`);
+  return seeded;
+}
+
+async function seedDefaultLocations(client) {
+  for (const [id, name, type] of STORAGE_SEED) {
+    await client.query(
+      `INSERT INTO public.inv_locations (id, name, location_type)
+       VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
+      [id, name, type]
+    );
+  }
+}
+
+// ============================================================================
 // AUTO-BOOTSTRAP: Create inventory tables on first load if missing
 // ============================================================================
 
@@ -36,7 +91,11 @@ async function ensureInventoryTables() {
        WHERE table_schema='public' AND table_name='inv_locations' LIMIT 1`
     );
     if (check.rows.length > 0) {
-      // Tables exist — just ensure latest columns are present
+      // Tables exist — ensure latest columns AND always re-seed UOMs
+      // FIX: The "tables exist" branch previously returned WITHOUT seeding UOMs.
+      // If tables were created but seeding failed (restart/timeout), inv_uom_definitions
+      // would be empty → every item INSERT fails with FK constraint violation.
+      // Solution: always run seed with ON CONFLICT DO NOTHING (safe, idempotent).
       await client.query(`ALTER TABLE public.inv_locations ADD COLUMN IF NOT EXISTS description TEXT`);
       await client.query(`ALTER TABLE public.inv_locations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
       await client.query(`ALTER TABLE public.inv_uom_definitions ADD COLUMN IF NOT EXISTS description TEXT`);
@@ -44,6 +103,14 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_by TEXT`);
       await client.query(`ALTER TABLE public.inv_stock_ledger ADD COLUMN IF NOT EXISTS inserted_at TIMESTAMPTZ DEFAULT NOW()`);
+
+      // ALWAYS re-seed UOMs — safe because of ON CONFLICT DO NOTHING
+      // This fixes the case where tables exist but UOM data was never inserted
+      await seedUomDefinitions(client);
+
+      // ALWAYS re-seed default storage locations
+      await seedDefaultLocations(client);
+
       await syncCostCentresToLocations(client);
       return;
     }
@@ -291,38 +358,9 @@ async function ensureInventoryTables() {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_type ON public.inv_stock_ledger(ledger_type)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_ref ON public.inv_stock_ledger(reference_number) WHERE reference_number IS NOT NULL`);
 
-    // ── Seed standard UOM definitions ──────────────────────────────────────
-    const uomSeed = [
-      ['uom_unit','UNIT','Unit','Count'],
-      ['uom_case','CASE','Case','Count'],['uom_bottle','BOTTLE','Bottle','Count'],
-      ['uom_can','CAN','Can','Count'],['uom_crate','CRATE','Crate','Count'],
-      ['uom_dozen','DOZ','Dozen','Count'],['uom_box','BOX','Box','Count'],
-      ['uom_bag','BAG','Bag','Count'],['uom_pkt','PKT','Packet','Count'],
-      ['uom_drum','DRUM','Drum','Count'],['uom_portion','POR','Portion','Count'],
-      ['uom_liter','LITER','Litre','Volume'],['uom_ml','ML','Millilitre','Volume'],
-      ['uom_tot','TOT','Tot','Volume'],['uom_g','G','Gram','Weight'],
-      ['uom_kg','KG','Kilogram','Weight'],
-    ];
-    for (const [id, code, name, cat] of uomSeed) {
-      await client.query(
-        `INSERT INTO public.inv_uom_definitions (id,code,name,category) VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING`,
-        [id, code, name, cat]
-      );
-    }
-
-    // ── Seed locations from cost_centres + default storage ─────────────────
-    const storageSeed = [
-      ['loc_main_cellar','Main Cellar','Storage'],
-      ['loc_dry_goods','Dry Goods Store','Storage'],
-      ['loc_freezer','Freezer / Perishables','Storage'],
-      ['loc_perishables','Perishables','Storage'],
-    ];
-    for (const [id, name, type] of storageSeed) {
-      await client.query(
-        `INSERT INTO public.inv_locations (id,name,location_type) VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING`,
-        [id, name, type]
-      );
-    }
+    // ── Seed standard UOM definitions + default locations ─────────────────
+    await seedUomDefinitions(client);
+    await seedDefaultLocations(client);
 
     // Sync all existing cost_centres as Outlet locations
     await syncCostCentresToLocations(client);
@@ -1378,6 +1416,28 @@ router.post('/items', async (req, res) => {
 
     res.json({ ok: true, data: item });
   } catch (err) {
+    // ── FK Constraint Guard: auto-seed UOMs and retry if missing ─────────────
+    // Catches: "insert or update on table inv_items violates foreign key constraint
+    //           inv_items_base_uom_id_fkey"
+    // Root cause: inv_uom_definitions exists but is empty (bootstrap seeding failed)
+    if (err.code === '23503' && err.message.includes('uom')) {
+      console.warn('[inv-v11] UOM FK violation — auto-seeding UOM definitions and retrying...');
+      try {
+        const client = await pool.connect();
+        await seedUomDefinitions(client);
+        client.release();
+        // Retry the request (will now find the UOM)
+        return res.status(409).json({
+          ok: false,
+          error: 'UOM definitions were missing — they have been seeded automatically. Please try saving again.',
+          retry: true,
+          hint: 'The Unit of Measure table was empty. It has now been populated. Click Save again.'
+        });
+      } catch (seedErr) {
+        console.error('[inv-v11] Auto-seed failed:', seedErr.message);
+      }
+    }
+    console.error('[inv-v11] items POST error:', err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -1445,7 +1505,19 @@ router.put('/items/:id', async (req, res) => {
         Number(selling_price||0), Number(last_cost_price||0), uomCode, notes||null, media_url||null]);
 
     res.json({ ok: true, data: item });
-  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+  } catch (err) {
+    // Same FK guard as POST — auto-seed if UOM missing
+    if (err.code === '23503' && err.message.includes('uom')) {
+      const c = await pool.connect();
+      await seedUomDefinitions(c).catch(() => {});
+      c.release();
+      return res.status(409).json({
+        ok: false, error: 'UOM definitions were missing — now seeded. Please retry.',
+        retry: true
+      });
+    }
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 /** DELETE /api/v1/inventory/items/:id — soft-delete (FIX: also deactivates in products table) */
