@@ -170,11 +170,16 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
         </table>
       </div>
 
-      {/* Item Edit/Create Modal */}
+      {/* Item Edit/Create Modal — SINGLE SOURCE OF TRUTH */}
       {editItem !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
-            <h3 className="text-lg font-bold mb-5">{editItem?.id ? 'Edit Item' : 'New Stock Item'}</h3>
+            <h3 className="text-lg font-bold mb-1">{editItem?.id ? 'Edit Item' : 'New Stock Item'}</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              {editItem?.id
+                ? 'Changes sync to POS menu automatically.'
+                : '📦 Inventory is the source of truth. Once saved, this item will appear in the POS stock list and can be received via GRN.'}
+            </p>
 
             <div className="grid grid-cols-2 gap-4">
               {/* Name */}
@@ -1491,6 +1496,18 @@ type TabId = typeof TABS[number]['id'];
 export const InventoryHub: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('items');
   const data = useInventoryData();
+
+  // Listen for navigation events from other modules (e.g. POS Settings "Add Item" button)
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { module?: string; tab?: TabId };
+      if (detail.module === 'inventory' && detail.tab) {
+        setActiveTab(detail.tab);
+      }
+    };
+    window.addEventListener('navigateToModule', handler as EventListener);
+    return () => window.removeEventListener('navigateToModule', handler as EventListener);
+  }, []);
 
   const renderTab = () => {
     switch (activeTab) {

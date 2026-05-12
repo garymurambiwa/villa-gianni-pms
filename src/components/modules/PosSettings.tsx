@@ -2074,7 +2074,17 @@ export const PosSettings: React.FC = () => {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'pos' } }))}>Back to POS</Button>
-          <Button className="bg-indigo-600 text-white" onClick={() => setStockOpen(true)}>New Stock Item</Button>
+          {/* ARCHITECTURE: Inventory Control is the single source of truth for item creation.
+              New items must be created in Inventory → Items, which auto-syncs to products/POS.
+              POS Settings Stock List is a POS-properties editor (selling price, visibility)
+              for items that already exist in the Inventory module. */}
+          <Button
+            className="bg-indigo-600 text-white"
+            title="Items are created in Inventory Control. Click to open Inventory → Items"
+            onClick={() => window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'inventory', tab: 'items' } }))}
+          >
+            <span className="mr-1">📦</span> Add Item (Inventory)
+          </Button>
         </div>
       </div>
 
@@ -2644,7 +2654,35 @@ export const PosSettings: React.FC = () => {
       )}
 
       {activeTab === 'stock' && activeSectionId === 'stock-list' && (
-        <Section id="stock-list" title="Stock List">
+        <Section id="stock-list" title="Stock List — POS Properties Editor">
+          {/* ── ARCHITECTURE BANNER ──────────────────────────────────────────────
+              This list is a POS-properties EDITOR — not the item master.
+              Items are CREATED and managed in Inventory Control → Items.
+              Here you can edit: Selling Price, Bar/Restaurant Visibility, POS Category.
+              Cost Price, UOM, Stock Levels and Supplier are managed in Inventory.
+          ─────────────────────────────────────────────────────────────────────── */}
+          <div className="flex items-start gap-3 mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+            <span className="text-blue-500 text-lg shrink-0">ℹ️</span>
+            <div className="flex-1">
+              <p className="font-semibold text-blue-800">Inventory Control is the source of truth for item creation.</p>
+              <p className="text-blue-600 mt-0.5">
+                Use this list to set <strong>POS selling prices</strong>, <strong>menu visibility</strong> and <strong>categories</strong> for existing items.
+                To add new items, receive stock, or manage cost prices — use&nbsp;
+                <button
+                  className="font-bold underline text-blue-700 hover:text-blue-900"
+                  onClick={() => window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'inventory' } }))}
+                >
+                  Inventory Control → Items
+                </button>.
+              </p>
+            </div>
+            <button
+              className="shrink-0 px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700"
+              onClick={() => window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'inventory' } }))}
+            >
+              📦 Go to Inventory
+            </button>
+          </div>
           <StockTab
             items={items}
             userRole={user?.role || null}
