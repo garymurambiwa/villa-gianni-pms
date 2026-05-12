@@ -351,183 +351,113 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       }
     };
 
-    const processAsync = async () => {
-      // Add timeout protection (30 seconds max)
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Payment processing timeout')), 30000);
-      });
+    const processAsync = () => {
+      // COMPLETELY NON-BLOCKING: No async/await anywhere in this function
+      // Everything runs in background, payment completes immediately
 
-      try {
-        await Promise.race([
-          (async () => {
-            if (paymentMethod === 'card') {
-              const gw = await processCardPayment({ amount: discountedTotal, currency: 'USD', token: undefined, meta: paymentData.meta });
-              if (gw.status === 'declined') {
-                logPaymentEvent({ type: 'payment_declined', data: { billId: bill.id, amount: discountedTotal } });
-                alert('Card declined. Please try another payment method.');
-                setIsProcessing(false);
-                return;
-              }
-              if (gw.status === 'timeout') {
-                logPaymentEvent({ type: 'payment_timeout', data: { billId: bill.id, amount: discountedTotal } });
-                alert('Payment timeout. Please retry.');
-                setIsProcessing(false);
-                return;
-              }
+      // Handle card payments (synchronous simulation)
+      if (paymentMethod === 'card') {
+        processCardPayment({ amount: discountedTotal, currency: 'USD', token: undefined, meta: paymentData.meta })
+          .then(gw => {
+            if (gw.status === 'declined') {
+              logPaymentEvent({ type: 'payment_declined', data: { billId: bill.id, amount: discountedTotal } });
+              // Modal already closed, can't show alert
+              console.warn('Card payment declined after modal closed');
+            } else if (gw.status === 'timeout') {
+              logPaymentEvent({ type: 'payment_timeout', data: { billId: bill.id, amount: discountedTotal } });
+              console.warn('Card payment timed out after modal closed');
+            } else {
               paymentData.meta = { ...(paymentData.meta || {}), gatewayAuth: gw.authCode, gatewayRef: gw.reference };
             }
-            // Call payment completion handler (now non-blocking)
-            try {
-              onPaymentComplete(paymentData).then((result: any) => {
-                if (result && result.ok === false) {
-                  console.error('Payment completion failed:', result);
-                  // Don't show alert since modal is already closed
-                }
-              }).catch((error) => {
-                console.error('Payment completion error:', error);
-              });
-            } catch (immediateError) {
-              console.error('Payment completion handler failed immediately:', immediateError);
-              // Reset processing state if handler fails immediately
-              setIsProcessing(false);
-              alert('Payment processing failed. Please try again.');
-              return;
-            }
-            logPaymentEvent({ type: 'payment_success', data: { billId: bill.id, amount: discountedTotal, method: paymentMethod } });
-          })(),
-          timeoutPromise
-        ]);
-      } catch (error) {
-        console.error('Payment processing failed:', error);
-        const isTimeout = String(error).includes('timeout');
-        alert(isTimeout ? 'Payment processing timed out. Please try again.' : 'Payment processing failed. Please try again.');
-        logPaymentEvent({ type: isTimeout ? 'payment_timeout' : 'payment_error', data: { billId: bill.id, error: String((error as any)?.message || error) } });
-        try {
-          const raw = localStorage.getItem('corepms_payment_logs');
-          const list = raw ? JSON.parse(raw) : [];
-          const recent = list.filter((e: any) => e.type && String(e.type).includes('payment_') && Date.now() - new Date(e.ts).getTime() < 10*60*1000);
-          const failures = recent.filter((e: any) => e.type === 'payment_error' || e.type === 'payment_declined' || e.type === 'payment_timeout');
-          if (failures.length >= 3) {
-            toast({ title: 'Multiple payment failures detected', description: 'Please check gateway/network connectivity.', variant: 'destructive' });
-          }
-        } catch {}
-        setIsProcessing(false);
-        return;
+          })
+          .catch(error => {
+            console.error('Card payment error:', error);
+          });
       }
-    }
 
-    const isCityLedgerPosting = (paymentMethod === 'city-ledger' || (paymentMethod === 'room-charge' && roomChargeType === 'city-ledger')) && selectedAccount;
-    if (isCityLedgerPosting) {
+      // Call payment completion handler (non-blocking)
       try {
-        // City Ledger posting should also be non-blocking
-        addCityLedgerTransaction(selectedAccount.id, {
-          date: new Date().toISOString().slice(0,10),
-          reference: clReference,
-          description: 'Direct Bill Posting',
-          debit: discountedTotal,
-        }).then(() => {
-          toast({ title: 'Posted to City Ledger', description: `${selectedAccount.name} (${selectedAccount.id}) • ${formatCurrency(discountedTotal)}` });
-        }).catch((e) => {
-          console.error('City Ledger post failed', e);
-          toast({ title: 'City Ledger posting failed', description: 'Please try again or check account status.', variant: 'destructive' });
+        onPaymentComplete(paymentData).catch(error => {
+          console.error('Payment completion error:', error);
         });
-      } catch (e) {
-        console.error('City Ledger post failed immediately', e);
-        toast({ title: 'City Ledger posting failed', description: 'Please try again or check account status.', variant: 'destructive' });
+      } catch (immediateError) {
+        console.error('Payment completion handler failed immediately:', immediateError);
       }
-    }
 
-    // Post-processing (receipts, etc.) — fire-and-forget, non-blocking
-    if (effectiveSettings) {
-      (async () => {
+      // City Ledger posting (non-blocking)
+      const isCityLedgerPosting = (paymentMethod === 'city-ledger' || (paymentMethod === 'room-charge' && roomChargeType === 'city-ledger')) && selectedAccount;
+      if (isCityLedgerPosting) {
         try {
-          const subMain = Array.isArray(bill.items) ? bill.items.reduce((s, i) => s + Number(i.subtotal != null ? i.subtotal : (Number(i.quantity || 0) * Number(i.price || 0))), 0) : 0
-          let taxLinesMain: Array<{ name: string; amount: number }> = []
-          let totalMain = Number(bill.total || 0)
-          try {
-            const calcMain = await calculateTaxBreakdown(subMain, 'pos')
-            taxLinesMain = calcMain.lines.map(l => ({ name: l.name, amount: l.amount }))
-            totalMain = calcMain.total
-          } catch {}
-          const receiptType = paymentMethod === 'room-charge' && roomChargeType === 'folio' ? 'folio' : 'receipt';
-          const receiptHTML = isCityLedgerPosting && selectedAccount ?
-            generateCityLedgerReceiptHTML({ id: selectedAccount.id, name: selectedAccount.name }, `CL-${bill.id}`, [{ date: new Date().toISOString().slice(0,10), description: 'Bill Payment', debit: discountedTotal }], receiptSettings?.tax_rate) :
-            generateReceiptHTML(
-              { ...bill, customerName: (paymentMethod === 'room-charge' && roomChargeType === 'folio') ? customerName : undefined, roomNumber: (paymentMethod === 'room-charge' && roomChargeType === 'folio') ? roomNumber : undefined, total: totalMain, paymentMethod },
-              effectiveSettings,
-              receiptType,
-              { includeSignature: paymentMethod === 'room-charge' && roomChargeType === 'folio', showTaxBreakdown: effectiveSettings.show_tax_breakdown, serverName: currentUser?.name, taxLines: taxLinesMain, subtotalOverride: subMain, totalOverride: totalMain }
-            );
-          printDocument(receiptHTML, `Receipt-${bill.id}`);
-          if (splits.length) {
-            for (let idx = 0; idx < splits.length; idx++) {
-              const s = splits[idx];
-              const subSplit = Array.isArray(bill.items) ? bill.items.reduce((sum, i) => sum + Number(i.subtotal != null ? i.subtotal : (Number(i.quantity || 0) * Number(i.price || 0))), 0) * (s.amount / Number(bill.total || 1)) : s.amount
-              let taxLinesSplit: Array<{ name: string; amount: number }> = []
-              try {
-                const calcSplit = await calculateTaxBreakdown(subSplit, 'pos')
-                taxLinesSplit = calcSplit.lines.map(l => ({ name: l.name, amount: l.amount }))
-              } catch {}
-               const html = generateReceiptHTML({ ...bill, total: s.amount, paymentMethod }, effectiveSettings, 'receipt', { showTaxBreakdown: effectiveSettings.show_tax_breakdown, serverName: currentUser?.name, taxLines: taxLinesSplit, subtotalOverride: subSplit, totalOverride: s.amount });
-              printDocument(html, `Split-${idx+1}-${bill.id}`);
-            }
-          }
-          if (emailReceipt && validateEmail(emailReceipt)) {
-            const subject = `Receipt ${bill.id} - ${effectiveSettings.restaurant_name}`;
-            const itemsSafe = Array.isArray(bill.items) ? bill.items : [];
-            const bodyLines = [
-              `${effectiveSettings.restaurant_name}`,
-              `Bill: ${bill.id}`,
-              `Total: ${formatCurrency(discountedTotal)}`,
-              '',
-              'Items:',
-              ...itemsSafe.map(i => `- ${i.name} x${i.quantity} = ${formatCurrency(i.subtotal)}`),
-              '',
-              'Thank you for your patronage.'
-            ];
-            sendReceiptEmail(emailReceipt, subject, bodyLines.join('\n'));
-          }
+          addCityLedgerTransaction(selectedAccount.id, {
+            date: new Date().toISOString().slice(0,10),
+            reference: clReference,
+            description: 'Direct Bill Posting',
+            debit: discountedTotal,
+          }).then(() => {
+            toast({ title: 'Posted to City Ledger', description: `${selectedAccount.name} (${selectedAccount.id}) • ${formatCurrency(discountedTotal)}` });
+          }).catch((e) => {
+            console.error('City Ledger post failed', e);
+            toast({ title: 'City Ledger posting failed', description: 'Please try again or check account status.', variant: 'destructive' });
+          });
         } catch (e) {
-          console.warn('Post-processing failed', e as any);
+          console.error('City Ledger post failed immediately', e);
         }
-      })();
-    }
-
-    try {
-      const entry = createAuditEntry(
-        isCityLedgerPosting ? 'CITY_LEDGER_POST' : 'PAYMENT_COMPLETE',
-        'BILL',
-        bill.id,
-        currentUser?.id || 'unknown',
-        {
-          ...paymentData,
-          postingUser: currentUser?.name,
-          postingUserId: currentUser?.id,
-          workstation: window.location.hostname,
-          userAgent: navigator.userAgent,
-          department: deptHeuristic,
-          managerOverrideApplied: isCityLedgerPosting ? (managerOverride && canManagerOverride) : false,
-        }
-      );
-      const raw = localStorage.getItem('corepms_pos_audit');
-      const list = raw ? JSON.parse(raw) : [];
-      localStorage.setItem('corepms_pos_audit', JSON.stringify([entry, ...list].slice(0,500)));
-    } catch {}
-    }
-    // Optimistic UI: close now, process in background
-    onClose();
-
-    // Process payment in background with timeout protection
-    setTimeout(async () => {
-      try {
-        await processAsync();
-      } catch (error) {
-        console.error('Payment processing failed:', error);
-        // Reset processing state in case modal is still open (shouldn't happen but safety net)
-        setIsProcessing(false);
       }
-    }, 0)
-  };
+
+      // Receipt printing (non-blocking)
+      if (effectiveSettings) {
+        setTimeout(() => {
+          try {
+            const subMain = Array.isArray(bill.items) ? bill.items.reduce((s, i) => s + Number(i.subtotal != null ? i.subtotal : (Number(i.quantity || 0) * Number(i.price || 0))), 0) : 0;
+            const receiptType = paymentMethod === 'room-charge' && roomChargeType === 'folio' ? 'folio' : 'receipt';
+            const receiptHTML = isCityLedgerPosting && selectedAccount ?
+              generateCityLedgerReceiptHTML({ id: selectedAccount.id, name: selectedAccount.name }, `CL-${bill.id}`, [{ date: new Date().toISOString().slice(0,10), description: 'Bill Payment', debit: discountedTotal }], receiptSettings?.tax_rate) :
+              generateReceiptHTML(
+                { ...bill, customerName: (paymentMethod === 'room-charge' && roomChargeType === 'folio') ? customerName : undefined, roomNumber: (paymentMethod === 'room-charge' && roomChargeType === 'folio') ? roomNumber : undefined, total: bill.total, paymentMethod },
+                effectiveSettings,
+                receiptType,
+                { includeSignature: paymentMethod === 'room-charge' && roomChargeType === 'folio', showTaxBreakdown: effectiveSettings.show_tax_breakdown, serverName: currentUser?.name }
+              );
+            printDocument(receiptHTML, `Receipt-${bill.id}`);
+          } catch (e) {
+            console.warn('Receipt printing failed', e);
+          }
+        }, 100); // Small delay to ensure modal is fully closed
+      }
+
+      // Audit logging (non-blocking)
+      try {
+        const entry = createAuditEntry(
+          isCityLedgerPosting ? 'CITY_LEDGER_POST' : 'PAYMENT_COMPLETE',
+          'BILL',
+          bill.id,
+          currentUser?.id || 'unknown',
+          {
+            ...paymentData,
+            postingUser: currentUser?.name,
+            postingUserId: currentUser?.id,
+            workstation: window.location.hostname,
+            userAgent: navigator.userAgent,
+            department: deptHeuristic,
+          }
+        );
+        const raw = localStorage.getItem('corepms_pos_audit');
+        const list = raw ? JSON.parse(raw) : [];
+        localStorage.setItem('corepms_pos_audit', JSON.stringify([entry, ...list].slice(0,500)));
+      } catch (e) {
+        console.warn('Audit logging failed', e);
+      }
+
+      // Close modal immediately and process in background
+      onClose();
+      setTimeout(() => {
+        try {
+          processAsync();
+        } catch (error) {
+          console.error('Payment processing failed:', error);
+        }
+      }, 0);
+    };
 
   if (!isOpen) return null;
 
