@@ -19,6 +19,20 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '50mb' }));
 
+// ── Mount inventory v11 router (/api/v1/inventory/*) ──────────────────────────
+// Provides all advanced inventory routes to Vercel deployments:
+//   Items CRUD, GRN (post + list), Transfers (create + approve),
+//   Recipes, Variance reports, Locations CRUD, UOM CRUD, Sale Depletion
+// Uses DATABASE_URL env var (must be set in Vercel project settings)
+try {
+  const inventoryRouter = require('../server/routes/inventory-v11.cjs');
+  app.use('/api/v1/inventory', inventoryRouter);
+  console.log('[handler] inventory-v11 routes mounted at /api/v1/inventory');
+} catch (e) {
+  console.warn('[handler] inventory-v11 router failed to load (inventory features unavailable):', e.message);
+  // Graceful degradation — all other routes still work
+}
+
 // ─── Utility ─────────────────────────────────────────────────────────────────
 const safeJson = (res, data) => {
   res.setHeader('Content-Type', 'application/json');

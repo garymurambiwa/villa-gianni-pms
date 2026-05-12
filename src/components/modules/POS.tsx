@@ -295,15 +295,21 @@ export const POS: React.FC = () => {
     setCustomerName('');
 
 
-    // Deduct Stock
+    // Deduct Stock — passes outlet + billId for inventory ledger (background, non-blocking)
     try {
       const deductionItems = bill.items.map((item: any) => ({
         id: item.id,
         qty: item.quantity
       }));
-      await deductInventoryStock(deductionItems);
+      await deductInventoryStock(
+        deductionItems,
+        activeCategory, // 'bar' | 'restaurant'
+        bill.id,        // idempotency key for inv_stock_ledger
+        activeShift?.id // shift reference for audit trail
+      );
     } catch (err) {
-      console.error('Failed to deduct stock:', err);
+      // Non-fatal — POS bill already complete, this is background cleanup
+      console.warn('[POS] Stock deduction warning (non-fatal):', err);
     }
 
     // Sync POS Bill to DB
