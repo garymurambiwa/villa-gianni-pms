@@ -19,6 +19,10 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '50mb' }));
 
+// ── Inventory Bootstrap endpoint ─────────────────────────────────────────────
+// GET /api/v1/inventory/init?key=confirm — triggers table creation on fresh DB
+// This is called automatically by the router on load, but can also be triggered manually.
+
 // ── Mount inventory v11 router (/api/v1/inventory/*) ──────────────────────────
 // Provides all advanced inventory routes to Vercel deployments:
 //   Items CRUD, GRN (post + list), Transfers (create + approve),

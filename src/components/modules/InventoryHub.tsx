@@ -986,12 +986,31 @@ function LocationsManager({ data }: { data: ReturnType<typeof useInventoryData> 
   const save = async () => {
     if (!form.name?.trim()) { toast({ title: 'Name required', variant: 'destructive' }); return; }
     setSaving(true);
-    const res = editLoc?.id
-      ? await apiPost(`/locations/${editLoc.id}`.replace('/locations/', '/locations/'), form)
-      : await fetch(`${API}/locations`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(form) }).then(r=>r.json());
+    try {
+      const isEdit = !!editLoc?.id;
+      const url    = isEdit ? `${API}/locations/${editLoc.id}` : `${API}/locations`;
+      const method = isEdit ? 'PUT' : 'POST';
+      const res    = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(form) }).then(r=>r.json());
+
+      if (res.ok) {
+        // ── If new Outlet location, also create corresponding POS cost centre ──
+        // So POS station selector immediately shows the new outlet without extra steps
+        if (!isEdit && form.location_type === 'Outlet') {
+          try {
+            const pmsAuthDb = (await import('@/lib/pmsAuthDb')).default;
+            await pmsAuthDb.addCostCentre(form.name.trim(), form.description || undefined);
+          } catch { /* non-fatal — location was already created */ }
+        }
+        toast({ title: isEdit ? 'Location updated' : `${form.location_type} location created` });
+        close();
+        reload();
+      } else {
+        toast({ title: 'Error', description: res.error, variant: 'destructive' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Error', description: e?.message || 'Save failed', variant: 'destructive' });
+    }
     setSaving(false);
-    if (res.ok) { toast({ title: editLoc?.id ? 'Location updated' : 'Location created' }); close(); reload(); }
-    else toast({ title: 'Error', description: res.error, variant: 'destructive' });
   };
 
   const del = async (id: string, name: string) => {

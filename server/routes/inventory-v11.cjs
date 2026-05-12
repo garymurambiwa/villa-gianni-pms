@@ -1,20 +1,402 @@
 /**
  * COREPMS v11 Inventory Module - Express API Routes
  * Location: server/routes/inventory-v11.cjs
- * 
- * All routes follow the v11 spec with proper error handling and transaction support
+ *
+ * Self-bootstrapping: automatically creates all inventory tables on first load
+ * if they do not exist. This means the module works on any clean database
+ * (fresh Baradzanwa deployment, new property, etc.) without manual migration.
+ *
+ * Also syncs with POS cost_centres table:
+ * - Every cost_centre is reflected as an inv_locations Outlet
+ * - Creating/deleting a location also updates cost_centres (and vice versa)
  */
 
 const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
 const { randomUUID } = require('crypto');
+const fs = require('fs');
 
 // Load environment
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
 const router = express.Router();
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// ============================================================================
+// AUTO-BOOTSTRAP: Create inventory tables on first load if missing
+// ============================================================================
+
+async function ensureInventoryTables() {
+  const client = await pool.connect();
+  try {
+    // Check if inv_locations already exists — if so, tables are set up
+    const check = await client.query(
+      `SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='inv_locations' LIMIT 1`
+    );
+    if (check.rows.length > 0) {
+      // Tables exist — just ensure latest columns are present
+      await client.query(`ALTER TABLE public.inv_locations ADD COLUMN IF NOT EXISTS description TEXT`);
+      await client.query(`ALTER TABLE public.inv_locations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
+      await client.query(`ALTER TABLE public.inv_uom_definitions ADD COLUMN IF NOT EXISTS description TEXT`);
+      await client.query(`ALTER TABLE public.inv_items ADD COLUMN IF NOT EXISTS selling_price NUMERIC(10,2) DEFAULT 0.00`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_by TEXT`);
+      await client.query(`ALTER TABLE public.inv_stock_ledger ADD COLUMN IF NOT EXISTS inserted_at TIMESTAMPTZ DEFAULT NOW()`);
+      await syncCostCentresToLocations(client);
+      return;
+    }
+
+    console.log('[inv-v11] First boot detected — creating inventory tables...');
+
+    // ── UOM Definitions ────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_uom_definitions (
+        id TEXT PRIMARY KEY,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'Count',
+        description TEXT,
+        inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── Locations ──────────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_locations (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        location_type TEXT NOT NULL CHECK (location_type IN ('Storage','Outlet')),
+        parent_location_id TEXT REFERENCES public.inv_locations(id),
+        description TEXT,
+        is_active BOOLEAN DEFAULT true,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── Item Master ────────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_items (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'Food',
+        sub_category TEXT,
+        base_uom_id TEXT NOT NULL DEFAULT 'uom_unit' REFERENCES public.inv_uom_definitions(id),
+        sku TEXT UNIQUE,
+        barcode TEXT,
+        selling_price NUMERIC(10,2) DEFAULT 0.00,
+        last_cost_price NUMERIC(10,4) DEFAULT 0.00,
+        average_cost NUMERIC(10,4) DEFAULT 0.00,
+        weighted_avg_cost NUMERIC(10,4) DEFAULT 0.00,
+        default_wastage_pct NUMERIC(5,2) DEFAULT 0.00,
+        par_level NUMERIC(12,4) DEFAULT 0.00,
+        reorder_level NUMERIC(12,4) DEFAULT 0.00,
+        reorder_qty NUMERIC(12,4) DEFAULT 0.00,
+        expiry_tracking BOOLEAN DEFAULT false,
+        default_location_id TEXT,
+        supplier_id TEXT,
+        media_url TEXT,
+        notes TEXT,
+        is_active BOOLEAN DEFAULT true,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── UOM Conversions ────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_uom_conversions (
+        id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL,
+        from_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        to_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        conversion_factor NUMERIC(10,4) NOT NULL CHECK (conversion_factor > 0),
+        breakdown_allowed BOOLEAN DEFAULT false,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(item_id, from_uom_id, to_uom_id)
+      )`);
+
+    // ── GRN ───────────────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_grn_headers (
+        id TEXT PRIMARY KEY,
+        grn_number TEXT UNIQUE NOT NULL,
+        supplier_name TEXT NOT NULL,
+        supplier_id TEXT,
+        supplier_invoice_number TEXT,
+        destination_location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        created_by TEXT NOT NULL,
+        total_value NUMERIC(12,2) DEFAULT 0.00,
+        status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','cancelled')),
+        posted_at TIMESTAMPTZ,
+        posted_by TEXT,
+        notes TEXT,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_grn_lines (
+        id TEXT PRIMARY KEY,
+        grn_header_id TEXT NOT NULL REFERENCES public.inv_grn_headers(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        qty_received NUMERIC(12,4) NOT NULL CHECK (qty_received > 0),
+        received_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        unit_cost NUMERIC(10,4) NOT NULL DEFAULT 0,
+        line_total NUMERIC(12,2) NOT NULL DEFAULT 0,
+        expiry_date DATE,
+        line_number INTEGER NOT NULL,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(grn_header_id, line_number)
+      )`);
+
+    // ── Transfers ──────────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_transfer_headers (
+        id TEXT PRIMARY KEY,
+        transfer_number TEXT UNIQUE NOT NULL,
+        source_location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        destination_location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        transfer_date DATE DEFAULT CURRENT_DATE,
+        reference_text TEXT,
+        status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','approved','cancelled')),
+        approved_by TEXT,
+        approved_at TIMESTAMPTZ,
+        created_by TEXT NOT NULL,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        CHECK (source_location_id != destination_location_id)
+      )`);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_transfer_lines (
+        id TEXT PRIMARY KEY,
+        transfer_header_id TEXT NOT NULL REFERENCES public.inv_transfer_headers(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        qty_requested NUMERIC(12,4) NOT NULL CHECK (qty_requested > 0),
+        source_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        breakdown_flag BOOLEAN DEFAULT false,
+        destination_uom_id TEXT REFERENCES public.inv_uom_definitions(id),
+        current_source_balance NUMERIC(12,4),
+        line_number INTEGER NOT NULL,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(transfer_header_id, line_number)
+      )`);
+
+    // ── Stock Ledger (single source of truth) ─────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_stock_ledger (
+        id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        ledger_type TEXT NOT NULL CHECK (ledger_type IN ('GRN','TRANSFER_IN','TRANSFER_OUT','SALE_DEPLETION','ADJUSTMENT','WASTE')),
+        reference_number TEXT,
+        quantity_change NUMERIC(12,4) NOT NULL,
+        base_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        cost_per_unit NUMERIC(10,4),
+        total_cost NUMERIC(12,2),
+        posted_by TEXT,
+        gl_account_code TEXT,
+        transaction_date TIMESTAMPTZ DEFAULT NOW(),
+        inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── Recipes ────────────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_recipes (
+        id TEXT PRIMARY KEY,
+        menu_item_id TEXT NOT NULL,
+        version_number INTEGER DEFAULT 1,
+        is_current BOOLEAN DEFAULT true,
+        created_by TEXT,
+        total_cost NUMERIC(10,4) DEFAULT 0.00,
+        notes TEXT,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(menu_item_id, version_number)
+      )`);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_recipe_lines (
+        id TEXT PRIMARY KEY,
+        recipe_id TEXT NOT NULL REFERENCES public.inv_recipes(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        qty_required NUMERIC(10,4) NOT NULL CHECK (qty_required > 0),
+        prep_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+        wastage_pct NUMERIC(5,2) DEFAULT 0.00,
+        line_number INTEGER NOT NULL,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(recipe_id, line_number)
+      )`);
+
+    // ── Physical Counts ────────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_physical_counts (
+        id TEXT PRIMARY KEY,
+        location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        count_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','submitted','approved')),
+        counted_by TEXT,
+        inserted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_physical_count_lines (
+        id TEXT PRIMARY KEY,
+        count_id TEXT NOT NULL REFERENCES public.inv_physical_counts(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        physical_qty NUMERIC(12,4) NOT NULL DEFAULT 0,
+        uom_id TEXT REFERENCES public.inv_uom_definitions(id),
+        notes TEXT,
+        inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── Variance Reports ───────────────────────────────────────────────────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_variance_reports (
+        id TEXT PRIMARY KEY,
+        report_number TEXT UNIQUE NOT NULL,
+        location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+        period_start DATE NOT NULL,
+        period_end DATE NOT NULL,
+        generated_by TEXT,
+        total_items INTEGER DEFAULT 0,
+        ok_count INTEGER DEFAULT 0,
+        warning_count INTEGER DEFAULT 0,
+        critical_count INTEGER DEFAULT 0,
+        inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_variance_lines (
+        id TEXT PRIMARY KEY,
+        variance_report_id TEXT NOT NULL REFERENCES public.inv_variance_reports(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+        theoretical_qty NUMERIC(12,4) NOT NULL,
+        physical_qty NUMERIC(12,4) NOT NULL,
+        variance_qty NUMERIC(12,4) NOT NULL,
+        variance_percentage NUMERIC(7,4) NOT NULL,
+        alert_level TEXT NOT NULL CHECK (alert_level IN ('OK','WARNING','CRITICAL')),
+        item_cost NUMERIC(10,4),
+        variance_value NUMERIC(12,2),
+        inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    // ── Performance Indexes ────────────────────────────────────────────────
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_items_category ON public.inv_items(category)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_items_active ON public.inv_items(is_active)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_grn_status ON public.inv_grn_headers(status)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_transfer_status ON public.inv_transfer_headers(status)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_item_loc ON public.inv_stock_ledger(item_id, location_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_type ON public.inv_stock_ledger(ledger_type)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_ref ON public.inv_stock_ledger(reference_number) WHERE reference_number IS NOT NULL`);
+
+    // ── Seed standard UOM definitions ──────────────────────────────────────
+    const uomSeed = [
+      ['uom_unit','UNIT','Unit','Count'],
+      ['uom_case','CASE','Case','Count'],['uom_bottle','BOTTLE','Bottle','Count'],
+      ['uom_can','CAN','Can','Count'],['uom_crate','CRATE','Crate','Count'],
+      ['uom_dozen','DOZ','Dozen','Count'],['uom_box','BOX','Box','Count'],
+      ['uom_bag','BAG','Bag','Count'],['uom_pkt','PKT','Packet','Count'],
+      ['uom_drum','DRUM','Drum','Count'],['uom_portion','POR','Portion','Count'],
+      ['uom_liter','LITER','Litre','Volume'],['uom_ml','ML','Millilitre','Volume'],
+      ['uom_tot','TOT','Tot','Volume'],['uom_g','G','Gram','Weight'],
+      ['uom_kg','KG','Kilogram','Weight'],
+    ];
+    for (const [id, code, name, cat] of uomSeed) {
+      await client.query(
+        `INSERT INTO public.inv_uom_definitions (id,code,name,category) VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING`,
+        [id, code, name, cat]
+      );
+    }
+
+    // ── Seed locations from cost_centres + default storage ─────────────────
+    const storageSeed = [
+      ['loc_main_cellar','Main Cellar','Storage'],
+      ['loc_dry_goods','Dry Goods Store','Storage'],
+      ['loc_freezer','Freezer / Perishables','Storage'],
+      ['loc_perishables','Perishables','Storage'],
+    ];
+    for (const [id, name, type] of storageSeed) {
+      await client.query(
+        `INSERT INTO public.inv_locations (id,name,location_type) VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING`,
+        [id, name, type]
+      );
+    }
+
+    // Sync all existing cost_centres as Outlet locations
+    await syncCostCentresToLocations(client);
+
+    console.log('[inv-v11] ✅ Inventory tables created and seeded successfully');
+
+  } catch (err) {
+    console.error('[inv-v11] Table creation error (non-fatal — routes will work if tables already exist):', err.message);
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Sync cost_centres → inv_locations (Outlets only).
+ * Called on boot and when a cost centre is added/deleted.
+ * Idempotent: ON CONFLICT DO NOTHING.
+ */
+async function syncCostCentresToLocations(client) {
+  try {
+    // Check cost_centres table exists before querying
+    const tableCheck = await client.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='cost_centres' LIMIT 1`
+    );
+    if (!tableCheck.rows.length) return;
+
+    // Ensure no unique constraint on name blocks the sync
+    await client.query(
+      `ALTER TABLE public.inv_locations DROP CONSTRAINT IF EXISTS inv_locations_name_key`
+    ).catch(() => {}); // ignore if already dropped
+
+    const centres = await client.query(`SELECT id, name, description FROM cost_centres WHERE active=true`);
+    const syncedIds = [];
+
+    for (const cc of centres.rows) {
+      const locId = `loc_cc_${cc.id}`;
+      try {
+        await client.query(
+          `INSERT INTO public.inv_locations (id, name, location_type, description, is_active, inserted_at, updated_at)
+           VALUES ($1,$2,'Outlet',$3,true,NOW(),NOW())
+           ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, description=EXCLUDED.description, is_active=true, updated_at=NOW()`,
+          [locId, cc.name, cc.description || null]
+        );
+        syncedIds.push(locId);
+      } catch (rowErr) {
+        // Per-row error tolerance — log and continue (don't stop entire sync)
+        console.warn(`[inv-v11] Could not sync cost centre "${cc.name}" to locations:`, rowErr.message);
+      }
+    }
+
+    // Deactivate orphaned cost_centre-linked locations (cost centre was deleted)
+    if (syncedIds.length > 0) {
+      const placeholders = syncedIds.map((_, i) => `$${i+1}`).join(',');
+      await client.query(
+        `UPDATE public.inv_locations SET is_active=false, updated_at=NOW()
+         WHERE id LIKE 'loc_cc_%' AND id NOT IN (${placeholders})`,
+        syncedIds
+      ).catch(() => {});
+    }
+    if (syncedIds.length > 0) {
+      console.log(`[inv-v11] Synced ${syncedIds.length} cost centres to inv_locations`);
+    }
+  } catch (err) {
+    console.warn('[inv-v11] Cost centre sync warning:', err.message);
+  }
+}
+
+// Run on startup — async, non-blocking
+ensureInventoryTables().catch(err => {
+  console.warn('[inv-v11] Bootstrap warning:', err.message);
+});
+
+// ============================================================================
+// GRN (Goods Received Note) Endpoints
 
 // ============================================================================
 // GRN (Goods Received Note) Endpoints

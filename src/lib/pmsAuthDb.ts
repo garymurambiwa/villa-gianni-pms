@@ -821,6 +821,16 @@ export const pmsAuthDb = {
         [id, name, description || null]
       );
       if ('error' in res) return { ok: false, error: res.error };
+
+      // ── Sync to inv_locations so Inventory module sees this outlet immediately ──
+      // Fire-and-forget: failure here doesn't fail the cost centre creation
+      db.query(
+        `INSERT INTO inv_locations (id, name, location_type, description, is_active, inserted_at, updated_at)
+         VALUES ($1, $2, 'Outlet', $3, true, NOW(), NOW())
+         ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, description=EXCLUDED.description, updated_at=NOW()`,
+        [`loc_cc_${id}`, name, description || null]
+      ).catch(() => { /* non-fatal */ });
+
       return { ok: true, id };
     } catch (e: any) {
       return { ok: false, error: e?.message || 'Failed to add cost centre' };
@@ -831,6 +841,13 @@ export const pmsAuthDb = {
     try {
       const res = await db.query(`UPDATE cost_centres SET active = false WHERE id = ?`, [id]);
       if ('error' in res) return { ok: false, error: res.error };
+
+      // ── Sync deactivation to inv_locations ──
+      db.query(
+        `UPDATE inv_locations SET is_active=false, updated_at=NOW() WHERE id=$1`,
+        [`loc_cc_${id}`]
+      ).catch(() => { /* non-fatal */ });
+
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: e?.message || 'Failed to delete cost centre' };
