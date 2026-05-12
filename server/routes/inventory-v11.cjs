@@ -391,8 +391,40 @@ async function syncCostCentresToLocations(client) {
 }
 
 // Run on startup — async, non-blocking
+// Catches ALL errors so a failed DB connection never crashes the module load
 ensureInventoryTables().catch(err => {
-  console.warn('[inv-v11] Bootstrap warning:', err.message);
+  console.warn('[inv-v11] Bootstrap warning (tables may not exist yet):', err.message);
+});
+
+// ── Manual init endpoint ───────────────────────────────────────────────────────
+// GET /api/v1/inventory/init?key=confirm
+// Triggers table creation on demand — useful for fresh Vercel/Baradzanwa deployments
+// where DATABASE_URL was just configured and bootstrap already ran (and failed)
+router.get('/init', async (req, res) => {
+  if (req.query.key !== 'confirm') {
+    return res.json({
+      ok: false,
+      error: 'Pass ?key=confirm to initialise inventory tables',
+      example: '/api/v1/inventory/init?key=confirm'
+    });
+  }
+  try {
+    await ensureInventoryTables();
+    // Verify tables now exist
+    const check = await pool.query(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name LIKE 'inv_%'
+       ORDER BY table_name`
+    );
+    res.json({
+      ok: true,
+      message: 'Inventory tables initialised successfully',
+      tables: check.rows.map(r => r.table_name),
+      count: check.rows.length
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // ============================================================================
@@ -1008,97 +1040,149 @@ router.post('/recipe', async (req, res) => {
 
 /**
  * POST /api/v1/inventory/variance/generate
- * Generate variance report
+ * Generate variance report comparing theoretical stock (from ledger) vs physical count.
+ *
+ * FIX: Replaced broken duplicate handler. Uses correct column names matching
+ * the actual inv_variance_lines schema:
+ *   pos_theoretical_qty, physical_count_qty, variance_qty, variance_pct,
+ *   variance_value, alert_level, base_uom_id
+ * Also fixed: uses inserted_at (not posted_at) for date filtering on inv_stock_ledger.
  */
 router.post('/variance/generate', async (req, res) => {
-  const { location_id, period_start, period_end, generated_by } = req.body;
-
-  if (!location_id || !period_start || !period_end || !generated_by) {
-    return res.status(400).json({ ok: false, error: 'Missing required fields' });
+  const { location_id, period_start, period_end, generated_by, physical_count_id } = req.body;
+  if (!location_id || !period_start || !period_end) {
+    return res.status(400).json({ ok: false, error: 'location_id, period_start, period_end required' });
   }
 
   const client = await pool.connect();
   try {
+    // ── Guard: ensure inventory tables exist (fail gracefully if not) ──────
+    const tableCheck = await client.query(
+      `SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='inv_stock_ledger' LIMIT 1`
+    );
+    if (!tableCheck.rows.length) {
+      client.release();
+      return res.status(503).json({
+        ok: false,
+        error: 'Inventory tables not yet initialised. Visit /api/v1/inventory/init?key=confirm to set up.'
+      });
+    }
+
     await client.query('BEGIN');
 
-    // Get next variance report number
-    const varCountRes = await client.query(
-      `SELECT COALESCE(MAX(CAST(SUBSTRING(report_number FROM 10) AS INTEGER)), 0) + 1 as next_num
-       FROM public.inv_variance_reports
-       WHERE report_number ~ ('^VAR-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-\\d+$')`
-    );
-    const nextNum = varCountRes.rows[0].next_num;
-    const reportNumber = 'VAR-' + new Date().getFullYear() + '-' + String(nextNum).padStart(4, '0');
+    // ── Theoretical qty: opening + GRNs + transfers in − transfers out − sales ──
+    // FIX: uses inserted_at (actual column on inv_stock_ledger, not posted_at)
+    const theoreticalRes = await client.query(`
+      SELECT
+        sl.item_id,
+        i.name,
+        i.sku,
+        i.category,
+        i.base_uom_id,
+        COALESCE(u.code, 'UNIT') AS uom_code,
+        SUM(CASE
+          WHEN sl.ledger_type IN ('GRN','TRANSFER_IN') THEN ABS(sl.quantity_change)
+          WHEN sl.ledger_type IN ('TRANSFER_OUT','SALE_DEPLETION','WASTE') THEN -ABS(sl.quantity_change)
+          WHEN sl.quantity_change > 0 THEN sl.quantity_change
+          ELSE -ABS(sl.quantity_change)
+        END) AS theoretical_qty,
+        AVG(NULLIF(sl.cost_per_unit, 0)) AS avg_cost
+      FROM public.inv_stock_ledger sl
+      JOIN public.inv_items i ON i.id = sl.item_id
+      LEFT JOIN public.inv_uom_definitions u ON u.id = i.base_uom_id
+      WHERE sl.location_id = $1
+        AND sl.inserted_at BETWEEN $2::timestamptz AND $3::date + interval '1 day'
+        AND i.is_active = true
+      GROUP BY sl.item_id, i.name, i.sku, i.category, i.base_uom_id, u.code
+      HAVING SUM(ABS(sl.quantity_change)) > 0
+    `, [location_id, period_start, period_end]);
 
-    // Create report header
-    const reportRes = await client.query(
-      `INSERT INTO public.inv_variance_reports 
-      (id, report_number, location_id, period_start, period_end, generated_by, inserted_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING *`,
-      [randomUUID(), reportNumber, location_id, period_start, period_end, generated_by, new Date()]
-    );
-
-    const report = reportRes.rows[0];
-
-    // Get all items and calculate variance
-    const itemsRes = await client.query(`SELECT DISTINCT item_id FROM public.inv_stock_ledger WHERE location_id = $1`, [
-      location_id,
-    ]);
-
-    let okCount = 0,
-      warningCount = 0,
-      criticalCount = 0,
-      totalVarianceValue = 0;
-
-    for (const { item_id } of itemsRes.rows) {
-      // Calculate variance...
-      const posRes = await client.query(
-        `SELECT COALESCE(SUM(quantity_change), 0) as qty FROM public.inv_stock_ledger 
-        WHERE item_id = $1 AND location_id = $2 AND ledger_type = 'SALE_DEPLETION' 
-        AND posted_at >= $3 AND posted_at <= $4`,
-        [item_id, location_id, period_start, period_end]
+    // ── Physical counts (if a count session was linked) ───────────────────
+    const physicalMap = {};
+    if (physical_count_id) {
+      const physRes = await client.query(
+        `SELECT item_id, physical_qty FROM public.inv_physical_count_lines WHERE count_id=$1`,
+        [physical_count_id]
       );
+      for (const row of physRes.rows) {
+        physicalMap[row.item_id] = Number(row.physical_qty);
+      }
+    }
 
-      const theoreticalQty = Math.abs(Number(posRes.rows[0]?.qty || 0));
-      const physicalQty = 0; // Placeholder
-      const varianceQty = theoreticalQty - physicalQty;
-      const variancePct = theoreticalQty > 0 ? (varianceQty / theoreticalQty) * 100 : 0;
-      const alertLevel = variancePct < 2 ? 'OK' : variancePct < 5 ? 'WARNING' : 'CRITICAL';
+    // ── Report number — safe: count existing reports + 1 ─────────────────
+    const numRes = await client.query(`SELECT COUNT(*)+1 AS n FROM public.inv_variance_reports`);
+    const reportNum = 'VAR-' + String(numRes.rows[0].n).padStart(4,'0');
+    const reportId  = randomUUID();
 
-      // Count alerts
-      if (alertLevel === 'OK') okCount++;
-      else if (alertLevel === 'WARNING') warningCount++;
-      else criticalCount++;
+    let okCount = 0, warnCount = 0, critCount = 0;
+    const lines = [];
 
-      totalVarianceValue += Math.abs(varianceQty);
+    for (const row of theoreticalRes.rows) {
+      const theoretical = Math.max(0, Number(row.theoretical_qty || 0));
+      // If no physical count session: use theoretical (zero variance) — report shows gaps
+      const physical    = physical_count_id ? (physicalMap[row.item_id] ?? 0) : theoretical;
+      const variance    = physical - theoretical;
+      const variancePct = theoretical > 0 ? Math.abs(variance / theoretical) * 100 : 0;
+      const cost        = Number(row.avg_cost || 0);
+      const varianceVal = Math.abs(variance) * cost;
 
-      // Insert line
-      await client.query(
-        `INSERT INTO public.inv_variance_lines 
-        (id, variance_report_id, item_id, pos_theoretical_qty, physical_count_qty, variance_qty, variance_pct, variance_value, alert_level, base_uom_id, inserted_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [randomUUID(), report.id, item_id, theoreticalQty, physicalQty, varianceQty, variancePct, Math.abs(varianceQty), alertLevel, 'uom_unit', new Date()]
+      let alert = 'OK';
+      if (variancePct >= 5)      { alert = 'CRITICAL'; critCount++; }
+      else if (variancePct >= 2) { alert = 'WARNING';  warnCount++; }
+      else                       { okCount++; }
+
+      lines.push({
+        item_id: row.item_id, name: row.name, sku: row.sku, category: row.category,
+        uom_code: row.uom_code, theoretical, physical, variance, variancePct, varianceVal, alert, cost
+      });
+    }
+
+    // ── Insert report header ───────────────────────────────────────────────
+    await client.query(`
+      INSERT INTO public.inv_variance_reports
+        (id, report_number, location_id, period_start, period_end, generated_by,
+         ok_count, warning_count, critical_count, variance_count, inserted_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
+      [reportId, reportNum, location_id, period_start, period_end, generated_by||'system',
+       okCount, warnCount, critCount, lines.length]
+    );
+
+    // ── Insert variance lines (using actual DB column names) ───────────────
+    for (const l of lines) {
+      await client.query(`
+        INSERT INTO public.inv_variance_lines
+          (id, variance_report_id, item_id,
+           pos_theoretical_qty, physical_count_qty, variance_qty,
+           variance_pct, variance_value, alert_level, base_uom_id, inserted_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
+        [randomUUID(), reportId, l.item_id,
+         l.theoretical, l.physical, l.variance,
+         l.variancePct, l.varianceVal, l.alert, 'uom_unit']
       );
     }
 
-    // Update report summary
-    await client.query(
-      `UPDATE public.inv_variance_reports 
-      SET ok_count = $1, warning_count = $2, critical_count = $3, 
-          variance_count = $4, total_variance_value = $5
-      WHERE id = $6`,
-      [okCount, warningCount, criticalCount, itemsRes.rows.length, totalVarianceValue, report.id]
-    );
-
     await client.query('COMMIT');
-    res.json({ ok: true, data: report });
-  } catch (error) {
+    res.json({
+      ok: true,
+      data: {
+        id: reportId,
+        report_number: reportNum,
+        location_id,
+        period_start,
+        period_end,
+        ok_count:       okCount,
+        warning_count:  warnCount,
+        critical_count: critCount,
+        total_items:    lines.length,
+        lines
+      }
+    });
+  } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ ok: false, error: error.message });
-  } finally {
-    client.release();
-  }
+    console.error('[inv-v11] variance/generate error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  } finally { client.release(); }
 });
 
 /**
@@ -1583,94 +1667,7 @@ router.post('/physical-count/:id/lines', async (req, res) => {
   } finally { client.release(); }
 });
 
-// ============================================================================
-// VARIANCE REPORT — generate from physical count vs ledger theoretical
-// ============================================================================
-router.post('/variance/generate', async (req, res) => {
-  const { location_id, period_start, period_end, generated_by, physical_count_id } = req.body;
-  if (!location_id || !period_start || !period_end)
-    return res.status(400).json({ ok: false, error: 'location_id, period_start, period_end required' });
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    // Theoretical qty = opening stock + GRNs - transfers out + transfers in - POS depletions
-    const theoreticalRes = await client.query(`
-      SELECT
-        item_id,
-        SUM(CASE WHEN ledger_type IN ('GRN','TRANSFER_IN','ADJUSTMENT_IN') THEN quantity_change
-                 WHEN ledger_type IN ('TRANSFER_OUT','SALE_DEPLETION','WASTE','ADJUSTMENT_OUT') THEN -quantity_change
-                 ELSE 0 END) AS theoretical_qty,
-        AVG(cost_per_unit) AS avg_cost
-      FROM public.inv_stock_ledger
-      WHERE location_id = $1
-        AND inserted_at BETWEEN $2 AND $3::date + interval '1 day'
-      GROUP BY item_id
-    `, [location_id, period_start, period_end]);
-
-    // Physical counts (if count session provided)
-    const physicalMap = {};
-    if (physical_count_id) {
-      const physRes = await client.query(
-        `SELECT item_id, physical_qty FROM public.inv_physical_count_lines WHERE count_id=$1`, [physical_count_id]
-      );
-      for (const row of physRes.rows) physicalMap[row.item_id] = Number(row.physical_qty);
-    }
-
-    // Report number
-    const numRes = await client.query(
-      `SELECT COALESCE(MAX(CAST(SUBSTRING(report_number FROM 5) AS INTEGER)),0)+1 AS n FROM public.inv_variance_reports`
-    );
-    const reportNum = 'VAR-' + String(numRes.rows[0].n).padStart(4,'0');
-
-    let okCount=0, warnCount=0, critCount=0;
-    const lines = [];
-
-    for (const row of theoreticalRes.rows) {
-      const theoretical = Number(row.theoretical_qty || 0);
-      const physical    = physicalMap[row.item_id] ?? theoretical; // if no count, assume matches
-      const variance    = physical - theoretical;
-      const variancePct = theoretical !== 0 ? Math.abs(variance / theoretical * 100) : 0;
-      const cost        = Number(row.avg_cost || 0);
-      const varianceVal = Math.abs(variance) * cost;
-
-      let alert = 'ok';
-      if (variancePct >= 5)      { alert = 'critical'; critCount++; }
-      else if (variancePct >= 2) { alert = 'warning';  warnCount++; }
-      else                       { okCount++; }
-
-      lines.push({ item_id: row.item_id, theoretical, physical, variance, variancePct, varianceVal, alert, cost });
-    }
-
-    const reportId = randomUUID();
-    await client.query(`
-      INSERT INTO public.inv_variance_reports
-        (id, report_number, location_id, period_start, period_end, generated_by,
-         ok_count, warning_count, critical_count, inserted_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
-      [reportId, reportNum, location_id, period_start, period_end, generated_by||'system',
-       okCount, warnCount, critCount]
-    );
-
-    for (const l of lines) {
-      await client.query(`
-        INSERT INTO public.inv_variance_lines
-          (id, variance_report_id, item_id, theoretical_qty, physical_qty,
-           variance_qty, variance_percentage, alert_level, item_cost, variance_value, inserted_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
-        [randomUUID(), reportId, l.item_id, l.theoretical, l.physical,
-         l.variance, l.variancePct, l.alert, l.cost, l.varianceVal]
-      );
-    }
-
-    await client.query('COMMIT');
-    res.json({ ok: true, data: { id: reportId, report_number: reportNum, ok_count: okCount, warning_count: warnCount, critical_count: critCount, lines } });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    res.status(500).json({ ok: false, error: err.message });
-  } finally { client.release(); }
-});
+// (Duplicate variance/generate handler removed — see definitive handler above)
 
 // ============================================================================
 // STOCK BALANCE with location name (enhanced)
