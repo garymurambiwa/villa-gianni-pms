@@ -328,6 +328,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     // Allow zero payment amounts for clearing bills (POS Management)
     if (!validatePaymentAmount(discountedTotal) && discountedTotal !== 0) { alert('Invalid payment amount.'); setIsProcessing(false); return; }
 
+    // Define isCityLedgerPosting before paymentData to avoid scoping issues
+    const isCityLedgerPosting = (paymentMethod === 'city-ledger' || (paymentMethod === 'room-charge' && roomChargeType === 'city-ledger')) && selectedAccount;
+
     const paymentData = {
       billId: bill.id,
       amount: discountedTotal,
@@ -385,7 +388,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       }
 
       // City Ledger posting (non-blocking)
-      const isCityLedgerPosting = (paymentMethod === 'city-ledger' || (paymentMethod === 'room-charge' && roomChargeType === 'city-ledger')) && selectedAccount;
       if (isCityLedgerPosting) {
         try {
           addCityLedgerTransaction(selectedAccount.id, {
