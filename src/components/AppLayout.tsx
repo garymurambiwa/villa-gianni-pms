@@ -21,24 +21,16 @@ import LoadingSpinner from './ui/LoadingSpinner';
 import { Button } from './ui/button';
 
 // Lazy-load POSFrontOffice with a retry mechanism for chunk load failures (common after deployment)
+// TEMPORARILY DISABLED AUTO-RELOAD TO DEBUG ERRORS
 const POSFrontOfficeLazy = React.lazy(() => {
-  return new Promise((resolve, reject) => {
-    import('./modules/POSFrontOffice')
-      .then(m => resolve({ default: m.POSFrontOffice }))
-      .catch(error => {
-        // Detect if the error is a loading error (ChunkLoadError)
-        const isChunkLoadError = error.message && (
-          error.message.includes('error loading dynamically imported module') ||
-          error.message.includes('Failed to fetch dynamically imported module')
-        );
-        if (isChunkLoadError) {
-          console.warn('[corepms] Chunk load failed. Attempting to reload page to get latest version.');
-          // Provide a small delay before reloading to prevent infinite reload loops
-          setTimeout(() => window.location.reload(), 1500);
-        }
-        reject(error);
-      });
-  });
+  return import('./modules/POSFrontOffice')
+    .then(m => ({ default: m.POSFrontOffice }))
+    .catch(error => {
+      console.error('[corepms] POSFrontOffice load error:', error);
+      // Temporarily disabled auto-reload to allow error inspection
+      // setTimeout(() => window.location.reload(), 1500);
+      throw error;
+    });
 });
 import { canManagePOS, canAccessPOS, canAccessInventoryManagement, canAccessReporting, canAccessTransactionClearing, isAdmin, canManageStaff, isManager, normalizeRole } from '@/lib/permissions';
 import PosSettings from './modules/PosSettings';
