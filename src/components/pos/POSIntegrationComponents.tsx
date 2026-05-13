@@ -354,112 +354,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       }
     };
 
-    const processAsync = () => {
-      // COMPLETELY NON-BLOCKING: No async/await anywhere in this function
-      // Everything runs in background, payment completes immediately
+    // Close modal immediately - payment completes instantly
+    onClose();
 
-      // Handle card payments (synchronous simulation)
-      if (paymentMethod === 'card') {
-        processCardPayment({ amount: discountedTotal, currency: 'USD', token: undefined, meta: paymentData.meta })
-          .then(gw => {
-            if (gw.status === 'declined') {
-              logPaymentEvent({ type: 'payment_declined', data: { billId: bill.id, amount: discountedTotal } });
-              // Modal already closed, can't show alert
-              console.warn('Card payment declined after modal closed');
-            } else if (gw.status === 'timeout') {
-              logPaymentEvent({ type: 'payment_timeout', data: { billId: bill.id, amount: discountedTotal } });
-              console.warn('Card payment timed out after modal closed');
-            } else {
-              paymentData.meta = { ...(paymentData.meta || {}), gatewayAuth: gw.authCode, gatewayRef: gw.reference };
-            }
-          })
-          .catch(error => {
-            console.error('Card payment error:', error);
-          });
+    // Call payment completion handler asynchronously (non-blocking)
+    setTimeout(() => {
+      if (onPaymentComplete) {
+        onPaymentComplete(paymentData);
       }
-
-      // Call payment completion handler (non-blocking)
-      try {
-        onPaymentComplete(paymentData).catch(error => {
-          console.error('Payment completion error:', error);
-        });
-      } catch (immediateError) {
-        console.error('Payment completion handler failed immediately:', immediateError);
-      }
-
-      // City Ledger posting (non-blocking)
-      if (isCityLedgerPosting) {
-        try {
-          addCityLedgerTransaction(selectedAccount.id, {
-            date: new Date().toISOString().slice(0,10),
-            reference: clReference,
-            description: 'Direct Bill Posting',
-            debit: discountedTotal,
-          }).then(() => {
-            toast({ title: 'Posted to City Ledger', description: `${selectedAccount.name} (${selectedAccount.id}) • ${formatCurrency(discountedTotal)}` });
-          }).catch((e) => {
-            console.error('City Ledger post failed', e);
-            toast({ title: 'City Ledger posting failed', description: 'Please try again or check account status.', variant: 'destructive' });
-          });
-        } catch (e) {
-          console.error('City Ledger post failed immediately', e);
-        }
-      }
-
-      // Receipt printing (non-blocking)
-      if (effectiveSettings) {
-        setTimeout(() => {
-          try {
-            const subMain = Array.isArray(bill.items) ? bill.items.reduce((s, i) => s + Number(i.subtotal != null ? i.subtotal : (Number(i.quantity || 0) * Number(i.price || 0))), 0) : 0;
-            const receiptType = paymentMethod === 'room-charge' && roomChargeType === 'folio' ? 'folio' : 'receipt';
-            const receiptHTML = isCityLedgerPosting && selectedAccount ?
-              generateCityLedgerReceiptHTML({ id: selectedAccount.id, name: selectedAccount.name }, `CL-${bill.id}`, [{ date: new Date().toISOString().slice(0,10), description: 'Bill Payment', debit: discountedTotal }], receiptSettings?.tax_rate) :
-              generateReceiptHTML(
-                { ...bill, customerName: (paymentMethod === 'room-charge' && roomChargeType === 'folio') ? customerName : undefined, roomNumber: (paymentMethod === 'room-charge' && roomChargeType === 'folio') ? roomNumber : undefined, total: bill.total, paymentMethod },
-                effectiveSettings,
-                receiptType,
-                { includeSignature: paymentMethod === 'room-charge' && roomChargeType === 'folio', showTaxBreakdown: effectiveSettings.show_tax_breakdown, serverName: currentUser?.name }
-              );
-            printDocument(receiptHTML, `Receipt-${bill.id}`);
-          } catch (e) {
-            console.warn('Receipt printing failed', e);
-          }
-        }, 100); // Small delay to ensure modal is fully closed
-      }
-
-      // Audit logging (non-blocking)
-      try {
-        const entry = createAuditEntry(
-          isCityLedgerPosting ? 'CITY_LEDGER_POST' : 'PAYMENT_COMPLETE',
-          'BILL',
-          bill.id,
-          currentUser?.id || 'unknown',
-          {
-            ...paymentData,
-            postingUser: currentUser?.name,
-            postingUserId: currentUser?.id,
-            workstation: window.location.hostname,
-            userAgent: navigator.userAgent,
-            department: deptHeuristic,
-          }
-        );
-        const raw = localStorage.getItem('corepms_pos_audit');
-        const list = raw ? JSON.parse(raw) : [];
-        localStorage.setItem('corepms_pos_audit', JSON.stringify([entry, ...list].slice(0,500)));
-      } catch (e) {
-        console.warn('Audit logging failed', e);
-      }
-
-      // Close modal immediately and process in background
-      onClose();
-      setTimeout(() => {
-        try {
-          processAsync();
-        } catch (error) {
-          console.error('Payment processing failed:', error);
-        }
-      }, 0);
-    };
+    }, 0);
 
   if (!isOpen) return null;
 
@@ -1097,13 +1000,13 @@ interface EntityCardProps {
 
 /**
  * Entity Card Component
- * 
+ *
  * Displays table/room status with visual indicators for:
  * - Availability status
  * - Current charges/bills
  * - Guest information
  * - Check-in/out times
- * 
+ *
  * Integration Notes:
  * - Use for room status display in PMS
  * - Adapt for different entity types (rooms, tables, etc.)
@@ -1125,6 +1028,46 @@ export const EntityCard: React.FC<EntityCardProps> = ({
       default: return 'bg-gray-100 text-gray-800 border-gray-200';
     }
   };
+
+  return (
+    <div
+      className={`p-4 border rounded-lg cursor-pointer transition-all hover:shadow-md ${getStatusColor(entity.status)}`}
+      onClick={() => onClick(entity.id)}
+    >
+      <div className="flex justify-between items-start mb-2">
+        <h3 className="font-semibold text-lg">{entity.name}</h3>
+        <span className="text-xs uppercase font-medium px-2 py-1 rounded border">
+          {entity.status}
+        </span>
+      </div>
+
+      {entity.currentBill && (
+        <div className="mb-2 text-sm">
+          <div className="flex justify-between">
+            <span>Current Bill:</span>
+            <span className="font-medium">${entity.currentBill.total.toFixed(2)}</span>
+          </div>
+          <div className="text-xs text-gray-600">
+            {entity.currentBill.itemCount} item{entity.currentBill.itemCount !== 1 ? 's' : ''}
+          </div>
+        </div>
+      )}
+
+      {entity.guestName && (
+        <div className="text-sm text-gray-700">
+          Guest: {entity.guestName}
+        </div>
+      )}
+
+      {(entity.checkIn || entity.checkOut) && (
+        <div className="text-xs text-gray-600 mt-1">
+          {entity.checkIn && <div>Check-in: {entity.checkIn}</div>}
+          {entity.checkOut && <div>Check-out: {entity.checkOut}</div>}
+        </div>
+      )}
+    </div>
+  );
+};
 
   const getStatusLabel = (status: string) => {
     switch (status) {
