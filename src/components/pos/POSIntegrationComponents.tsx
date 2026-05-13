@@ -354,15 +354,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       }
     };
 
-    // Close modal immediately - payment completes instantly
-    onClose();
+    // Print receipt before closing modal
+    handlePrintBill().catch(err => console.warn('Receipt printing failed:', err));
+
+    // Close modal after printing attempt
+    setTimeout(() => onClose(), 100);
 
     // Call payment completion handler asynchronously (non-blocking)
     setTimeout(() => {
       if (onPaymentComplete) {
         onPaymentComplete(paymentData);
       }
-    }, 0);
+    }, 200);
   };
 
   if (!isOpen) return null;
