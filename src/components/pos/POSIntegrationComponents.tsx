@@ -978,96 +978,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 // TABLE/ROOM CARD COMPONENT
 // ============================================================================
 
-interface EntityCardProps {
-  /** Entity data (table, room, etc.) */
-  entity: {
-    id: string;
-    name: string;
-    status: 'available' | 'occupied' | 'cleaning' | 'maintenance' | 'reserved';
-    currentBill?: {
-      total: number;
-      itemCount: number;
-    };
-    guestName?: string;
-    checkIn?: string;
-    checkOut?: string;
-  };
-  /** Function called when entity is clicked */
-  onClick: (entityId: string) => void;
-  /** Type of entity for display purposes */
-  entityType?: 'table' | 'room';
-}
 
-/**
- * Entity Card Component
- *
- * Displays table/room status with visual indicators for:
- * - Availability status
- * - Current charges/bills
- * - Guest information
- * - Check-in/out times
- *
- * Integration Notes:
- * - Use for room status display in PMS
- * - Adapt for different entity types (rooms, tables, etc.)
- * - Customize status colors and labels for hotel operations
- * - Add housekeeping status integration
- */
-export const EntityCard: React.FC<EntityCardProps> = ({
-  entity,
-  onClick,
-  entityType = 'table'
-}) => {
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'available': return 'bg-green-100 text-green-800 border-green-200';
-      case 'occupied': return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'cleaning': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'maintenance': return 'bg-red-100 text-red-800 border-red-200';
-      case 'reserved': return 'bg-purple-100 text-purple-800 border-purple-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
 
-  return (
-    <div
-      className={`p-4 border rounded-lg cursor-pointer transition-all hover:shadow-md ${getStatusColor(entity.status)}`}
-      onClick={() => onClick(entity.id)}
-    >
-      <div className="flex justify-between items-start mb-2">
-        <h3 className="font-semibold text-lg">{entity.name}</h3>
-        <span className="text-xs uppercase font-medium px-2 py-1 rounded border">
-          {entity.status}
-        </span>
-      </div>
 
-      {entity.currentBill && (
-        <div className="mb-2 text-sm">
-          <div className="flex justify-between">
-            <span>Current Bill:</span>
-            <span className="font-medium">${entity.currentBill.total.toFixed(2)}</span>
-          </div>
-          <div className="text-xs text-gray-600">
-            {entity.currentBill.itemCount} item{entity.currentBill.itemCount !== 1 ? 's' : ''}
-          </div>
-        </div>
-      )}
-
-      {entity.guestName && (
-        <div className="text-sm text-gray-700">
-          Guest: {entity.guestName}
-        </div>
-      )}
-
-      {(entity.checkIn || entity.checkOut) && (
-        <div className="text-xs text-gray-600 mt-1">
-          {entity.checkIn && <div>Check-in: {entity.checkIn}</div>}
-          {entity.checkOut && <div>Check-out: {entity.checkOut}</div>}
-        </div>
-      )}
-    </div>
-  );
-};
 
   const getStatusLabel = (status: string) => {
     switch (status) {
@@ -1314,7 +1227,6 @@ export const QuickActions: React.FC<QuickActionsProps> = ({
 
 export default {
   PaymentModal,
-  EntityCard,
   BillSummary,
   QuickActions
 };
