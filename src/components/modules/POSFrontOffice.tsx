@@ -350,6 +350,45 @@ export const POSFrontOffice: React.FC = () => {
     } catch { }
   }, [search, statusFilter, sortKey, sortDir, pageSize]);
 
+  // Connect posOrders to table currentBill - this makes tables persistent across restarts
+  useEffect(() => {
+    if (!Array.isArray(posOrders) || posOrders.length === 0) return;
+
+    setTables(prev => {
+      const safePrev = Array.isArray(prev) ? prev : [];
+      return safePrev.map(table => {
+        // Find any open order for this table
+        const tableOrder = posOrders.find(order =>
+          order.table_number === table.id && order.status === 'open'
+        );
+
+        if (tableOrder) {
+          // Convert database order format to frontend bill format
+          const currentBill = {
+            id: tableOrder.id,
+            tableId: tableOrder.table_number,
+            items: Array.isArray(tableOrder.items) ? tableOrder.items.map((item: any) => ({
+              id: item.id,
+              menuItem: { id: item.id, name: item.name, price: item.price },
+              quantity: item.quantity,
+              price: item.price,
+              subtotal: item.subtotal || (item.quantity * item.price)
+            })) : [],
+            total: tableOrder.total_amount || 0,
+            customerName: tableOrder.customer_name,
+            roomNumber: tableOrder.room_number,
+            createdAt: tableOrder.created_at || new Date().toISOString()
+          };
+
+          return { ...table, status: 'occupied', currentBill };
+        }
+
+        // If no order found, ensure table is available (unless it was manually suspended)
+        return table.status === 'suspended' ? table : { ...table, status: 'available', currentBill: undefined };
+      });
+    });
+  }, [posOrders]);
+
   // Persist and restore table states (run after database init)
   useEffect(() => {
     // Only restore if we're not still loading from database

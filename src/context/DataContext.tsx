@@ -699,12 +699,19 @@ check_in_date = ?, check_out_date = ?, status = ?,
       } else if ('error' in updateResult) {
         console.error('POS order update details:', { params: updateParams, error: (updateResult as any).error });
         const dbError = (updateResult as any).error?.message || (updateResult as any).error || 'Unknown DB Error';
-        setPosOrders((prev: any[]) => prev.filter((p: any) => 
+        setPosOrders((prev: any[]) => prev.filter((p: any) =>
           !(String(p.table_number) === provisional.table_number && String(p.status) === 'OPEN' && p.cost_center === provisional.cost_center)
         ));
         toast({ title: 'Database Write Failed', description: `POS order update failed: ${dbError}`, variant: 'destructive' });
         return false;
       }
+
+      // Update table status to occupied
+      const tableSql = provisional.cost_center
+        ? "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'occupied', ?, NOW()) ON CONFLICT (table_id, cost_center) DO UPDATE SET status = 'occupied', last_update = NOW()"
+        : "INSERT INTO table_status (table_id, status, last_update) VALUES (?, 'occupied', NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'occupied', last_update = NOW()";
+      const tableParams = provisional.cost_center ? [provisional.table_number, provisional.cost_center] : [provisional.table_number];
+      await db.query(tableSql, tableParams);
 
       return true;
     } catch (e: any) {
