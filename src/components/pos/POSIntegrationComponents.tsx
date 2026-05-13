@@ -363,6 +363,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         onPaymentComplete(paymentData);
       }
     }, 0);
+  };
 
   if (!isOpen) return null;
 
@@ -973,67 +974,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     </div>
   );
 }
-
-// ============================================================================
-// TABLE/ROOM CARD COMPONENT
-// ============================================================================
-
-
-
-
-
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'available': return entityType === 'room' ? 'Available' : 'Open';
-      case 'occupied': return entityType === 'room' ? 'Occupied' : 'In Use';
-      case 'cleaning': return 'Cleaning';
-      case 'maintenance': return 'Maintenance';
-      case 'reserved': return 'Reserved';
-      default: return status;
-    }
-  };
-
-  return (
-    <Card 
-      className={`cursor-pointer transition-all hover:shadow-md ${getStatusColor(entity.status)} border-2`}
-      onClick={() => onClick(entity.id)}
-    >
-      <CardContent className="p-4">
-        <div className="flex justify-between items-start mb-2">
-          <div>
-            <h3 className="font-semibold text-lg">{entity.name}</h3>
-            <Badge variant="secondary" className="text-xs">
-              {getStatusLabel(entity.status)}
-            </Badge>
-          </div>
-          {entity.currentBill && (
-            <div className="text-right text-sm">
-              <div className="font-semibold">{formatCurrency(entity.currentBill.total)}</div>
-              <div className="text-gray-600">{entity.currentBill.itemCount} items</div>
-            </div>
-          )}
-        </div>
-
-        {/* Guest Information for Rooms */}
-        {entityType === 'room' && entity.guestName && (
-          <div className="text-sm space-y-1">
-            <div className="font-medium">{entity.guestName}</div>
-            {entity.checkIn && (
-              <div className="text-gray-600">
-                In: {formatReceiptDate(new Date(entity.checkIn), false)}
-              </div>
-            )}
-            {entity.checkOut && (
-              <div className="text-gray-600">
-                Out: {formatReceiptDate(new Date(entity.checkOut), false)}
-              </div>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-};
 
 // ============================================================================
 // BILL/FOLIO SUMMARY COMPONENT
