@@ -32,10 +32,22 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
     const [checkInDate, setCheckInDate] = useState(format(new Date(), 'yyyy-MM-dd'));
     const [checkOutDate, setCheckOutDate] = useState(format(addDays(new Date(), 1), 'yyyy-MM-dd'));
 
-    // Filter for available rooms
-    const availableRooms = rooms.filter(r => {
-        const s = String(r.status || '').toLowerCase();
-        return s === 'available' || s === 'vacant' || String(r.status).toUpperCase() === 'VC';
+    // Already-occupied room IDs (guard against double check-in)
+    const reservations = Array.isArray(ctx?.reservations) ? ctx.reservations : [];
+    const occupiedRoomIds = new Set(
+        reservations
+            .filter((r: any) => r.status === 'checked-in' || r.status === 'occupied')
+            .map((r: any) => r.room_id || r.roomId)
+            .filter(Boolean)
+    );
+
+    // Available rooms: VC (clean) + VD (dirty — needs housekeeping but is vacant)
+    // Mirrors FrontOffice logic. OOO/OOS excluded. Already-occupied excluded.
+    const availableRooms = rooms.filter((r: any) => {
+        const s = String(r.status || '').toUpperCase();
+        const isVacant = s === 'VC' || s === 'VD' || s === 'VACANT' || s === 'AVAILABLE';
+        const isBlocked = s === 'OOO' || s === 'OOS';
+        return isVacant && !isBlocked && !occupiedRoomIds.has(r.id);
     });
 
     // Whenever the modal opens, check for pre-selected room from Room Availability Grid
@@ -76,15 +88,22 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!guestName || !roomId || !nights || !rate) {
-            toast.error('Please fill in all required fields (Name, Room, Nights, Rate).');
+        if (!guestName || !roomId || !nights) {
+            toast.error('Guest name and room are required.');
+            return;
+        }
+        // Guard: block double check-in to an occupied room
+        if (occupiedRoomIds.has(roomId)) {
+            const room = rooms.find((r: any) => r.id === roomId);
+            toast.error(`Room ${room?.number || roomId} already has a checked-in guest. Please select another room.`);
             return;
         }
 
         setLoading(true);
 
         try {
-            const selectedRoom = rooms.find(r => r.id === roomId);
+            const selectedRoom = rooms.find((r: any) => r.id === roomId);
+            const effectiveRate = rate || String(selectedRoom?.rate || 0);
 
             console.log('[QuickCheckIn] Calling createReservation...');
 

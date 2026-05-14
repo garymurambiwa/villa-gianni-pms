@@ -561,8 +561,15 @@ async function runNightAudit(triggeredBy = 'scheduler') {
     const taxRevenue      = roomResult.charges.reduce((s, c) => s + (c.tax || 0), 0);
     const totalRevenue    = roomResult.totalRevenue + posRevenue.total;
 
-    // ── Step 7: Record audit run ────────────────────────────────────────────
-    await updateStep('Recording audit run to database', 80);
+    // ── Step 7: Rollover date (MOVED BEFORE record so nextDate is valid) ───────
+    // FIX: nextDate MUST be computed before recordAuditRun because
+    // next_business_date is NOT NULL in night_audit_runs. Passing '' caused
+    // silent INSERT failures — room charges were posted but no audit record stored.
+    await updateStep('Rolling over business date', 80);
+    const nextDate = await rolloverDate(businessDate);
+
+    // ── Step 8: Record audit run ─────────────────────────────────────────────
+    await updateStep('Recording audit run to database', 88);
     const snapshot = {
       roomRevenue:   roomResult.totalRevenue,
       posRevenue:    posRevenue.total,
@@ -572,20 +579,21 @@ async function runNightAudit(triggeredBy = 'scheduler') {
       revPAR:        revpar,
       roomsPosted:   roomResult.count,
       shiftsClosed:  shiftResult.count,
+      date:          businessDate,
     };
     const runId = await recordAuditRun({
-      businessDate, nextDate: '', // filled after rollover
+      businessDate, nextDate,   // nextDate now valid — no more NOT NULL violation
       roomsPosted: roomResult.count, roomRevenue: roomResult.totalRevenue, taxRevenue,
       totalRevenue, cityLedgerCount: clResult.count, cityLedgerAmount: clResult.amount,
       occupiedRooms, availableRooms, occupancyPct,
       adr, revpar, startedAt, snapshot
     });
 
-    // ── Step 8: Rollover date ───────────────────────────────────────────────
-    await updateStep('Rolling over business date', 88);
-    const nextDate = await rolloverDate(businessDate);
+    if (!runId) {
+      log('  ⚠ night_audit_runs INSERT returned no id — record may already exist for ' + businessDate);
+    }
 
-    // Patch the audit run with next_date
+    // Patch step kept for safety but nextDate already set
     if (runId) {
       await db.query(
         `UPDATE night_audit_runs SET next_business_date = $1 WHERE id = $2`,
@@ -656,24 +664,41 @@ async function runNightAudit(triggeredBy = 'scheduler') {
 // ─── Scheduler (called from index.cjs) ───────────────────────────────────────
 let _schedulerInterval = null;
 
-function startScheduler(auditHour = 21, auditMinute = 0, timezone = 'Africa/Harare') {
+function startScheduler(auditHour = 0, auditMinute = 0, timezone = 'Africa/Harare') {
   if (_schedulerInterval) clearInterval(_schedulerInterval);
 
   log(`⏰ Night audit scheduled for ${pad(auditHour)}:${pad(auditMinute)} (${timezone}) — checking every 60s`);
 
   _schedulerInterval = setInterval(async () => {
-    const now = new Date();
-    // Convert to Africa/Harare time
-    const zw  = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
-    if (zw.getHours() === auditHour && zw.getMinutes() === auditMinute) {
-      // Check if already ran this minute
-      const lock = await getSystemConfig('night_audit_lock', {});
-      if (lock && lock.locked) return; // already running
-      const lastRun = lock && lock.completed_at
-        ? new Date(lock.completed_at)
-        : null;
-      if (lastRun && (now - lastRun) < 55000) return; // ran in last 55s
-      runNightAudit('scheduler').catch(console.error);
+    try {
+      const now = new Date();
+      // Convert to hotel local time (Africa/Harare = UTC+2)
+      const zw = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
+
+      // ── CATCH-UP: if business_date is behind today, run immediately ─────────
+      // This handles the case where the server was down or the audit was skipped.
+      const dbDate = await getSystemConfig('business_date', null);
+      const businessDate = dbDate?.date || todayDB();
+      const localToday = zw.toLocaleDateString('en-CA', { timeZone: timezone }); // YYYY-MM-DD
+      if (businessDate < localToday) {
+        const lock = await getSystemConfig('night_audit_lock', {});
+        if (!lock || !lock.locked) {
+          log(`⚡ Catch-up: business_date=${businessDate} is behind local date=${localToday} — running audit now`);
+          runNightAudit('catch_up').catch(console.error);
+          return;
+        }
+      }
+
+      // ── SCHEDULED RUN: fire at the configured hour:minute ────────────────────
+      if (zw.getHours() === auditHour && zw.getMinutes() === auditMinute) {
+        const lock = await getSystemConfig('night_audit_lock', {});
+        if (lock && lock.locked) return; // already running
+        const lastRun = lock?.completed_at ? new Date(lock.completed_at) : null;
+        if (lastRun && (now - lastRun) < 55000) return; // ran in last 55s
+        runNightAudit('scheduler').catch(console.error);
+      }
+    } catch (err) {
+      log('⚠ Scheduler tick error (non-fatal): ' + err.message);
     }
   }, 60 * 1000);
 

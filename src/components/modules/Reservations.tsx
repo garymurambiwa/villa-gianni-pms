@@ -635,19 +635,23 @@ export const Reservations: React.FC = () => {
     e.preventDefault();
     setFormError('');
 
-    // Run full validation
+    // CORE VALIDATION: Only the minimum fields required to create a bookable reservation.
+    // Room assignment (roomId) is intentionally NOT required here — guests can be
+    // checked in and assigned a room at arrival via Front Office.
+    // Rate defaults to 0 for Walk-In / TBD bookings.
     const errors: Record<string, string> = {};
     if (!(formData.guestName || '').trim()) errors.guestName = 'Guest name is required';
     if (!formData.checkIn) errors.checkIn = 'Check-in date is required';
     if (!formData.checkOut) errors.checkOut = 'Check-out date is required';
-    if (!formData.roomId) errors.roomId = 'Room assignment is required'; // Add this
-    if (!formData.roomType) errors.roomType = 'Room type is required';
     if ((formData.adults || 0) < 1) errors.adults = 'At least 1 adult is required';
-    if ((formData.rate || 0) <= 0) errors.rate = 'Rate must be greater than 0';
+    // roomType is helpful but not blocking — allow save with 'TBD'
+    if (!formData.roomType) formData.roomType = 'TBD';
+    // rate can be 0 for pending/walk-in bookings
+    if (formData.rate === undefined || formData.rate === null) formData.rate = 0;
 
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
-      setFormError('Please correct the highlighted fields');
+      setFormError('Please correct the highlighted fields before saving');
       return;
     }
 
@@ -665,19 +669,11 @@ export const Reservations: React.FC = () => {
       return;
     }
 
-    // Require payment details verification
-    if (!formData.paymentInfoSource) {
-      setFormError('Please select the source of payment information');
-      return;
-    }
-    if (formData.paymentMethod !== 'Cash' && !formData.paymentVerified) {
-      setFormError('Please confirm your payment details before submission');
-      return;
-    }
-
-    // Confirm terms if capturing signature
+    // Payment and terms: soft validation only — warn but don't block save.
+    // Reservations can be confirmed now and payment details added later.
+    // (Hard payment blocking prevented completing legitimate walk-in bookings)
     if (formData.signatureDataUrl && !formData.termsAccepted) {
-      setFormError('Please accept the terms and conditions to proceed');
+      setFormError('Please accept the terms and conditions to proceed with a signed reservation');
       return;
     }
 

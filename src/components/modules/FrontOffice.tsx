@@ -147,14 +147,30 @@ export const FrontOffice: React.FC = () => {
     }
   }, [reservations, guests]);
 
-  // Derived state for available rooms
+  // IDs of rooms that already have a checked-in reservation (guard against double check-in)
+  const occupiedRoomIds = useMemo(() => {
+    const ids = new Set<string>();
+    reservations.forEach((r: any) => {
+      if ((r.status === 'checked-in' || r.status === 'occupied') && (r.room_id || r.roomId)) {
+        ids.add(r.room_id || r.roomId);
+      }
+    });
+    return ids;
+  }, [reservations]);
+
+  // Available rooms: VC (Vacant Clean) + VD (Vacant Dirty) — both are unoccupied.
+  // VD rooms still need housekeeping but can be assigned; they show a warning badge.
+  // OOO/OOS rooms are excluded. Rooms already checked-in are excluded.
   const availableRooms = useMemo(() => {
     if (!rooms) return [];
-    return rooms.filter(r => {
-      const s = String(r.status || '').toLowerCase();
-      return s === 'available' || s === 'vacant' || String(r.status).toUpperCase() === 'VC';
+    return rooms.filter((r: any) => {
+      const s = String(r.status || '').toUpperCase();
+      const isVacant = s === 'VC' || s === 'VD' || s === 'VACANT' || s === 'AVAILABLE';
+      const isBlocked = s === 'OOO' || s === 'OOS';
+      const isOccupied = occupiedRoomIds.has(r.id);
+      return isVacant && !isBlocked && !isOccupied;
     });
-  }, [rooms]);
+  }, [rooms, occupiedRoomIds]);
 
   const isLoadingRooms = !rooms || (rooms.length === 0 && !dbError);
   const roomsError = (!rooms || rooms.length === 0) && dbError ? dbError : null;
@@ -1054,8 +1070,14 @@ export const FrontOffice: React.FC = () => {
 
   const handleCheckInConfirm = () => {
     if (selectedResId && selectedRoom) {
-      const roomObj = rooms.find(r => r.id === selectedRoom);
-      const baseRate = rateOverride ? parseFloat(rateOverride) : (roomObj?.rate || (reservations.find(r => r.id === selectedResId)?.rate || 0));
+      // Guard: prevent double check-in to an already-occupied room
+      if (occupiedRoomIds.has(selectedRoom)) {
+        const roomObj = rooms.find((r: any) => r.id === selectedRoom);
+        toast.error(`Room ${roomObj?.number || selectedRoom} already has a checked-in guest. Select a different room.`);
+        return;
+      }
+      const roomObj = rooms.find((r: any) => r.id === selectedRoom);
+      const baseRate = rateOverride ? parseFloat(rateOverride) : (Number(roomObj?.rate) || (Number(reservations.find((r: any) => r.id === selectedResId)?.rate) || 0));
       const totalRate = computeTotalRate(baseRate, selectedPackage, packageOptions, 'RO');
       const pct = Math.max(0, Math.min(100, parseFloat(taxRatePercent || '0')));
       const includeTax = taxEnabled && taxMethod === 'inclusive';
@@ -1767,13 +1789,28 @@ export const FrontOffice: React.FC = () => {
                   } />
                 </SelectTrigger>
                 <SelectContent>
-                  {availableRooms.map(r => (
-                    <SelectItem key={r.id} value={r.id}>
-                      Room {r.number} ({r.type})
-                    </SelectItem>
-                  ))}
+                  {availableRooms.map((r: any) => {
+                    const isDirty = String(r.status || '').toUpperCase() === 'VD';
+                    return (
+                      <SelectItem key={r.id} value={r.id}>
+                        <span className="flex items-center gap-2">
+                          Room {r.number} — {r.type} · ${Number(r.rate || 0).toFixed(0)}/night
+                          {isDirty && (
+                            <span className="ml-1 text-[10px] bg-amber-100 text-amber-700 border border-amber-300 rounded px-1 py-0.5 font-medium">
+                              Needs Cleaning
+                            </span>
+                          )}
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
+              {availableRooms.length === 0 && !isLoadingRooms && !roomsError && (
+                <p className="text-xs text-orange-600 mt-1">
+                  No vacant rooms available. Check if all rooms are occupied or marked OOO.
+                </p>
+              )}
               {roomsError && <p className="text-xs text-red-500 mt-1">{roomsError}</p>}
             </div>
 

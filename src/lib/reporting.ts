@@ -682,32 +682,129 @@ export const buildPosReconciliation = async (forDate?: string) => {
   return { title: `POS Sales & Cashier Reconciliation — ${date}`, columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'Card', 'Over/Short'], rows };
 };
 
-// Daily Purchase & Receiving Log (simple placeholder using expenses and vendors if present)
+// Daily Purchase & Receiving Log — DB-driven from inventory GRN transactions
 export const buildPurchaseReceivingLog = async (forDate?: string) => {
-  const purchases = readJSON<any[]>('corepms_purchases', []);
   const date = forDate || getBusinessDate();
-  const rows = purchases.filter(p => p.date === date).map(p => ({ item: p.itemName || p.item || 'Item', vendor: p.vendorName || p.vendorId || 'Vendor', po: p.poId || p.po || '-', unitCost: Number(p.unitCost || 0), qty: Number(p.quantity || 0), total: Number((Number(p.unitCost || 0) * Number(p.quantity || 0)).toFixed(2)) }));
-  return { title: `Daily Purchase & Receiving — ${date}`, columns: ['Item', 'Vendor', 'PO', 'Unit Cost', 'Qty', 'Total Value'], rows };
+  try {
+    const { db: dbMod } = await import('@/lib/db');
+    // Pull from inventory GRN headers + lines for the given date
+    const grnRes = await dbMod.query<any>(
+      `SELECT h.grn_number, h.supplier_name, h.inserted_at::date::text as date,
+              l.item_id, i.name as item_name, l.qty_received, l.unit_cost,
+              l.line_total, u.code as uom
+       FROM inv_grn_headers h
+       JOIN inv_grn_lines l ON l.grn_header_id = h.id
+       LEFT JOIN inv_items i ON i.id = l.item_id
+       LEFT JOIN inv_uom_definitions u ON u.id = l.received_uom_id
+       WHERE h.status = 'posted' AND h.inserted_at::date = $1
+       ORDER BY h.grn_number, l.line_number`,
+      [date]
+    );
+    if ('rows' in grnRes && grnRes.rows.length > 0) {
+      const rows = grnRes.rows.map((r: any) => ({
+        grn: r.grn_number,
+        item: r.item_name || r.item_id,
+        vendor: r.supplier_name,
+        qty: Number(r.qty_received || 0),
+        uom: r.uom || 'UNIT',
+        unitCost: Number(r.unit_cost || 0),
+        total: Number(r.line_total || 0)
+      }));
+      return { title: `Daily Purchase & Receiving — ${date}`, columns: ['GRN', 'Item', 'Vendor', 'Qty', 'UOM', 'Unit Cost', 'Total'], rows };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildPurchaseReceivingLog DB failed, using expenses fallback:', err);
+  }
+  // Fallback: vendor expenses
+  const expenses = readJSON<any[]>('corepms_vendor_expenses', []);
+  const rows = expenses.filter(e => (e.expense_date || '').slice(0, 10) === date)
+    .map(e => ({ grn: e.reference_number || '—', item: e.description, vendor: e.vendor_name, qty: Number(e.quantity || 1), uom: 'UNIT', unitCost: Number(e.unit_cost || 0), total: Number(e.total_cost || 0) }));
+  return { title: `Daily Purchase & Receiving — ${date}`, columns: ['GRN', 'Item', 'Vendor', 'Qty', 'UOM', 'Unit Cost', 'Total'], rows };
 };
 
-// Housekeeping Status (daily snapshot from room service)
+// Housekeeping Status — real-time from DB rooms table
 export const buildHousekeepingStatus = async () => {
+  const date = new Date().toISOString().slice(0, 10);
+  try {
+    const { db: dbMod } = await import('@/lib/db');
+    const roomsRes = await dbMod.query<any>(
+      `SELECT
+         status,
+         COUNT(*) as count,
+         COUNT(CASE WHEN status='OC' OR status='OD' THEN 1 END) as occupied,
+         COUNT(CASE WHEN status='VC' THEN 1 END) as vacant_clean,
+         COUNT(CASE WHEN status='VD' THEN 1 END) as vacant_dirty,
+         COUNT(CASE WHEN status='OOO' THEN 1 END) as out_of_order
+       FROM rooms
+       WHERE is_active IS DISTINCT FROM false
+       GROUP BY status
+       ORDER BY status`
+    );
+    if ('rows' in roomsRes && roomsRes.rows.length > 0) {
+      const statusLabels: Record<string, string> = {
+        OC: 'Occupied Clean', OD: 'Occupied Dirty',
+        VC: 'Vacant Clean',   VD: 'Vacant Dirty',
+        OOO: 'Out of Order',  OOS: 'Out of Service'
+      };
+      const rows = roomsRes.rows.map((r: any) => ({
+        status: statusLabels[String(r.status || '').toUpperCase()] || r.status,
+        count: Number(r.count || 0)
+      }));
+      return { title: `Housekeeping Status — ${date}`, columns: ['Status', 'Count'], rows };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildHousekeepingStatus DB failed:', err);
+  }
+  // Fallback to localStorage
   const rooms = roomSvc.getRooms();
   const byStatus: Record<string, number> = {};
-  rooms.forEach(r => { byStatus[r.status] = (byStatus[r.status] || 0) + 1; });
+  rooms.forEach((r: any) => { byStatus[r.status] = (byStatus[r.status] || 0) + 1; });
   const rows = Object.entries(byStatus).map(([status, count]) => ({ status, count }));
-  const date = new Date().toISOString().slice(0, 10);
   return { title: `Housekeeping Status — ${date}`, columns: ['Status', 'Count'], rows };
 };
 
-// Daily Tax Report (sum of TAX account for date from GL)
+// Daily Tax Report — DB-driven from folio_charges tax entries
 export const buildDailyTax = async (forDate?: string) => {
   const date = forDate || new Date().toISOString().slice(0, 10);
+  try {
+    const { db: dbMod } = await import('@/lib/db');
+    const taxRes = await dbMod.query<any>(
+      `SELECT
+         category,
+         COUNT(*) as transactions,
+         COALESCE(SUM(amount), 0) as total_amount,
+         COALESCE(SUM(tax_amount), 0) as tax_collected
+       FROM folio_charges
+       WHERE business_date::date = $1 AND is_voided = false
+         AND charge_type = 'charge'
+       GROUP BY category
+       ORDER BY total_amount DESC`,
+      [date]
+    );
+    if ('rows' in taxRes && taxRes.rows.length > 0) {
+      const rows = taxRes.rows.map((r: any) => ({
+        category: r.category,
+        transactions: Number(r.transactions),
+        revenue: Number(r.total_amount || 0).toFixed(2),
+        tax: Number(r.tax_collected || 0).toFixed(2)
+      }));
+      const totalTax = taxRes.rows.reduce((s: number, r: any) => s + Number(r.tax_collected || 0), 0);
+      return {
+        title: `Daily Tax Report — ${date}`,
+        columns: ['Category', 'Transactions', 'Revenue', 'Tax Collected'],
+        rows,
+        summary: { totalTax: totalTax.toFixed(2) }
+      };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildDailyTax DB failed, using GL fallback:', err);
+  }
+  // Fallback to GL ledger
   const ledger = gl.getLedger().filter(e => e.date === date);
   const taxAcc = gl.getMappings().TAX || 'TAX';
   const totalTax = ledger.flatMap(e => e.lines).filter(l => l.accountId === taxAcc).reduce((s, l) => s + (l.debit || 0) + (l.credit || 0), 0);
-  const rows = [{ metric: 'Tax Collected', value: Number(totalTax.toFixed(2)) }];
-  return { title: `Daily Tax Report — ${date}`, columns: ['Metric', 'Value'], rows };
+  const rows = [{ category: 'Tax Collected', transactions: 0, revenue: '0.00', tax: Number(totalTax.toFixed(2)) }];
+  return { title: `Daily Tax Report — ${date}`, columns: ['Category', 'Transactions', 'Revenue', 'Tax Collected'], rows };
 };
 
 // Cash & Bank Deposits (daily totals for CASH/BANK accounts)

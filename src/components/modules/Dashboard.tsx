@@ -16,51 +16,63 @@ export const Dashboard: React.FC = () => {
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
 
-  // 1. Occupied Rooms
+  // ── Industry-standard status normaliser (matches Availability Grid logic) ──
   const getStatusCategory = (status: string) => {
     const s = (status || '').toUpperCase();
-    if (s === 'VC' || s === 'VACANT' || s === 'AVAILABLE') return 'VC';
-    if (s === 'VD') return 'VD';
-    if (s === 'OCC' || s === 'OC' || s === 'OCCUPIED') return 'OCC';
-    if (s === 'OD') return 'OD';
-    if (s === 'OOO') return 'OOO';
-    if (s === 'OOS') return 'OOS';
+    if (s === 'OC' || s === 'OCC' || s === 'OCCUPIED') return 'OCC'; // Occupied Clean
+    if (s === 'OD') return 'OD';                                       // Occupied Dirty
+    if (s === 'VD') return 'VD';                                       // Vacant Dirty
+    if (s === 'VC' || s === 'VACANT' || s === 'AVAILABLE') return 'VC';// Vacant Clean
+    if (s === 'OOO') return 'OOO';                                     // Out of Order
+    if (s === 'OOS') return 'OOS';                                     // Out of Service
     return 'VC';
   };
+
+  // OCCUPIED = rooms physically occupied (OC + OD status on the rooms table).
+  // This is the industry standard (Smith Travel Research / STR) — use room status,
+  // not reservation count, so the dashboard stays in sync with the Availability Grid.
   const occupiedRooms = rooms.filter(r => {
     const c = getStatusCategory(r.status);
     return c === 'OCC' || c === 'OD';
   }).length;
 
-  // Total Available Rooms (Total Inventory excluding Out of Order/Service)
-  // Used as denominator for Occupancy Rate and ARR
+  // TOTAL AVAILABLE ROOMS = physical inventory minus permanently blocked (OOO/OOS).
+  // Denominator for Occupancy %, ADR and RevPAR.
   const totalAvailableRooms = rooms.filter(r => {
     const c = getStatusCategory(r.status);
     return c !== 'OOO' && c !== 'OOS';
   }).length;
 
-  // 1. Occupancy Rate = (Occupied Rooms / Total Available Rooms) * 100
+  // OCCUPANCY RATE (industry standard): Occupied Rooms ÷ Total Available Rooms
   const occupancyRate = totalAvailableRooms > 0
     ? ((occupiedRooms / totalAvailableRooms) * 100).toFixed(1)
     : '0.0';
 
-  // 3. Today's Check-Ins: Number of reservations checking in today
-  const todayCheckIns = reservations.filter(r => r.checkIn === todayStr).length;
+  // TODAY'S ARRIVALS / DEPARTURES from reservations
+  const todayCheckIns = reservations.filter((r: any) => {
+    const ci = String(r.checkIn || r.check_in_date || '').slice(0, 10);
+    return ci === todayStr && r.status !== 'checked-out' && r.status !== 'cancelled';
+  }).length;
+  const todayCheckOuts = reservations.filter((r: any) => {
+    const co = String(r.checkOut || r.check_out_date || '').slice(0, 10);
+    return co === todayStr;
+  }).length;
 
-  // 4. Today's Check-Outs: Number of reservations checking out today
-  const todayCheckOuts = reservations.filter(r => r.checkOut === todayStr).length;
+  // ADR (Average Daily Rate) = Sum of room rates for occupied rooms ÷ occupied rooms count.
+  // Uses unique rooms (not duplicate reservations) to avoid inflating ADR.
+  const occupiedRoomIds = new Set(
+    reservations
+      .filter((r: any) => r.status === 'checked-in' || r.status === 'occupied')
+      .map((r: any) => r.room_id || r.roomId)
+      .filter(Boolean)
+  );
+  const currentRevenue = rooms
+    .filter((r: any) => occupiedRoomIds.has(r.id))
+    .reduce((sum: number, r: any) => sum + (Number(r.rate) || 0), 0);
 
-  // Calculate Total Room Revenue for today (sum of rates for currently checked-in reservations)
-  // We use 'checked-in' status to identify currently generating revenue
-  const currentRevenue = reservations
-    .filter(r => r.status === 'checked-in')
-    .reduce((sum, r) => sum + (Number(r.rate) || 0), 0);
+  const avgDailyRate = occupiedRooms > 0 ? currentRevenue / occupiedRooms : 0;
 
-  // 5. ADR (Average Daily Rate) = Total Room Revenue / Number of Rooms Sold (Occupied Rooms)
-  // Handle division by zero to prevent $Infinity display
-  const avgDailyRate = occupiedRooms > 0 && currentRevenue > 0 ? currentRevenue / occupiedRooms : 0;
-
-  // 6. ARR (Average Room Rate) = Total Room Revenue / Total Available Rooms
+  // RevPAR (Revenue Per Available Room) = ADR × Occupancy % (or Total Revenue ÷ Total Rooms)
   const avgRoomRate = totalAvailableRooms > 0 ? currentRevenue / totalAvailableRooms : 0;
 
   const stats = [
