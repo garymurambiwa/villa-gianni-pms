@@ -981,7 +981,12 @@ export const POSFrontOffice: React.FC = () => {
                   bill={{
                     id: currentBill.id,
                     items: Array.isArray(currentBill.items)
-                      ? currentBill.items.map((i: any) => ({ name: i.menuItem.name, quantity: i.quantity, price: i.menuItem.price, subtotal: i.subtotal }))
+                      ? currentBill.items.map((i: any) => ({
+                          name: i.menuItem?.name || i.name || 'Unknown Item',
+                          quantity: i.quantity,
+                          price: i.menuItem?.price || i.price || 0,
+                          subtotal: i.subtotal
+                        }))
                       : [],
                     subtotal: Array.isArray(currentBill.items)
                       ? currentBill.items.reduce((s: number, i: any) => s + i.subtotal, 0)
@@ -1052,12 +1057,17 @@ export const POSFrontOffice: React.FC = () => {
                 </DialogHeader>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setPrintOpen(false)}>Cancel</Button>
-                  <Button onClick={() => {
-                    if (!currentBill) return;
-                    const items = Array.isArray(currentBill.items)
-                      ? currentBill.items.map((i: any) => ({ name: i.menuItem.name, quantity: i.quantity, price: i.menuItem.price, subtotal: i.subtotal }))
-                      : [];
-                     const html = generateReceiptHTML({
+                   <Button onClick={() => {
+                     if (!currentBill) return;
+                     const items = Array.isArray(currentBill.items)
+                       ? currentBill.items.map((i: any) => ({
+                           name: i.menuItem?.name || i.name || 'Unknown Item',
+                           quantity: i.quantity,
+                           price: i.menuItem?.price || i.price || 0,
+                           subtotal: i.subtotal
+                         }))
+                       : [];
+                      const html = generateReceiptHTML({
                        id: currentBill.id,
                        items,
                        total: currentBill.total,
@@ -1081,12 +1091,17 @@ export const POSFrontOffice: React.FC = () => {
                 </DialogHeader>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setKitchenOpen(false)}>Cancel</Button>
-                  <Button onClick={() => {
-                    if (!currentBill) return;
-                    const items = Array.isArray(currentBill.items)
-                      ? currentBill.items.map((i: any) => ({ name: i.menuItem.name, quantity: i.quantity, price: i.menuItem.price, subtotal: i.subtotal }))
-                      : [];
-                    const html = generateReceiptHTML({
+                   <Button onClick={() => {
+                     if (!currentBill) return;
+                     const items = Array.isArray(currentBill.items)
+                       ? currentBill.items.map((i: any) => ({
+                           name: i.menuItem?.name || i.name || 'Unknown Item',
+                           quantity: i.quantity,
+                           price: i.menuItem?.price || i.price || 0,
+                           subtotal: i.subtotal
+                         }))
+                       : [];
+                     const html = generateReceiptHTML({
                       id: currentBill.id,
                       items,
                       total: currentBill.total,
@@ -1180,7 +1195,11 @@ export const POSFrontOffice: React.FC = () => {
           bill={{
             id: paymentModal.bill.id,
             items: Array.isArray(paymentModal.bill.items)
-              ? paymentModal.bill.items.map((i: any) => ({ name: i.menuItem.name, quantity: i.quantity, price: i.menuItem.price }))
+              ? paymentModal.bill.items.map((i: any) => ({
+                  name: i.menuItem?.name || i.name || 'Unknown Item',
+                  quantity: i.quantity,
+                  price: i.menuItem?.price || i.price || 0
+                }))
               : [],
             total: paymentModal.bill.total,
             tableId: paymentModal.bill.tableId,
