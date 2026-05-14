@@ -569,16 +569,41 @@ export const POSFrontOffice: React.FC = () => {
   }, []);
 
   const clearBill = useCallback(async (tableId: string) => {
-    if (closePosOrder) await closePosOrder(tableId, costCentre || undefined);
-    setTables(prev => {
-      const safePrev = Array.isArray(prev) ? prev : [];
-      return safePrev.map(t => t.id === tableId ? { ...t, currentBill: undefined, status: 'available' } : t);
-    });
-    // Audit
-    const entry = createAuditEntry('CLEAR_BILL', 'TABLE', tableId, 'server-1');
-    try { const raw = localStorage.getItem('corepms_pos_audit'); const list = raw ? JSON.parse(raw) : []; localStorage.setItem('corepms_pos_audit', JSON.stringify([entry, ...list].slice(0, 50))); } catch { }
-    updateTableStatus(tableId, 'available');
-  }, [closePosOrder, updateTableStatus]);
+    try {
+      // Close ALL open orders for this table regardless of cost center
+      if (closePosOrder) {
+        // First try to close orders for current cost center
+        await closePosOrder(tableId, costCentre || undefined);
+        // Then close any remaining orders without cost center filter
+        await closePosOrder(tableId, undefined);
+      }
+
+      setTables(prev => {
+        const safePrev = Array.isArray(prev) ? prev : [];
+        return safePrev.map(t => t.id === tableId ? { ...t, currentBill: undefined, status: 'available' } : t);
+      });
+
+      // Force update table status to available
+      updateTableStatus(tableId, 'available');
+
+      // Audit
+      const entry = createAuditEntry('CLEAR_BILL', 'TABLE', tableId, 'server-1');
+      try {
+        const raw = localStorage.getItem('corepms_pos_audit');
+        const list = raw ? JSON.parse(raw) : [];
+        localStorage.setItem('corepms_pos_audit', JSON.stringify([entry, ...list].slice(0, 50)));
+      } catch { }
+
+      console.log(`Successfully cleared table ${tableId}`);
+    } catch (error) {
+      console.error(`Failed to clear table ${tableId}:`, error);
+      // Still update UI even if database operations fail
+      setTables(prev => {
+        const safePrev = Array.isArray(prev) ? prev : [];
+        return safePrev.map(t => t.id === tableId ? { ...t, currentBill: undefined, status: 'available' } : t);
+      });
+    }
+  }, [closePosOrder, costCentre, updateTableStatus]);
 
   const visibleTables = useMemo(() => {
     const safeTables = Array.isArray(tables) ? tables : [];
