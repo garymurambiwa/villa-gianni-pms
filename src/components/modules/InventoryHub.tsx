@@ -81,7 +81,8 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
 
   const filtered = items.filter(i =>
     !search || i.name.toLowerCase().includes(search.toLowerCase()) ||
-    (i.sku||'').toLowerCase().includes(search.toLowerCase())
+    (i.sku||'').toLowerCase().includes(search.toLowerCase()) ||
+    (i.id||'').toLowerCase().includes(search.toLowerCase())
   );
 
   const openNew = () => {
@@ -145,7 +146,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
     <div className="h-full flex flex-col">
       {/* Toolbar */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <Input placeholder="Search by name or SKU…" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
+        <Input placeholder="Search by ID, name, or SKU…" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
         <span className="text-sm text-gray-500">{filtered.length} items</span>
         <div className="ml-auto flex gap-2">
           <Button onClick={openNew} className="bg-indigo-600 text-white hover:bg-indigo-700">＋ New Item</Button>
@@ -157,17 +158,18 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50 sticky top-0">
             <tr>
-              {['SKU','Name','Category','Base UOM','Cost Price','Avg Cost','Location','Expiry','Actions'].map(h => (
+              {['ID','SKU','Name','Category','Base UOM','Cost Price','Avg Cost','Location','Expiry','Actions'].map(h => (
                 <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {filtered.length === 0 && (
-              <tr><td colSpan={9} className="text-center py-12 text-gray-400">No items found</td></tr>
+              <tr><td colSpan={10} className="text-center py-12 text-gray-400">No items found</td></tr>
             )}
             {filtered.map((item: any) => (
               <tr key={item.id} className="hover:bg-gray-50">
+                <td className="px-3 py-2 font-mono text-xs text-gray-500">{item.id}</td>
                 <td className="px-3 py-2 font-mono text-xs text-purple-700">{item.sku || '—'}</td>
                 <td className="px-3 py-2 font-medium">{item.name}</td>
                 <td className="px-3 py-2">
@@ -516,7 +518,8 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                     const suggestions = searchVal.length >= 2
                       ? items.filter((it:any) =>
                           it.name.toLowerCase().includes(searchVal.toLowerCase()) ||
-                          (it.sku||'').toLowerCase().includes(searchVal.toLowerCase())
+                          (it.sku||'').toLowerCase().includes(searchVal.toLowerCase()) ||
+                          (it.id||'').toLowerCase().includes(searchVal.toLowerCase())
                         ).slice(0, 8)
                       : [];
                     return (
@@ -536,9 +539,9 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                               {suggestions.map((it:any) => (
                                 <div key={it.id} onClick={() => selectItem(i, it)}
                                   className="px-3 py-1.5 hover:bg-indigo-50 cursor-pointer text-xs">
-                                  <span className="font-mono text-purple-600">{it.sku}</span>
+                                  <span className="font-mono text-purple-600">{it.sku || it.id}</span>
                                   <span className="ml-2">{it.name}</span>
-                                  <span className="ml-auto text-gray-400 float-right">{fmt(it.last_cost_price)}</span>
+                                  <span className="ml-auto text-gray-400 float-right">{it.id} · {fmt(it.last_cost_price)}</span>
                                 </div>
                               ))}
                             </div>
@@ -745,7 +748,8 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
                     const suggestions = searchVal.length >= 2
                       ? items.filter((it:any) =>
                           it.name.toLowerCase().includes(searchVal.toLowerCase()) ||
-                          (it.sku||'').toLowerCase().includes(searchVal.toLowerCase())
+                          (it.sku||'').toLowerCase().includes(searchVal.toLowerCase()) ||
+                          (it.id||'').toLowerCase().includes(searchVal.toLowerCase())
                         ).slice(0, 8)
                       : [];
                     const onHand = line.balance ?? 0;
@@ -761,8 +765,9 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
                               {suggestions.map((it:any) => (
                                 <div key={it.id} onClick={() => selectTransferItem(i, it)}
                                   className="px-3 py-1.5 hover:bg-amber-50 cursor-pointer text-xs">
-                                  <span className="font-mono text-purple-600">{it.sku}</span>
+                                  <span className="font-mono text-purple-600">{it.sku || it.id}</span>
                                   <span className="ml-2">{it.name}</span>
+                                  <span className="ml-auto text-gray-400 float-right">{it.id}</span>
                                 </div>
                               ))}
                             </div>
@@ -921,12 +926,13 @@ function RecipeBuilder({ data }: { data: ReturnType<typeof useInventoryData> }) 
           <tbody>
             {ingredients.map((line, i) => {
               const searchVal = itemSearch[i] ?? line.item_name;
-              const suggestions = searchVal.length >= 2
-                ? items.filter((it:any) =>
-                    it.name.toLowerCase().includes(searchVal.toLowerCase()) ||
-                    (it.sku||'').toLowerCase().includes(searchVal.toLowerCase())
-                  ).slice(0, 8)
-                : [];
+                    const suggestions = searchVal.length >= 2
+                      ? items.filter((it:any) =>
+                          it.name.toLowerCase().includes(searchVal.toLowerCase()) ||
+                          (it.sku||'').toLowerCase().includes(searchVal.toLowerCase()) ||
+                          (it.id||'').toLowerCase().includes(searchVal.toLowerCase())
+                        ).slice(0, 8)
+                      : [];
               const waste = 1 + (Number(line.wastage_pct||0)/100);
               const effectiveCost = Number(line.qty||0) * Number(line.unit_cost||0) * waste;
               return (
@@ -941,6 +947,7 @@ function RecipeBuilder({ data }: { data: ReturnType<typeof useInventoryData> }) 
                           <div key={it.id} onClick={() => selectIngredientItem(i, it)}
                             className="px-3 py-1.5 hover:bg-indigo-50 cursor-pointer text-xs flex justify-between">
                             <span>{it.name}</span>
+                            <span className="text-gray-500 text-xs">{it.id}</span>
                             <span className="text-indigo-600">{fmt(it.weighted_avg_cost)}/{it.base_uom_code}</span>
                           </div>
                         ))}

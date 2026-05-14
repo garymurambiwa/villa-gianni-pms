@@ -1305,7 +1305,7 @@ router.get('/items', async (req, res) => {
     }
 
     if (search) {
-      conditions.push(`i.name ILIKE $${params.length + 1}`);
+      conditions.push(`(i.name ILIKE $${params.length + 1} OR i.id ILIKE $${params.length + 1} OR i.sku ILIKE $${params.length + 1})`);
       params.push(`%${search}%`);
     }
 
