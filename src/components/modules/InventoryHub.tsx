@@ -82,6 +82,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const filtered = items.filter(i =>
     !search || i.name.toLowerCase().includes(search.toLowerCase()) ||
     (i.sku||'').toLowerCase().includes(search.toLowerCase()) ||
+    (i.short_id||'').toLowerCase().includes(search.toLowerCase()) ||
     (i.id||'').toLowerCase().includes(search.toLowerCase())
   );
 
@@ -146,7 +147,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
     <div className="h-full flex flex-col">
       {/* Toolbar */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <Input placeholder="Search by ID, name, or SKU…" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
+        <Input placeholder="Search by ID, short ID, name, or SKU…" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
         <span className="text-sm text-gray-500">{filtered.length} items</span>
         <div className="ml-auto flex gap-2">
           <Button onClick={openNew} className="bg-indigo-600 text-white hover:bg-indigo-700">＋ New Item</Button>
@@ -169,7 +170,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
             )}
             {filtered.map((item: any) => (
               <tr key={item.id} className="hover:bg-gray-50">
-                <td className="px-3 py-2 font-mono text-xs text-gray-500">{item.id}</td>
+                <td className="px-3 py-2 font-mono text-xs text-gray-500">{item.short_id || item.id}</td>
                 <td className="px-3 py-2 font-mono text-xs text-purple-700">{item.sku || '—'}</td>
                 <td className="px-3 py-2 font-medium">{item.name}</td>
                 <td className="px-3 py-2">

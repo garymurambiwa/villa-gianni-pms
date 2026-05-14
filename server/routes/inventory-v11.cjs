@@ -79,6 +79,35 @@ async function seedDefaultLocations(client) {
 }
 
 // ============================================================================
+// ITEM ID GENERATION: Generate short item IDs (first 4 letters + # + 3 digits)
+// ============================================================================
+
+async function generateShortItemId(name) {
+  if (!name) return 'UNKN#001';
+
+  // Extract first 4 letters (uppercase alphanumeric)
+  const letters = name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().substring(0, 4);
+  const prefix = letters.padEnd(4, 'X'); // Pad with X if less than 4 chars
+
+  // Find the highest existing number for this prefix
+  const res = await pool.query(
+    `SELECT id FROM public.inv_items WHERE id LIKE $1 ORDER BY id DESC LIMIT 1`,
+    [`${prefix}#___`]
+  );
+
+  let nextNum = 1;
+  if (res.rows.length > 0) {
+    const lastId = res.rows[0].id;
+    const numPart = lastId.split('#')[1];
+    if (numPart && !isNaN(numPart)) {
+      nextNum = parseInt(numPart, 10) + 1;
+    }
+  }
+
+  return `${prefix}#${String(nextNum).padStart(3, '0')}`;
+}
+
+// ============================================================================
 // AUTO-BOOTSTRAP: Create inventory tables on first load if missing
 // ============================================================================
 
@@ -100,6 +129,7 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inv_locations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
       await client.query(`ALTER TABLE public.inv_uom_definitions ADD COLUMN IF NOT EXISTS description TEXT`);
       await client.query(`ALTER TABLE public.inv_items ADD COLUMN IF NOT EXISTS selling_price NUMERIC(10,2) DEFAULT 0.00`);
+      await client.query(`ALTER TABLE public.inv_items ADD COLUMN IF NOT EXISTS short_id TEXT UNIQUE`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_by TEXT`);
       await client.query(`ALTER TABLE public.inv_stock_ledger ADD COLUMN IF NOT EXISTS inserted_at TIMESTAMPTZ DEFAULT NOW()`);
@@ -1347,19 +1377,21 @@ router.post('/items', async (req, res) => {
   if (!name) return res.status(400).json({ ok: false, error: 'name is required' });
 
   try {
-    const itemId = id || randomUUID();
+    const itemId = id || (await generateShortItemId(name));
+    const shortId = itemId.match(/^[A-Z0-9]{4}#[0-9]{3}$/) ? itemId : (await generateShortItemId(name));
     // Auto-generate SKU if not provided
     const skuVal = sku || null;
 
     const r = await pool.query(`
       INSERT INTO public.inv_items
-        (id, name, category, sub_category, base_uom_id, sku, barcode,
+        (id, short_id, name, category, sub_category, base_uom_id, sku, barcode,
          last_cost_price, weighted_avg_cost, average_cost,
          expiry_tracking, default_location_id, supplier_id,
          media_url, notes, par_level, reorder_level, default_wastage_pct,
          is_active, inserted_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$8,$9,$10,$11,$12,$13,$14,$15,$16,true,NOW(),NOW())
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$9,$10,$11,$12,$13,$14,$15,$16,$17,true,NOW(),NOW())
       ON CONFLICT (id) DO UPDATE SET
+        short_id           = COALESCE(public.inv_items.short_id, EXCLUDED.short_id),
         name               = EXCLUDED.name,
         category           = EXCLUDED.category,
         sub_category       = EXCLUDED.sub_category,
@@ -1377,7 +1409,7 @@ router.post('/items', async (req, res) => {
         default_wastage_pct= EXCLUDED.default_wastage_pct,
         updated_at         = NOW()
       RETURNING *
-    `, [itemId, name, category||'Food', sub_category||null, base_uom_id||'uom_unit',
+    `, [itemId, shortId, name, category||'Food', sub_category||null, base_uom_id||'uom_unit',
         skuVal, barcode||null, Number(last_cost_price||0),
         !!expiry_tracking, default_location_id||null, supplier_id||null,
         media_url||null, notes||null, Number(par_level||0), Number(reorder_level||0),
