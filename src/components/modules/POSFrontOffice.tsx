@@ -540,11 +540,9 @@ export const POSFrontOffice: React.FC = () => {
     const safeTables = Array.isArray(tables) ? tables : [];
     const table = safeTables.find(t => t.id === tableId);
     if (!table) return;
-    if (table.currentBill) {
-      setPaymentModal({ bill: table.currentBill, open: true });
-    } else {
-      setOrderModal({ tableId, open: true });
-    }
+    // Always open order modal - allows adding items to existing orders
+    // Payment can be accessed from the order modal
+    setOrderModal({ tableId, open: true });
   }, [tables]);
 
   const toggleSuspend = useCallback((tableId: string) => {
@@ -1159,9 +1157,16 @@ export const POSFrontOffice: React.FC = () => {
       {orderModal?.open && (
         <OrderModal
           tableNumber={Number(orderModal.tableId.replace('t', ''))}
-          bill={null}
+          bill={(() => {
+            const table = tables.find(t => t.id === orderModal.tableId);
+            return table?.currentBill || null;
+          })()}
           onClose={() => setOrderModal(null)}
           onSave={saveOrder}
+          onPayment={(bill) => {
+            setOrderModal(null); // Close order modal
+            setPaymentModal({ bill, open: true }); // Open payment modal
+          }}
           menuItems={menuItems as any}
         />
       )}

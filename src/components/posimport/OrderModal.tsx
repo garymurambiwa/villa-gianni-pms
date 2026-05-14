@@ -52,10 +52,11 @@ interface OrderModalProps {
   bill: Bill | null;
   onClose: () => void;
   onSave: (bill: Bill) => void;
+  onPayment?: (bill: Bill) => void;
   menuItems: MenuItem[];
 }
 
-export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClose, onSave, menuItems }) => {
+export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClose, onSave, onPayment, menuItems }) => {
   const [items, setItems] = useState<BillItem[]>(bill?.items || []);
   const [activeCategory, setActiveCategory] = useState<'food' | 'bar'>('food');
   const [dynamicMenu, setDynamicMenu] = useState<MenuItem[]>([]);
@@ -763,12 +764,43 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
+
+                {/* If there are existing items, show payment option */}
+                {bill && items.length > 0 && onPayment && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      const finalTotal = total * (1 + posSettings.service_charge);
+                      const vatAmount = total - (total / (1 + posSettings.vat_rate));
+                      const scAmount = total * posSettings.service_charge;
+
+                      const currentBill = {
+                        id: bill?.id || `bill-${Date.now()}`,
+                        tableId: `t${tableNumber}`,
+                        items,
+                        status: 'open',
+                        createdAt: new Date().toISOString(),
+                        total: finalTotal,
+                        shift_id: activeShift?.id,
+                        user_id: user?.id,
+                        vat_amount: vatAmount,
+                        service_charge_amount: scAmount
+                      };
+
+                      onPayment(currentBill);
+                    }}
+                    className="flex-1"
+                  >
+                    Process Payment
+                  </Button>
+                )}
+
                 <Button
                   onClick={() => {
                     const finalTotal = total * (1 + posSettings.service_charge);
                     const vatAmount = total - (total / (1 + posSettings.vat_rate));
                     const scAmount = total * posSettings.service_charge;
-                    
+
                     onSave({
                       id: bill?.id || `bill-${Date.now()}`,
                       tableId: `t${tableNumber}`,
@@ -781,11 +813,11 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       vat_amount: vatAmount,
                       service_charge_amount: scAmount
                     });
-                    onClose();
                   }}
                   className="flex-1"
+                  disabled={items.length === 0}
                 >
-                  Save Order
+                  {bill ? 'Update Order' : 'Send to Kitchen'}
                 </Button>
               </div>
             </div>
