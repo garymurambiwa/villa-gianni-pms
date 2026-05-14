@@ -813,6 +813,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       vat_amount: vatAmount,
                       service_charge_amount: scAmount
                     });
+
+                    // Close modal after saving order
+                    onClose();
                   }}
                   className="flex-1"
                   disabled={items.length === 0}
