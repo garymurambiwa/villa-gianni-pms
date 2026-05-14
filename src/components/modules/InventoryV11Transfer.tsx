@@ -45,17 +45,53 @@ interface TransferLine {
 
 export const InventoryV11Transfer: React.FC = () => {
   const { toast } = useToast();
-  const [sourceLocation, setSourceLocation] = useState('loc_main_cellar');
-  const [destinationLocation, setDestinationLocation] = useState('loc_bar1');
+  const [sourceLocation, setSourceLocation] = useState('');
+  const [destinationLocation, setDestinationLocation] = useState('');
   const [referenceText, setReferenceText] = useState('');
   const [lines, setLines] = useState<TransferLine[]>([]);
   const [loading, setLoading] = useState(false);
   const [availableItems, setAvailableItems] = useState<any[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
+  const [locationsLoading, setLocationsLoading] = useState(true);
   const [openCombobox, setOpenCombobox] = useState<{ [key: string]: boolean }>({});
 
   React.useEffect(() => {
-    fetchAvailableStock();
+    fetchLocations();
+  }, []);
+
+  React.useEffect(() => {
+    if (sourceLocation) {
+      fetchAvailableStock();
+    }
   }, [sourceLocation]);
+
+  const fetchLocations = async () => {
+    try {
+      setLocationsLoading(true);
+      const res = await fetch('/api/v1/inventory/locations');
+      const data = await res.json();
+      if (data.ok) {
+        setLocations(data.data);
+        // Set default locations if available
+        const storageLocs = data.data.filter((l: any) => l.location_type === 'Storage');
+        const outletLocs = data.data.filter((l: any) => l.location_type === 'Outlet');
+
+        if (storageLocs.length > 0 && !sourceLocation) {
+          setSourceLocation(storageLocs[0].id);
+        }
+        if (outletLocs.length > 0 && !destinationLocation) {
+          setDestinationLocation(outletLocs[0].id);
+        }
+      } else {
+        toast({ title: 'Failed to load locations', description: data.error || 'Unknown error', variant: 'destructive' });
+      }
+    } catch (e) {
+      console.error('Failed to fetch locations', e);
+      toast({ title: 'Network error', description: 'Failed to load locations', variant: 'destructive' });
+    } finally {
+      setLocationsLoading(false);
+    }
+  };
 
   const fetchAvailableStock = async () => {
     try {
@@ -71,16 +107,8 @@ export const InventoryV11Transfer: React.FC = () => {
     window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } }));
   };
 
-  const locations = [
-    { id: 'loc_main_cellar', name: 'Main Cellar', type: 'Storage' },
-    { id: 'loc_dry_goods', name: 'Dry Goods Store', type: 'Storage' },
-    { id: 'loc_freezer', name: 'Freezer / Perishables', type: 'Storage' },
-    { id: 'loc_bar1', name: 'Bar 1', type: 'Outlet' },
-    { id: 'loc_restaurant', name: 'Restaurant', type: 'Outlet' },
-  ];
-
-  const storageLocations = locations.filter(l => l.type === 'Storage');
-  const outletLocations = locations.filter(l => l.type === 'Outlet');
+  const storageLocations = locations.filter(l => l.location_type === 'Storage');
+  const outletLocations = locations.filter(l => l.location_type === 'Outlet');
 
   const uoms = [
     { id: 'uom_case', code: 'CASE' },
@@ -188,11 +216,18 @@ export const InventoryV11Transfer: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             <div>
               <Label htmlFor="source">Source Location *</Label>
-              <Select value={sourceLocation} onValueChange={setSourceLocation}>
+              <Select
+                value={sourceLocation}
+                onValueChange={setSourceLocation}
+                disabled={locationsLoading}
+              >
                 <SelectTrigger className="mt-1.5">
-                  <SelectValue />
+                  <SelectValue placeholder={locationsLoading ? "Loading..." : "Select source location"} />
                 </SelectTrigger>
                 <SelectContent>
+                  {storageLocations.length === 0 && !locationsLoading && (
+                    <SelectItem value="" disabled>No storage locations available</SelectItem>
+                  )}
                   {storageLocations.map(loc => (
                     <SelectItem key={loc.id} value={loc.id}>{loc.name}</SelectItem>
                   ))}
@@ -206,11 +241,18 @@ export const InventoryV11Transfer: React.FC = () => {
 
             <div>
               <Label htmlFor="dest">Destination Location *</Label>
-              <Select value={destinationLocation} onValueChange={setDestinationLocation}>
+              <Select
+                value={destinationLocation}
+                onValueChange={setDestinationLocation}
+                disabled={locationsLoading}
+              >
                 <SelectTrigger className="mt-1.5">
-                  <SelectValue />
+                  <SelectValue placeholder={locationsLoading ? "Loading..." : "Select destination location"} />
                 </SelectTrigger>
                 <SelectContent>
+                  {outletLocations.length === 0 && !locationsLoading && (
+                    <SelectItem value="" disabled>No outlet locations available</SelectItem>
+                  )}
                   {outletLocations.map(loc => (
                     <SelectItem key={loc.id} value={loc.id}>{loc.name}</SelectItem>
                   ))}
