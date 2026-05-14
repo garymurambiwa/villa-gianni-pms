@@ -742,10 +742,15 @@ check_in_date = ?, check_out_date = ?, status = ?,
         return false;
       }
 
-      // Update local state
-      setPosOrders((prev: any[]) => prev.filter((p: any) => 
-        !(String(p.table_number) === tableNumber && String(p.status) === 'OPEN' && (!costCentre || p.cost_center === costCentre))
-      ));
+      // FIX: case-insensitive status comparison — DB stores 'open' lowercase
+      // Previous bug: p.status==='OPEN' never matched 'open', so orders stayed
+      // in posOrders state and syncTablesWithOrders immediately re-occupied table.
+      setPosOrders((prev: any[]) => prev.filter((p: any) => {
+        const sameTable = String(p.table_number) === String(tableNumber);
+        const isOpen    = String(p.status || '').toLowerCase() === 'open';
+        const sameCc    = !costCentre || p.cost_center === costCentre;
+        return !(sameTable && isOpen && sameCc);
+      }));
 
       return true;
     } catch (e: any) {

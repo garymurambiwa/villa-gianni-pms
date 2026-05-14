@@ -386,8 +386,10 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
     updateLine(lineIdx, 'item_id', item.id);
     updateLine(lineIdx, 'item_name', item.name);
     updateLine(lineIdx, 'uom', item.base_uom_id || 'uom_unit');
-    updateLine(lineIdx, 'unit_cost', Number(item.last_cost_price || 0));
-    setItemSearch(s => ({ ...s, [lineIdx]: '' }));
+    updateLine(lineIdx, 'unit_cost', Number(item.last_cost_price || item.weighted_avg_cost || 0));
+    // FIX: Remove the itemSearch entry entirely (don't set to '') so the
+    // "not typing" branch shows the selected item's name in the field.
+    setItemSearch(s => { const next = { ...s }; delete next[lineIdx]; return next; });
   };
 
   const total = lines.reduce((s, l) => s + (Number(l.qty||0) * Number(l.unit_cost||0)), 0);
@@ -465,8 +467,8 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
 
       {/* GRN Form Modal */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto pt-8 pb-8">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl p-6">
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto pt-4 pb-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl mx-4 p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-bold">New Goods Received Note</h3>
               <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-700 text-xl">✕</button>
@@ -515,40 +517,79 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 </thead>
                 <tbody>
                   {lines.map((line, i) => {
-                    const searchVal = itemSearch[i] ?? line.item_name;
-                    const suggestions = searchVal.length >= 2
-                      ? items.filter((it:any) =>
-                          it.name.toLowerCase().includes(searchVal.toLowerCase()) ||
-                          (it.sku||'').toLowerCase().includes(searchVal.toLowerCase()) ||
-                          (it.id||'').toLowerCase().includes(searchVal.toLowerCase())
-                        ).slice(0, 8)
+                    // FIX: When an item is selected, show its name in the field (not blank).
+                    // itemSearch[i] = undefined means "not typing" → show selected item name.
+                    const isTyping   = Object.prototype.hasOwnProperty.call(itemSearch, i);
+                    const searchVal  = isTyping ? (itemSearch[i] ?? '') : (line.item_name || '');
+                    const suggestions = isTyping && searchVal.length >= 2
+                      ? items.filter((it:any) => {
+                          const q = searchVal.toLowerCase();
+                          // FIX: search by name OR by first-4-chars of ID OR full SKU
+                          return (
+                            it.name.toLowerCase().includes(q) ||
+                            (it.sku||'').toLowerCase().includes(q) ||
+                            String(it.id||'').toLowerCase().startsWith(q) ||
+                            String(it.id||'').toLowerCase().slice(-4).startsWith(q)
+                          );
+                        }).slice(0, 10)
                       : [];
                     return (
                       <tr key={i} className="border-t border-gray-100">
-                        <td className="px-2 py-1 relative min-w-[220px]">
+                        <td className="px-2 py-1 relative min-w-[240px]">
+                          {/* Show selected item badge when not actively searching */}
+                          {line.item_id && !isTyping && (
+                            <div className="flex items-center gap-1 mb-0.5">
+                              <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-mono">
+                                #{String(line.item_id).slice(-4).toUpperCase()}
+                              </span>
+                              <span className="text-xs font-medium text-gray-700 truncate max-w-[160px]">{line.item_name}</span>
+                              <button onClick={() => { updateLine(i,'item_id',''); updateLine(i,'item_name',''); setItemSearch(s=>({...s,[i]:''})); }}
+                                className="ml-auto text-gray-300 hover:text-red-400 text-xs">✕</button>
+                            </div>
+                          )}
                           <Input
-                            value={searchVal}
-                            placeholder="Type name or SKU…"
+                            value={isTyping ? searchVal : ''}
+                            placeholder={line.item_id ? 'Click ✕ to change…' : 'Search by name, SKU or last 4 of ID…'}
+                            onFocus={() => {
+                              // Start typing mode on focus if no item selected
+                              if (!line.item_id) setItemSearch(s => ({ ...s, [i]: '' }));
+                            }}
                             onChange={e => {
                               setItemSearch(s => ({ ...s, [i]: e.target.value }));
-                              if (!e.target.value) updateLine(i, 'item_id', '');
+                              if (!e.target.value) { updateLine(i, 'item_id', ''); updateLine(i, 'item_name', ''); }
                             }}
-                            className="text-sm"
+                            onBlur={() => {
+                              // If user typed but didn't pick — keep text visible briefly then clear
+                              setTimeout(() => {
+                                setItemSearch(s => {
+                                  const next = { ...s };
+                                  delete next[i];
+                                  return next;
+                                });
+                              }, 200);
+                            }}
+                            className={`text-sm ${line.item_id ? 'opacity-0 h-0 p-0 border-0 absolute' : ''}`}
                           />
                           {suggestions.length > 0 && (
-                            <div className="absolute z-30 left-2 top-full bg-white border rounded-lg shadow-lg w-64 max-h-40 overflow-y-auto">
+                            <div className="absolute z-30 left-2 top-full bg-white border rounded-lg shadow-xl w-80 max-h-52 overflow-y-auto">
                               {suggestions.map((it:any) => (
-                                <div key={it.id} onClick={() => selectItem(i, it)}
-                                  className="px-3 py-1.5 hover:bg-indigo-50 cursor-pointer text-xs">
-                                  <span className="font-mono text-purple-600">{it.sku || it.id}</span>
-                                  <span className="ml-2">{it.name}</span>
-                                  <span className="ml-auto text-gray-400 float-right">{it.id} · {fmt(it.last_cost_price)}</span>
+                                <div key={it.id}
+                                  onMouseDown={e => { e.preventDefault(); selectItem(i, it); setItemSearch(s=>{const n={...s};delete n[i];return n;}); }}
+                                  className="px-3 py-2 hover:bg-indigo-50 cursor-pointer border-b border-gray-50 last:border-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-[10px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded">
+                                      #{String(it.id).slice(-4).toUpperCase()}
+                                    </span>
+                                    {it.sku && <span className="text-[10px] text-gray-400">{it.sku}</span>}
+                                  </div>
+                                  <div className="text-xs font-medium text-gray-800 mt-0.5">{it.name}</div>
+                                  <div className="text-[10px] text-gray-400">{it.category} · {fmt(it.last_cost_price)}/unit</div>
                                 </div>
                               ))}
                             </div>
                           )}
-                          {!line.item_id && searchVal.length > 0 && suggestions.length === 0 && (
-                            <p className="text-xs text-red-500 mt-0.5">Item not in stock master — create it first</p>
+                          {isTyping && searchVal.length > 0 && suggestions.length === 0 && !line.item_id && (
+                            <p className="text-xs text-red-500 mt-0.5">No items found — create it in Inventory → Items first</p>
                           )}
                         </td>
                         <td className="px-2 py-1 w-24">

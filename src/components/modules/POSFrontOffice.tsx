@@ -569,39 +569,50 @@ export const POSFrontOffice: React.FC = () => {
   }, []);
 
   const clearBill = useCallback(async (tableId: string) => {
-    try {
-      // Close ALL open orders for this table regardless of cost center
-      if (closePosOrder) {
-        // First try to close orders for current cost center
-        await closePosOrder(tableId, costCentre || undefined);
-        // Then close any remaining orders without cost center filter
-        await closePosOrder(tableId, undefined);
-      }
-
+    const resetTable = () => {
       setTables(prev => {
         const safePrev = Array.isArray(prev) ? prev : [];
-        return safePrev.map(t => t.id === tableId ? { ...t, currentBill: undefined, status: 'available' } : t);
+        return safePrev.map(t =>
+          t.id === tableId ? { ...t, currentBill: undefined, status: 'available' as const } : t
+        );
       });
+      // FIX: also wipe localStorage entry so the persist-restore effect
+      // doesn't re-inflate the table back to 'occupied' on next render.
+      try {
+        const raw = localStorage.getItem('corepms_pos_table_states');
+        const saved = raw ? JSON.parse(raw) : {};
+        saved[tableId] = { status: 'available', currentBill: undefined };
+        localStorage.setItem('corepms_pos_table_states', JSON.stringify(saved));
+      } catch { }
+    };
 
-      // Force update table status to available
+    try {
+      // Close ALL open orders for this table in DB (both with and without cost-centre filter)
+      if (closePosOrder) {
+        await closePosOrder(tableId, costCentre || undefined);
+        await closePosOrder(tableId, undefined);
+      }
+      // Also directly mark closed any lingering open orders via raw DB update
+      try {
+        const { db: dbMod } = await import('@/lib/db');
+        await dbMod.query(
+          `UPDATE pos_orders SET status='closed' WHERE (table_number=$1 OR table_number=$2) AND status='open'`,
+          [tableId, tableId.replace('t','')]
+        );
+      } catch { /* non-fatal */ }
+
+      resetTable();
       updateTableStatus(tableId, 'available');
 
-      // Audit
       const entry = createAuditEntry('CLEAR_BILL', 'TABLE', tableId, 'server-1');
       try {
         const raw = localStorage.getItem('corepms_pos_audit');
         const list = raw ? JSON.parse(raw) : [];
         localStorage.setItem('corepms_pos_audit', JSON.stringify([entry, ...list].slice(0, 50)));
       } catch { }
-
-      console.log(`Successfully cleared table ${tableId}`);
     } catch (error) {
       console.error(`Failed to clear table ${tableId}:`, error);
-      // Still update UI even if database operations fail
-      setTables(prev => {
-        const safePrev = Array.isArray(prev) ? prev : [];
-        return safePrev.map(t => t.id === tableId ? { ...t, currentBill: undefined, status: 'available' } : t);
-      });
+      resetTable(); // always reset UI even on error
     }
   }, [closePosOrder, costCentre, updateTableStatus]);
 
