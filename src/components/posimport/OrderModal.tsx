@@ -645,7 +645,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 <div key={item.menuItem.id} className="bg-white p-3 rounded-lg mb-2 shadow">
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
-                      <div className="font-semibold">{item.menuItem.name}</div>
+                       <div className="font-semibold">{item.menuItem?.name || 'Unknown Item'}</div>
                       {!!item.preparation_level && item.preparation_level !== 'n/a' && (
                         <div className="text-xs text-gray-600 italic">({
                           item.preparation_level.replace('-', ' ')
@@ -782,11 +782,11 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       const currentBill = {
                         id: bill?.id || `bill-${Date.now()}`,
                         tableId: `t${tableNumber}`,
-                        items: items.map(item => ({
-                          name: item.menuItem.name,
-                          quantity: item.quantity,
-                          price: item.menuItem.price,
-                          subtotal: item.subtotal
+                         items: items.map(item => ({
+                           name: item.menuItem?.name || 'Unknown Item',
+                           quantity: item.quantity,
+                           price: item.menuItem?.price || 0,
+                           subtotal: item.subtotal
                         })),
                         total: finalTotal,
                         customerName: bill?.customerName,
