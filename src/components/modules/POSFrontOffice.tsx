@@ -734,6 +734,7 @@ export const POSFrontOffice: React.FC = () => {
   }
 
   const saveOrder = async (bill: any) => {
+    console.log('[POSFrontOffice] saveOrder called with bill:', bill);
     const safeTables = Array.isArray(tables) ? tables : [];
     const prev = safeTables;
     const next = safeTables.map(t =>
@@ -744,19 +745,22 @@ export const POSFrontOffice: React.FC = () => {
     if (debouncedTimerRef.current) clearTimeout(debouncedTimerRef.current);
     debouncedTimerRef.current = setTimeout(async () => {
       const current = pendingBillRef.current;
+      console.log('[POSFrontOffice] Saving order to database:', current);
       const ok = await (typeof savePosOrder === 'function'
-        ? savePosOrder({ 
-            table: current.tableId, 
-            items: current.items, 
+        ? savePosOrder({
+            table: current.tableId,
+            items: current.items,
             total: current.total,
             cost_center: costCentre || 'Main Restaurant',
             shift_id: shiftId
           })
         : Promise.resolve(true));
       if (!ok) {
+        console.log('[POSFrontOffice] Order save failed');
         setTables(prev);
         alert('Database Write Failed: POS order could not be saved');
       } else {
+        console.log('[POSFrontOffice] Order saved successfully');
         updateTableStatus(current.tableId, 'occupied');
       }
     }, 400);

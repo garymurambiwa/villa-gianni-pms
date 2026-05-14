@@ -330,7 +330,12 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   };
 
   const removeItem = (itemId: string) => {
-    setItems(items.filter(i => i.menuItem.id !== itemId));
+    console.log('[OrderModal] Removing item:', itemId, 'from items:', items);
+    setItems(prevItems => {
+      const filtered = prevItems.filter(i => i.menuItem.id !== itemId);
+      console.log('[OrderModal] Items after removal:', filtered);
+      return filtered;
+    });
     try { cocktailEng.restoreIngredientsForCocktail(itemId, 1); } catch (e) {
       console.warn('[OrderModal] Ingredient restoration failed:', e);
     }
@@ -777,14 +782,15 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       const currentBill = {
                         id: bill?.id || `bill-${Date.now()}`,
                         tableId: `t${tableNumber}`,
-                        items,
-                        status: 'open',
-                        createdAt: new Date().toISOString(),
+                        items: items.map(item => ({
+                          name: item.menuItem.name,
+                          quantity: item.quantity,
+                          price: item.menuItem.price,
+                          subtotal: item.subtotal
+                        })),
                         total: finalTotal,
-                        shift_id: activeShift?.id,
-                        user_id: user?.id,
-                        vat_amount: vatAmount,
-                        service_charge_amount: scAmount
+                        customerName: bill?.customerName,
+                        roomNumber: bill?.roomNumber
                       };
 
                       onPayment(currentBill);
