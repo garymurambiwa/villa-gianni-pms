@@ -368,11 +368,11 @@ export const POSFrontOffice: React.FC = () => {
             id: tableOrder.id,
             tableId: tableOrder.table_number,
             items: Array.isArray(tableOrder.items) ? tableOrder.items.map((item: any) => ({
-              id: item.id,
-              menuItem: { id: item.id, name: item.name, price: item.price },
+              id: item.menuItem?.id || item.id,
+              menuItem: item.menuItem || { id: item.id, name: item.name, price: item.price },
               quantity: item.quantity,
-              price: item.price,
-              subtotal: item.subtotal || (item.quantity * item.price)
+              price: item.menuItem?.price || item.price,
+              subtotal: item.subtotal || (item.quantity * (item.menuItem?.price || item.price))
             })) : [],
             total: tableOrder.total_amount || 0,
             customerName: tableOrder.customer_name,
