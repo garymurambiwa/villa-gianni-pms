@@ -956,18 +956,18 @@ router.post('/transfer/:id/approve', async (req, res) => {
 // ============================================================================
 
 /**
- * GET /api/v1/inventory/balance/:location_id
- * Get current balances per location
- */
+  * GET /api/v1/inventory/balance/:location_id
+  * Get current balances per location
+  */
 router.get('/balance/:location_id', async (req, res) => {
   const { location_id } = req.params;
 
   try {
     const result = await pool.query(
-      `SELECT 
-        item_id, 
+      `SELECT
+        item_id,
         COALESCE(SUM(quantity_change), 0) as current_balance
-      FROM public.inv_stock_ledger 
+      FROM public.inv_stock_ledger
       WHERE location_id = $1
       GROUP BY item_id
       ORDER BY item_id`,
@@ -978,6 +978,37 @@ router.get('/balance/:location_id', async (req, res) => {
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
+});
+
+ /**
+  * GET /api/v1/inventory/items-with-balance/:location_id
+  * Get inventory items with their current balances for a location
+  */
+router.get('/items-with-balance/:location_id', async (req, res) => {
+  const { location_id } = req.params;
+
+  try {
+    const result = await pool.query(
+      `SELECT
+        i.id,
+        i.short_id,
+        i.name,
+        i.category,
+        COALESCE(SUM(sl.quantity_change), 0) as current_balance
+      FROM public.inv_items i
+      LEFT JOIN public.inv_stock_ledger sl ON sl.item_id = i.id AND sl.location_id = $1
+      WHERE i.is_active = true
+      GROUP BY i.id, i.short_id, i.name, i.category
+      HAVING COALESCE(SUM(sl.quantity_change), 0) > 0
+      ORDER BY i.name`,
+      [location_id]
+    );
+
+    res.json({ ok: true, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
 });
 
 /**

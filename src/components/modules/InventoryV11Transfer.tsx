@@ -15,9 +15,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Trash2, CheckCircle, ChevronLeft } from 'lucide-react';
+import { Plus, Trash2, CheckCircle, ChevronLeft, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 
 interface TransferLine {
   id: string;
@@ -37,6 +51,7 @@ export const InventoryV11Transfer: React.FC = () => {
   const [lines, setLines] = useState<TransferLine[]>([]);
   const [loading, setLoading] = useState(false);
   const [availableItems, setAvailableItems] = useState<any[]>([]);
+  const [openCombobox, setOpenCombobox] = useState<{ [key: string]: boolean }>({});
 
   React.useEffect(() => {
     fetchAvailableStock();
@@ -44,11 +59,11 @@ export const InventoryV11Transfer: React.FC = () => {
 
   const fetchAvailableStock = async () => {
     try {
-      const res = await fetch(`/api/v1/inventory/balance/${sourceLocation}`);
+      const res = await fetch(`/api/v1/inventory/items-with-balance/${sourceLocation}`);
       const data = await res.json();
       if (data.ok) setAvailableItems(data.data);
     } catch (e) {
-      console.error('Failed to fetch balance', e);
+      console.error('Failed to fetch available items', e);
     }
   };
 
@@ -242,25 +257,64 @@ export const InventoryV11Transfer: React.FC = () => {
                   {lines.map((line) => (
                     <tr key={line.id} className="border-b hover:bg-gray-50">
                       <td className="px-4 py-2">
-                        <Select 
-                          value={line.item_id} 
-                          onValueChange={(val) => {
-                            const item = availableItems.find(i => i.item_id === val);
-                            updateLine(line.id, 'item_id', val);
-                            updateLine(line.id, 'current_source_balance', parseFloat(item?.current_balance || '0'));
-                          }}
+                        <Popover
+                          open={openCombobox[line.id] || false}
+                          onOpenChange={(open) => setOpenCombobox(prev => ({ ...prev, [line.id]: open }))}
                         >
-                          <SelectTrigger className="text-xs h-8">
-                            <SelectValue placeholder="Select Item" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableItems.map(item => (
-                              <SelectItem key={item.item_id} value={item.item_id}>
-                                {item.item_id} ({parseFloat(item.current_balance).toFixed(2)})
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={openCombobox[line.id]}
+                              className="w-full justify-between text-xs h-8"
+                            >
+                              {line.item_id
+                                ? (() => {
+                                    const item = availableItems.find(i => i.id === line.item_id);
+                                    return item ? `${item.short_id || item.id} - ${item.name}` : 'Select Item';
+                                  })()
+                                : 'Select Item'
+                              }
+                              <Check className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[400px] p-0">
+                            <Command>
+                              <CommandInput placeholder="Search items..." />
+                              <CommandList>
+                                <CommandEmpty>No items found.</CommandEmpty>
+                                <CommandGroup>
+                                  {availableItems.map((item) => (
+                                    <CommandItem
+                                      key={item.id}
+                                      value={`${item.short_id || item.id} ${item.name} ${item.category}`}
+                                      onSelect={() => {
+                                        updateLine(line.id, 'item_id', item.id);
+                                        updateLine(line.id, 'current_source_balance', parseFloat(item.current_balance || '0'));
+                                        setOpenCombobox(prev => ({ ...prev, [line.id]: false }));
+                                      }}
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "mr-2 h-4 w-4",
+                                          line.item_id === item.id ? "opacity-100" : "opacity-0"
+                                        )}
+                                      />
+                                      <div className="flex flex-col">
+                                        <div className="font-medium text-sm">
+                                          {item.short_id || item.id} - {item.name}
+                                        </div>
+                                        <div className="text-xs text-gray-500">
+                                          {item.category} • Balance: {parseFloat(item.current_balance).toFixed(2)}
+                                        </div>
+                                      </div>
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
                       </td>
                       <td className="px-4 py-2 font-medium text-green-600">{line.current_source_balance.toFixed(2)}</td>
                       <td className="px-4 py-2">
