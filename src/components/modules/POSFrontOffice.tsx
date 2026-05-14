@@ -367,13 +367,21 @@ export const POSFrontOffice: React.FC = () => {
           const currentBill = {
             id: tableOrder.id,
             tableId: tableOrder.table_number,
-            items: Array.isArray(tableOrder.items) ? tableOrder.items.map((item: any) => ({
-              id: item.menuItem?.id || item.id,
-              menuItem: item.menuItem || { id: item.id, name: item.name, price: item.price },
-              quantity: item.quantity,
-              price: item.menuItem?.price || item.price,
-              subtotal: item.subtotal || (item.quantity * (item.menuItem?.price || item.price))
-            })) : [],
+            items: Array.isArray(tableOrder.items) ? tableOrder.items.map((item: any) => {
+              const menuItem = item.menuItem || {};
+              return {
+                id: menuItem.id || item.id,
+                menuItem: {
+                  id: menuItem.id || item.id,
+                  name: menuItem.name || item.name || 'Unknown Item',
+                  price: menuItem.price || item.price || 0,
+                  category: menuItem.category || item.category
+                },
+                quantity: item.quantity,
+                price: menuItem.price || item.price || 0,
+                subtotal: item.subtotal || (item.quantity * (menuItem.price || item.price || 0))
+              };
+            }) : [],
             total: tableOrder.total_amount || 0,
             customerName: tableOrder.customer_name,
             roomNumber: tableOrder.room_number,
@@ -982,9 +990,9 @@ export const POSFrontOffice: React.FC = () => {
                     id: currentBill.id,
                     items: Array.isArray(currentBill.items)
                       ? currentBill.items.map((i: any) => ({
-                          name: i.menuItem?.name || i.name || 'Unknown Item',
+                          name: i.menuItem.name,
                           quantity: i.quantity,
-                          price: i.menuItem?.price || i.price || 0,
+                          price: i.menuItem.price,
                           subtotal: i.subtotal
                         }))
                       : [],
@@ -1061,9 +1069,9 @@ export const POSFrontOffice: React.FC = () => {
                      if (!currentBill) return;
                      const items = Array.isArray(currentBill.items)
                        ? currentBill.items.map((i: any) => ({
-                           name: i.menuItem?.name || i.name || 'Unknown Item',
+                           name: i.menuItem.name,
                            quantity: i.quantity,
-                           price: i.menuItem?.price || i.price || 0,
+                           price: i.menuItem.price,
                            subtotal: i.subtotal
                          }))
                        : [];
@@ -1095,9 +1103,9 @@ export const POSFrontOffice: React.FC = () => {
                      if (!currentBill) return;
                      const items = Array.isArray(currentBill.items)
                        ? currentBill.items.map((i: any) => ({
-                           name: i.menuItem?.name || i.name || 'Unknown Item',
+                           name: i.menuItem.name,
                            quantity: i.quantity,
-                           price: i.menuItem?.price || i.price || 0,
+                           price: i.menuItem.price,
                            subtotal: i.subtotal
                          }))
                        : [];
@@ -1196,9 +1204,9 @@ export const POSFrontOffice: React.FC = () => {
             id: paymentModal.bill.id,
             items: Array.isArray(paymentModal.bill.items)
               ? paymentModal.bill.items.map((i: any) => ({
-                  name: i.menuItem?.name || i.name || 'Unknown Item',
+                  name: i.menuItem.name,
                   quantity: i.quantity,
-                  price: i.menuItem?.price || i.price || 0
+                  price: i.menuItem.price
                 }))
               : [],
             total: paymentModal.bill.total,
