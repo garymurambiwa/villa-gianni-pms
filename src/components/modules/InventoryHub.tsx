@@ -770,18 +770,18 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
               </table>
             </div>
 
-              <div className="flex items-center gap-3 mt-4">
-                <Button variant="outline" onClick={addTLine}>＋ Add Line</Button>
-                <div className="flex flex-col">
-                  <label className="text-xs text-gray-600 mb-1">Transfer Date</label>
-                  <input type="date" className="border border-gray-300 rounded-md px-3 py-2 text-sm w-40" value={transferDate} onChange={e => setTransferDate(e.target.value)} />
+              <div className="flex items-center justify-between mt-4">
+                <Button variant="outline" onClick={addLine}>＋ Add Line</Button>
+                <div className="text-right">
+                  <div className="text-sm text-gray-500">GRN Total</div>
+                  <div className="text-2xl font-bold text-indigo-700">{fmt(total)}</div>
                 </div>
               </div>
 
               <div className="flex gap-3 mt-5 justify-end">
-                <Button variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
-                <Button onClick={submit} disabled={saving} className="bg-amber-600 text-white hover:bg-amber-700">
-                  {saving ? 'Posting…' : 'Post Transfer'}
+                <Button variant="outline" onClick={() => { setShowForm(false); setFullScreen(false); }}>Cancel</Button>
+                <Button onClick={submit} disabled={saving} className="bg-green-700 text-white hover:bg-green-800">
+                  {saving ? 'Posting…' : 'Post GRN'}
                 </Button>
               </div>
           </div>
