@@ -321,7 +321,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
                {/* Date */}
                <div className="col-span-2">
                  <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
-                 <Input type="date" value={form.date||''} onChange={e => setForm((f:any)=>({...f,date:e.target.value}))} />
+                 <input type="date" className="w-full border rounded-md px-3 py-2 text-sm" value={form.date||''} onChange={e => setForm((f:any)=>({...f,date:e.target.value}))} />
                </div>
 
                {/* Notes */}
@@ -616,7 +616,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
              <div className="grid grid-cols-2 gap-4 mb-5">
                <div>
                  <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
-                 <Input type="date" value={transferDate} onChange={e => setTransferDate(e.target.value)} />
+                 <input type="date" className="w-full border rounded-md px-3 py-2 text-sm" value={transferDate} onChange={e => setTransferDate(e.target.value)} />
                </div>
                <div>
                  <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
@@ -725,8 +725,8 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                           )}
                          </td>
                          <td className="px-2 py-1 min-w-[140px]">
-                           <Input type="date" value={line.date||''}
-                             onChange={e => updateTLine(i, 'date', e.target.value)} className="text-sm w-full" />
+                           <input type="date" className="w-full border rounded px-2 py-1 text-sm" value={line.date||''}
+                             onChange={e => updateTLine(i, 'date', e.target.value)} />
                          </td>
                          <td className="px-2 py-1 w-24 text-center">
                            <span className="text-sm">{onHand}</span>
@@ -801,7 +801,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   const [itemSearch, setItemSearch] = useState<Record<number,string>>({});
   const [dateFilter, setDateFilter] = useState('');
   const [fullScreen, setFullScreen] = useState(false);
-  const [transferDate, setTransferDate] = useState('');
+  const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
