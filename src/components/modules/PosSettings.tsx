@@ -1457,6 +1457,10 @@ export const PosSettings: React.FC = () => {
   const saveStockItem = () => {
     if (!validate()) return;
 
+    // Explicit capture of notes state — prevents ReferenceError in minified builds
+    // where shorthand `notes` in the object literal can lose its scope binding.
+    const itemNotes: string = typeof notes !== 'undefined' ? notes : '';
+
     // FIX: Auto-assign Bar visibility based on cost center
     // Items in bar-related cost centers show as Bar:Yes, Restaurant:No
     // Items in restaurant-related cost centers show as Bar:No, Restaurant:Yes
@@ -1490,7 +1494,7 @@ export const PosSettings: React.FC = () => {
       pictureData: picturePreview || null,
       imageBgColor,
       barcodes: scannedCodes.length ? scannedCodes : (barcode ? [barcode] : []),
-      notes
+      notes: itemNotes
     };
     try {
       // Use current items state as source of truth

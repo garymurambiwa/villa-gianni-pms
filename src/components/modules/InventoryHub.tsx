@@ -173,7 +173,11 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
             )}
             {filtered.map((item: any) => (
               <tr key={item.id} className="hover:bg-gray-50">
-                <td className="px-3 py-2 font-mono text-xs text-gray-500">{item.short_id || item.id}</td>
+                <td className="px-3 py-2 font-mono text-xs text-gray-500">
+                  <span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold tracking-wide">
+                    #{(item.short_id || String(item.id || '').slice(-4)).toUpperCase()}
+                  </span>
+                </td>
                 <td className="px-3 py-2 font-mono text-xs text-purple-700">{item.sku || '—'}</td>
                 <td className="px-3 py-2 font-medium">{item.name}</td>
                 <td className="px-3 py-2">
