@@ -413,10 +413,24 @@ export const POSFrontOffice: React.FC = () => {
           let nextTable = { ...table };
 
           if (saved) {
-            // Only restore if the saved state is more recent or if database didn't set it to occupied
-            // This prevents database initialization from overriding manually cleared tables
+            // GUARD 1 — No active shift means no occupied tables can survive.
+            // Orders created without a shift (shift_id=null) are orphans; wipe them.
+            if (!activeShift && saved.status === 'occupied') {
+              nextTable = { ...table, status: 'available', currentBill: undefined };
+              updateTableStatus(table.id, 'available');
+              return nextTable;
+            }
+
+            // GUARD 2 — Staleness check: bills older than 12 hours are stale.
+            // Prevents 38-day-old bills (like t1/t4) from reappearing across sessions.
+            const billCreatedAt = saved.currentBill?.createdAt;
+            const billAgeHours = billCreatedAt
+              ? (Date.now() - new Date(billCreatedAt).getTime()) / 3_600_000
+              : 0;
+            const isFreshBill = billAgeHours < 12;
+
             const shouldRestore = saved.status === 'available' ||
-              (saved.status === 'occupied' && saved.currentBill);
+              (saved.status === 'occupied' && saved.currentBill && isFreshBill);
 
             if (shouldRestore) {
               nextTable = {
@@ -424,15 +438,18 @@ export const POSFrontOffice: React.FC = () => {
                 status: saved.status || table.status,
                 currentBill: saved.currentBill || undefined
               };
+            } else if (saved.status === 'occupied' && !isFreshBill) {
+              // Stale occupied entry — treat as available and clean up DB
+              console.warn(`[POS] Stale bill on ${table.id} (age: ${billAgeHours.toFixed(1)}h) — resetting to available`);
+              nextTable = { ...table, status: 'available', currentBill: undefined };
+              updateTableStatus(table.id, 'available');
             }
           }
 
-          // Fix for Table State Anomaly:
-          // If table is occupied but has no active bill, reset to available.
+          // GUARD 3 — Occupied with no bill is always an anomaly, reset it.
           if (nextTable.status === 'occupied' && !nextTable.currentBill) {
-            console.log(`[POS] Fixing anomaly for table ${table.id}: Occupied but no bill -> Setting Available`);
+            console.log(`[POS] Anomaly on ${table.id}: occupied but no bill → available`);
             nextTable.status = 'available';
-            // Ensure DB is consistent
             updateTableStatus(table.id, 'available');
           }
 
@@ -440,7 +457,7 @@ export const POSFrontOffice: React.FC = () => {
         });
       });
     } catch { }
-  }, [mountLoading]);
+  }, [mountLoading, activeShift]);
 
   // Persist table states whenever they change
   useEffect(() => {
