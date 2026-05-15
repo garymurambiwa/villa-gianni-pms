@@ -74,16 +74,18 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const { toast } = useToast();
   const { user } = useAuth();
   const [search, setSearch] = useState('');
+  const [dateFilter, setDateFilter] = useState('');
   const [editItem, setEditItem] = useState<any | null>(null);
   const [form, setForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
   const imgRef = useRef<HTMLInputElement>(null);
 
   const filtered = items.filter(i =>
-    !search || i.name.toLowerCase().includes(search.toLowerCase()) ||
+    (!search || i.name.toLowerCase().includes(search.toLowerCase()) ||
     (i.sku||'').toLowerCase().includes(search.toLowerCase()) ||
     (i.short_id||'').toLowerCase().includes(search.toLowerCase()) ||
-    (i.id||'').toLowerCase().includes(search.toLowerCase())
+    (i.id||'').toLowerCase().includes(search.toLowerCase())) &&
+    (!dateFilter || new Date(i.inserted_at).toDateString() === new Date(dateFilter).toDateString())
   );
 
   const openNew = () => {
@@ -148,6 +150,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
       {/* Toolbar */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <Input placeholder="Search by ID, short ID, name, or SKU…" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
+        <Input type="date" placeholder="Filter by date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="max-w-xs" />
         <span className="text-sm text-gray-500">{filtered.length} items</span>
         <div className="ml-auto flex gap-2">
           <Button onClick={openNew} className="bg-indigo-600 text-white hover:bg-indigo-700">＋ New Item</Button>
@@ -159,14 +162,14 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50 sticky top-0">
             <tr>
-              {['ID','SKU','Name','Category','Base UOM','Cost Price','Avg Cost','Location','Expiry','Actions'].map(h => (
+              {['ID','SKU','Name','Category','Base UOM','Cost Price','Avg Cost','Location','Expiry','Date','Actions'].map(h => (
                 <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {filtered.length === 0 && (
-              <tr><td colSpan={10} className="text-center py-12 text-gray-400">No items found</td></tr>
+              <tr><td colSpan={11} className="text-center py-12 text-gray-400">No items found</td></tr>
             )}
             {filtered.map((item: any) => (
               <tr key={item.id} className="hover:bg-gray-50">
@@ -187,6 +190,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 <td className="px-3 py-2">
                   {item.expiry_tracking ? <span className="text-orange-600 text-xs">● Tracked</span> : <span className="text-gray-300 text-xs">—</span>}
                 </td>
+                <td className="px-3 py-2 text-gray-500 text-xs">{new Date(item.inserted_at).toLocaleDateString()}</td>
                 <td className="px-3 py-2">
                   <Button variant="outline" size="sm" onClick={() => openEdit(item)}>Edit</Button>
                 </td>
@@ -772,6 +776,8 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   const [saving, setSaving] = useState(false);
   const [balances, setBalances] = useState<any[]>([]);
   const [itemSearch, setItemSearch] = useState<Record<number,string>>({});
+  const [dateFilter, setDateFilter] = useState('');
+  const [fullScreen, setFullScreen] = useState(false);
 
   useEffect(() => {
     apiGet('/transfer?limit=30').then(r => { if (r.ok) setTransfers(r.data); });
@@ -780,6 +786,8 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   useEffect(() => {
     if (srcLoc) apiGet(`/balance/${srcLoc}`).then(r => { if (r.ok) setBalances(r.data || []); });
   }, [srcLoc]);
+
+  const filteredTransfers = transfers.filter(t => !dateFilter || new Date(t.inserted_at).toDateString() === new Date(dateFilter).toDateString());
 
   const addTLine = () => setTLines(l => [...l, { item_id:'', item_name:'', qty:1, uom:'uom_unit' }]);
   const removeTLine = (i: number) => setTLines(l => l.filter((_,idx) => idx !== i));
@@ -825,7 +833,10 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-base font-bold text-gray-700">Stock Transfers</h3>
+        <div className="flex items-center gap-3">
+          <h3 className="text-base font-bold text-gray-700">Stock Transfers</h3>
+          <Input type="date" placeholder="Filter by date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="max-w-xs" />
+        </div>
         <Button onClick={() => setShowForm(true)} className="bg-amber-600 text-white hover:bg-amber-700">＋ New Transfer</Button>
       </div>
 
@@ -839,8 +850,8 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {transfers.length === 0 && <tr><td colSpan={6} className="text-center py-10 text-gray-400">No transfers yet</td></tr>}
-            {transfers.map((t:any) => (
+            {filteredTransfers.length === 0 && <tr><td colSpan={6} className="text-center py-10 text-gray-400">No transfers found</td></tr>}
+            {filteredTransfers.map((t:any) => (
               <tr key={t.id} className="hover:bg-gray-50">
                 <td className="px-3 py-2 font-mono font-bold text-amber-700">{t.transfer_number}</td>
                 <td className="px-3 py-2">{locations.find((l:any) => l.id === t.source_location_id)?.name || t.source_location_id}</td>
@@ -860,10 +871,18 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto pt-8 pb-8">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl p-6">
+          <div className={`bg-white shadow-2xl p-6 transition-all duration-200 ${fullScreen ? 'fixed inset-0 rounded-none overflow-y-auto z-50' : 'rounded-xl w-full max-w-3xl mx-4'}`}>
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-bold">New Stock Transfer</h3>
-              <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-700 text-xl">✕</button>
+              <div className="flex items-center gap-2">
+                <button
+                  title={fullScreen ? 'Windowed view' : 'Full-screen view'}
+                  onClick={() => setFullScreen(f => !f)}
+                  className="text-gray-400 hover:text-indigo-600 text-base px-2 py-1 rounded hover:bg-indigo-50 transition-colors border border-gray-200">
+                  {fullScreen ? '⊡ Windowed' : '⛶ Full Screen'}
+                </button>
+                <button onClick={() => { setShowForm(false); setFullScreen(false); }} className="text-gray-400 hover:text-gray-700 text-xl">✕</button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-5">
