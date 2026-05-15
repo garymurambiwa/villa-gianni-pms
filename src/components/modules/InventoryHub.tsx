@@ -768,9 +768,9 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
 
              <div className="flex items-center gap-3 mt-4">
                <Button variant="outline" onClick={addTLine}>＋ Add Line</Button>
-               <div>
-                 <label className="text-xs text-gray-600 mr-2">Transfer Date</label>
-                 <input type="date" className="border rounded-md px-3 py-2 text-sm" value={transferDate} onChange={e => setTransferDate(e.target.value)} />
+               <div className="flex flex-col">
+                 <label className="text-xs text-gray-600 mb-1">Transfer Date</label>
+                 <input type="date" className="border border-gray-300 rounded-md px-3 py-2 text-sm w-40" value={transferDate} onChange={e => setTransferDate(e.target.value)} />
                </div>
              </div>
 
