@@ -311,20 +311,26 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 </select>
               </div>
 
-              {/* Expiry tracking */}
-              <div className="flex items-center gap-3">
-                <input type="checkbox" id="expiry" checked={!!form.expiry_tracking}
-                  onChange={e => setForm((f:any)=>({...f,expiry_tracking:e.target.checked}))} className="w-4 h-4" />
-                <label htmlFor="expiry" className="text-sm font-medium cursor-pointer">Track Expiry Dates</label>
-              </div>
+               {/* Expiry tracking */}
+               <div className="flex items-center gap-3">
+                 <input type="checkbox" id="expiry" checked={!!form.expiry_tracking}
+                   onChange={e => setForm((f:any)=>({...f,expiry_tracking:e.target.checked}))} className="w-4 h-4" />
+                 <label htmlFor="expiry" className="text-sm font-medium cursor-pointer">Track Expiry Dates</label>
+               </div>
 
-              {/* Notes */}
-              <div className="col-span-2">
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
-                <textarea className="w-full border rounded-md px-3 py-2 text-sm" rows={2}
-                  value={form.notes||''} onChange={e => setForm((f:any)=>({...f,notes:e.target.value}))}
-                  placeholder="Any additional notes..." />
-              </div>
+               {/* Date */}
+               <div className="col-span-2">
+                 <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
+                 <Input type="date" value={form.date||''} onChange={e => setForm((f:any)=>({...f,date:e.target.value}))} />
+               </div>
+
+               {/* Notes */}
+               <div className="col-span-2">
+                 <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
+                 <textarea className="w-full border rounded-md px-3 py-2 text-sm" rows={2}
+                   value={form.notes||''} onChange={e => setForm((f:any)=>({...f,notes:e.target.value}))}
+                   placeholder="Any additional notes..." />
+               </div>
 
               {/* Picture */}
               <div className="col-span-2">
@@ -440,17 +446,16 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
     if (!lines.some(l => l.item_id)) { toast({ title: 'At least one item required', variant:'destructive' }); return; }
     setSaving(true);
     const payload = {
-      supplier_name: supplier,
-      supplier_id: supplierId || undefined,
-      supplier_invoice_number: invoiceNum || undefined,
-      destination_location_id: destLocation,
+      source_location_id: srcLoc,
+      destination_location_id: dstLoc,
+      reference_note: reqRef,
+      date: transferDate || undefined,
+      notes: notes || undefined,
       created_by: user?.id || 'system',
-      lines: lines.filter(l => l.item_id).map(l => ({
-        item_id:       l.item_id,
-        qty_received:  Number(l.qty),
-        received_uom_id: l.uom,
-        unit_cost:     Number(l.unit_cost),
-        expiry_date:   l.expiry_date || undefined,
+      lines: tLines.filter(l => l.item_id).map(l => ({
+        item_id: l.item_id, qty_requested: Number(l.qty),
+        source_uom_id: l.uom, breakdown_flag: false,
+        date: l.date || undefined
       }))
     };
     const r = await apiPost('/grn', payload);
@@ -606,9 +611,20 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                   {storageLocations.map((l:any) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               </div>
-            </div>
+             </div>
 
-            {/* Lines */}
+             <div className="grid grid-cols-2 gap-4 mb-5">
+               <div>
+                 <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
+                 <Input type="date" value={transferDate} onChange={e => setTransferDate(e.target.value)} />
+               </div>
+               <div>
+                 <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
+                 <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Additional notes..." />
+               </div>
+             </div>
+
+             {/* Lines */}
             <div className="overflow-x-auto rounded-lg border border-gray-200 mb-4">
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50">
@@ -707,11 +723,18 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                           {isTyping && searchVal.length >= 2 && suggestions.length === 0 && !line.item_id && (
                             <p className="text-xs text-red-500 mt-0.5">No items found — create it in Items tab first</p>
                           )}
-                        </td>
-                        <td className="px-2 py-1 w-24">
-                          <Input type="number" min={0} step="0.001" value={line.qty}
-                            onChange={e => updateLine(i, 'qty', e.target.value)} className="text-sm text-center" />
-                        </td>
+                         </td>
+                         <td className="px-2 py-1 w-32">
+                           <Input type="date" value={line.date||''}
+                             onChange={e => updateTLine(i, 'date', e.target.value)} className="text-sm" />
+                         </td>
+                         <td className="px-2 py-1 w-24 text-center">
+                           <span className="text-sm">{onHand}</span>
+                         </td>
+                         <td className="px-2 py-1 w-24">
+                           <Input type="number" min={0} step="0.001" value={line.qty}
+                             onChange={e => updateTLine(i, 'qty', e.target.value)} className="text-sm text-center" />
+                         </td>
                         <td className="px-2 py-1 w-28">
                           <select className="border rounded-md px-2 py-1.5 text-sm w-full"
                             value={line.uom} onChange={e => updateLine(i, 'uom', e.target.value)}>
@@ -772,12 +795,14 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   const [srcLoc, setSrcLoc] = useState('loc_main_cellar');
   const [dstLoc, setDstLoc] = useState('loc_bar1');
   const [reqRef, setReqRef] = useState('');
-  const [tLines, setTLines] = useState<any[]>([{ item_id:'', item_name:'', qty:1, uom:'uom_unit' }]);
+  const [tLines, setTLines] = useState<any[]>([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', date:'' }]);
   const [saving, setSaving] = useState(false);
   const [balances, setBalances] = useState<any[]>([]);
   const [itemSearch, setItemSearch] = useState<Record<number,string>>({});
   const [dateFilter, setDateFilter] = useState('');
   const [fullScreen, setFullScreen] = useState(false);
+  const [transferDate, setTransferDate] = useState('');
+  const [notes, setNotes] = useState('');
 
   useEffect(() => {
     apiGet('/transfer?limit=30').then(r => { if (r.ok) setTransfers(r.data); });
@@ -789,7 +814,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
 
   const filteredTransfers = transfers.filter(t => !dateFilter || new Date(t.inserted_at).toDateString() === new Date(dateFilter).toDateString());
 
-  const addTLine = () => setTLines(l => [...l, { item_id:'', item_name:'', qty:1, uom:'uom_unit' }]);
+  const addTLine = () => setTLines(l => [...l, { item_id:'', item_name:'', qty:1, uom:'uom_unit', date:'' }]);
   const removeTLine = (i: number) => setTLines(l => l.filter((_,idx) => idx !== i));
   const updateTLine = (i: number, field: string, val: any) => setTLines(l => l.map((ln,idx) => idx===i ? {...ln,[field]:val} : ln));
 
@@ -821,8 +846,10 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
       await apiPost(`/transfer/${r.data.id}/approve`, { approved_by: user?.id || 'system' });
       toast({ title: `Transfer posted — ${r.data.transfer_number}` });
       setShowForm(false);
-      setTLines([{ item_id:'', item_name:'', qty:1, uom:'uom_unit' }]);
+      setTLines([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', date:'' }]);
       setReqRef('');
+      setTransferDate('');
+      setNotes('');
       apiGet('/transfer?limit=30').then(res => { if (res.ok) setTransfers(res.data); });
     } else {
       toast({ title: 'Transfer failed', description: r.error, variant:'destructive' });
@@ -909,11 +936,11 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
             <div className="overflow-x-auto rounded-lg border border-gray-200 mb-4">
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50">
-                  <tr>
-                    {['Item','On Hand','Qty to Transfer','UOM',''].map(h => (
-                      <th key={h} className="px-2 py-2 text-left text-xs font-semibold text-gray-600">{h}</th>
-                    ))}
-                  </tr>
+                   <tr>
+                     {['Item','Date','On Hand','Qty to Transfer','UOM',''].map(h => (
+                       <th key={h} className="px-2 py-2 text-left text-xs font-semibold text-gray-600">{h}</th>
+                     ))}
+                   </tr>
                 </thead>
                 <tbody>
                   {tLines.map((line, i) => {
