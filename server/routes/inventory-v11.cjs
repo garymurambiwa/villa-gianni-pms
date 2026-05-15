@@ -120,11 +120,9 @@ async function ensureInventoryTables() {
        WHERE table_schema='public' AND table_name='inv_locations' LIMIT 1`
     );
     if (check.rows.length > 0) {
-      // Tables exist — ensure latest columns AND always re-seed UOMs
-      // FIX: The "tables exist" branch previously returned WITHOUT seeding UOMs.
-      // If tables were created but seeding failed (restart/timeout), inv_uom_definitions
-      // would be empty → every item INSERT fails with FK constraint violation.
-      // Solution: always run seed with ON CONFLICT DO NOTHING (safe, idempotent).
+      // Some tables exist — but others (stock ledger, transfer, variance) may be
+      // missing on deployments that were created before v11. Run CREATE IF NOT EXISTS
+      // for every table so a partial schema is always completed idempotently.
       await client.query(`ALTER TABLE public.inv_locations ADD COLUMN IF NOT EXISTS description TEXT`);
       await client.query(`ALTER TABLE public.inv_locations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
       await client.query(`ALTER TABLE public.inv_uom_definitions ADD COLUMN IF NOT EXISTS description TEXT`);
@@ -132,15 +130,146 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inv_items ADD COLUMN IF NOT EXISTS short_id TEXT UNIQUE`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_by TEXT`);
+
+      // Ensure advanced tables that may be missing on older deployments
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_grn_lines (
+          id TEXT PRIMARY KEY,
+          grn_header_id TEXT NOT NULL REFERENCES public.inv_grn_headers(id) ON DELETE CASCADE,
+          item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+          qty_received NUMERIC(12,4) NOT NULL CHECK (qty_received > 0),
+          uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+          unit_cost NUMERIC(10,4) DEFAULT 0,
+          total_cost NUMERIC(12,2) DEFAULT 0,
+          line_number INTEGER NOT NULL,
+          notes TEXT,
+          inserted_at TIMESTAMPTZ DEFAULT NOW()
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_transfer_headers (
+          id TEXT PRIMARY KEY,
+          transfer_number TEXT UNIQUE NOT NULL,
+          from_location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+          to_location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','cancelled')),
+          requested_by TEXT,
+          approved_by TEXT,
+          notes TEXT,
+          inserted_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_transfer_lines (
+          id TEXT PRIMARY KEY,
+          transfer_header_id TEXT NOT NULL REFERENCES public.inv_transfer_headers(id) ON DELETE CASCADE,
+          item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+          qty_requested NUMERIC(12,4) NOT NULL CHECK (qty_requested > 0),
+          source_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+          breakdown_flag BOOLEAN DEFAULT false,
+          destination_uom_id TEXT REFERENCES public.inv_uom_definitions(id),
+          current_source_balance NUMERIC(12,4),
+          line_number INTEGER NOT NULL,
+          inserted_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(transfer_header_id, line_number)
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_stock_ledger (
+          id TEXT PRIMARY KEY,
+          item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+          location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+          ledger_type TEXT NOT NULL CHECK (ledger_type IN ('GRN','TRANSFER_IN','TRANSFER_OUT','SALE_DEPLETION','ADJUSTMENT','WASTE')),
+          reference_number TEXT,
+          quantity_change NUMERIC(12,4) NOT NULL,
+          base_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+          cost_per_unit NUMERIC(10,4),
+          total_cost NUMERIC(12,2),
+          posted_by TEXT,
+          gl_account_code TEXT,
+          transaction_date TIMESTAMPTZ DEFAULT NOW(),
+          inserted_at TIMESTAMPTZ DEFAULT NOW()
+        )`);
       await client.query(`ALTER TABLE public.inv_stock_ledger ADD COLUMN IF NOT EXISTS inserted_at TIMESTAMPTZ DEFAULT NOW()`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_recipes (
+          id TEXT PRIMARY KEY,
+          menu_item_id TEXT NOT NULL,
+          version_number INTEGER DEFAULT 1,
+          is_current BOOLEAN DEFAULT true,
+          created_by TEXT,
+          total_cost NUMERIC(10,4) DEFAULT 0.00,
+          notes TEXT,
+          inserted_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(menu_item_id, version_number)
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_recipe_lines (
+          id TEXT PRIMARY KEY,
+          recipe_id TEXT NOT NULL REFERENCES public.inv_recipes(id) ON DELETE CASCADE,
+          item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+          qty_required NUMERIC(10,4) NOT NULL CHECK (qty_required > 0),
+          prep_uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+          wastage_pct NUMERIC(5,2) DEFAULT 0.00,
+          line_number INTEGER NOT NULL,
+          inserted_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(recipe_id, line_number)
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_physical_counts (
+          id TEXT PRIMARY KEY,
+          location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+          count_date DATE NOT NULL DEFAULT CURRENT_DATE,
+          status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','submitted','approved')),
+          counted_by TEXT,
+          inserted_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_physical_count_lines (
+          id TEXT PRIMARY KEY,
+          count_id TEXT NOT NULL REFERENCES public.inv_physical_counts(id) ON DELETE CASCADE,
+          item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+          physical_qty NUMERIC(12,4) NOT NULL DEFAULT 0,
+          uom_id TEXT REFERENCES public.inv_uom_definitions(id),
+          notes TEXT,
+          inserted_at TIMESTAMPTZ DEFAULT NOW()
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_variance_reports (
+          id TEXT PRIMARY KEY,
+          report_number TEXT UNIQUE NOT NULL,
+          location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+          period_start DATE NOT NULL,
+          period_end DATE NOT NULL,
+          generated_by TEXT,
+          total_items INTEGER DEFAULT 0,
+          ok_count INTEGER DEFAULT 0,
+          warning_count INTEGER DEFAULT 0,
+          critical_count INTEGER DEFAULT 0,
+          inserted_at TIMESTAMPTZ DEFAULT NOW()
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_variance_lines (
+          id TEXT PRIMARY KEY,
+          variance_report_id TEXT NOT NULL REFERENCES public.inv_variance_reports(id) ON DELETE CASCADE,
+          item_id TEXT NOT NULL REFERENCES public.inv_items(id),
+          theoretical_qty NUMERIC(12,4) NOT NULL,
+          physical_qty NUMERIC(12,4) NOT NULL,
+          variance_qty NUMERIC(12,4) NOT NULL,
+          variance_percentage NUMERIC(7,4) NOT NULL,
+          alert_level TEXT NOT NULL CHECK (alert_level IN ('OK','WARNING','CRITICAL')),
+          item_cost NUMERIC(10,4),
+          variance_value NUMERIC(12,2),
+          inserted_at TIMESTAMPTZ DEFAULT NOW()
+        )`);
 
-      // ALWAYS re-seed UOMs — safe because of ON CONFLICT DO NOTHING
-      // This fixes the case where tables exist but UOM data was never inserted
+      // Indexes — safe with IF NOT EXISTS
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_item_loc ON public.inv_stock_ledger(item_id, location_id)`).catch(()=>{});
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_type ON public.inv_stock_ledger(ledger_type)`).catch(()=>{});
+
+      // ALWAYS re-seed UOMs and default storage locations
       await seedUomDefinitions(client);
-
-      // ALWAYS re-seed default storage locations
       await seedDefaultLocations(client);
-
       await syncCostCentresToLocations(client);
       return;
     }
