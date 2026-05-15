@@ -96,6 +96,65 @@ app.post('/api/db/test', async (req, res) => {
   }
 });
 
+// ─── System Branding (DB-backed, per-property) ───────────────────────────────
+// Reads/writes hotel branding from system_configs so each property keeps its own
+// name/logo regardless of which Vite build is deployed.
+app.get('/api/system/branding', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT key, value FROM system_configs
+       WHERE key IN ('hotel_name','hotel_address','hotel_phone','hotel_email',
+                     'hotel_website','hotel_logo_url','hotel_logo_show',
+                     'hotel_receipt_footer','hotel_tax_rate','hotel_paper_size')`
+    );
+    const map = {};
+    if (result.ok && result.rows) {
+      for (const row of result.rows) {
+        try { map[row.key] = JSON.parse(row.value); } catch { map[row.key] = row.value; }
+      }
+    }
+    safeJson(res, { ok: true, branding: map });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+app.post('/api/system/branding', async (req, res) => {
+  const patch = req.body || {};
+  const allowed = ['hotel_name','hotel_address','hotel_phone','hotel_email',
+                   'hotel_website','hotel_logo_url','hotel_logo_show',
+                   'hotel_receipt_footer','hotel_tax_rate','hotel_paper_size'];
+  try {
+    const ops = Object.entries(patch)
+      .filter(([k]) => allowed.includes(k))
+      .map(([k, v]) => ({
+        sql: `INSERT INTO system_configs (key, value) VALUES ($1, $2)
+              ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        params: [k, JSON.stringify(v)]
+      }));
+    if (ops.length === 0) return safeJson(res, { ok: true, updated: 0 });
+    const txResult = await db.transaction(ops);
+    safeJson(res, { ok: !!(txResult && txResult.ok), updated: ops.length });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// ─── Room Reconciliation ──────────────────────────────────────────────────────
+// POST /api/rooms/reconcile — corrects stale OC rooms with no active checked-in guest
+app.post('/api/rooms/reconcile', async (req, res) => {
+  try {
+    // Rooms with OC/OD status but no matching checked-in reservation → set VD
+    const staleResult = await db.query(
+      `UPDATE rooms r SET status = 'VD', updated_at = NOW()
+       WHERE r.status IN ('OC','OD')
+         AND NOT EXISTS (
+           SELECT 1 FROM reservations res
+           WHERE res.room_id = r.id AND res.status = 'checked-in'
+         )
+       RETURNING id, number, status`
+    );
+    const fixed = staleResult.ok ? (staleResult.rows || []) : [];
+    safeJson(res, { ok: true, fixed, count: fixed.length });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 // ─── Schema Init ──────────────────────────────────────────────────────────────
 app.get('/api/setup/init-db', async (req, res) => {
   const { key, reset } = req.query;

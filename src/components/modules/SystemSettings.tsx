@@ -10,6 +10,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, ArrowLeft, Building2, Palette, Globe, Receipt, Database, Download } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { db } from '@/lib/db';
+import { writeReceiptBranding, invalidateReceiptBrandingCache } from '@/lib/printSettings';
 
 // ─── Options ───────────────────────────────────────────────────────────────
 
@@ -106,6 +108,38 @@ const SystemSettings = () => {
                 receiptFooter: form.receiptFooter,
             };
             const ok = await updateSettings(patch);
+
+            // Persist branding to DB so each property deployment shows correct name/logo
+            const brandingOps = [
+              { key: 'hotel_name', val: form.hotelName },
+              { key: 'hotel_address', val: form.address },
+              { key: 'hotel_phone', val: form.phone },
+              { key: 'hotel_email', val: form.email },
+              { key: 'hotel_website', val: form.website },
+              { key: 'hotel_logo_url', val: form.logoUrl },
+              { key: 'hotel_receipt_footer', val: form.receiptFooter },
+            ].filter(o => o.val !== undefined && o.val !== null).map(o => ({
+              sql: `INSERT INTO system_configs (key, value) VALUES ($1, $2)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+              params: [o.key, JSON.stringify(o.val)]
+            }));
+            if (brandingOps.length > 0) {
+              await db.transaction(brandingOps);
+              // Update receipt branding cache so Z-readings pick up new name immediately
+              invalidateReceiptBrandingCache();
+              if (form.hotelName) {
+                writeReceiptBranding({
+                  restaurant_name: form.hotelName,
+                  address: form.address,
+                  phone: form.phone,
+                  email: form.email,
+                  website: form.website,
+                  logo_url: form.logoUrl,
+                  footer_text: form.receiptFooter,
+                });
+              }
+            }
+
             if (ok) {
                 toast({ title: 'Settings saved', description: 'All settings have been updated successfully.' });
             } else {

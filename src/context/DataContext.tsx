@@ -2752,7 +2752,56 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
 
     const startup = async () => {
       try {
-        // 1. First load fresh data from DB to clean up localStorage
+        // 0. Load DB-backed branding so each property shows correct name/logo
+        try {
+          const brandRes = await db.query(
+            `SELECT key, value FROM system_configs
+             WHERE key IN ('hotel_name','hotel_address','hotel_phone','hotel_email',
+                           'hotel_website','hotel_logo_url','hotel_logo_show',
+                           'hotel_receipt_footer','hotel_tax_rate','hotel_paper_size')`
+          );
+          if ('rows' in brandRes && brandRes.rows && brandRes.rows.length > 0) {
+            const map: Record<string, unknown> = {};
+            for (const row of brandRes.rows) {
+              try { map[row.key] = JSON.parse(row.value); } catch { map[row.key] = row.value; }
+            }
+            if (map['hotel_name']) {
+              // Import lazily to avoid circular dependencies
+              const { writeReceiptBranding, invalidateReceiptBrandingCache } = await import('../lib/printSettings');
+              invalidateReceiptBrandingCache(); // clear stale env-var defaults
+              writeReceiptBranding({
+                restaurant_name: map['hotel_name'] as string,
+                address: map['hotel_address'] as string | undefined,
+                phone: map['hotel_phone'] as string | undefined,
+                email: map['hotel_email'] as string | undefined,
+                website: map['hotel_website'] as string | undefined,
+                logo_url: map['hotel_logo_url'] as string | undefined,
+                show_logo: map['hotel_logo_show'] as boolean | undefined,
+                footer_text: map['hotel_receipt_footer'] as string | undefined,
+                tax_rate: map['hotel_tax_rate'] as number | undefined,
+                paper_size: map['hotel_paper_size'] as '58mm' | '80mm' | undefined,
+              });
+            }
+          }
+        } catch (brandErr) {
+          console.warn('[DataContext] Branding load skipped:', brandErr);
+        }
+
+        // 1. Reconcile stale room statuses (OC with no active reservation → VD)
+        try {
+          await db.query(
+            `UPDATE rooms r SET status = 'VD', updated_at = NOW()
+             WHERE r.status IN ('OC','OD')
+               AND NOT EXISTS (
+                 SELECT 1 FROM reservations res
+                 WHERE res.room_id = r.id AND res.status = 'checked-in'
+               )`
+          );
+        } catch (reconcileErr) {
+          console.warn('[DataContext] Room reconcile skipped:', reconcileErr);
+        }
+
+        // 2. First load fresh data from DB to clean up localStorage
         console.log('[DataContext] Starting startup sequence...');
         await loadAllData();
         await Promise.all([

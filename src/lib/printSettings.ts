@@ -65,6 +65,15 @@ let __brandCache: { value: ReceiptBranding; version: number } | null = null;
 let __brandListeners: Array<(b: ReceiptBranding) => void> = [];
 let __htmlChromeCache: { key: string; headerBrand: string; headerUser: string; footerUser: string; poweredBy: string } | null = null;
 
+/**
+ * Invalidate the in-memory brand cache so the next call re-reads from localStorage.
+ * Called after DataContext writes DB-sourced branding into localStorage on startup.
+ */
+export const invalidateReceiptBrandingCache = (): void => {
+  __brandCache = null;
+  __htmlChromeCache = null;
+};
+
 export const readReceiptBranding = (): ReceiptBranding => {
   if (__brandCache) return __brandCache.value;
 
