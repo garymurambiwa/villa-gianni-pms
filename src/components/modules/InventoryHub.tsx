@@ -364,6 +364,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const { toast } = useToast();
   const [grns, setGrns] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [fullScreen, setFullScreen] = useState(false);
   const [supplier, setSupplier] = useState('');
   const [supplierId, setSupplierId] = useState('');
   const [invoiceNum, setInvoiceNum] = useState('');
@@ -371,6 +372,14 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const [lines, setLines] = useState<any[]>([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, expiry_date:'' }]);
   const [saving, setSaving] = useState(false);
   const [itemSearch, setItemSearch] = useState<Record<number,string>>({});
+  // Floating dropdown state: tracks which line's input anchor rect to position against
+  const [dropdownAnchor, setDropdownAnchor] = useState<{ lineIdx: number; rect: DOMRect } | null>(null);
+  const inputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  // GRN detail/delete state
+  const [detailGrn, setDetailGrn] = useState<any | null>(null);
+  const [detailLines, setDetailLines] = useState<any[]>([]);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     apiGet('/grn?limit=30').then(r => { if (r.ok) setGrns(r.data); });
@@ -387,9 +396,37 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
     updateLine(lineIdx, 'item_name', item.name);
     updateLine(lineIdx, 'uom', item.base_uom_id || 'uom_unit');
     updateLine(lineIdx, 'unit_cost', Number(item.last_cost_price || item.weighted_avg_cost || 0));
-    // FIX: Remove the itemSearch entry entirely (don't set to '') so the
-    // "not typing" branch shows the selected item's name in the field.
+    // Remove itemSearch entry so badge shows; close floating dropdown immediately
     setItemSearch(s => { const next = { ...s }; delete next[lineIdx]; return next; });
+    setDropdownAnchor(null);
+  };
+
+  const openDetailGrn = async (g: any) => {
+    setDetailGrn(g);
+    setLoadingDetail(true);
+    try {
+      const r = await fetch(`/api/v1/inventory/grn/${g.id}`).then(x => x.json());
+      setDetailLines(r.ok ? (r.data?.lines || []) : []);
+    } catch { setDetailLines([]); }
+    setLoadingDetail(false);
+  };
+
+  const deleteGrn = async (id: string) => {
+    if (!window.confirm('Delete this GRN? This cannot be undone.')) return;
+    setDeletingId(id);
+    try {
+      const r = await fetch(`/api/v1/inventory/grn/${id}`, { method: 'DELETE' }).then(x => x.json());
+      if (r.ok) {
+        toast({ title: 'GRN deleted' });
+        setGrns(prev => prev.filter(g => g.id !== id));
+        if (detailGrn?.id === id) setDetailGrn(null);
+      } else {
+        toast({ title: 'Delete failed', description: r.error, variant: 'destructive' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Delete failed', description: e.message, variant: 'destructive' });
+    }
+    setDeletingId(null);
   };
 
   const total = lines.reduce((s, l) => s + (Number(l.qty||0) * Number(l.unit_cost||0)), 0);
@@ -439,15 +476,17 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50 sticky top-0">
             <tr>
-              {['GRN #','Supplier','Invoice #','Destination','Total','Status','Date'].map(h => (
+              {['GRN #','Supplier','Invoice #','Destination','Total','Status','Date','Actions'].map(h => (
                 <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {grns.length === 0 && <tr><td colSpan={7} className="text-center py-10 text-gray-400">No GRNs yet</td></tr>}
+            {grns.length === 0 && <tr><td colSpan={8} className="text-center py-10 text-gray-400">No GRNs yet</td></tr>}
             {grns.map((g:any) => (
-              <tr key={g.id} className="hover:bg-gray-50">
+              <tr key={g.id}
+                className={`hover:bg-indigo-50 cursor-pointer transition-colors ${detailGrn?.id === g.id ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-300' : ''}`}
+                onClick={() => openDetailGrn(g)}>
                 <td className="px-3 py-2 font-mono font-bold text-indigo-700">{g.grn_number}</td>
                 <td className="px-3 py-2">{g.supplier_name}</td>
                 <td className="px-3 py-2 text-gray-500">{g.supplier_invoice_number || '—'}</td>
@@ -459,19 +498,79 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                   </span>
                 </td>
                 <td className="px-3 py-2 text-gray-500 text-xs">{new Date(g.inserted_at).toLocaleDateString()}</td>
+                <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                  <button
+                    disabled={deletingId === g.id}
+                    onClick={() => deleteGrn(g.id)}
+                    className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40 px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">
+                    {deletingId === g.id ? '…' : 'Delete'}
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {/* GRN Form Modal */}
+      {/* GRN Detail Panel */}
+      {detailGrn && (
+        <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <span className="font-mono font-bold text-indigo-700 text-base">{detailGrn.grn_number}</span>
+              <span className="ml-3 text-sm text-gray-600">— {detailGrn.supplier_name}</span>
+              {detailGrn.supplier_invoice_number && <span className="ml-2 text-xs text-gray-400">INV# {detailGrn.supplier_invoice_number}</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${detailGrn.status==='posted'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>{detailGrn.status}</span>
+              <button onClick={() => setDetailGrn(null)} className="text-gray-400 hover:text-gray-700">✕</button>
+            </div>
+          </div>
+          {loadingDetail
+            ? <p className="text-sm text-gray-400 py-4 text-center">Loading lines…</p>
+            : detailLines.length === 0
+              ? <p className="text-sm text-gray-400 py-2 text-center">No line items recorded</p>
+              : (
+                <table className="min-w-full text-xs bg-white rounded-lg overflow-hidden">
+                  <thead className="bg-gray-100">
+                    <tr>{['Item','Qty','UOM','Unit Cost','Total'].map(h=><th key={h} className="px-3 py-1.5 text-left font-semibold text-gray-600">{h}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {detailLines.map((l:any, i:number) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="px-3 py-1.5 font-medium">{l.item_name || items.find((it:any)=>it.id===l.item_id)?.name || l.item_id}</td>
+                        <td className="px-3 py-1.5">{fmtQ(l.qty_received)}</td>
+                        <td className="px-3 py-1.5">{uoms.find((u:any)=>u.id===l.uom_id || u.id===l.received_uom_id)?.name || l.uom_id}</td>
+                        <td className="px-3 py-1.5">{fmt(l.unit_cost)}</td>
+                        <td className="px-3 py-1.5 font-bold">{fmt(Number(l.qty_received||0)*Number(l.unit_cost||0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )
+          }
+          <div className="mt-2 flex justify-end">
+            <span className="text-sm font-bold text-indigo-700">Total: {fmt(detailGrn.total_value)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* GRN Form Modal — supports windowed and full-screen modes */}
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto pt-4 pb-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl mx-4 p-6">
+          <div className={`bg-white shadow-2xl p-6 transition-all duration-200 ${fullScreen ? 'fixed inset-0 rounded-none overflow-y-auto z-50' : 'rounded-xl w-full max-w-6xl mx-4'}`}>
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-bold">New Goods Received Note</h3>
-              <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-700 text-xl">✕</button>
+              <div className="flex items-center gap-2">
+                {/* Full-screen toggle */}
+                <button
+                  title={fullScreen ? 'Windowed view' : 'Full-screen view'}
+                  onClick={() => setFullScreen(f => !f)}
+                  className="text-gray-400 hover:text-indigo-600 text-base px-2 py-1 rounded hover:bg-indigo-50 transition-colors border border-gray-200">
+                  {fullScreen ? '⊡ Windowed' : '⛶ Full Screen'}
+                </button>
+                <button onClick={() => { setShowForm(false); setFullScreen(false); }} className="text-gray-400 hover:text-gray-700 text-xl">✕</button>
+              </div>
             </div>
 
             {/* Header */}
@@ -517,79 +616,92 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 </thead>
                 <tbody>
                   {lines.map((line, i) => {
-                    // FIX: When an item is selected, show its name in the field (not blank).
-                    // itemSearch[i] = undefined means "not typing" → show selected item name.
-                    const isTyping   = Object.prototype.hasOwnProperty.call(itemSearch, i);
-                    const searchVal  = isTyping ? (itemSearch[i] ?? '') : (line.item_name || '');
+                    const isTyping  = Object.prototype.hasOwnProperty.call(itemSearch, i);
+                    const searchVal = isTyping ? (itemSearch[i] ?? '') : (line.item_name || '');
                     const suggestions = isTyping && searchVal.length >= 2
                       ? items.filter((it:any) => {
                           const q = searchVal.toLowerCase();
-                          // FIX: search by name OR by first-4-chars of ID OR full SKU
                           return (
                             it.name.toLowerCase().includes(q) ||
                             (it.sku||'').toLowerCase().includes(q) ||
-                            String(it.id||'').toLowerCase().startsWith(q) ||
                             String(it.id||'').toLowerCase().slice(-4).startsWith(q)
                           );
-                        }).slice(0, 10)
+                        }).slice(0, 12)
                       : [];
+                    const isThisDropdownOpen = dropdownAnchor?.lineIdx === i && suggestions.length > 0;
                     return (
                       <tr key={i} className="border-t border-gray-100">
                         <td className="px-2 py-1 relative min-w-[240px]">
-                          {/* Show selected item badge when not actively searching */}
                           {line.item_id && !isTyping && (
-                            <div className="flex items-center gap-1 mb-0.5">
+                            <div className="flex items-center gap-1">
                               <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-mono">
                                 #{String(line.item_id).slice(-4).toUpperCase()}
                               </span>
                               <span className="text-xs font-medium text-gray-700 truncate max-w-[160px]">{line.item_name}</span>
-                              <button onClick={() => { updateLine(i,'item_id',''); updateLine(i,'item_name',''); setItemSearch(s=>({...s,[i]:''})); }}
+                              <button onClick={() => { updateLine(i,'item_id',''); updateLine(i,'item_name',''); setItemSearch(s=>({...s,[i]:''})); setDropdownAnchor(null); }}
                                 className="ml-auto text-gray-300 hover:text-red-400 text-xs">✕</button>
                             </div>
                           )}
                           <Input
+                            ref={(el) => { inputRefs.current[i] = el; }}
                             value={isTyping ? searchVal : ''}
                             placeholder={line.item_id ? 'Click ✕ to change…' : 'Search by name, SKU or last 4 of ID…'}
-                            onFocus={() => {
-                              // Start typing mode on focus if no item selected
-                              if (!line.item_id) setItemSearch(s => ({ ...s, [i]: '' }));
+                            onFocus={e => {
+                              if (!line.item_id) {
+                                setItemSearch(s => ({ ...s, [i]: '' }));
+                                setDropdownAnchor({ lineIdx: i, rect: e.currentTarget.getBoundingClientRect() });
+                              }
                             }}
                             onChange={e => {
                               setItemSearch(s => ({ ...s, [i]: e.target.value }));
-                              if (!e.target.value) { updateLine(i, 'item_id', ''); updateLine(i, 'item_name', ''); }
+                              if (!e.target.value) { updateLine(i,'item_id',''); updateLine(i,'item_name',''); }
+                              const el = inputRefs.current[i];
+                              if (el) setDropdownAnchor({ lineIdx: i, rect: el.getBoundingClientRect() });
                             }}
                             onBlur={() => {
-                              // If user typed but didn't pick — keep text visible briefly then clear
                               setTimeout(() => {
-                                setItemSearch(s => {
-                                  const next = { ...s };
-                                  delete next[i];
-                                  return next;
-                                });
-                              }, 200);
+                                setItemSearch(s => { const n={...s}; delete n[i]; return n; });
+                                setDropdownAnchor(null);
+                              }, 180);
                             }}
-                            className={`text-sm ${line.item_id ? 'opacity-0 h-0 p-0 border-0 absolute' : ''}`}
+                            className={`text-sm ${line.item_id ? 'opacity-0 h-0 p-0 border-0 absolute pointer-events-none' : ''}`}
                           />
-                          {suggestions.length > 0 && (
-                            <div className="absolute z-30 left-2 top-full bg-white border rounded-lg shadow-xl w-80 max-h-52 overflow-y-auto">
-                              {suggestions.map((it:any) => (
-                                <div key={it.id}
-                                  onMouseDown={e => { e.preventDefault(); selectItem(i, it); setItemSearch(s=>{const n={...s};delete n[i];return n;}); }}
-                                  className="px-3 py-2 hover:bg-indigo-50 cursor-pointer border-b border-gray-50 last:border-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-mono text-[10px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded">
-                                      #{String(it.id).slice(-4).toUpperCase()}
-                                    </span>
-                                    {it.sku && <span className="text-[10px] text-gray-400">{it.sku}</span>}
+                          {/* Floating window overlay — rendered via fixed position */}
+                          {isThisDropdownOpen && dropdownAnchor && (
+                            <div
+                              style={{
+                                position: 'fixed',
+                                top: dropdownAnchor.rect.bottom + 4,
+                                left: dropdownAnchor.rect.left,
+                                width: Math.max(dropdownAnchor.rect.width, 320),
+                                zIndex: 9999,
+                              }}
+                              className="bg-white border border-indigo-200 rounded-xl shadow-2xl overflow-hidden">
+                              <div className="px-3 py-1.5 bg-indigo-50 border-b border-indigo-100 flex items-center justify-between">
+                                <span className="text-[10px] font-semibold text-indigo-600 uppercase tracking-wide">Select Item</span>
+                                <span className="text-[10px] text-gray-400">{suggestions.length} match{suggestions.length !== 1 ? 'es' : ''}</span>
+                              </div>
+                              <div className="max-h-56 overflow-y-auto">
+                                {suggestions.map((it:any) => (
+                                  <div key={it.id}
+                                    onMouseDown={e => { e.preventDefault(); selectItem(i, it); }}
+                                    className="px-3 py-2.5 hover:bg-indigo-50 cursor-pointer border-b border-gray-50 last:border-0 transition-colors">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-mono text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+                                        #{String(it.id).slice(-4).toUpperCase()}
+                                      </span>
+                                      {it.sku && <span className="text-[10px] text-gray-400 font-mono">{it.sku}</span>}
+                                      <span className={`ml-auto text-[9px] px-1.5 py-0.5 rounded-full font-medium ${it.category==='Beverage'?'bg-blue-100 text-blue-600':it.category==='Food'?'bg-green-100 text-green-600':'bg-gray-100 text-gray-500'}`}>{it.category}</span>
+                                    </div>
+                                    <div className="text-xs font-semibold text-gray-800 mt-0.5">{it.name}</div>
+                                    <div className="text-[10px] text-gray-400">{fmt(it.last_cost_price || 0)}/unit · {uoms.find((u:any)=>u.id===it.base_uom_id)?.name || it.base_uom_id}</div>
                                   </div>
-                                  <div className="text-xs font-medium text-gray-800 mt-0.5">{it.name}</div>
-                                  <div className="text-[10px] text-gray-400">{it.category} · {fmt(it.last_cost_price)}/unit</div>
-                                </div>
-                              ))}
+                                ))}
+                              </div>
                             </div>
                           )}
-                          {isTyping && searchVal.length > 0 && suggestions.length === 0 && !line.item_id && (
-                            <p className="text-xs text-red-500 mt-0.5">No items found — create it in Inventory → Items first</p>
+                          {isTyping && searchVal.length >= 2 && suggestions.length === 0 && !line.item_id && (
+                            <p className="text-xs text-red-500 mt-0.5">No items found — create it in Items tab first</p>
                           )}
                         </td>
                         <td className="px-2 py-1 w-24">

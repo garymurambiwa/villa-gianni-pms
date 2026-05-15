@@ -128,6 +128,12 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inv_uom_definitions ADD COLUMN IF NOT EXISTS description TEXT`);
       await client.query(`ALTER TABLE public.inv_items ADD COLUMN IF NOT EXISTS selling_price NUMERIC(10,2) DEFAULT 0.00`);
       await client.query(`ALTER TABLE public.inv_items ADD COLUMN IF NOT EXISTS short_id TEXT UNIQUE`);
+      // Enforce 4-char max on short_id via CHECK constraint (idempotent — ignore if already exists)
+      await client.query(
+        `DO $$ BEGIN
+           ALTER TABLE public.inv_items ADD CONSTRAINT inv_items_short_id_len CHECK (short_id IS NULL OR char_length(short_id) <= 4);
+         EXCEPTION WHEN duplicate_object THEN NULL; END $$`
+      );
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_by TEXT`);
 
@@ -189,6 +195,12 @@ async function ensureInventoryTables() {
           inserted_at TIMESTAMPTZ DEFAULT NOW()
         )`);
       await client.query(`ALTER TABLE public.inv_stock_ledger ADD COLUMN IF NOT EXISTS inserted_at TIMESTAMPTZ DEFAULT NOW()`);
+      // Enforce 4-char max on short_id
+      await client.query(
+        `DO $$ BEGIN
+           ALTER TABLE public.inv_items ADD CONSTRAINT inv_items_short_id_len CHECK (short_id IS NULL OR char_length(short_id) <= 4);
+         EXCEPTION WHEN duplicate_object THEN NULL; END $$`
+      );
       await client.query(`
         CREATE TABLE IF NOT EXISTS public.inv_recipes (
           id TEXT PRIMARY KEY,
@@ -873,6 +885,54 @@ router.post('/grn/:id/post', async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+/**
+ * GET /api/v1/inventory/grn/:id
+ * Fetch single GRN with its line items
+ */
+router.get('/grn/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const header = await pool.query(`SELECT * FROM public.inv_grn_headers WHERE id=$1`, [id]);
+    if (!header.rows.length) return res.status(404).json({ ok: false, error: 'GRN not found' });
+    const lines = await pool.query(
+      `SELECT gl.*, i.name as item_name FROM public.inv_grn_lines gl
+       LEFT JOIN public.inv_items i ON i.id = gl.item_id
+       WHERE gl.grn_header_id=$1 ORDER BY gl.line_number`, [id]
+    );
+    res.json({ ok: true, data: { ...header.rows[0], lines: lines.rows } });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/**
+ * DELETE /api/v1/inventory/grn/:id
+ * Delete a GRN and reverse its stock ledger entries (if posted)
+ */
+router.delete('/grn/:id', async (req, res) => {
+  const { id } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const grnRes = await client.query(`SELECT * FROM public.inv_grn_headers WHERE id=$1`, [id]);
+    if (!grnRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ ok: false, error: 'GRN not found' }); }
+    const grn = grnRes.rows[0];
+    // Reverse ledger entries if posted
+    if (grn.status === 'posted') {
+      await client.query(
+        `DELETE FROM public.inv_stock_ledger WHERE ledger_type='GRN' AND reference_number=$1`,
+        [grn.grn_number]
+      );
+    }
+    // Delete lines then header (FK cascade handles lines if set, but explicit is safer)
+    await client.query(`DELETE FROM public.inv_grn_lines WHERE grn_header_id=$1`, [id]);
+    await client.query(`DELETE FROM public.inv_grn_headers WHERE id=$1`, [id]);
+    await client.query('COMMIT');
+    res.json({ ok: true, deleted: id });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ ok: false, error: e.message });
+  } finally { client.release(); }
 });
 
 // ============================================================================

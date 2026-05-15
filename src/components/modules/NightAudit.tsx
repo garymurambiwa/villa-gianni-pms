@@ -28,6 +28,10 @@ const NightAudit: React.FC = () => {
   const [activeTab, setActiveTab] = React.useState<'audit' | 'reports'>('audit');
 
   const [busy, setBusy] = React.useState(false);
+  // Catch-up state: audit dates that are missing from night_audit_runs
+  const [catchupDates, setCatchupDates] = React.useState<string[]>([]);
+  const [catchupRunning, setCatchupRunning] = React.useState(false);
+  const [catchupLog, setCatchupLog] = React.useState<string[]>([]);
   const [validationIssues, setValidationIssues] = React.useState<string[]>([]);
   const [validationWarnings, setValidationWarnings] = React.useState<string[]>([]);
   const [canForceOptions, setCanForceOptions] = React.useState<string[]>([]);
@@ -116,7 +120,62 @@ const NightAudit: React.FC = () => {
         } catch { /* non-fatal */ }
       }).catch(err => console.warn('[NightAudit] DB bundle hydration failed:', err));
     }).catch(() => {});
+
+    // 3. Detect missing audit dates (gaps between last audit and today)
+    fetch('/api/night-audit/status').then(r => r.json()).then(status => {
+      if (!status.ok) return;
+      const bizDateRaw = status.businessDate?.date || status.businessDate;
+      if (!bizDateRaw) return;
+      const lastAuditDate = status.lastRun?.business_date
+        ? String(status.lastRun.business_date).slice(0, 10)
+        : null;
+      if (!lastAuditDate) return;
+      const today = new Date().toISOString().split('T')[0];
+      const missing: string[] = [];
+      let cur = new Date(lastAuditDate);
+      cur.setDate(cur.getDate() + 1); // start from day after last audit
+      while (cur.toISOString().split('T')[0] < today) {
+        missing.push(cur.toISOString().split('T')[0]);
+        cur.setDate(cur.getDate() + 1);
+        if (missing.length > 60) break; // safety cap
+      }
+      setCatchupDates(missing);
+    }).catch(() => {});
   }, []);
+
+  // Run all missing night audits sequentially via the /api/night-audit/run endpoint
+  const runCatchupAudits = async () => {
+    if (catchupDates.length === 0 || catchupRunning) return;
+    setCatchupRunning(true);
+    setCatchupLog([]);
+    const log: string[] = [];
+    for (const date of catchupDates) {
+      log.push(`Running audit for ${date}…`);
+      setCatchupLog([...log]);
+      try {
+        const r = await fetch('/api/night-audit/run', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date })
+        }).then(x => x.json());
+        if (r.ok) {
+          log.push(r.skipped
+            ? `  ✓ ${date} — already existed, skipped`
+            : `  ✓ ${date} — ${r.roomsPosted} rooms posted, revenue $${Number(r.totalRevenue||0).toFixed(2)}`
+          );
+        } else {
+          log.push(`  ✗ ${date} — ${r.error}`);
+        }
+      } catch (e: any) {
+        log.push(`  ✗ ${date} — ${e.message}`);
+      }
+      setCatchupLog([...log]);
+    }
+    log.push('Catch-up complete. Refreshing…');
+    setCatchupLog([...log]);
+    setCatchupDates([]);
+    setCatchupRunning(false);
+    toast({ title: 'Catch-up audits complete', description: `${catchupDates.length} dates processed.` });
+  };
 
   const forceReconciliation = () => {
     setShowForceDialog(true);
@@ -326,6 +385,33 @@ const NightAudit: React.FC = () => {
 
       {/* Audit tab — original content below, hidden when reports tab active */}
       {activeTab === 'audit' && <>
+
+      {/* ── Catch-up Banner: shown when audit dates are missing ─────────────── */}
+      {catchupDates.length > 0 && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 font-semibold text-amber-800 mb-1">
+                <AlertTriangle className="w-4 h-4" />
+                {catchupDates.length} Missing Night Audit{catchupDates.length !== 1 ? 's' : ''} Detected
+              </div>
+              <p className="text-sm text-amber-700">
+                Reports are missing from <strong>{catchupDates[0]}</strong> to <strong>{catchupDates[catchupDates.length - 1]}</strong>.
+                Run the catch-up to generate all missing audit records.
+              </p>
+              {catchupLog.length > 0 && (
+                <pre className="mt-2 text-xs text-amber-900 bg-amber-100 rounded p-2 max-h-32 overflow-y-auto">{catchupLog.join('\n')}</pre>
+              )}
+            </div>
+            <Button
+              onClick={runCatchupAudits}
+              disabled={catchupRunning}
+              className="bg-amber-600 hover:bg-amber-700 text-white whitespace-nowrap shrink-0">
+              {catchupRunning ? 'Running…' : `Run ${catchupDates.length} Catch-up Audit${catchupDates.length !== 1 ? 's' : ''}`}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* End-of-Day Processing */}
       <section className="bg-white rounded-xl shadow p-4">

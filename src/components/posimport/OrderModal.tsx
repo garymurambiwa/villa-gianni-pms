@@ -63,7 +63,18 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const { toast } = useToast();
   const { activeShift } = useShift();
-  const { user } = useAuth();
+  const { user, verifyPosPin } = useAuth();
+
+  // Track which items have been committed (saved/printed) — these require manager PIN to remove
+  const [committedItemIds, setCommittedItemIds] = useState<Set<string>>(() => {
+    // Pre-populate from existing bill items so reloaded orders are also protected
+    return new Set(bill?.items?.map(i => i.menuItem.id) || []);
+  });
+  // Manager PIN auth state for item removal
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [pinValue, setPinValue] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
   const [subTree, setSubTree] = useState<SubTreeNode[]>([]);
   const [subPath, setSubPath] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -330,14 +341,41 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   };
 
   const removeItem = (itemId: string) => {
-    console.log('[OrderModal] Removing item:', itemId, 'from items:', items);
-    setItems(prevItems => {
-      const filtered = prevItems.filter(i => i.menuItem.id !== itemId);
-      console.log('[OrderModal] Items after removal:', filtered);
-      return filtered;
-    });
+    // If this item was previously saved/printed (committed), require manager PIN
+    if (committedItemIds.has(itemId)) {
+      setPendingRemoveId(itemId);
+      setPinValue('');
+      setPinError('');
+      setPinModalOpen(true);
+      return;
+    }
+    executeRemoveItem(itemId);
+  };
+
+  const executeRemoveItem = (itemId: string) => {
+    console.log('[OrderModal] Removing item:', itemId);
+    setItems(prevItems => prevItems.filter(i => i.menuItem.id !== itemId));
+    setCommittedItemIds(prev => { const n = new Set(prev); n.delete(itemId); return n; });
     try { cocktailEng.restoreIngredientsForCocktail(itemId, 1); } catch (e) {
       console.warn('[OrderModal] Ingredient restoration failed:', e);
+    }
+  };
+
+  const handlePinSubmit = async () => {
+    if (!pinValue.trim()) { setPinError('Enter manager PIN'); return; }
+    try {
+      const ok = await verifyPosPin(pinValue);
+      if (ok) {
+        setPinModalOpen(false);
+        setPinError('');
+        if (pendingRemoveId) executeRemoveItem(pendingRemoveId);
+        setPendingRemoveId(null);
+        toast({ title: 'Authorization granted', description: 'Item removed from order.' });
+      } else {
+        setPinError('Incorrect PIN — manager authorization required');
+      }
+    } catch {
+      setPinError('Verification failed — try again');
     }
   };
 
@@ -807,6 +845,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                     const vatAmount = total - (total / (1 + posSettings.vat_rate));
                     const scAmount = total * posSettings.service_charge;
 
+                    // Mark all current items as committed — PIN required to remove them later
+                    setCommittedItemIds(new Set(items.map(i => i.menuItem.id)));
+
                     onSave({
                       id: bill?.id || `bill-${Date.now()}`,
                       tableId: `t${tableNumber}`,
@@ -820,6 +861,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       service_charge_amount: scAmount
                     });
 
+                    toast({ title: 'Order saved', description: 'Items are now committed — manager PIN required for modifications.' });
                     // Close modal after saving order
                     onClose();
                   }}
@@ -1105,6 +1147,39 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowItemEdit(false)}>Cancel</Button>
             <Button onClick={saveItemEdit}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Manager PIN Authorization Modal — required to remove committed items */}
+      <Dialog open={pinModalOpen} onOpenChange={open => { if (!open) { setPinModalOpen(false); setPendingRemoveId(null); setPinError(''); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <span>🔐</span> Manager Authorization Required
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-gray-600">
+              This item has been committed to the order. A management-level PIN is required to remove it.
+            </p>
+            <div>
+              <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Manager PIN</Label>
+              <Input
+                type="password"
+                value={pinValue}
+                onChange={e => { setPinValue(e.target.value); setPinError(''); }}
+                onKeyDown={e => { if (e.key === 'Enter') handlePinSubmit(); }}
+                placeholder="Enter manager PIN"
+                className="mt-1 text-center text-xl tracking-widest"
+                autoFocus
+              />
+              {pinError && <p className="text-xs text-red-500 mt-1">{pinError}</p>}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setPinModalOpen(false); setPendingRemoveId(null); setPinError(''); }}>Cancel</Button>
+            <Button variant="destructive" onClick={handlePinSubmit}>Authorize & Remove</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

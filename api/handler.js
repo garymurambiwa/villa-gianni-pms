@@ -385,6 +385,95 @@ app.get('/api/pos/reports/daily', async (req, res) => {
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
+// ─── Night Audit Manual Run (Vercel/serverless — triggered by admin UI) ──────
+// POST /api/night-audit/run  { date: 'YYYY-MM-DD' }
+// Runs a single night audit for the given date: posts room charges, saves run record.
+app.post('/api/night-audit/run', async (req, res) => {
+  const { date } = req.body || {};
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return safeJson(res, { ok: false, error: 'date (YYYY-MM-DD) required' });
+  }
+  try {
+    // Guard: don't run twice for the same date
+    const existing = await db.query(
+      `SELECT id FROM night_audit_runs WHERE business_date::date = $1::date AND status='completed' LIMIT 1`, [date]
+    );
+    if (existing.ok && existing.rows?.length) {
+      return safeJson(res, { ok: true, skipped: true, message: `Audit for ${date} already exists` });
+    }
+
+    // Gather occupied rooms for the date
+    const roomsRes = await db.query(
+      `SELECT r.id, r.number, r.rate, r.type, r.status
+       FROM rooms r WHERE r.is_active IS DISTINCT FROM false`
+    );
+    const rooms = roomsRes.ok ? roomsRes.rows || [] : [];
+    const occupied = rooms.filter(r => ['OC','OD','OCC','occupied'].includes(String(r.status||'').toUpperCase().replace('UPY','')) || String(r.status||'').toLowerCase().includes('occ'));
+
+    // Post room charges to checked-in folios
+    let roomsPosted = 0;
+    for (const room of occupied) {
+      try {
+        const folioRes = await db.query(
+          `SELECT f.id FROM folios f
+           JOIN reservations res ON res.id = f.reservation_id
+           WHERE res.room_id = $1 AND res.status='checked-in' AND f.status='open' LIMIT 1`,
+          [room.id]
+        );
+        if (folioRes.ok && folioRes.rows?.length) {
+          const folioId = folioRes.rows[0].id;
+          const chargeId = `rc_${date.replace(/-/g,'')}_${room.id.slice(-6)}`;
+          await db.query(
+            `INSERT INTO folio_charges (id,folio_id,category,description,amount,quantity,unit_price,business_date,posted_at)
+             VALUES ($1,$2,'Room Rate','Room Rate - Night Audit',$3,1,$4,$5::date,NOW())
+             ON CONFLICT (id) DO NOTHING`,
+            [chargeId, folioId, Number(room.rate||0), Number(room.rate||0), date]
+          );
+          roomsPosted++;
+        }
+      } catch { /* per-room failure is non-fatal */ }
+    }
+
+    // Compute totals
+    const totalOccupied = occupied.length;
+    const totalAvailable = rooms.filter(r => !['OOO','OOS'].includes(String(r.status||'').toUpperCase())).length;
+    const roomRevenue = occupied.reduce((s, r) => s + Number(r.rate || 0), 0);
+    const occupancyPct = totalAvailable > 0 ? ((totalOccupied / totalAvailable) * 100) : 0;
+    const adr = totalOccupied > 0 ? roomRevenue / totalOccupied : 0;
+    const revpar = totalAvailable > 0 ? roomRevenue / totalAvailable : 0;
+
+    // POS revenue for the date
+    const posRes = await db.query(
+      `SELECT COALESCE(SUM(total_amount),0) as pos_rev FROM pos_orders WHERE business_date::date=$1::date AND status='closed'`, [date]
+    );
+    const posRevenue = posRes.ok ? Number(posRes.rows?.[0]?.pos_rev || 0) : 0;
+    const totalRevenue = roomRevenue + posRevenue;
+
+    // Advance business date
+    const nextDate = new Date(date); nextDate.setDate(nextDate.getDate() + 1);
+    const nextDateStr = nextDate.toISOString().split('T')[0];
+    await db.query(
+      `INSERT INTO system_configs (key,value) VALUES ('business_date',$1)
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
+      [JSON.stringify({ date: nextDateStr })]
+    );
+
+    // Record audit run
+    const runId = `run_${date.replace(/-/g,'')}_${Date.now().toString(36)}`;
+    await db.query(
+      `INSERT INTO night_audit_runs
+         (id,business_date,status,rooms_posted,occupied_rooms,available_rooms,
+          room_revenue,total_revenue,occupancy_percent,adr,revpar,completed_at,inserted_at)
+       VALUES ($1,$2::date,'completed',$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [runId, date, roomsPosted, totalOccupied, totalAvailable,
+       roomRevenue, totalRevenue, occupancyPct, adr, revpar]
+    );
+
+    safeJson(res, { ok: true, date, roomsPosted, roomRevenue, totalRevenue, occupancyPct: occupancyPct.toFixed(1), nextBusinessDate: nextDateStr });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 // ─── Night Audit (simplified for Vercel — no SSE/file system) ────────────────
 app.get('/api/night-audit/status', async (req, res) => {
   try {

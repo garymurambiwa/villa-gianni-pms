@@ -49,13 +49,17 @@ export const Dashboard: React.FC = () => {
     : '0.0';
 
   // TODAY'S ARRIVALS / DEPARTURES from reservations
+  // TODAY CHECK-INS: reservations that checked in today (status = checked-in or occupied)
   const todayCheckIns = reservations.filter((r: any) => {
     const ci = String(r.checkIn || r.check_in_date || '').slice(0, 10);
-    return ci === todayStr && r.status !== 'checked-out' && r.status !== 'cancelled';
+    return ci === todayStr && (r.status === 'checked-in' || r.status === 'occupied');
   }).length;
+  // TODAY CHECK-OUTS: only reservations that have ACTUALLY checked out today
+  // (status = 'checked-out' AND check_out_date = today). Confirmed/in-house reservations
+  // with a future checkout date must NOT be counted — fixes the "2 checkouts 0 occupied" anomaly.
   const todayCheckOuts = reservations.filter((r: any) => {
     const co = String(r.checkOut || r.check_out_date || '').slice(0, 10);
-    return co === todayStr;
+    return co === todayStr && r.status === 'checked-out';
   }).length;
 
   // ADR (Average Daily Rate) = Sum of room rates for occupied rooms ÷ occupied rooms count.
