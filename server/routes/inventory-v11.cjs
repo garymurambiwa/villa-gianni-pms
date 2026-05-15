@@ -1369,7 +1369,7 @@ router.post('/variance/generate', async (req, res) => {
     await client.query(`
       INSERT INTO public.inv_variance_reports
         (id, report_number, location_id, period_start, period_end, generated_by,
-         ok_count, warning_count, critical_count, variance_count, inserted_at)
+         ok_count, warning_count, critical_count, total_items, inserted_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
       [reportId, reportNum, location_id, period_start, period_end, generated_by||'system',
        okCount, warnCount, critCount, lines.length]
