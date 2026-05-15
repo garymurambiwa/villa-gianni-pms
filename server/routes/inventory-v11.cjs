@@ -1009,7 +1009,6 @@ router.get('/items-with-balance/:location_id', async (req, res) => {
     res.status(500).json({ ok: false, error: error.message });
   }
 });
-});
 
 /**
  * GET /api/v1/inventory/ledger
