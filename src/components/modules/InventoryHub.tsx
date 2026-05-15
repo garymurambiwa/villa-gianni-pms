@@ -724,9 +724,9 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                             <p className="text-xs text-red-500 mt-0.5">No items found — create it in Items tab first</p>
                           )}
                          </td>
-                         <td className="px-2 py-1 w-32">
+                         <td className="px-2 py-1 min-w-[140px]">
                            <Input type="date" value={line.date||''}
-                             onChange={e => updateTLine(i, 'date', e.target.value)} className="text-sm" />
+                             onChange={e => updateTLine(i, 'date', e.target.value)} className="text-sm w-full" />
                          </td>
                          <td className="px-2 py-1 w-24 text-center">
                            <span className="text-sm">{onHand}</span>
