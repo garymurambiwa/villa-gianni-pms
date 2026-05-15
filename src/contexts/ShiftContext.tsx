@@ -265,6 +265,20 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return next;
       });
 
+      // ── Flush void log to DB for audit trail & Z-Reading stamp ──────────
+      try {
+        const rawVoidLog = localStorage.getItem('corepms_void_log');
+        const voidEntries = rawVoidLog ? JSON.parse(rawVoidLog) : [];
+        if (voidEntries.length > 0) {
+          await fetch('/api/pos/voids', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entries: voidEntries }),
+          });
+          localStorage.removeItem('corepms_void_log');
+        }
+      } catch { /* non-fatal — void log remains in localStorage */ }
+
       // ── Atomic table state cleanup on shift close ─────────────────────────
       // Three-layer wipe so no stale bill survives shift closure:
       //  1. localStorage — clear all occupied table entries

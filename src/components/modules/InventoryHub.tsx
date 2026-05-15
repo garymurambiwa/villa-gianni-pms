@@ -386,7 +386,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const [lines, setLines] = useState<any[]>([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, expiry_date:'' }]);
   const [saving, setSaving] = useState(false);
   const [itemSearch, setItemSearch] = useState<Record<number,string>>({});
-  // Floating dropdown state: tracks which line's input anchor rect to position against
+  // Floating dropdown state
   const [dropdownAnchor, setDropdownAnchor] = useState<{ lineIdx: number; rect: DOMRect } | null>(null);
   const inputRefs = useRef<Record<number, HTMLInputElement | null>>({});
   // GRN detail/delete state
@@ -394,6 +394,9 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const [detailLines, setDetailLines] = useState<any[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // GRN header fields — these were the missing state variables causing ReferenceError
+  const [grnDate, setGrnDate] = useState(new Date().toISOString().split('T')[0]);
+  const [grnNotes, setGrnNotes] = useState('');
 
   useEffect(() => {
     apiGet('/grn?limit=30').then(r => { if (r.ok) setGrns(r.data); });
@@ -449,17 +452,23 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
     if (!supplier) { toast({ title: 'Supplier required', variant:'destructive' }); return; }
     if (!lines.some(l => l.item_id)) { toast({ title: 'At least one item required', variant:'destructive' }); return; }
     setSaving(true);
+    // FIX: was referencing StockTransfer variables (srcLoc, dstLoc, reqRef, transferDate,
+    // notes, tLines) — all undefined in GRNModule scope → ReferenceError: notes is not defined.
+    // Corrected to use GRN-specific state variables.
     const payload = {
-      source_location_id: srcLoc,
-      destination_location_id: dstLoc,
-      reference_note: reqRef,
-      date: transferDate || undefined,
-      notes: notes || undefined,
+      supplier_name: supplier,
+      supplier_id: supplierId || undefined,
+      supplier_invoice_number: invoiceNum || undefined,
+      destination_location_id: destLocation,
+      receipt_date: grnDate || undefined,
+      notes: grnNotes || undefined,
       created_by: user?.id || 'system',
-      lines: tLines.filter(l => l.item_id).map(l => ({
-        item_id: l.item_id, qty_requested: Number(l.qty),
-        source_uom_id: l.uom, breakdown_flag: false,
-        date: l.date || undefined
+      lines: lines.filter(l => l.item_id).map(l => ({
+        item_id:         l.item_id,
+        qty_received:    Number(l.qty),
+        received_uom_id: l.uom,
+        unit_cost:       Number(l.unit_cost),
+        expiry_date:     l.expiry_date || undefined,
       }))
     };
     const r = await apiPost('/grn', payload);
@@ -467,9 +476,10 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
       // Auto-post
       await apiPost(`/grn/${r.data.id}/post`, { posted_by: user?.id || 'system' });
       toast({ title: `GRN ${r.data.grn_number} posted successfully` });
-      setShowForm(false);
+      setShowForm(false); setFullScreen(false);
       setLines([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, expiry_date:'' }]);
       setSupplier(''); setSupplierId(''); setInvoiceNum('');
+      setGrnDate(new Date().toISOString().split('T')[0]); setGrnNotes('');
       apiGet('/grn?limit=30').then(res => { if (res.ok) setGrns(res.data); });
     } else {
       toast({ title: 'GRN failed', description: r.error, variant:'destructive' });
@@ -587,7 +597,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
             </div>
 
             {/* Header */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
               <div className="col-span-2">
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Supplier *</label>
                 <select className="w-full border rounded-md px-3 py-2 text-sm"
@@ -615,14 +625,19 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                   {storageLocations.map((l:any) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               </div>
-             </div>
+            </div>
 
-             <div className="grid grid-cols-1 gap-4 mb-5">
-               <div>
-                 <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
-                 <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Additional notes..." />
-               </div>
-             </div>
+            {/* GRN date + notes row — both fields are part of the GRN payload */}
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Receipt / Delivery Date</label>
+                <Input type="date" value={grnDate} onChange={e => setGrnDate(e.target.value)} className="text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
+                <Input value={grnNotes} onChange={e => setGrnNotes(e.target.value)} placeholder="Delivery notes, batch info…" />
+              </div>
+            </div>
 
              {/* Lines */}
             <div className="overflow-x-auto rounded-lg border border-gray-200 mb-4">
@@ -913,7 +928,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
               </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-5">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">From (Source)</label>
                 <select className="w-full border rounded-md px-3 py-2 text-sm" value={srcLoc} onChange={e => setSrcLoc(e.target.value)}>
@@ -932,6 +947,14 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Requisition Ref *</label>
                 <Input value={reqRef} onChange={e => setReqRef(e.target.value)} placeholder="REQ-0001" />
               </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Transfer Date</label>
+                <Input type="date" value={transferDate} onChange={e => setTransferDate(e.target.value)} className="text-sm" />
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Notes / Reason</label>
+              <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Reason for transfer, event name…" />
             </div>
 
             <div className="overflow-x-auto rounded-lg border border-gray-200 mb-4">

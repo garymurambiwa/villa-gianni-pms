@@ -353,12 +353,47 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   };
 
   const executeRemoveItem = (itemId: string) => {
-    console.log('[OrderModal] Removing item:', itemId);
-    setItems(prevItems => prevItems.filter(i => i.menuItem.id !== itemId));
+    console.log('[OrderModal] Removing committed item:', itemId);
+    setItems(prevItems => {
+      const filtered = prevItems.filter(i => i.menuItem.id !== itemId);
+      // Immediately persist the updated bill so the table doesn't stay stuck occupied.
+      // This is the "Immediate Commit" path: manager-authorized removals write to DB now.
+      if (bill) {
+        const updatedTotal = filtered.reduce((s, i) => s + i.subtotal, 0) * (1 + posSettings.service_charge);
+        onSave({
+          id: bill.id || `bill-${Date.now()}`,
+          tableId: `t${tableNumber}`,
+          items: filtered,
+          status: filtered.length === 0 ? 'paid' : 'open',
+          createdAt: bill.createdAt || new Date().toISOString(),
+          total: updatedTotal,
+          shift_id: activeShift?.id,
+          user_id: user?.id,
+        });
+        // If all items removed, close the modal (table becomes available)
+        if (filtered.length === 0) {
+          setTimeout(() => onClose(), 300);
+        }
+      }
+      return filtered;
+    });
     setCommittedItemIds(prev => { const n = new Set(prev); n.delete(itemId); return n; });
     try { cocktailEng.restoreIngredientsForCocktail(itemId, 1); } catch (e) {
       console.warn('[OrderModal] Ingredient restoration failed:', e);
     }
+    // Log void to localStorage audit trail for Z-Reading stamp
+    try {
+      const voidEntry = {
+        itemId,
+        timestamp: new Date().toISOString(),
+        tableId: `t${tableNumber}`,
+        billId: bill?.id,
+        authorizedBy: 'manager-pin',
+        shiftId: activeShift?.id,
+      };
+      const existing = JSON.parse(localStorage.getItem('corepms_void_log') || '[]');
+      localStorage.setItem('corepms_void_log', JSON.stringify([voidEntry, ...existing].slice(0, 500)));
+    } catch { /* non-fatal */ }
   };
 
   const handlePinSubmit = async () => {
@@ -368,9 +403,10 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
       if (ok) {
         setPinModalOpen(false);
         setPinError('');
-        if (pendingRemoveId) executeRemoveItem(pendingRemoveId);
+        const removingId = pendingRemoveId;
         setPendingRemoveId(null);
-        toast({ title: 'Authorization granted', description: 'Item removed from order.' });
+        if (removingId) executeRemoveItem(removingId);
+        toast({ title: '🔐 Void authorized', description: 'Item removed and logged to audit trail.' });
       } else {
         setPinError('Incorrect PIN — manager authorization required');
       }

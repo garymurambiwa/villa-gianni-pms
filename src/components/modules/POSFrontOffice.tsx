@@ -24,7 +24,7 @@ import { db } from '@/lib/db';
 import { offlineCache } from '@/lib/offlineCache';
 import { offlineSync } from '@/lib/offlineSync';
 import { networkStatus, NetworkInfo } from '@/lib/networkStatus';
-import { toast } from '@/hooks/use-toast';
+import { toast, useToast } from '@/hooks/use-toast';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
 export const POSFrontOffice: React.FC = () => {
@@ -32,11 +32,20 @@ export const POSFrontOffice: React.FC = () => {
   const { activeShift, startShift, endShift, getTotals, addTransaction } = useShift();
   const { user, costCentre, shiftId, isLocked, setIsLocked, verifyPosPin } = useAuth();
 
-  // 90-second inactivity timeout (locks the station, does not log out)
+  // 90-second inactivity timeout — locks the station without losing table state.
+  // Saves current page to localStorage so session recovery restores operational context.
   useInactivityTimeout({
     timeoutMs: 90000,
     onTimeout: () => {
       if (activeShift && costCentre) {
+        // Persist last active context so the unlock PIN modal can restore it
+        try {
+          localStorage.setItem('corepms_pos_last_context', JSON.stringify({
+            module: 'pos',
+            costCentre,
+            lockedAt: new Date().toISOString(),
+          }));
+        } catch { /* non-fatal */ }
         setIsLocked(true);
       }
     },
@@ -397,14 +406,18 @@ export const POSFrontOffice: React.FC = () => {
     });
   }, [posOrders]);
 
+  // Track how long since mount so GUARD 1 doesn't fire before shift is restored from storage
+  const mountTimeRef = React.useRef<number>(Date.now());
+  const SHIFT_RESTORE_GRACE_MS = 8000; // 8s — time to allow ShiftContext to reload from localStorage
+
   // Persist and restore table states (run after database init)
   useEffect(() => {
-    // Only restore if we're not still loading from database
     if (typeof mountLoading !== 'undefined' && mountLoading) return;
 
     try {
       const raw = localStorage.getItem('corepms_pos_table_states');
       const savedStates = raw ? JSON.parse(raw) : {};
+      const msSinceMount = Date.now() - mountTimeRef.current;
 
       setTables(prev => {
         const safePrev = Array.isArray(prev) ? prev : [];
@@ -413,16 +426,19 @@ export const POSFrontOffice: React.FC = () => {
           let nextTable = { ...table };
 
           if (saved) {
-            // GUARD 1 — No active shift means no occupied tables can survive.
-            // Orders created without a shift (shift_id=null) are orphans; wipe them.
-            if (!activeShift && saved.status === 'occupied') {
+            // GUARD 1 — No active shift → occupied tables are orphans, wipe them.
+            // EXCEPTION: within 8s of mount, skip this guard to let ShiftContext
+            // restore the shift from localStorage first. Without this delay, a page
+            // refresh clears all occupied tables before the shift is re-loaded,
+            // causing "table disappears on refresh" symptom.
+            const shiftRestoreComplete = msSinceMount > SHIFT_RESTORE_GRACE_MS;
+            if (!activeShift && saved.status === 'occupied' && shiftRestoreComplete) {
               nextTable = { ...table, status: 'available', currentBill: undefined };
               updateTableStatus(table.id, 'available');
               return nextTable;
             }
 
-            // GUARD 2 — Staleness check: bills older than 12 hours are stale.
-            // Prevents 38-day-old bills (like t1/t4) from reappearing across sessions.
+            // GUARD 2 — Staleness: bills older than 12 hours are stale.
             const billCreatedAt = saved.currentBill?.createdAt;
             const billAgeHours = billCreatedAt
               ? (Date.now() - new Date(billCreatedAt).getTime()) / 3_600_000
@@ -439,16 +455,14 @@ export const POSFrontOffice: React.FC = () => {
                 currentBill: saved.currentBill || undefined
               };
             } else if (saved.status === 'occupied' && !isFreshBill) {
-              // Stale occupied entry — treat as available and clean up DB
-              console.warn(`[POS] Stale bill on ${table.id} (age: ${billAgeHours.toFixed(1)}h) — resetting to available`);
+              console.warn(`[POS] Stale bill on ${table.id} (${billAgeHours.toFixed(1)}h) — reset`);
               nextTable = { ...table, status: 'available', currentBill: undefined };
               updateTableStatus(table.id, 'available');
             }
           }
 
-          // GUARD 3 — Occupied with no bill is always an anomaly, reset it.
+          // GUARD 3 — Occupied with no bill is always an anomaly.
           if (nextTable.status === 'occupied' && !nextTable.currentBill) {
-            console.log(`[POS] Anomaly on ${table.id}: occupied but no bill → available`);
             nextTable.status = 'available';
             updateTableStatus(table.id, 'available');
           }
@@ -928,8 +942,20 @@ export const POSFrontOffice: React.FC = () => {
       <PINModal
         isOpen={isLocked}
         onClose={() => {}} // User cannot close without PIN
-        onSuccess={() => setIsLocked(false)}
-        title="POS Session Locked"
+        onSuccess={() => {
+          setIsLocked(false);
+          // Session recovery: clear lock context, stay on current view (Table Management).
+          // No "Start Shift" redirect — operational continuity is maintained.
+          try {
+            const ctx = JSON.parse(localStorage.getItem('corepms_pos_last_context') || '{}');
+            localStorage.removeItem('corepms_pos_last_context');
+            if (ctx.lockedAt) {
+              const lockDuration = Math.round((Date.now() - new Date(ctx.lockedAt).getTime()) / 60000);
+              toast({ title: '🔓 Session resumed', description: `Locked for ${lockDuration} min — returning to Table Management.` });
+            }
+          } catch { /* non-fatal */ }
+        }}
+        title="POS Session Locked — Enter PIN to Resume"
         verifyPin={verifyPosPin}
       />
 

@@ -385,6 +385,67 @@ app.get('/api/pos/reports/daily', async (req, res) => {
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
+// ─── Voids & Deleted Items Report ────────────────────────────────────────────
+// GET /api/pos/voids?shift_id=X&date=YYYY-MM-DD
+// Returns all void log entries from DB. Populated by the frontend void_log
+// localStorage flush on shift end, and by the server-side POS void endpoint.
+app.get('/api/pos/voids', async (req, res) => {
+  const { shift_id, date, limit = 200 } = req.query;
+  try {
+    let sql = `SELECT v.*, p.name as product_name, p.price as product_price
+               FROM pos_void_log v
+               LEFT JOIN products p ON p.id = v.item_id
+               WHERE 1=1`;
+    const params = [];
+    if (shift_id) { sql += ` AND v.shift_id = $${params.length+1}`; params.push(shift_id); }
+    if (date)     { sql += ` AND v.voided_at::date = $${params.length+1}::date`; params.push(date); }
+    sql += ` ORDER BY v.voided_at DESC LIMIT $${params.length+1}`;
+    params.push(Number(limit));
+    const result = await db.query(sql, params);
+    if (!result.ok && result.error?.includes('does not exist')) {
+      // Table not yet created — return empty with a flag so UI can auto-init
+      return safeJson(res, { ok: true, rows: [], tableNotReady: true });
+    }
+    safeJson(res, { ok: true, rows: result.rows || [] });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// POST /api/pos/voids — flush void log entries from localStorage to DB
+app.post('/api/pos/voids', async (req, res) => {
+  const { entries } = req.body || {};
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return safeJson(res, { ok: true, inserted: 0 });
+  }
+  try {
+    // Ensure table exists (idempotent)
+    await db.exec(`CREATE TABLE IF NOT EXISTS public.pos_void_log (
+      id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      item_id     TEXT,
+      item_name   TEXT,
+      table_id    TEXT,
+      bill_id     TEXT,
+      shift_id    TEXT,
+      authorized_by TEXT,
+      voided_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+    let inserted = 0;
+    for (const e of entries) {
+      try {
+        await db.query(
+          `INSERT INTO pos_void_log (item_id, item_name, table_id, bill_id, shift_id, authorized_by, voided_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
+          [e.itemId||null, e.itemName||null, e.tableId||null, e.billId||null,
+           e.shiftId||null, e.authorizedBy||'manager-pin',
+           e.timestamp ? new Date(e.timestamp).toISOString() : new Date().toISOString()]
+        );
+        inserted++;
+      } catch { /* skip bad entry */ }
+    }
+    safeJson(res, { ok: true, inserted });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 // ─── Night Audit Manual Run (Vercel/serverless — triggered by admin UI) ──────
 // POST /api/night-audit/run  { date: 'YYYY-MM-DD' }
 // Runs a single night audit for the given date: posts room charges, saves run record.
