@@ -851,14 +851,14 @@ router.post('/grn/:id/post', async (req, res) => {
     // FIX: Create ledger entries + correct WAC calculation
     for (const line of linesRes.rows) {
       const itemRes = await client.query(
-        `SELECT base_uom_id, weighted_avg_cost, COALESCE(SUM(sl.quantity_change),0) as current_qty
+        `SELECT i.base_uom_id, i.weighted_avg_cost, COALESCE(SUM(sl.quantity_change),0) as current_qty
          FROM public.inv_items i
          LEFT JOIN public.inv_stock_ledger sl ON sl.item_id = i.id AND sl.location_id = $2
          WHERE i.id = $1
          GROUP BY i.base_uom_id, i.weighted_avg_cost`,
         [line.item_id, grn.destination_location_id]
       );
-      const baseUomId    = itemRes.rows[0]?.base_uom_id || line.received_uom_id;
+      const baseUomId    = itemRes.rows[0]?.base_uom_id || line.received_uom_id || line.uom_id;
       const existingQty  = Number(itemRes.rows[0]?.current_qty || 0);
       const existingWac  = Number(itemRes.rows[0]?.weighted_avg_cost || 0);
       const newQty       = Number(line.qty_received);
@@ -876,7 +876,7 @@ router.post('/grn/:id/post', async (req, res) => {
          (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, cost_per_unit, total_cost, posted_by, gl_account_code, inserted_at)
          VALUES ($1,$2,$3,'GRN',$4,$5,$6,$7,$8,$9,'INVENTORY_ASSET',NOW())`,
         [randomUUID(), line.item_id, grn.destination_location_id, grn.grn_number,
-         newQty, baseUomId, newUnitCost, line.line_total, posted_by]
+         newQty, baseUomId, newUnitCost, line.line_total || line.total_cost || (newQty * newUnitCost), posted_by]
       );
 
       // ── Update inv_items: last_cost_price + correctly calculated weighted_avg_cost ──
