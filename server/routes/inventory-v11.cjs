@@ -688,6 +688,18 @@ router.post('/grn', async (req, res) => {
   if (!supplier_name || !destination_location_id || !created_by) {
     return res.status(400).json({ ok: false, error: 'Missing required fields' });
   }
+  // Validate destination is an active location — prevents posting to inactive/seeded locations
+  // that are no longer visible in the frontend dropdown
+  const locCheck = await pool.query(
+    `SELECT id, name, is_active FROM public.inv_locations WHERE id = $1 LIMIT 1`,
+    [destination_location_id]
+  );
+  if (!locCheck.rows.length) {
+    return res.status(400).json({ ok: false, error: `Destination location '${destination_location_id}' does not exist` });
+  }
+  if (locCheck.rows[0].is_active === false) {
+    return res.status(400).json({ ok: false, error: `Destination location '${locCheck.rows[0].name}' is inactive. Please select an active location from the dropdown.` });
+  }
 
   const client = await pool.connect();
   try {

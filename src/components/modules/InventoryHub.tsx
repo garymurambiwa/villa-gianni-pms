@@ -382,7 +382,9 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const [supplier, setSupplier] = useState('');
   const [supplierId, setSupplierId] = useState('');
   const [invoiceNum, setInvoiceNum] = useState('');
-  const [destLocation, setDestLocation] = useState('loc_main_cellar');
+  // FIX: never hardcode loc_main_cellar — it may be is_active=false on some properties.
+  // Initialize to empty string and let useEffect below set the first active storage location.
+  const [destLocation, setDestLocation] = useState('');
   const [lines, setLines] = useState<any[]>([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, expiry_date:'' }]);
   const [saving, setSaving] = useState(false);
   const [itemSearch, setItemSearch] = useState<Record<number,string>>({});
@@ -402,7 +404,16 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
     apiGet('/grn?limit=30').then(r => { if (r.ok) setGrns(r.data); });
   }, []);
 
+  // Auto-initialize destLocation to first ACTIVE storage location from the API.
+  // Prevents the React controlled-select mismatch where hardcoded 'loc_main_cellar'
+  // may be is_active=false — browser shows first option visually but state
+  // stays wrong → GRN posts to the wrong (inactive) location.
   const storageLocations = locations.filter((l:any) => l.location_type === 'Storage');
+  useEffect(() => {
+    if (!destLocation && storageLocations.length > 0) {
+      setDestLocation(storageLocations[0].id);
+    }
+  }, [storageLocations.length]);
 
   const addLine = () => setLines(l => [...l, { item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, expiry_date:'' }]);
   const removeLine = (i: number) => setLines(l => l.filter((_,idx) => idx !== i));
@@ -800,8 +811,9 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   const { toast } = useToast();
   const [transfers, setTransfers] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [srcLoc, setSrcLoc] = useState('loc_main_cellar');
-  const [dstLoc, setDstLoc] = useState('loc_bar1');
+  // FIX: initialize dynamically — hardcoded IDs may be inactive on some properties
+  const [srcLoc, setSrcLoc] = useState('');
+  const [dstLoc, setDstLoc] = useState('');
   const [reqRef, setReqRef] = useState('');
   const [tLines, setTLines] = useState<any[]>([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', date:'' }]);
   const [saving, setSaving] = useState(false);
@@ -815,6 +827,16 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   useEffect(() => {
     apiGet('/transfer?limit=30').then(r => { if (r.ok) setTransfers(r.data); });
   }, []);
+
+  // Auto-initialize src/dst to first active storage/outlet locations from the API
+  const allStorageLocs  = locations.filter((l:any) => l.location_type === 'Storage');
+  const allOutletLocs   = locations.filter((l:any) => l.location_type === 'Outlet');
+  useEffect(() => {
+    if (!srcLoc && allStorageLocs.length > 0) setSrcLoc(allStorageLocs[0].id);
+  }, [allStorageLocs.length]);
+  useEffect(() => {
+    if (!dstLoc && allOutletLocs.length > 0) setDstLoc(allOutletLocs[0].id);
+  }, [allOutletLocs.length]);
 
   useEffect(() => {
     if (srcLoc) apiGet(`/balance/${srcLoc}`).then(r => { if (r.ok) setBalances(r.data || []); });
@@ -1631,7 +1653,11 @@ function VarianceReports({ data }: { data: ReturnType<typeof useInventoryData> }
   const { locations } = data;
   const { user } = useAuth();
   const { toast } = useToast();
-  const [location, setLocation] = useState('loc_main_cellar');
+  // FIX: initialize dynamically from first active location, not hardcoded ID
+  const [location, setLocation] = useState(() => locations.length > 0 ? locations[0].id : '');
+  React.useEffect(() => {
+    if (!location && locations.length > 0) setLocation(locations[0].id);
+  }, [locations.length]);
   const [dateFrom, setDateFrom] = useState(new Date(Date.now()-30*86400000).toISOString().slice(0,10));
   const [dateTo, setDateTo] = useState(new Date().toISOString().slice(0,10));
   const [report, setReport] = useState<any>(null);
