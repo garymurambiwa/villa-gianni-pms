@@ -1119,7 +1119,7 @@ router.post('/transfer', async (req, res) => {
 
     // Build INSERT using only columns that actually exist
     const hColNames = ['id','transfer_number','status','inserted_at'];
-    const hColVals  = [randomUUID(), transferNumber, 'draft', new Date()];
+    const hColVals  = [randomUUID(), transferNumber, 'pending', new Date()];
     if (hcols.has('source_location_id'))      { hColNames.push('source_location_id');      hColVals.push(source_location_id); }
     if (hcols.has('destination_location_id')) { hColNames.push('destination_location_id'); hColVals.push(destination_location_id); }
     if (hcols.has('from_location_id'))        { hColNames.push('from_location_id');        hColVals.push(source_location_id); }
