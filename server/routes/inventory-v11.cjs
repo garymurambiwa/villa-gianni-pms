@@ -884,22 +884,35 @@ router.post('/grn/:id/post', async (req, res) => {
          newQty, baseUomId, newUnitCost, line.line_total || line.total_cost || (newQty * newUnitCost), posted_by]
       );
 
-      // ── Update inv_items: last_cost_price + correctly calculated weighted_avg_cost ──
-      await client.query(
-        `UPDATE public.inv_items SET
-           last_cost_price    = $1,
-           weighted_avg_cost  = $2,
-           average_cost       = $2,
-           updated_at         = NOW()
-         WHERE id = $3`,
-        [newUnitCost, parseFloat(newWac.toFixed(4)), line.item_id]
-      );
+      // ── Update inv_items WAC (SAVEPOINT — weighted_avg_cost may not exist on all schemas) ──
+      try {
+        await client.query('SAVEPOINT items_wac_sp');
+        await client.query(
+          `UPDATE public.inv_items SET
+             last_cost_price   = $1,
+             weighted_avg_cost = $2,
+             updated_at        = NOW()
+           WHERE id = $3`,
+          [newUnitCost, parseFloat(newWac.toFixed(4)), line.item_id]
+        );
+        await client.query('RELEASE SAVEPOINT items_wac_sp');
+      } catch (wacErr) {
+        await client.query('ROLLBACK TO SAVEPOINT items_wac_sp').catch(() => {});
+        console.warn('[inv-v11] inv_items WAC update skipped:', wacErr.message);
+      }
 
-      // ── Sync updated cost to products table ───────────────────────────────
-      await client.query(
-        `UPDATE public.products SET cost_price = $1, updated_at = NOW() WHERE id = $2`,
-        [newUnitCost, line.item_id]
-      );
+      // ── Sync updated cost to products table (SAVEPOINT) ───────────────────
+      try {
+        await client.query('SAVEPOINT products_sp');
+        await client.query(
+          `UPDATE public.products SET cost_price = $1, updated_at = NOW() WHERE id = $2`,
+          [newUnitCost, line.item_id]
+        );
+        await client.query('RELEASE SAVEPOINT products_sp');
+      } catch (prodErr) {
+        await client.query('ROLLBACK TO SAVEPOINT products_sp').catch(() => {});
+        // non-fatal — products sync failure shouldn't block GRN posting
+      }
     }
 
     // FIX: Use correct variable names (was postedBy/grnHeaderId — undefined!)
@@ -919,9 +932,15 @@ router.post('/grn/:id/post', async (req, res) => {
     );
     const periodId = periodRes.rows?.[0]?.id || null;
 
-    // Insert inventory_transactions for reconciliation period (non-fatal — wrapped in try/catch
-    // so schema mismatches on old inventory_transactions tables don't roll back the main GRN post)
+    // Insert inventory_transactions for reconciliation period.
+    // CRITICAL FIX: Use SAVEPOINT not bare try/catch.
+    // When a statement fails inside a PostgreSQL transaction, the connection enters
+    // "aborted transaction" state. All subsequent statements (INCLUDING COMMIT) silently
+    // no-op and PostgreSQL converts COMMIT → ROLLBACK. The pg driver doesn't throw on this,
+    // so JavaScript sees {ok:true} but the entire transaction was rolled back.
+    // SAVEPOINT allows partial rollback while keeping the outer transaction valid.
     try {
+      await client.query('SAVEPOINT inv_tx_sp');
       for (const line of linesRes.rows) {
         const txNum      = `GRN-${grn.grn_number}-L${line.line_number}`;
         const totalValue = Number(line.qty_received) * Number(line.unit_cost);
@@ -935,18 +954,27 @@ router.post('/grn/:id/post', async (req, res) => {
            line.qty_received, totalValue, grn.supplier_name, posted_by]
         );
       }
+      await client.query('RELEASE SAVEPOINT inv_tx_sp');
     } catch (txErr) {
-      console.warn('[inv-v11] inventory_transactions insert failed (non-fatal — schema mismatch):', txErr.message);
-      // Do NOT re-throw: stock ledger + GRN status update must still commit
+      // Rollback to savepoint — outer transaction stays valid and can still COMMIT
+      await client.query('ROLLBACK TO SAVEPOINT inv_tx_sp').catch(() => {});
+      console.warn('[inv-v11] inventory_transactions insert skipped (schema mismatch):', txErr.message);
     }
 
-    // FIX: use $N placeholders for period update
+    // period update — also protected by SAVEPOINT
     if (periodId) {
-      const totalGrnValue = linesRes.rows.reduce((s, l) => s + Number(l.qty_received) * Number(l.unit_cost), 0);
-      await client.query(
-        `UPDATE inventory_periods SET received_value = COALESCE(received_value,0) + $1 WHERE id = $2`,
-        [totalGrnValue, periodId]
-      );
+      try {
+        await client.query('SAVEPOINT period_sp');
+        const totalGrnValue = linesRes.rows.reduce((s, l) => s + Number(l.qty_received) * Number(l.unit_cost), 0);
+        await client.query(
+          `UPDATE inventory_periods SET received_value = COALESCE(received_value,0) + $1 WHERE id = $2`,
+          [totalGrnValue, periodId]
+        );
+        await client.query('RELEASE SAVEPOINT period_sp');
+      } catch (periodErr) {
+        await client.query('ROLLBACK TO SAVEPOINT period_sp').catch(() => {});
+        console.warn('[inv-v11] period update skipped:', periodErr.message);
+      }
     }
 
     await client.query('COMMIT');
