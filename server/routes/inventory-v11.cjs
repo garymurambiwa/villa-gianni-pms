@@ -1110,28 +1110,30 @@ router.post('/transfer', async (req, res) => {
 
     // Create transfer header — write to BOTH old (from/to) and new (source/destination) columns
     // so the record is readable regardless of which schema version each deployment has.
-    // Detect available columns once (cached per transaction client)
-    if (!client._tx_header_cols) {
-      const hc = await client.query(`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='inv_transfer_headers' AND column_name IN ('source_location_id','destination_location_id','from_location_id','to_location_id','created_by','reference_text')`);
-      client._tx_header_cols = new Set(hc.rows.map(function(r){return r.column_name;}));
+    // Insert transfer header — try full schema first, fall back via SAVEPOINT.
+    // Avoids information_schema query inside the hot path (slow on cold start).
+    let transRes;
+    await client.query('SAVEPOINT th_insert');
+    try {
+      // Full insert: works after migration adds source/destination + created_by + reference_text
+      transRes = await client.query(
+        `INSERT INTO public.inv_transfer_headers
+         (id, transfer_number, source_location_id, destination_location_id,
+          from_location_id, to_location_id, created_by, reference_text, status, inserted_at)
+         VALUES ($1,$2,$3,$4,$3,$4,$5,$6,'pending',$7) RETURNING *`,
+        [randomUUID(), transferNumber, source_location_id, destination_location_id, created_by, reference_text, new Date()]
+      );
+      await client.query('RELEASE SAVEPOINT th_insert');
+    } catch {
+      await client.query('ROLLBACK TO SAVEPOINT th_insert');
+      // Fallback: minimal set of columns for old schema (no source/destination, no created_by/reference_text)
+      transRes = await client.query(
+        `INSERT INTO public.inv_transfer_headers
+         (id, transfer_number, from_location_id, to_location_id, status, inserted_at)
+         VALUES ($1,$2,$3,$4,'pending',$5) RETURNING *`,
+        [randomUUID(), transferNumber, source_location_id, destination_location_id, new Date()]
+      );
     }
-    const hcols = client._tx_header_cols;
-
-    // Build INSERT using only columns that actually exist
-    const hColNames = ['id','transfer_number','status','inserted_at'];
-    const hColVals  = [randomUUID(), transferNumber, 'pending', new Date()];
-    if (hcols.has('source_location_id'))      { hColNames.push('source_location_id');      hColVals.push(source_location_id); }
-    if (hcols.has('destination_location_id')) { hColNames.push('destination_location_id'); hColVals.push(destination_location_id); }
-    if (hcols.has('from_location_id'))        { hColNames.push('from_location_id');        hColVals.push(source_location_id); }
-    if (hcols.has('to_location_id'))          { hColNames.push('to_location_id');          hColVals.push(destination_location_id); }
-    if (hcols.has('created_by'))              { hColNames.push('created_by');              hColVals.push(created_by); }
-    if (hcols.has('reference_text'))          { hColNames.push('reference_text');          hColVals.push(reference_text); }
-    const hPh = hColVals.map(function(_,idx){return '$'+(idx+1);}).join(',');
-
-    const transRes = await client.query(
-      `INSERT INTO public.inv_transfer_headers (${hColNames.join(',')}) VALUES (${hPh}) RETURNING *`,
-      hColVals
-    );
 
     const transfer = transRes.rows[0];
 
