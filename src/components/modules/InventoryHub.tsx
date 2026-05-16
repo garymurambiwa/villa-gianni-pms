@@ -439,6 +439,66 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
     setLoadingDetail(false);
   };
 
+  const printGrn = async (g: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    let lines = detailLines;
+    if (detailGrn?.id !== g.id) {
+      try {
+        const r = await fetch(`/api/v1/inventory/grn/${g.id}`).then(x => x.json());
+        lines = r.ok ? (r.data?.lines || []) : [];
+      } catch { lines = []; }
+    }
+    const win = window.open('', '_blank');
+    if (!win) return;
+    const loc = locations.find((l: any) => l.id === g.destination_location_id)?.name || g.destination_location_id;
+    const html = `<html><head><title>GRN ${g.grn_number}</title>
+<style>
+  body { font-family: monospace; font-size: 12px; padding: 20px; }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  .meta { color: #555; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+  th { background: #eee; }
+  .right { text-align: right; }
+  .total-row td { font-weight: bold; border-top: 2px solid #333; }
+  @media print { .no-print { display: none; } }
+</style></head><body>
+  <div class="no-print" style="text-align:right;margin-bottom:12px"><button onclick="window.print()">🖨 Print</button></div>
+  <h1>Goods Received Note</h1>
+  <div class="meta">
+    <div><strong>GRN #:</strong> ${g.grn_number}</div>
+    <div><strong>Date:</strong> ${new Date(g.inserted_at).toLocaleDateString()}</div>
+    <div><strong>Supplier:</strong> ${g.supplier_name}</div>
+    <div><strong>Invoice #:</strong> ${g.supplier_invoice_number || '—'}</div>
+    <div><strong>Destination:</strong> ${loc}</div>
+    <div><strong>Status:</strong> ${g.status}</div>
+  </div>
+  <table><thead><tr><th>#</th><th>Item</th><th class="right">Qty</th><th>UOM</th><th class="right">Unit Cost</th><th class="right">Total</th></tr></thead><tbody>
+    ${lines.map((l: any, i: number) => `<tr>
+      <td>${i + 1}</td>
+      <td>${l.item_name || ''}</td>
+      <td class="right">${fmtQ(l.qty_received)}</td>
+      <td>${uoms.find((u: any) => u.id === l.uom_id || u.id === l.received_uom_id)?.name || ''}</td>
+      <td class="right">${fmt(l.unit_cost)}</td>
+      <td class="right">${fmt(Number(l.qty_received || 0) * Number(l.unit_cost || 0))}</td>
+    </tr>`).join('')}
+    <tr class="total-row"><td colspan="5" class="right">Total</td><td class="right">${fmt(g.total_value)}</td></tr>
+  </tbody></table></body></html>`;
+    win.document.write(html);
+    win.document.close();
+  };
+
+  const editGrn = (g: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSupplier(g.supplier_name || '');
+    setSupplierId(g.supplier_id || '');
+    setInvoiceNum(g.supplier_invoice_number || '');
+    setDestLocation(g.destination_location_id || '');
+    setGrnDate(g.receipt_date ? g.receipt_date.split('T')[0] : new Date().toISOString().split('T')[0]);
+    setGrnNotes(g.notes || '');
+    setShowForm(true);
+  };
+
   const deleteGrn = async (id: string) => {
     if (!window.confirm('Delete this GRN? This cannot be undone.')) return;
     setDeletingId(id);
@@ -533,12 +593,24 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 </td>
                 <td className="px-3 py-2 text-gray-500 text-xs">{new Date(g.inserted_at).toLocaleDateString()}</td>
                 <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
-                  <button
-                    disabled={deletingId === g.id}
-                    onClick={() => deleteGrn(g.id)}
-                    className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40 px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">
-                    {deletingId === g.id ? '…' : 'Delete'}
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={(e) => editGrn(g, e)}
+                      className="text-xs text-indigo-500 hover:text-indigo-700 px-2 py-1 rounded border border-indigo-200 hover:bg-indigo-50 transition-colors">
+                      Edit
+                    </button>
+                    <button
+                      onClick={(e) => printGrn(g, e)}
+                      className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 transition-colors">
+                      Print
+                    </button>
+                    <button
+                      disabled={deletingId === g.id}
+                      onClick={() => deleteGrn(g.id)}
+                      className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40 px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">
+                      {deletingId === g.id ? '…' : 'Delete'}
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
