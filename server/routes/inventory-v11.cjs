@@ -147,6 +147,10 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inv_grn_lines ADD COLUMN IF NOT EXISTS received_uom_id TEXT REFERENCES public.inv_uom_definitions(id)`);
       await client.query(`ALTER TABLE public.inv_grn_lines ADD COLUMN IF NOT EXISTS expiry_date DATE`);
       await client.query(`ALTER TABLE public.inv_grn_lines ADD COLUMN IF NOT EXISTS notes TEXT`);
+      // ISSUE 1 FIX cont.: old schema has total_cost, new schema has line_total — align both
+      // Add line_total for old schemas (total_cost → line_total rename via new column + back-fill)
+      await client.query(`ALTER TABLE public.inv_grn_lines ADD COLUMN IF NOT EXISTS line_total NUMERIC(12,2) NOT NULL DEFAULT 0`);
+      await client.query(`UPDATE public.inv_grn_lines SET line_total = total_cost WHERE line_total = 0 AND total_cost IS NOT NULL AND total_cost > 0`).catch(() => {});
       // Back-fill received_uom_id from uom_id where column existed but was named wrong
       await client.query(`UPDATE public.inv_grn_lines SET received_uom_id = uom_id WHERE received_uom_id IS NULL AND uom_id IS NOT NULL`).catch(() => {});
 
@@ -726,24 +730,29 @@ router.post('/grn', async (req, res) => {
         const resolvedUomId = line.received_uom_id || line.uom_id || 'uom_unit';
         const expiryDate = line.expiry_date || null;
 
-        // Detect which column names actually exist in this DB instance (cached once per request)
+        // Detect which column names actually exist in this DB instance (cached once per request).
+        // Handles schema divergence: old = (uom_id, total_cost), new = (received_uom_id, line_total)
         if (!client._grn_cols_checked) {
           const colCheck = await client.query(
             `SELECT column_name FROM information_schema.columns
              WHERE table_schema='public' AND table_name='inv_grn_lines'
-             AND column_name IN ('received_uom_id','uom_id','expiry_date','notes')`
+             AND column_name IN ('received_uom_id','uom_id','expiry_date','notes','line_total','total_cost')`
           );
           client._grn_cols = colCheck.rows.map(r => r.column_name);
           client._grn_cols_checked = true;
         }
-        const hasCols = client._grn_cols || [];
+        const hasCols     = client._grn_cols || [];
         const hasReceived = hasCols.includes('received_uom_id');
         const hasUomId    = hasCols.includes('uom_id');
         const hasExpiry   = hasCols.includes('expiry_date');
         const hasNotes    = hasCols.includes('notes');
+        // line_total (new schema) vs total_cost (old schema) — use whichever exists
+        const lineTotalCol = hasCols.includes('line_total') ? 'line_total'
+                           : hasCols.includes('total_cost') ? 'total_cost'
+                           : 'line_total'; // fallback assumes new schema
 
-        // Build INSERT dynamically so it works on both old (uom_id) and new (received_uom_id) schemas
-        const colNames = ['id','grn_header_id','item_id','qty_received','unit_cost','line_total','line_number','inserted_at'];
+        // Build INSERT dynamically — works on both old and new schema versions
+        const colNames = ['id','grn_header_id','item_id','qty_received','unit_cost', lineTotalCol,'line_number','inserted_at'];
         const colVals  = [randomUUID(), grn.id, itemId, line.qty_received, line.unit_cost, lineTotal, i + 1, new Date()];
         if (hasReceived) { colNames.push('received_uom_id'); colVals.push(resolvedUomId); }
         if (hasUomId)    { colNames.push('uom_id');          colVals.push(resolvedUomId); }
