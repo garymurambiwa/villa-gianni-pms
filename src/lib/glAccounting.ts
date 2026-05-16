@@ -61,10 +61,69 @@ export const REQUIRED_CODES = [
   'CITY_LEDGER'
 ];
 
+// USALI-aligned safe defaults — prevent complete mapping failure when user hasn't configured
+// the Chart of Accounts yet. Financial managers can override via Settings → GL Mapping.
+export const GL_USALI_DEFAULTS: Record<string, string> = {
+  ROOM_REVENUE:  '4000',  // Revenue: Rooms Department (USALI Schedule 1)
+  FB_REVENUE:    '4100',  // Revenue: F&B Department (USALI Schedule 2)
+  CONF_REVENUE:  '4200',  // Revenue: Catering/Conferences (USALI Schedule 3)
+  TAX:           '2300',  // Liability: VAT/Sales Tax Payable
+  CASH:          '1000',  // Asset: Cash on Hand
+  CARD:          '1100',  // Asset: Card/Bank Clearing
+  ROOM_CHARGE:   '1200',  // Control: In-house Guest Ledger (transient AR)
+  CITY_LEDGER:   '1300',  // Control: Accounts Receivable (non-guest/corporate)
+  FB_COST:       '5100',  // Expense: F&B Cost of Sales
+  BANK:          '1150',  // Asset: Bank Account
+  AP_CONTROL:    '2100',  // Liability: Accounts Payable
+};
+
 export type GLMappings = Record<string, string>; // code -> accountId
 
-export const getMappings = (): GLMappings => readJSON<GLMappings>(K_MAPPINGS, {});
-export const setMappings = (m: GLMappings) => writeJSON(K_MAPPINGS, m);
+// getMappings merges: DB-synced > localStorage > USALI defaults
+// This means the system always resolves required codes even before user configures COA.
+export const getMappings = (): GLMappings => {
+  const local = readJSON<GLMappings>(K_MAPPINGS, {});
+  return { ...GL_USALI_DEFAULTS, ...local };
+};
+
+export const setMappings = (m: GLMappings) => {
+  writeJSON(K_MAPPINGS, m);
+};
+
+// Sync GL mappings FROM the DB into localStorage (call on app startup or after user saves in UI)
+export const syncMappingsFromDB = async (): Promise<GLMappings> => {
+  try {
+    const res = await fetch('/api/gl/mappings');
+    const data = await res.json();
+    if (data.ok && data.mappings) {
+      writeJSON(K_MAPPINGS, data.mappings);
+      return data.mappings as GLMappings;
+    }
+  } catch { /* non-fatal — fall back to localStorage + defaults */ }
+  return getMappings();
+};
+
+// Persist user-configured mappings to DB AND localStorage
+export const saveMappingsToDB = async (m: GLMappings): Promise<boolean> => {
+  try {
+    writeJSON(K_MAPPINGS, m); // optimistic local write
+    const res = await fetch('/api/gl/mappings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mappings: m }),
+    });
+    const data = await res.json();
+    if (data.ok) writeJSON(K_MAPPINGS, data.mappings);
+    return data.ok;
+  } catch { return false; }
+};
+
+// Validate that all required codes are mapped (using merged defaults)
+export const validateMappings = (): { ok: boolean; missing: string[] } => {
+  const m = getMappings();
+  const missing = REQUIRED_CODES.filter(c => !m[c]);
+  return { ok: missing.length === 0, missing };
+};
 
 // Suggest GL account for a PMS code using heuristics (USALI-aligned)
 export const suggestAccountForPMSCode = (

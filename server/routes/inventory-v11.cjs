@@ -136,6 +136,19 @@ async function ensureInventoryTables() {
       );
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_by TEXT`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS supplier_id TEXT`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS supplier_invoice_number TEXT`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS receipt_date DATE`);
+
+      // ── ISSUE 1 FIX: inv_grn_lines column alignment ───────────────────────
+      // Older deployments created inv_grn_lines with `uom_id` (wrong name).
+      // The backend INSERT and frontend payload both use `received_uom_id`.
+      // Add the correct column if missing; copy existing uom_id data across.
+      await client.query(`ALTER TABLE public.inv_grn_lines ADD COLUMN IF NOT EXISTS received_uom_id TEXT REFERENCES public.inv_uom_definitions(id)`);
+      await client.query(`ALTER TABLE public.inv_grn_lines ADD COLUMN IF NOT EXISTS expiry_date DATE`);
+      await client.query(`ALTER TABLE public.inv_grn_lines ADD COLUMN IF NOT EXISTS notes TEXT`);
+      // Back-fill received_uom_id from uom_id where column existed but was named wrong
+      await client.query(`UPDATE public.inv_grn_lines SET received_uom_id = uom_id WHERE received_uom_id IS NULL AND uom_id IS NOT NULL`).catch(() => {});
 
       // Ensure advanced tables that may be missing on older deployments
       await client.query(`
@@ -144,7 +157,8 @@ async function ensureInventoryTables() {
           grn_header_id TEXT NOT NULL REFERENCES public.inv_grn_headers(id) ON DELETE CASCADE,
           item_id TEXT NOT NULL REFERENCES public.inv_items(id),
           qty_received NUMERIC(12,4) NOT NULL CHECK (qty_received > 0),
-          uom_id TEXT NOT NULL REFERENCES public.inv_uom_definitions(id),
+          received_uom_id TEXT REFERENCES public.inv_uom_definitions(id),
+          uom_id TEXT REFERENCES public.inv_uom_definitions(id),
           unit_cost NUMERIC(10,4) DEFAULT 0,
           total_cost NUMERIC(12,2) DEFAULT 0,
           line_number INTEGER NOT NULL,
@@ -706,16 +720,54 @@ router.post('/grn', async (req, res) => {
           itemId = newItemId;
         }
 
+        // ISSUE 1 FIX: resolved_uom is the UOM ID from frontend (sent as received_uom_id).
+        // We write it into BOTH received_uom_id and uom_id for backward compat across
+        // schema versions (some DBs have uom_id, some have received_uom_id).
+        const resolvedUomId = line.received_uom_id || line.uom_id || 'uom_unit';
+        const expiryDate = line.expiry_date || null;
+
+        // Detect which column names actually exist in this DB instance (cached once per request)
+        if (!client._grn_cols_checked) {
+          const colCheck = await client.query(
+            `SELECT column_name FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='inv_grn_lines'
+             AND column_name IN ('received_uom_id','uom_id','expiry_date','notes')`
+          );
+          client._grn_cols = colCheck.rows.map(r => r.column_name);
+          client._grn_cols_checked = true;
+        }
+        const hasCols = client._grn_cols || [];
+        const hasReceived = hasCols.includes('received_uom_id');
+        const hasUomId    = hasCols.includes('uom_id');
+        const hasExpiry   = hasCols.includes('expiry_date');
+        const hasNotes    = hasCols.includes('notes');
+
+        // Build INSERT dynamically so it works on both old (uom_id) and new (received_uom_id) schemas
+        const colNames = ['id','grn_header_id','item_id','qty_received','unit_cost','line_total','line_number','inserted_at'];
+        const colVals  = [randomUUID(), grn.id, itemId, line.qty_received, line.unit_cost, lineTotal, i + 1, new Date()];
+        if (hasReceived) { colNames.push('received_uom_id'); colVals.push(resolvedUomId); }
+        if (hasUomId)    { colNames.push('uom_id');          colVals.push(resolvedUomId); }
+        if (hasExpiry)   { colNames.push('expiry_date');     colVals.push(expiryDate); }
+        if (hasNotes && line.notes) { colNames.push('notes'); colVals.push(line.notes); }
+        const placeholders = colVals.map((_, idx) => `$${idx + 1}`).join(', ');
         await client.query(
-          `INSERT INTO public.inv_grn_lines 
-          (id, grn_header_id, item_id, qty_received, received_uom_id, unit_cost, line_total, line_number, inserted_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [randomUUID(), grn.id, itemId, line.qty_received, line.received_uom_id, line.unit_cost, lineTotal, i + 1, new Date()]
+          `INSERT INTO public.inv_grn_lines (${colNames.join(', ')}) VALUES (${placeholders})`,
+          colVals
         );
       }
 
-      // Update GRN total
-      await client.query(`UPDATE public.inv_grn_headers SET total_value = $1 WHERE id = $2`, [totalValue, grn.id]);
+      // Update GRN total + header fields
+      await client.query(
+        `UPDATE public.inv_grn_headers SET
+           total_value = $1,
+           supplier_invoice_number = COALESCE($2, supplier_invoice_number),
+           receipt_date = COALESCE($3::date, receipt_date)
+         WHERE id = $4`,
+        [totalValue, req.body.supplier_invoice_number || null, req.body.receipt_date || null, grn.id]
+      ).catch(() => {
+        // Fallback for older schema without those columns
+        return client.query(`UPDATE public.inv_grn_headers SET total_value = $1 WHERE id = $2`, [totalValue, grn.id]);
+      });
     }
 
     // Fetch updated GRN with final total

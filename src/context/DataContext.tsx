@@ -2801,7 +2801,22 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
           console.warn('[DataContext] Room reconcile skipped:', reconcileErr);
         }
 
-        // 2. First load fresh data from DB to clean up localStorage
+        // 2. Sync GL mappings from DB → localStorage so getMappings() returns DB values.
+        // This fixes ISSUE 2: mappings set in browser A weren't visible server-side or in browser B.
+        try {
+          const { syncMappingsFromDB, saveMappingsToDB, GL_USALI_DEFAULTS } = await import('../lib/glAccounting');
+          const dbMappings = await syncMappingsFromDB();
+          // Auto-seed USALI defaults for any codes not yet mapped (non-destructive)
+          const needsSeed = Object.keys(GL_USALI_DEFAULTS).some(k => !dbMappings[k]);
+          if (needsSeed) {
+            await fetch('/api/gl/mappings/seed', { method: 'POST' });
+            await syncMappingsFromDB(); // re-sync after seeding
+          }
+        } catch (glErr) {
+          console.warn('[DataContext] GL mapping sync skipped:', glErr);
+        }
+
+        // 3. First load fresh data from DB to clean up localStorage
         console.log('[DataContext] Starting startup sequence...');
         await loadAllData();
         await Promise.all([

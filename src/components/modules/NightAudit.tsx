@@ -121,25 +121,54 @@ const NightAudit: React.FC = () => {
       }).catch(err => console.warn('[NightAudit] DB bundle hydration failed:', err));
     }).catch(() => {});
 
-    // 3. Detect missing audit dates (gaps between last audit and today)
-    fetch('/api/night-audit/status').then(r => r.json()).then(status => {
+    // ISSUE 3 FIX: Detect missing audit dates with robust initialization.
+    // Previous code returned early when lastRun=null (new property / never ran).
+    // Now we handle: (a) never initialized, (b) gap in history, (c) stuck date.
+    fetch('/api/night-audit/status').then(r => r.json()).then(async status => {
       if (!status.ok) return;
-      const bizDateRaw = status.businessDate?.date || status.businessDate;
-      if (!bizDateRaw) return;
-      const lastAuditDate = status.lastRun?.business_date
-        ? String(status.lastRun.business_date).slice(0, 10)
-        : null;
-      if (!lastAuditDate) return;
       const today = new Date().toISOString().split('T')[0];
+
+      // Determine the anchor date: last completed audit OR system business date OR yesterday
+      let anchorDate: string | null = null;
+      if (status.lastRun?.business_date) {
+        anchorDate = String(status.lastRun.business_date).slice(0, 10);
+      } else if (status.businessDate) {
+        // system_configs has a business_date but no audit has run yet
+        const biz = status.businessDate?.date || status.businessDate;
+        if (biz && biz < today) {
+          anchorDate = biz; // business date IS the last "audit-complete" date
+        }
+      }
+
+      if (!anchorDate) {
+        // Property has NO audit history AND no business_date — initialize to yesterday
+        // so a single catch-up run brings them to today.
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        anchorDate = yesterday.toISOString().split('T')[0];
+        // Seed the business_date in system_configs so future audits have an anchor
+        try {
+          await fetch('/api/db/query', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sql: `INSERT INTO system_configs(key,value) VALUES('business_date',$1)
+                    ON CONFLICT(key) DO NOTHING`,
+              params: [JSON.stringify({ date: anchorDate })]
+            })
+          });
+        } catch { /* non-fatal */ }
+      }
+
+      // Build list of dates from anchorDate+1 up to (but not including) today
       const missing: string[] = [];
-      let cur = new Date(lastAuditDate);
-      cur.setDate(cur.getDate() + 1); // start from day after last audit
+      let cur = new Date(anchorDate);
+      cur.setDate(cur.getDate() + 1);
       while (cur.toISOString().split('T')[0] < today) {
         missing.push(cur.toISOString().split('T')[0]);
         cur.setDate(cur.getDate() + 1);
-        if (missing.length > 60) break; // safety cap
+        if (missing.length > 90) break; // safety cap: max 90 days catch-up
       }
-      setCatchupDates(missing);
+      if (missing.length > 0) setCatchupDates(missing);
     }).catch(() => {});
   }, []);
 

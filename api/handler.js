@@ -96,6 +96,103 @@ app.post('/api/db/test', async (req, res) => {
   }
 });
 
+// ─── GL Account Mappings (DB-backed) ─────────────────────────────────────────
+// ISSUE 2 FIX: GL mappings were localStorage-only → invisible to server-side
+// processes and lost across sessions. Now persisted in system_configs so all
+// contexts (Vercel, Render, browsers) read the same mappings.
+//
+// USALI-aligned required aliases and their classifications:
+//   ROOM_REVENUE  → Revenue: Rooms Dept         (USALI Schedule 1)
+//   FB_REVENUE    → Revenue: F&B Dept            (USALI Schedule 2)
+//   CONF_REVENUE  → Revenue: Catering/Banquets   (USALI Schedule 3)
+//   TAX           → Liability: VAT/Sales Tax
+//   CASH          → Asset: Cash on Hand
+//   CARD          → Asset: Card Clearing/Bank
+//   ROOM_CHARGE   → Control: In-house Guest Ledger (transient AR)
+//   CITY_LEDGER   → Control: Accounts Receivable  (non-guest/corporate)
+//   FB_REVENUE, BANK, AP_CONTROL etc. extended as needed.
+
+const GL_REQUIRED_CODES = [
+  'ROOM_REVENUE','FB_REVENUE','CONF_REVENUE','TAX','CASH','CARD','ROOM_CHARGE','CITY_LEDGER'
+];
+
+// USALI-aligned safe default account numbers (seed if no user mapping exists)
+const GL_USALI_DEFAULTS = {
+  ROOM_REVENUE:  { accountId: '4000', name: 'Rooms Revenue',          category: 'Revenue',   usali: 'Rooms' },
+  FB_REVENUE:    { accountId: '4100', name: 'F&B Revenue',            category: 'Revenue',   usali: 'F&B' },
+  CONF_REVENUE:  { accountId: '4200', name: 'Conference Revenue',     category: 'Revenue',   usali: 'Catering' },
+  TAX:           { accountId: '2300', name: 'VAT/Sales Tax Payable',  category: 'Liability', usali: 'Tax' },
+  CASH:          { accountId: '1000', name: 'Cash on Hand',           category: 'Asset',     usali: 'Cash' },
+  CARD:          { accountId: '1100', name: 'Card/Bank Clearing',     category: 'Asset',     usali: 'Bank' },
+  ROOM_CHARGE:   { accountId: '1200', name: 'In-house Guest Ledger',  category: 'Asset',     usali: 'GuestLedger' },
+  CITY_LEDGER:   { accountId: '1300', name: 'City Ledger/AR',         category: 'Asset',     usali: 'AR' },
+  FB_COST:       { accountId: '5100', name: 'F&B Cost of Sales',      category: 'Expense',   usali: 'F&B Cost' },
+  BANK:          { accountId: '1150', name: 'Bank Account',           category: 'Asset',     usali: 'Bank' },
+  AP_CONTROL:    { accountId: '2100', name: 'Accounts Payable',       category: 'Liability', usali: 'AP' },
+};
+
+app.get('/api/gl/mappings', async (req, res) => {
+  try {
+    const result = await db.query(`SELECT value FROM system_configs WHERE key='gl_mappings'`);
+    let mappings = {};
+    if (result.ok && result.rows?.length) {
+      try { mappings = JSON.parse(result.rows[0].value); } catch { mappings = {}; }
+    }
+    // Merge defaults so missing codes always resolve to USALI safe defaults
+    const merged = { ...Object.fromEntries(Object.entries(GL_USALI_DEFAULTS).map(([k,v])=>[k,v.accountId])), ...mappings };
+    safeJson(res, { ok: true, mappings: merged, requiredCodes: GL_REQUIRED_CODES, defaults: GL_USALI_DEFAULTS });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+app.post('/api/gl/mappings', async (req, res) => {
+  const { mappings } = req.body || {};
+  if (!mappings || typeof mappings !== 'object') return safeJson(res, { ok: false, error: 'mappings object required' });
+  try {
+    const existing = await db.query(`SELECT value FROM system_configs WHERE key='gl_mappings'`);
+    let current = {};
+    if (existing.ok && existing.rows?.length) { try { current = JSON.parse(existing.rows[0].value); } catch {} }
+    const merged = { ...current, ...mappings };
+    await db.query(
+      `INSERT INTO system_configs (key,value) VALUES ('gl_mappings',$1)
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
+      [JSON.stringify(merged)]
+    );
+    safeJson(res, { ok: true, mappings: merged });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// GET /api/gl/mappings/validate — check which required codes are mapped
+app.get('/api/gl/mappings/validate', async (req, res) => {
+  try {
+    const result = await db.query(`SELECT value FROM system_configs WHERE key='gl_mappings'`);
+    let mappings = {};
+    if (result.ok && result.rows?.length) { try { mappings = JSON.parse(result.rows[0].value); } catch {} }
+    const merged = { ...Object.fromEntries(Object.entries(GL_USALI_DEFAULTS).map(([k,v])=>[k,v.accountId])), ...mappings };
+    const missing = GL_REQUIRED_CODES.filter(c => !merged[c]);
+    safeJson(res, { ok: missing.length === 0, mappings: merged, missing, complete: missing.length === 0 });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// POST /api/gl/mappings/seed — seed USALI defaults for any unmapped codes
+app.post('/api/gl/mappings/seed', async (req, res) => {
+  try {
+    const existing = await db.query(`SELECT value FROM system_configs WHERE key='gl_mappings'`);
+    let current = {};
+    if (existing.ok && existing.rows?.length) { try { current = JSON.parse(existing.rows[0].value); } catch {} }
+    // Only seed codes that have no existing mapping
+    const seeded = {};
+    for (const [code, def] of Object.entries(GL_USALI_DEFAULTS)) {
+      if (!current[code]) { current[code] = def.accountId; seeded[code] = def.accountId; }
+    }
+    await db.query(
+      `INSERT INTO system_configs (key,value) VALUES ('gl_mappings',$1)
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
+      [JSON.stringify(current)]
+    );
+    safeJson(res, { ok: true, mappings: current, seeded, message: `Seeded ${Object.keys(seeded).length} USALI default account mappings` });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 // ─── System Branding (DB-backed, per-property) ───────────────────────────────
 // Reads/writes hotel branding from system_configs so each property keeps its own
 // name/logo regardless of which Vite build is deployed.
@@ -539,14 +636,34 @@ app.post('/api/night-audit/run', async (req, res) => {
 app.get('/api/night-audit/status', async (req, res) => {
   try {
     const lastRun = await db.query(
-      `SELECT business_date, total_revenue, rooms_posted, status, completed_at
-       FROM night_audit_runs ORDER BY inserted_at DESC LIMIT 1`
+      `SELECT business_date, business_date::date::text as business_date_str,
+              total_revenue, rooms_posted, status, completed_at
+       FROM night_audit_runs WHERE status='completed' ORDER BY business_date DESC LIMIT 1`
     );
-    const bizDate = await db.query(`SELECT value FROM system_configs WHERE key='business_date'`);
+    const bizDateRow = await db.query(`SELECT value FROM system_configs WHERE key='business_date'`);
+
+    // ISSUE 3 FIX: Parse businessDate robustly — value is stored as JSON {date:'YYYY-MM-DD'}
+    let businessDate = null;
+    try {
+      const raw = bizDateRow.rows?.[0]?.value;
+      if (raw) {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        businessDate = parsed?.date || parsed || null;
+      }
+    } catch { businessDate = bizDateRow.rows?.[0]?.value || null; }
+
+    // Normalize lastRun.business_date to string for frontend consumption
+    const lastRunRow = lastRun.ok && lastRun.rows?.length ? lastRun.rows[0] : null;
+    if (lastRunRow) {
+      lastRunRow.business_date = lastRunRow.business_date_str || String(lastRunRow.business_date || '').slice(0, 10);
+    }
+
     safeJson(res, {
       ok: true, locked: false, step: null, progress: 0,
-      businessDate: bizDate.rows?.[0]?.value?.date || null,
-      lastRun: lastRun.ok ? lastRun.rows?.[0] : null
+      businessDate,
+      lastRun: lastRunRow,
+      // Signal to frontend if business_date was never initialized (new property)
+      needsInitialization: !businessDate && !lastRunRow
     });
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });

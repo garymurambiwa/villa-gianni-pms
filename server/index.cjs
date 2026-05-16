@@ -79,6 +79,51 @@ app.post('/api/db/test', async (req, res) => {
     }
 });
 
+// ─── GL Account Mappings (DB-backed, USALI-aligned) ──────────────────────────
+const GL_REQUIRED_CODES = ['ROOM_REVENUE','FB_REVENUE','CONF_REVENUE','TAX','CASH','CARD','ROOM_CHARGE','CITY_LEDGER'];
+const GL_USALI_DEFAULTS = {
+  ROOM_REVENUE:'4000', FB_REVENUE:'4100', CONF_REVENUE:'4200', TAX:'2300',
+  CASH:'1000', CARD:'1100', ROOM_CHARGE:'1200', CITY_LEDGER:'1300',
+  FB_COST:'5100', BANK:'1150', AP_CONTROL:'2100',
+};
+app.get('/api/gl/mappings', async (req, res) => {
+  try {
+    const r = await db.query(`SELECT value FROM system_configs WHERE key='gl_mappings'`);
+    let m = {}; if (r.ok && r.rows?.length) { try { m = JSON.parse(r.rows[0].value); } catch {} }
+    const merged = { ...GL_USALI_DEFAULTS, ...m };
+    res.json({ ok: true, mappings: merged, requiredCodes: GL_REQUIRED_CODES });
+  } catch(e) { res.json({ ok:false, error:e.message }); }
+});
+app.post('/api/gl/mappings', async (req, res) => {
+  const { mappings } = req.body || {};
+  if (!mappings) return res.json({ ok:false, error:'mappings required' });
+  try {
+    const r = await db.query(`SELECT value FROM system_configs WHERE key='gl_mappings'`);
+    let cur = {}; if (r.ok && r.rows?.length) { try { cur = JSON.parse(r.rows[0].value); } catch {} }
+    const merged = { ...cur, ...mappings };
+    await db.query(`INSERT INTO system_configs(key,value) VALUES('gl_mappings',$1) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`,[JSON.stringify(merged)]);
+    res.json({ ok:true, mappings:merged });
+  } catch(e) { res.json({ ok:false, error:e.message }); }
+});
+app.post('/api/gl/mappings/seed', async (req, res) => {
+  try {
+    const r = await db.query(`SELECT value FROM system_configs WHERE key='gl_mappings'`);
+    let cur = {}; if (r.ok && r.rows?.length) { try { cur = JSON.parse(r.rows[0].value); } catch {} }
+    const seeded = {}; for (const [k,v] of Object.entries(GL_USALI_DEFAULTS)) { if (!cur[k]) { cur[k]=v; seeded[k]=v; } }
+    await db.query(`INSERT INTO system_configs(key,value) VALUES('gl_mappings',$1) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`,[JSON.stringify(cur)]);
+    res.json({ ok:true, mappings:cur, seeded, message:`Seeded ${Object.keys(seeded).length} USALI defaults` });
+  } catch(e) { res.json({ ok:false, error:e.message }); }
+});
+app.get('/api/gl/mappings/validate', async (req, res) => {
+  try {
+    const r = await db.query(`SELECT value FROM system_configs WHERE key='gl_mappings'`);
+    let m = {}; if (r.ok && r.rows?.length) { try { m = JSON.parse(r.rows[0].value); } catch {} }
+    const merged = { ...GL_USALI_DEFAULTS, ...m };
+    const missing = GL_REQUIRED_CODES.filter(c => !merged[c]);
+    res.json({ ok:missing.length===0, mappings:merged, missing, complete:missing.length===0 });
+  } catch(e) { res.json({ ok:false, error:e.message }); }
+});
+
 // ─── System Branding (DB-backed, per-property) ───────────────────────────────
 app.get('/api/system/branding', async (req, res) => {
   try {
