@@ -1196,11 +1196,12 @@ router.post('/transfer/:id/approve', async (req, res) => {
     // Get lines
     const linesRes = await client.query(`SELECT * FROM public.inv_transfer_lines WHERE transfer_header_id = $1`, [id]);
 
+    // Resolve location IDs once at function scope (used in loop AND after loop)
+    const resolvedSource = transfer.source_location_id || transfer.from_location_id;
+    const resolvedDest   = transfer.destination_location_id || transfer.to_location_id;
+
     // Process each line
     for (const line of linesRes.rows) {
-      // Resolve location IDs from either old (from/to) or new (source/destination) column names
-      const resolvedSource = transfer.source_location_id || transfer.from_location_id;
-      const resolvedDest   = transfer.destination_location_id || transfer.to_location_id;
 
       const balRes = await client.query(
         `SELECT COALESCE(SUM(quantity_change), 0) as balance
