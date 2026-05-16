@@ -140,6 +140,11 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS supplier_invoice_number TEXT`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS receipt_date DATE`);
 
+      // Ensure inventory_transactions has columns needed by GRN post route
+      await client.query(`ALTER TABLE public.inventory_transactions ADD COLUMN IF NOT EXISTS transaction_type TEXT DEFAULT 'grv'`).catch(() => {});
+      await client.query(`ALTER TABLE public.inventory_transactions ADD COLUMN IF NOT EXISTS is_historical_backfill BOOLEAN DEFAULT false`).catch(() => {});
+      await client.query(`ALTER TABLE public.inventory_transactions ADD COLUMN IF NOT EXISTS department TEXT`).catch(() => {});
+
       // ── ISSUE 1 FIX: inv_grn_lines column alignment ───────────────────────
       // Older deployments created inv_grn_lines with `uom_id` (wrong name).
       // The backend INSERT and frontend payload both use `received_uom_id`.
@@ -914,19 +919,25 @@ router.post('/grn/:id/post', async (req, res) => {
     );
     const periodId = periodRes.rows?.[0]?.id || null;
 
-    // Insert inventory_transactions for reconciliation period
-    for (const line of linesRes.rows) {
-      const txNum       = `GRN-${grn.grn_number}-L${line.line_number}`;
-      const totalValue  = Number(line.qty_received) * Number(line.unit_cost);
-      await client.query(
-        `INSERT INTO inventory_transactions
-         (transaction_type, transaction_number, period_id, transaction_date, department,
-          total_quantity, total_value, supplier_name, created_by, is_historical_backfill)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false)
-         ON CONFLICT (transaction_number) DO NOTHING`,
-        ['grv', txNum, periodId, grnDate, 'Kitchen',
-         line.qty_received, totalValue, grn.supplier_name, posted_by]
-      );
+    // Insert inventory_transactions for reconciliation period (non-fatal — wrapped in try/catch
+    // so schema mismatches on old inventory_transactions tables don't roll back the main GRN post)
+    try {
+      for (const line of linesRes.rows) {
+        const txNum      = `GRN-${grn.grn_number}-L${line.line_number}`;
+        const totalValue = Number(line.qty_received) * Number(line.unit_cost);
+        await client.query(
+          `INSERT INTO inventory_transactions
+           (transaction_type, transaction_number, period_id, transaction_date, department,
+            total_quantity, total_value, supplier_name, created_by, is_historical_backfill)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false)
+           ON CONFLICT (transaction_number) DO NOTHING`,
+          ['grv', txNum, periodId, grnDate, 'Kitchen',
+           line.qty_received, totalValue, grn.supplier_name, posted_by]
+        );
+      }
+    } catch (txErr) {
+      console.warn('[inv-v11] inventory_transactions insert failed (non-fatal — schema mismatch):', txErr.message);
+      // Do NOT re-throw: stock ledger + GRN status update must still commit
     }
 
     // FIX: use $N placeholders for period update
