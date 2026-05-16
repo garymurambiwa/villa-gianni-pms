@@ -178,15 +178,27 @@ async function ensureInventoryTables() {
         CREATE TABLE IF NOT EXISTS public.inv_transfer_headers (
           id TEXT PRIMARY KEY,
           transfer_number TEXT UNIQUE NOT NULL,
-          from_location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
-          to_location_id TEXT NOT NULL REFERENCES public.inv_locations(id),
+          from_location_id TEXT REFERENCES public.inv_locations(id),
+          to_location_id TEXT REFERENCES public.inv_locations(id),
+          source_location_id TEXT REFERENCES public.inv_locations(id),
+          destination_location_id TEXT REFERENCES public.inv_locations(id),
           status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','cancelled')),
           requested_by TEXT,
+          created_by TEXT,
           approved_by TEXT,
           notes TEXT,
+          reference_text TEXT,
           inserted_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
         )`);
+      // Align column names: old schema uses from/to, new uses source/destination — add both
+      await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS source_location_id TEXT REFERENCES public.inv_locations(id)`);
+      await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS destination_location_id TEXT REFERENCES public.inv_locations(id)`);
+      await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS created_by TEXT`);
+      await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS reference_text TEXT`);
+      // Back-fill new columns from old column names (idempotent)
+      await client.query(`UPDATE public.inv_transfer_headers SET source_location_id=from_location_id WHERE source_location_id IS NULL AND from_location_id IS NOT NULL`).catch(()=>{});
+      await client.query(`UPDATE public.inv_transfer_headers SET destination_location_id=to_location_id WHERE destination_location_id IS NULL AND to_location_id IS NOT NULL`).catch(()=>{});
       await client.query(`
         CREATE TABLE IF NOT EXISTS public.inv_transfer_lines (
           id TEXT PRIMARY KEY,
@@ -1040,6 +1052,34 @@ router.delete('/grn/:id', async (req, res) => {
 // ============================================================================
 
 /**
+ * GET /api/v1/inventory/transfer
+ * List transfers (paginated, filterable by status/date)
+ */
+router.get('/transfer', async (req, res) => {
+  const { limit = 30, offset = 0, status } = req.query;
+  try {
+    let sql = `SELECT h.*,
+                 COALESCE(h.source_location_id, h.from_location_id) as resolved_source,
+                 COALESCE(h.destination_location_id, h.to_location_id) as resolved_destination
+               FROM public.inv_transfer_headers h
+               WHERE 1=1`;
+    const params = [];
+    if (status) { sql += ` AND h.status = $${params.length+1}`; params.push(status); }
+    sql += ` ORDER BY h.inserted_at DESC LIMIT $${params.length+1} OFFSET $${params.length+2}`;
+    params.push(Number(limit), Number(offset));
+    const result = await pool.query(sql, params);
+    // Normalize source/destination to unified field names for frontend
+    const data = (result.rows || []).map(function(r) {
+      return Object.assign({}, r, {
+        source_location_id:      r.source_location_id      || r.from_location_id,
+        destination_location_id: r.destination_location_id || r.to_location_id,
+      });
+    });
+    res.json({ ok: true, data });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/**
  * POST /api/v1/inventory/transfer
  * Create stock transfer
  */
@@ -1068,14 +1108,28 @@ router.post('/transfer', async (req, res) => {
     const nextNum = transCountRes.rows[0].next_num;
     const transferNumber = 'TRANS-' + new Date().getFullYear() + '-' + String(nextNum).padStart(4, '0');
 
-    // Create transfer header
+    // Create transfer header — write to BOTH old (from/to) and new (source/destination) columns
+    // so the record is readable regardless of which schema version each deployment has.
     const transRes = await client.query(
-      `INSERT INTO public.inv_transfer_headers 
-      (id, transfer_number, source_location_id, destination_location_id, created_by, reference_text, status, inserted_at)
-      VALUES ($1, $2, $3, $4, $5, $6, 'draft', $7)
-      RETURNING *`,
+      `INSERT INTO public.inv_transfer_headers
+       (id, transfer_number,
+        source_location_id, destination_location_id,
+        from_location_id,   to_location_id,
+        created_by, reference_text, status, inserted_at)
+       VALUES ($1,$2,$3,$4,$3,$4,$5,$6,'draft',$7)
+       ON CONFLICT DO NOTHING
+       RETURNING *`,
       [randomUUID(), transferNumber, source_location_id, destination_location_id, created_by, reference_text, new Date()]
-    );
+    ).catch(async () => {
+      // Fallback for schemas that don't have both column sets
+      return client.query(
+        `INSERT INTO public.inv_transfer_headers
+         (id, transfer_number, from_location_id, to_location_id, created_by, reference_text, status, inserted_at)
+         VALUES ($1,$2,$3,$4,$5,$6,'draft',$7)
+         RETURNING *`,
+        [randomUUID(), transferNumber, source_location_id, destination_location_id, created_by, reference_text, new Date()]
+      );
+    });
 
     const transfer = transRes.rows[0];
 
@@ -1140,12 +1194,15 @@ router.post('/transfer/:id/approve', async (req, res) => {
 
     // Process each line
     for (const line of linesRes.rows) {
-      // Check source balance
+      // Resolve location IDs from either old (from/to) or new (source/destination) column names
+      const resolvedSource = transfer.source_location_id || transfer.from_location_id;
+      const resolvedDest   = transfer.destination_location_id || transfer.to_location_id;
+
       const balRes = await client.query(
-        `SELECT COALESCE(SUM(quantity_change), 0) as balance 
-        FROM public.inv_stock_ledger 
+        `SELECT COALESCE(SUM(quantity_change), 0) as balance
+        FROM public.inv_stock_ledger
         WHERE item_id = $1 AND location_id = $2`,
-        [line.item_id, transfer.source_location_id]
+        [line.item_id, resolvedSource]
       );
 
       const balance = Number(balRes.rows[0]?.balance || 0);
@@ -1157,12 +1214,12 @@ router.post('/transfer/:id/approve', async (req, res) => {
         );
       }
 
-      // Create TRANSFER_OUT entry
+      // Create TRANSFER_OUT entry (using resolved location IDs)
       await client.query(
         `INSERT INTO public.inv_stock_ledger
          (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
          VALUES ($1,$2,$3,'TRANSFER_OUT',$4,$5,$6,$7,NOW())`,
-        [randomUUID(), line.item_id, transfer.source_location_id, transfer.transfer_number,
+        [randomUUID(), line.item_id, resolvedSource, transfer.transfer_number,
          -Number(line.qty_requested), line.source_uom_id, approved_by]
       );
 
@@ -1196,20 +1253,27 @@ router.post('/transfer/:id/approve', async (req, res) => {
         `INSERT INTO public.inv_stock_ledger
          (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
          VALUES ($1,$2,$3,'TRANSFER_IN',$4,$5,$6,$7,NOW())`,
-        [randomUUID(), line.item_id, transfer.destination_location_id, transfer.transfer_number,
+        [randomUUID(), line.item_id, resolvedDest, transfer.transfer_number,
          destQty, destUomId, approved_by]
       );
     }
 
-    // Update transfer status
-    await client.query(
-      `UPDATE public.inv_transfer_headers SET status = 'approved', approved_by = $1, approved_at = $2 WHERE id = $3`,
-      [approved_by, new Date(), id]
-    );
+    // Update transfer status (use SAVEPOINT to keep transaction valid if approved_at column missing)
+    try {
+      await client.query('SAVEPOINT approve_sp');
+      await client.query(
+        `UPDATE public.inv_transfer_headers SET status='approved', approved_by=$1, approved_at=$2 WHERE id=$3`,
+        [approved_by, new Date(), id]
+      );
+      await client.query('RELEASE SAVEPOINT approve_sp');
+    } catch {
+      await client.query('ROLLBACK TO SAVEPOINT approve_sp').catch(()=>{});
+      await client.query(`UPDATE public.inv_transfer_headers SET status='approved', approved_by=$1 WHERE id=$2`, [approved_by, id]);
+    }
 
     // ── Sync POS product visibility based on destination outlet ────────────
     const destLoc = await client.query(
-      `SELECT name, location_type FROM public.inv_locations WHERE id = $1`, [transfer.destination_location_id]
+      `SELECT name, location_type FROM public.inv_locations WHERE id = $1`, [resolvedDest]
     );
     if (destLoc.rows.length) {
       const { name: locName, location_type } = destLoc.rows[0];

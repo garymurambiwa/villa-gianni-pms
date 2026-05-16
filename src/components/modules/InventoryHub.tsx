@@ -826,13 +826,20 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   const removeTLine = (i: number) => setTLines(l => l.filter((_,idx) => idx !== i));
   const updateTLine = (i: number, field: string, val: any) => setTLines(l => l.map((ln,idx) => idx===i ? {...ln,[field]:val} : ln));
 
+  // Transfer item selection — matches GRN pattern:
+  // delete key from itemSearch (not set to '') so badge shows after selection
+  const [transferDropdownAnchor, setTransferDropdownAnchor] = useState<{ lineIdx: number; rect: DOMRect } | null>(null);
+  const transferInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+
   const selectTransferItem = (lineIdx: number, item: any) => {
     const bal = balances.find((b:any) => b.item_id === item.id);
     updateTLine(lineIdx, 'item_id', item.id);
     updateTLine(lineIdx, 'item_name', item.name);
     updateTLine(lineIdx, 'uom', item.base_uom_id || 'uom_unit');
     updateTLine(lineIdx, 'balance', bal ? Number(bal.current_balance || 0) : 0);
-    setItemSearch(s => ({ ...s, [lineIdx]: '' }));
+    // FIX: delete the key (don't set to '') — same as GRN so badge shows correctly
+    setItemSearch(s => { const n = {...s}; delete n[lineIdx]; return n; });
+    setTransferDropdownAnchor(null);
   };
 
   const submit = async () => {
@@ -953,53 +960,107 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
             <div className="overflow-x-auto rounded-lg border border-gray-200 mb-4">
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50">
-                   <tr>
-                     {['Item','Date','On Hand','Qty to Transfer','UOM',''].map(h => (
-                       <th key={h} className="px-2 py-2 text-left text-xs font-semibold text-gray-600">{h}</th>
-                     ))}
-                   </tr>
+                  <tr>
+                    {['Item (SKU or name)','On Hand','Qty to Transfer','UOM',''].map(h => (
+                      <th key={h} className="px-2 py-2 text-left text-xs font-semibold text-gray-600">{h}</th>
+                    ))}
+                  </tr>
                 </thead>
                 <tbody>
                   {tLines.map((line, i) => {
-                    const searchVal = itemSearch[i] ?? line.item_name;
-                    const suggestions = searchVal.length >= 2
-                      ? items.filter((it:any) =>
-                          it.name.toLowerCase().includes(searchVal.toLowerCase()) ||
-                          (it.sku||'').toLowerCase().includes(searchVal.toLowerCase()) ||
-                          (it.id||'').toLowerCase().includes(searchVal.toLowerCase())
-                        ).slice(0, 8)
+                    // GRN-aligned pattern: delete key on select so badge shows (not blank input)
+                    const isTyping  = Object.prototype.hasOwnProperty.call(itemSearch, i);
+                    const searchVal = isTyping ? (itemSearch[i] ?? '') : (line.item_name || '');
+                    const suggestions = isTyping && searchVal.length >= 2
+                      ? items.filter((it:any) => {
+                          const q = searchVal.toLowerCase();
+                          return (
+                            it.name.toLowerCase().includes(q) ||
+                            (it.sku||'').toLowerCase().includes(q) ||
+                            String(it.id||'').slice(-4).toLowerCase().startsWith(q)
+                          );
+                        }).slice(0, 12)
                       : [];
-                    const onHand = line.balance ?? 0;
-                    const overQty = Number(line.qty) > onHand;
+                    const isThisOpen = transferDropdownAnchor?.lineIdx === i && suggestions.length > 0;
+                    const onHand  = line.balance ?? 0;
+                    const overQty = Number(line.qty) > onHand && onHand >= 0;
                     return (
                       <tr key={i} className="border-t border-gray-100">
-                        <td className="px-2 py-1 relative min-w-[200px]">
-                          <Input value={searchVal} placeholder="Search item…"
-                            onChange={e => { setItemSearch(s => ({...s,[i]:e.target.value})); if (!e.target.value) updateTLine(i,'item_id',''); }}
-                            className="text-sm" />
-                          {suggestions.length > 0 && (
-                            <div className="absolute z-30 left-2 top-full bg-white border rounded-lg shadow-lg w-64 max-h-40 overflow-y-auto">
-                              {suggestions.map((it:any) => (
-                                <div key={it.id} onClick={() => selectTransferItem(i, it)}
-                                  className="px-3 py-1.5 hover:bg-amber-50 cursor-pointer text-xs">
-                                  <span className="font-mono text-purple-600">{it.sku || it.id}</span>
-                                  <span className="ml-2">{it.name}</span>
-                                  <span className="ml-auto text-gray-400 float-right">{it.id}</span>
-                                </div>
-                              ))}
+                        <td className="px-2 py-1 relative min-w-[240px]">
+                          {/* Badge when item selected */}
+                          {line.item_id && !isTyping && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-mono font-semibold">
+                                #{String(line.item_id).slice(-4).toUpperCase()}
+                              </span>
+                              <span className="text-xs font-medium text-gray-700 truncate max-w-[160px]">{line.item_name}</span>
+                              <button onClick={() => { updateTLine(i,'item_id',''); updateTLine(i,'item_name',''); updateTLine(i,'balance',0); setItemSearch(s=>({...s,[i]:''})); setTransferDropdownAnchor(null); }}
+                                className="ml-auto text-gray-300 hover:text-red-400 text-xs">✕</button>
+                            </div>
+                          )}
+                          <Input
+                            ref={(el) => { transferInputRefs.current[i] = el; }}
+                            value={isTyping ? searchVal : ''}
+                            placeholder={line.item_id ? 'Click ✕ to change…' : 'Search by name or last 4 of ID…'}
+                            onFocus={e => {
+                              if (!line.item_id) {
+                                setItemSearch(s => ({...s,[i]:''}));
+                                setTransferDropdownAnchor({ lineIdx: i, rect: e.currentTarget.getBoundingClientRect() });
+                              }
+                            }}
+                            onChange={e => {
+                              setItemSearch(s => ({...s,[i]:e.target.value}));
+                              if (!e.target.value) { updateTLine(i,'item_id',''); updateTLine(i,'item_name',''); }
+                              const el = transferInputRefs.current[i];
+                              if (el) setTransferDropdownAnchor({ lineIdx: i, rect: el.getBoundingClientRect() });
+                            }}
+                            onBlur={() => { setTimeout(() => { setItemSearch(s=>{const n={...s};delete n[i];return n;}); setTransferDropdownAnchor(null); }, 180); }}
+                            className={`text-sm ${line.item_id ? 'opacity-0 h-0 p-0 border-0 absolute pointer-events-none' : ''}`}
+                          />
+                          {/* Floating dropdown — fixed position, same as GRN */}
+                          {isThisOpen && transferDropdownAnchor && (
+                            <div style={{ position:'fixed', top:transferDropdownAnchor.rect.bottom+4, left:transferDropdownAnchor.rect.left, width:Math.max(transferDropdownAnchor.rect.width,320), zIndex:9999 }}
+                              className="bg-white border border-amber-200 rounded-xl shadow-2xl overflow-hidden">
+                              <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-100 flex items-center justify-between">
+                                <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Select Item</span>
+                                <span className="text-[10px] text-gray-400">{suggestions.length} match{suggestions.length!==1?'es':''}</span>
+                              </div>
+                              <div className="max-h-52 overflow-y-auto">
+                                {suggestions.map((it:any) => {
+                                  const bal = balances.find((b:any) => b.item_id === it.id);
+                                  const avail = bal ? Number(bal.current_balance||0) : 0;
+                                  return (
+                                    <div key={it.id}
+                                      onMouseDown={e => { e.preventDefault(); selectTransferItem(i, it); }}
+                                      className="px-3 py-2.5 hover:bg-amber-50 cursor-pointer border-b border-gray-50 last:border-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-mono text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                                          #{String(it.id).slice(-4).toUpperCase()}
+                                        </span>
+                                        {it.sku && <span className="text-[10px] text-gray-400 font-mono">{it.sku}</span>}
+                                        <span className={`ml-auto text-[9px] px-1.5 py-0.5 rounded-full font-medium ${avail>0?'bg-green-100 text-green-600':'bg-gray-100 text-gray-400'}`}>
+                                          {avail>0?`${avail.toFixed(1)} in stock`:'0 in stock'}
+                                        </span>
+                                      </div>
+                                      <div className="text-xs font-semibold text-gray-800 mt-0.5">{it.name}</div>
+                                      <div className="text-[10px] text-gray-400">{it.category} · {uoms.find((u:any)=>u.id===it.base_uom_id)?.name||it.base_uom_id}</div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
                           )}
                         </td>
-                        <td className="px-2 py-1 w-24 text-center">
-                          <span className={`font-bold ${onHand <= 0 ? 'text-red-500' : 'text-green-700'}`}>
+                        <td className="px-2 py-1 w-28 text-center">
+                          <span className={`font-bold text-sm ${onHand <= 0 ? 'text-red-500' : 'text-green-700'}`}>
                             {fmtQ(onHand)}
                           </span>
+                          {overQty && <p className="text-[10px] text-red-500 mt-0.5">Exceeds balance</p>}
                         </td>
                         <td className="px-2 py-1 w-24">
                           <Input type="number" min={0} step="0.001" value={line.qty}
                             onChange={e => updateTLine(i, 'qty', e.target.value)}
-                            className={`text-sm text-center ${overQty ? 'border-red-400' : ''}`} />
-                          {overQty && <p className="text-xs text-red-500">Exceeds balance</p>}
+                            className={`text-sm text-center ${overQty ? 'border-red-400 ring-1 ring-red-300' : ''}`} />
                         </td>
                         <td className="px-2 py-1 w-24">
                           <select className="border rounded-md px-2 py-1.5 text-sm w-full" value={line.uom} onChange={e => updateTLine(i,'uom',e.target.value)}>
