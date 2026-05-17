@@ -305,6 +305,7 @@ export const PosReports: React.FC = () => {
         
 if(!('error' in billsRes)) {
   (billsRes.rows || []).forEach((row: any) => {
+    if ((row.outlet || '').toLowerCase().includes('room') || (row.outlet || '').toLowerCase().includes('front')) return; // POS only
     processedBills.push({
       ...row,
       id: row.id,
