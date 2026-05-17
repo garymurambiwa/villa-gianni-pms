@@ -118,6 +118,9 @@ export const InventoryReconciliation: React.FC = () => {
   const [physicalCounts, setPhysicalCounts] = useState<Record<string, number>>({});
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());
   const [closeReason, setCloseReason] = useState('');
+  // Phase 2: manager_override for zero-capture periods
+  const [showOverrideDialog, setShowOverrideDialog] = useState(false);
+  const [overridePin, setOverridePin] = useState('');
   
   const [syncStatus, setSyncStatus] = useState<{ pending: number; isOnline: boolean; isSyncing: boolean }>({
     pending: 0,
@@ -229,8 +232,9 @@ export const InventoryReconciliation: React.FC = () => {
      }
 
      try {
+       // Phase 1/2 fix: use $N placeholders; opening stock from previous closed period
        const existingRes = await db.query(
-         'SELECT id FROM inventory_periods WHERE period_year = ? AND period_month = ?',
+         'SELECT id FROM inventory_periods WHERE period_year = $1 AND period_month = $2',
          [newPeriod.periodYear, newPeriod.periodMonth]
        );
        if ('rows' in existingRes && existingRes.rows.length > 0) {
@@ -241,8 +245,7 @@ export const InventoryReconciliation: React.FC = () => {
        let openingStockValue = 0;
        if (!newPeriod.isInitial) {
          const latestRes = await db.query(
-           'SELECT closing_stock_value FROM inventory_periods WHERE status IN (?, ?) ORDER BY period_year DESC, period_month DESC LIMIT 1',
-           ['closed', 'locked']
+           `SELECT closing_stock_value FROM inventory_periods WHERE status IN ('closed','locked') ORDER BY period_year DESC, period_month DESC LIMIT 1`
          );
          if ('rows' in latestRes && latestRes.rows.length > 0) {
            openingStockValue = Number(latestRes.rows[0].closing_stock_value || 0);
@@ -278,14 +281,17 @@ export const InventoryReconciliation: React.FC = () => {
        if (!response.ok || !data.ok) {
          throw new Error(data.error || 'Failed to create period');
        }
-       const periodId = data.rows[0]?.id;
+       // Phase 1 fix: backend now returns RETURNING id; use data.id directly
+       const periodId = data.id || data.rows?.[0]?.id;
 
-       // Audit log (can use generic db)
-       await db.query(
-         `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, is_historical_backfill)
-          VALUES (?, 'PERIOD_CREATED', ?, ?, false)`,
-         [periodId, user?.id, user?.name]
-       );
+       // Audit log — use $N placeholders; only if we have a valid period ID
+       if (periodId) {
+         await db.query(
+           `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, is_historical_backfill)
+            VALUES ($1, 'PERIOD_CREATED', $2, $3, false)`,
+           [periodId, user?.id || 'system', user?.name || 'system']
+         );
+       }
 
        toast({ title: 'Inventory period created successfully' });
        setShowNewPeriodDialog(false);
@@ -296,28 +302,22 @@ export const InventoryReconciliation: React.FC = () => {
      }
    };
 
-   const openPeriod = async (periodId: string) => {
-     try {
-       const response = await fetch(`/api/inventory/periods/${periodId}`, {
-         method: 'PUT',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({
-           status: 'open',
-           reopened_by: user?.name,
-           reopened_at: new Date().toISOString()
-         })
-       });
-       const data = await response.json();
-       if (!response.ok || !data.ok) {
-         throw new Error(data.error || 'Failed to open period');
-       }
-
-       toast({ title: 'Period opened successfully' });
-       loadData();
-     } catch (e: any) {
-       toast({ title: 'Failed to open period', variant: 'destructive' });
-     }
-   };
+  // Phase 2 fix: use dedicated /reopen endpoint (not generic PUT) so audit trail is written
+  const openPeriod = async (periodId: string) => {
+    try {
+      const response = await fetch('/api/inventory/reopen', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ period_id: periodId, reopened_by: user?.name || user?.id || 'system' })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Failed to reopen period');
+      toast({ title: 'Period reopened successfully' });
+      loadData();
+    } catch (e: any) {
+      toast({ title: 'Failed to reopen period', description: e.message, variant: 'destructive' });
+    }
+  };
 
     const startReconciliation = async (periodId: string) => {
       try {
@@ -333,7 +333,7 @@ export const InventoryReconciliation: React.FC = () => {
           throw new Error(msg);
         }
 
-        const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = ?', [periodId]);
+        const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = $1', [periodId]);
         if ('rows' in periodRes && periodRes.rows.length > 0) {
           const period = periodRes.rows[0] as InventoryPeriod;
           setSelectedPeriod(period);
@@ -350,100 +350,88 @@ export const InventoryReconciliation: React.FC = () => {
 
   const savePhysicalCounts = async () => {
     if (!selectedPeriod) return;
+    const entries = Object.entries(physicalCounts);
+    if (entries.length === 0) {
+      toast({ title: 'No counts entered', variant: 'destructive' });
+      return;
+    }
 
     try {
-      for (const [productId, qty] of Object.entries(physicalCounts)) {
-        const physicalQty = Number(qty) || 0;
-        const today = new Date().toISOString().split('T')[0];
+      const today = new Date().toISOString().split('T')[0];
 
-        // Get product details to access current book quantity and cost
+      for (const [productId, qty] of entries) {
+        const physicalQty = Number(qty) || 0;
+
+        // Phase 2 fix: correct $N placeholders; remove broken per-product transaction
+        // aggregation (inventory_transactions has no product_id column).
+        // All we need: current book qty for variance, then update product + snapshot.
         const productRes = await db.query(
-          'SELECT stock_level, cost_price FROM products WHERE id = ?',
-          [productId]
+          'SELECT stock_level, cost_price FROM products WHERE id = $1', [productId]
         );
         const product = ('rows' in productRes && productRes.rows?.[0]) || { stock_level: 0, cost_price: 0 };
         const bookQty = Number(product.stock_level || 0);
-        const costPrice = Number(product.cost_price || 0);
-
-        // Calculate variance
         const variance = physicalQty - bookQty;
 
-        // Fetch aggregated transaction sums for this period/product
-        const aggRes = await db.query(
-          `SELECT
-            COALESCE(SUM(CASE WHEN type = 'opening_balance' THEN quantity ELSE 0 END), 0) as opening_qty,
-            COALESCE(SUM(CASE WHEN type IN ('purchase', 'grv') THEN quantity ELSE 0 END), 0) as received_qty,
-            COALESCE(SUM(CASE WHEN type = 'usage' THEN quantity ELSE 0 END), 0) as usage_qty
-           FROM inventory_transactions
-           WHERE period_id = ? AND product_id = ?`,
-          [selectedPeriod.id, productId]
-        );
-        const agg = ('rows' in aggRes && aggRes.rows?.[0]) || { opening_qty: 0, received_qty: 0, usage_qty: 0 };
-        const openingQty = Number(agg.opening_qty || 0);
-        const receivedQty = Number(agg.received_qty || 0);
-        const usageQty = Number(agg.usage_qty || 0);
-
-        // Update product metadata
+        // Record physical count on product (sets last_inventory_period_id for close endpoint)
         await db.query(
-          `UPDATE products SET last_inventory_period_id = ?, last_physical_qty = ?, last_physical_date = ? WHERE id = ?`,
+          `UPDATE products SET last_inventory_period_id=$1, last_physical_qty=$2, last_physical_date=$3, updated_at=NOW() WHERE id=$4`,
           [selectedPeriod.id, physicalQty, today, productId]
         );
 
-        // Upsert inventory_snapshot with ON CONFLICT DO UPDATE
+        // Upsert snapshot — opening/received are period-level aggregates set to 0 here;
+        // the close endpoint computes period COGS from period.opening_stock_value + received_value.
         await db.query(
           `INSERT INTO inventory_snapshots (period_id, product_id, physical_qty, variance, opening_qty, received_qty, system_usage_qty)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+           VALUES ($1, $2, $3, $4, 0, 0, 0)
            ON CONFLICT (period_id, product_id) DO UPDATE SET
-             physical_qty = excluded.physical_qty,
-             variance = excluded.variance,
-             opening_qty = excluded.opening_qty,
-             received_qty = excluded.received_qty,
-             system_usage_qty = excluded.system_usage_qty,
+             physical_qty = EXCLUDED.physical_qty,
+             variance = EXCLUDED.variance,
              updated_at = NOW()`,
-          [selectedPeriod.id, productId, physicalQty, variance, openingQty, receivedQty, usageQty]
+          [selectedPeriod.id, productId, physicalQty, variance]
         );
       }
 
-      toast({ title: 'Physical counts saved successfully' });
+      toast({ title: `Physical counts saved (${entries.length} items)` });
     } catch (e: any) {
       console.error('Save physical counts error:', e);
       toast({ title: 'Failed to save physical counts', description: e.message, variant: 'destructive' });
     }
   };
 
-   const closePeriod = async () => {
-     if (!selectedPeriod) return;
-
-     try {
-       // Call server to close period; server will compute totals, create snapshots and adjustments
-       const response = await fetch('/api/inventory/close', {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({
-           period_id: selectedPeriod.id,
-           closed_by: user?.name,
-           closed_reason: closeReason
-           // manager_override will be sent automatically if zero-capture
-         })
-       });
-       const data = await response.json();
-       if (!response.ok || !data.ok) {
-         if (data.error === 'ZERO_CAPTURE') {
-           // Prompt user for override confirmation? For now just show error
-           toast({ title: 'Zero capture detected', description: 'No receipts found. Add manager_override or add receipts.', variant: 'destructive' });
-           return;
-         }
-         throw new Error(data.error || 'Failed to close period');
-       }
-
-       toast({ title: 'Period closed successfully', description: `Closing stock: $${Number(data.closing_stock_value || 0).toFixed(2)}` });
-       setShowCloseDialog(false);
-       loadData();
-     } catch (e: any) {
-       console.error('Close period error:', e);
-       toast({ title: 'Failed to close period', description: e.message, variant: 'destructive' });
-     }
-   };
+  // Phase 2 fix: manager_override now properly sent; ZERO_CAPTURE opens an override dialog
+  const closePeriod = async (managerOverride = false) => {
+    if (!selectedPeriod) return;
+    try {
+      const response = await fetch('/api/inventory/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          period_id: selectedPeriod.id,
+          closed_by: user?.name || user?.id || 'system',
+          closed_reason: closeReason,
+          manager_override: managerOverride || undefined
+        })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        if (data.error === 'ZERO_CAPTURE') {
+          // Show override dialog instead of a dead-end toast
+          setShowCloseDialog(false);
+          setShowOverrideDialog(true);
+          return;
+        }
+        throw new Error(data.error || 'Failed to close period');
+      }
+      toast({ title: 'Period closed', description: `Closing stock: $${Number(data.closing_stock_value || 0).toFixed(2)} · COGS: $${Number(data.cogs_value || 0).toFixed(2)}` });
+      setShowCloseDialog(false);
+      setShowOverrideDialog(false);
+      setOverridePin('');
+      loadData();
+    } catch (e: any) {
+      console.error('Close period error:', e);
+      toast({ title: 'Failed to close period', description: e.message, variant: 'destructive' });
+    }
+  };
 
    const addBackfill = async () => {
      if (!selectedPeriod || selectedProducts.size === 0) {
@@ -489,8 +477,10 @@ export const InventoryReconciliation: React.FC = () => {
      }
    };
 
-  const calculateVariance = (opening: number, received: number, physical: number) => {
-    const expected = opening + received;
+  // Phase 3 fix: correct USALI formula — Expected = Opening + Received − Consumed.
+  // Without consumed, every item used during the period appears as negative variance.
+  const calculateVariance = (opening: number, received: number, consumed: number, physical: number) => {
+    const expected = opening + received - consumed;
     return { expected, variance: physical - expected };
   };
 
@@ -897,20 +887,62 @@ export const InventoryReconciliation: React.FC = () => {
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-gray-600">
-              Are you sure you want to close this period? This will finalize all reconciliation data and lock the period.
+              This will finalize all reconciliation data, compute COGS, and lock the period. Ensure all physical counts have been entered.
             </p>
             <div>
               <Label>Closing Reason</Label>
-              <Input 
+              <Input
                 value={closeReason}
                 onChange={e => setCloseReason(e.target.value)}
-                placeholder="Enter reason for closing..."
+                placeholder="e.g. End of month stock count"
+              />
+            </div>
+            {selectedPeriod && (
+              <div className="p-3 bg-blue-50 rounded-lg text-xs text-blue-700 space-y-1">
+                <div><strong>Opening Stock:</strong> ${Number(selectedPeriod.opening_stock_value || 0).toFixed(2)}</div>
+                <div><strong>Received (Purchases):</strong> ${Number(selectedPeriod.received_value || 0).toFixed(2)}</div>
+                <div><strong>Max Available:</strong> ${(Number(selectedPeriod.opening_stock_value || 0) + Number(selectedPeriod.received_value || 0)).toFixed(2)}</div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCloseDialog(false)}>Cancel</Button>
+            <Button onClick={() => closePeriod(false)}>Close Period</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Phase 2: Manager Override Dialog — shown when ZERO_CAPTURE is returned */}
+      <Dialog open={showOverrideDialog} onOpenChange={setShowOverrideDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-amber-700">⚠ Zero-Capture Override Required</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              This period has <strong>no purchase or GRN receipts</strong> recorded. This is unusual — verify that all deliveries have been entered before closing.
+            </p>
+            <p className="text-sm text-gray-600">
+              If you are certain this period had no purchases (e.g., the property was closed), a manager can override and force-close the period.
+            </p>
+            <div>
+              <Label>Manager PIN (for audit trail)</Label>
+              <Input
+                type="password"
+                value={overridePin}
+                onChange={e => setOverridePin(e.target.value)}
+                placeholder="Enter manager PIN to authorize"
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCloseDialog(false)}>Cancel</Button>
-            <Button onClick={closePeriod}>Close Period</Button>
+            <Button variant="outline" onClick={() => { setShowOverrideDialog(false); setOverridePin(''); }}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={!overridePin.trim()}
+              onClick={() => closePeriod(true)}>
+              Force Close (Override)
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

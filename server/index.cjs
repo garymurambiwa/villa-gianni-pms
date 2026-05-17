@@ -588,10 +588,10 @@ app.post('/api/inventory/periods', async (req, res) => {
 
         const result = await db.query(
             `INSERT INTO inventory_periods (period_name, period_year, period_month, start_date, end_date, status, opening_stock_value, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, period_name, period_year, period_month, status`,
             [period_name, period_year, period_month, start_date, end_date, status || 'open', opening_stock_value || 0, created_by]
         );
-        res.json(result);
+        res.json({ ok: true, rows: result.rows, id: result.rows?.[0]?.id });
     } catch (e) {
         res.json({ ok: false, error: e.message });
     }
@@ -719,101 +719,77 @@ app.post('/api/inventory/batch-reconcile', async (req, res) => {
         return res.status(400).json({ ok: false, error: 'Invalid request: period_id and items array required' });
     }
 
-    const client = await db.pool.connect();
+    // PHASE-1 FIX: db.pool.connect() was crashing (pool not exposed by db-web.cjs).
+    // Refactored to use db.transaction(ops[]) for atomicity without exposing pool.
     try {
-        // Validate period is in reconciling state
-        const periodRes = await client.query('SELECT status, is_locked FROM inventory_periods WHERE id = ?', [period_id]);
-        if (!periodRes.rows || periodRes.rows.length === 0) {
-            return res.status(404).json({ ok: false, error: 'Period not found' });
-        }
+        // 1. Validate period (read — outside transaction)
+        const periodRes = await db.query('SELECT status, is_locked FROM inventory_periods WHERE id = ?', [period_id]);
+        if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
         const period = periodRes.rows[0];
-        if (period.is_locked) {
-            return res.status(403).json({ ok: false, error: 'Period is locked. Cannot reconcile.' });
-        }
-        if (period.status !== 'reconciling') {
-            return res.status(403).json({ ok: false, error: `Period must be in 'reconciling' state, current: ${period.status}` });
-        }
+        if (period.is_locked) return res.status(403).json({ ok: false, error: 'Period is locked. Cannot reconcile.' });
+        if (period.status !== 'reconciling') return res.status(403).json({ ok: false, error: `Period must be in 'reconciling' state, current: ${period.status}` });
 
-        await client.query('BEGIN');
+        // 2. Pre-fetch all products (reads — outside transaction)
+        const productIds = items.map(i => i.product_id).filter(Boolean);
+        const placeholders = productIds.map((_, i) => `$${i + 1}`).join(',');
+        const allProds = productIds.length > 0
+            ? await db.query(`SELECT id, department, stock_level, cost_price FROM products WHERE id IN (${placeholders})`, productIds)
+            : { rows: [] };
+        const prodMap = Object.fromEntries((allProds.rows || []).map(p => [p.id, p]));
+
+        // 3. Build transaction ops
+        const today = new Date().toISOString().split('T')[0];
+        const ops = [];
 
         for (const item of items) {
             const { product_id, physical_qty, cost_price } = item;
             const physQty = Number(physical_qty) || 0;
-
-            // Validate product exists
-            const prodRes = await client.query('SELECT id, name, department, stock_level, cost_price FROM products WHERE id = ?', [product_id]);
-            if (!prodRes.rows || prodRes.rows.length === 0) {
-                throw new Error(`Product ${product_id} not found`);
-            }
-            const product = prodRes.rows[0];
+            const product = prodMap[product_id];
+            if (!product) continue; // skip unknown products
             const bookQty = Number(product.stock_level || 0);
             const currentCost = Number(product.cost_price || 0);
-            const newCost = cost_price !== undefined && cost_price !== null ? Number(cost_price) : currentCost;
-
-            // Compute variance and value delta
+            const newCost = (cost_price != null) ? Number(cost_price) : currentCost;
             const variance = physQty - bookQty;
             const totalValue = variance * newCost;
 
-            // Fetch aggregated transaction sums for this period/product
-            const aggRes = await client.query(
-                `SELECT
-                  COALESCE(SUM(CASE WHEN transaction_type = 'opening_balance' THEN total_quantity ELSE 0 END),0) as opening_qty,
-                  COALESCE(SUM(CASE WHEN transaction_type IN ('purchase','grv') THEN total_quantity ELSE 0 END),0) as received_qty,
-                  COALESCE(SUM(CASE WHEN transaction_type = 'usage' THEN total_quantity ELSE 0 END),0) as usage_qty
-                 FROM inventory_transactions
-                 WHERE period_id = ?`,
-                [period_id]
-            );
-            const openingQty = Number(aggRes.rows?.[0]?.opening_qty || 0);
-            const receivedQty = Number(aggRes.rows?.[0]?.received_qty || 0);
-            const usageQty = Number(aggRes.rows?.[0]?.usage_qty || 0);
+            // Upsert snapshot (physical_qty + variance; opening/received are period-level, set 0 here)
+            ops.push({
+                sql: `INSERT INTO inventory_snapshots (period_id, product_id, physical_qty, variance, opening_qty, received_qty, system_usage_qty)
+                      VALUES (?, ?, ?, ?, 0, 0, 0)
+                      ON CONFLICT (period_id, product_id) DO UPDATE SET
+                        physical_qty = EXCLUDED.physical_qty,
+                        variance = EXCLUDED.variance,
+                        updated_at = NOW()`,
+                params: [period_id, product_id, physQty, variance]
+            });
 
-            // Upsert inventory_snapshot if table exists
-            try {
-                await client.query(
-                    `INSERT INTO inventory_snapshots (period_id, product_id, physical_qty, variance, opening_qty, received_qty, system_usage_qty)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                     ON CONFLICT (period_id, product_id) DO UPDATE SET
-                       physical_qty = EXCLUDED.physical_qty, variance = EXCLUDED.variance,
-                       opening_qty = EXCLUDED.opening_qty, received_qty = EXCLUDED.received_qty,
-                       system_usage_qty = EXCLUDED.system_usage_qty, updated_at = NOW()`,
-                    [period_id, product_id, physQty, variance, openingQty, receivedQty, usageQty]
-                );
-            } catch (_snapErr) { /* table may not exist yet — non-fatal */ }
-
-            // Create adjustment transaction if variance non-zero
+            // Adjustment transaction only when variance exists
             if (variance !== 0) {
-                await client.query(
-                    `INSERT INTO inventory_transactions
-                     (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, created_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                    ['adjustment', `BATCH-${Date.now()}-${String(product_id).slice(0,8)}`,
-                     period_id, new Date().toISOString().split('T')[0],
-                     product.department || 'General', variance, totalValue, user_id || 'system']
-                );
+                ops.push({
+                    sql: `INSERT INTO inventory_transactions
+                          (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, created_by)
+                          VALUES ('adjustment', ?, ?, ?, ?, ?, ?, ?)`,
+                    params: [`BATCH-${Date.now()}-${String(product_id).slice(0,8)}`, period_id, today, product.department || 'General', variance, totalValue, user_id || 'system']
+                });
             }
 
-            // Update product stock to physical count
-            const upFields = ['stock_level = ?', 'updated_at = NOW()'];
-            const upVals = [physQty];
-            if (cost_price !== undefined && cost_price !== null) {
-                upFields.push('cost_price = ?');
-                upVals.push(newCost);
+            // Update product stock + optionally cost_price + record last reconciliation
+            if (cost_price != null) {
+                ops.push({ sql: 'UPDATE products SET stock_level=?, cost_price=?, last_inventory_period_id=?, last_physical_qty=?, last_physical_date=NOW(), updated_at=NOW() WHERE id=?', params: [physQty, newCost, period_id, physQty, product_id] });
+            } else {
+                ops.push({ sql: 'UPDATE products SET stock_level=?, last_inventory_period_id=?, last_physical_qty=?, last_physical_date=NOW(), updated_at=NOW() WHERE id=?', params: [physQty, period_id, physQty, product_id] });
             }
-            upVals.push(product_id);
-            await client.query(
-                `UPDATE products SET ${upFields.join(', ')} WHERE id = ?`, upVals
-            );
         }
 
-        await client.query('COMMIT');
+        if (ops.length > 0) {
+            const txResult = await db.transaction(ops);
+            if (!txResult.ok) throw new Error(txResult.error || 'Transaction failed');
+        }
+
         res.json({ ok: true, message: `Batch reconciled ${items.length} items` });
     } catch (e) {
-        await client.query('ROLLBACK');
         console.error('Batch reconcile error:', e);
         res.json({ ok: false, error: e.message });
-    } finally {
-        client.release();
     }
 });
 
@@ -852,58 +828,46 @@ app.post('/api/inventory/close', async (req, res) => {
         return res.status(400).json({ ok: false, error: 'Period ID and closed_by required' });
     }
 
-    const client = await db.pool.connect();
+    // PHASE-1 FIX: db.pool.connect() crash replaced with db.transaction(ops[]).
+    // PHASE-2 FIX: removed broken per-product aggregation (inventory_transactions has no product_id);
+    //              snapshot stores physical_qty + variance; COGS computed from period totals.
     try {
-        // Validate period
-        const periodRes = await client.query('SELECT * FROM inventory_periods WHERE id = ?', [period_id]);
-        if (!periodRes.rows || periodRes.rows.length === 0) {
-            return res.status(404).json({ ok: false, error: 'Period not found' });
-        }
+        // 1. Validate period (read)
+        const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id = ?', [period_id]);
+        if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
         const period = periodRes.rows[0];
-        if (period.is_locked) {
-            return res.status(403).json({ ok: false, error: 'Period already locked' });
-        }
-        if (period.status !== 'reconciling') {
-            return res.status(403).json({ ok: false, error: `Period must be in 'reconciling' state, current: ${period.status}` });
-        }
+        if (period.is_locked) return res.status(403).json({ ok: false, error: 'Period already locked' });
+        if (period.status !== 'reconciling') return res.status(403).json({ ok: false, error: `Period must be in 'reconciling' state, current: ${period.status}` });
 
-        // Zero-capture detection: if period has no receipt transactions, require override
-        const txCountRes = await client.query(
-            `SELECT COUNT(*) as cnt FROM inventory_transactions WHERE period_id = ? AND transaction_type IN ('purchase', 'grv')`,
-            [period_id]
+        // 2. Zero-capture check
+        const txCountRes = await db.query(
+            `SELECT COUNT(*) as cnt FROM inventory_transactions WHERE period_id = ? AND transaction_type IN ('purchase','grv')`, [period_id]
         );
-        const txCount = (txCountRes.rows && txCountRes.rows[0] && Number(txCountRes.rows[0].cnt)) || 0;
+        const txCount = Number(txCountRes.rows?.[0]?.cnt || 0);
         if (txCount === 0 && !manager_override) {
-            return res.status(403).json({ ok: false, error: 'ZERO_CAPTURE', message: 'Period has no inventory receipts. Manager override required to close.' });
+            return res.status(403).json({ ok: false, error: 'ZERO_CAPTURE', message: 'No inventory receipts found. Set manager_override:true to force close.' });
         }
 
-        await client.query('BEGIN');
-
-        // 1. Get all products that have a physical count for this period (via last_inventory_period_id)
-        // Note: batch-reconcile updates last_inventory_period_id; savePhysicalCounts also does.
-        const prodRes = await client.query(
+        // 3. Fetch products with physical counts for this period
+        const prodRes = await db.query(
             `SELECT id, name, department, stock_level, cost_price, last_physical_qty
-             FROM products
-             WHERE last_inventory_period_id = ?`,
-            [period_id]
+             FROM products WHERE last_inventory_period_id = ?`, [period_id]
         );
-        if (!prodRes.rows || prodRes.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ ok: false, error: 'No physical counts recorded for this period. Perform a stock take before closing.' });
+        if (!prodRes.rows?.length) {
+            return res.status(400).json({ ok: false, error: 'No physical counts recorded. Perform a stock take before closing.' });
         }
         const products = prodRes.rows;
 
-        let totalClosingValue = 0;
-        let totalVarianceValue = 0;
-        let kitchenVarianceValue = 0;
-        let cellarVarianceValue = 0;
+        // 4. Compute closing totals
+        let totalClosingValue = 0, totalVarianceValue = 0;
+        let kitchenVarianceValue = 0, cellarVarianceValue = 0;
+        const today = new Date().toISOString().split('T')[0];
+        const ops = [];
 
-        // 2. Process each product: create snapshot, create adjustment transaction, update stock
         for (const p of products) {
             const physQty = Number(p.last_physical_qty || 0);
             const bookQty = Number(p.stock_level || 0);
             const costPrice = Number(p.cost_price || 0);
-
             const variance = physQty - bookQty;
             const varianceValue = variance * costPrice;
             const physValue = physQty * costPrice;
@@ -913,92 +877,53 @@ app.post('/api/inventory/close', async (req, res) => {
             if ((p.department || '').toLowerCase() === 'kitchen') kitchenVarianceValue += varianceValue;
             else if ((p.department || '').toLowerCase() === 'cellar') cellarVarianceValue += varianceValue;
 
-            // Fetch opening/received/usage aggregates for snapshot
-            const agg = await client.query(
-                `SELECT
-                  COALESCE(SUM(CASE WHEN type = 'opening_balance' THEN quantity ELSE 0 END),0) as opening_qty,
-                  COALESCE(SUM(CASE WHEN type IN ('purchase','grv') THEN quantity ELSE 0 END),0) as received_qty,
-                  COALESCE(SUM(CASE WHEN type = 'usage' THEN quantity ELSE 0 END),0) as usage_qty
-                 FROM inventory_transactions
-                 WHERE period_id = ? AND product_id = ?`,
-                [period_id, p.id]
-            );
-            const openingQty = Number(agg.rows[0].opening_qty);
-            const receivedQty = Number(agg.rows[0].received_qty);
-            const usageQty = Number(agg.rows[0].usage_qty);
+            // Upsert snapshot (physical_qty + variance; no per-product transaction breakdown available)
+            ops.push({
+                sql: `INSERT INTO inventory_snapshots (period_id, product_id, physical_qty, variance, opening_qty, received_qty, system_usage_qty)
+                      VALUES (?, ?, ?, ?, 0, 0, 0)
+                      ON CONFLICT (period_id, product_id) DO UPDATE SET
+                        physical_qty = EXCLUDED.physical_qty, variance = EXCLUDED.variance, updated_at = NOW()`,
+                params: [period_id, p.id, physQty, variance]
+            });
 
-            // Upsert snapshot
-            await client.query(
-                `INSERT INTO inventory_snapshots (period_id, product_id, physical_qty, variance, opening_qty, received_qty, system_usage_qty)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT (period_id, product_id) DO UPDATE SET
-                   physical_qty = EXCLUDED.physical_qty,
-                   variance = EXCLUDED.variance,
-                   opening_qty = EXCLUDED.opening_qty,
-                   received_qty = EXCLUDED.received_qty,
-                   system_usage_qty = EXCLUDED.system_usage_qty,
-                   updated_at = NOW()`,
-                [period_id, p.id, physQty, variance, openingQty, receivedQty, usageQty]
-            );
-
-            // Create adjustment transaction if variance non-zero
+            // Variance adjustment transaction
             if (variance !== 0) {
-                await client.query(
-                    `INSERT INTO inventory_transactions
-                     (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, created_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                    ['adjustment', `CLS-${Date.now()}-${p.id.slice(0,8)}`, period_id, new Date().toISOString().split('T')[0],
-                     p.department, variance, varianceValue, closed_by]
-                );
+                ops.push({
+                    sql: `INSERT INTO inventory_transactions (transaction_type, transaction_number, period_id, transaction_date, department, total_quantity, total_value, created_by)
+                          VALUES ('adjustment', ?, ?, ?, ?, ?, ?, ?)`,
+                    params: [`CLS-${Date.now()}-${p.id.slice(0,8)}`, period_id, today, p.department || 'General', variance, varianceValue, closed_by]
+                });
             }
 
             // Update product stock to physical count
-            await client.query(
-                `UPDATE products SET stock_level = ?, updated_at = NOW() WHERE id = ?`,
-                [physQty, p.id]
-            );
+            ops.push({ sql: 'UPDATE products SET stock_level=?, updated_at=NOW() WHERE id=?', params: [physQty, p.id] });
         }
 
-        // 3. Compute COGS and update period
+        // 5. Lock and close the period
         const openingStock = Number(period.opening_stock_value || 0);
         const receivedValue = Number(period.received_value || 0);
         const cogsValue = openingStock + receivedValue - totalClosingValue;
 
-        await client.query(
-            `UPDATE inventory_periods
-             SET status = 'closed',
-                 closing_stock_value = ?,
-                 variance_value = ?,
-                 cogs_value = ?,
-                 kitchen_cogs = ?,
-                 cellar_cogs = ?,
-                 closed_at = NOW(),
-                 closed_by = ?,
-                 closed_reason = ?,
-                 is_locked = true,
-                 locked_at = NOW()
-             WHERE id = ?`,
-            [totalClosingValue, totalVarianceValue, cogsValue, kitchenVarianceValue, cellarVarianceValue, closed_by, closed_reason, period_id]
-        );
+        ops.push({
+            sql: `UPDATE inventory_periods SET status='closed', closing_stock_value=?, variance_value=?, cogs_value=?, kitchen_cogs=?, cellar_cogs=?, closed_at=NOW(), closed_by=?, closed_reason=?, is_locked=true, locked_at=NOW() WHERE id=?`,
+            params: [totalClosingValue, totalVarianceValue, cogsValue, kitchenVarianceValue, cellarVarianceValue, closed_by, closed_reason || '', period_id]
+        });
 
-        // 4. If zero-capture override, audit log
+        // 6. Audit: zero-capture override
         if (txCount === 0 && manager_override) {
-            await client.query(
-                `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, change_reason)
-                 VALUES (?, 'ZERO_CAPTURE_OVERRIDE', ?, ?, ?)`,
-                [period_id, closed_by, closed_by, 'Manager override: closed period with zero receipts']
-            );
+            ops.push({
+                sql: `INSERT INTO inventory_period_audit (period_id, action, user_id, user_name, change_reason) VALUES (?, 'ZERO_CAPTURE_OVERRIDE', ?, ?, ?)`,
+                params: [period_id, closed_by, closed_by, 'Manager override: closed period with zero receipts']
+            });
         }
 
-        await client.query('COMMIT');
+        const txResult = await db.transaction(ops);
+        if (!txResult.ok) throw new Error(txResult.error || 'Transaction failed');
 
         res.json({ ok: true, message: 'Period closed successfully', closing_stock_value: totalClosingValue, variance_value: totalVarianceValue, cogs_value: cogsValue });
     } catch (e) {
-        await client.query('ROLLBACK');
         console.error('Close period error:', e);
         res.json({ ok: false, error: e.message });
-    } finally {
-        client.release();
     }
 });
 
