@@ -23,6 +23,18 @@ import { RoomGridModal } from './RoomGridModal';
 import { RoomGrid } from './RoomGrid';
 import { addDays, format } from 'date-fns';
 
+// Formats ISO date strings to "16 May 2026 07:06" style — short, readable, no raw UTC noise
+const fmtDate = (raw: string | undefined | null): string => {
+  if (!raw) return '—';
+  try {
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return String(raw);
+    return format(d, 'd MMM yyyy HH:mm');
+  } catch {
+    return String(raw);
+  }
+};
+
 // Dynamic package options will be loaded from Breakfast module via the custom hook
 
 export const Reservations: React.FC = () => {
@@ -1535,8 +1547,8 @@ export const Reservations: React.FC = () => {
                       : <span className="text-gray-400 text-xs">—</span>}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-600">{String(res.roomType || '')}</td>
-                  <td className="px-6 py-4 text-sm text-gray-600">{String(res.checkIn || '')}</td>
-                  <td className="px-6 py-4 text-sm text-gray-600">{String(res.checkOut || '')}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600">{fmtDate(res.checkIn)}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600">{fmtDate(res.checkOut)}</td>
                   <td className="px-6 py-4 text-sm text-gray-600">
                     {String(res.bookingType || 'Individual')}
                     {((res as any).companyName) && <span className="block text-xs text-gray-500">{String((res as any).companyName || '')}</span>}
