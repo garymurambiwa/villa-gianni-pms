@@ -43,15 +43,29 @@ export const POSManagement: React.FC = () => {
         ordersMap.set(`${o.cost_center}:${o.table_id}`, { id: o.table_id, total: Number(o.total), items: o.items });
       });
 
+      // 2.5 Active shifts check (isolated to Master Mgmt for real-time occupancy)
+      const shiftsRes = await db.query(`SELECT DISTINCT cost_center FROM pos_shifts WHERE status = 'active' OR end_time IS NULL`);
+      const activeShifts = new Set((shiftsRes && 'rows' in shiftsRes && Array.isArray(shiftsRes.rows) ? shiftsRes.rows : []).map((s: any) => s.cost_center));
+
       // 3. Construct the full view
       // We'll group by cost centre. If a cost centre exists in table_status, we show its tables.
-      const tables: TableStatus[] = rows.map(r => ({
-        table_id: r.table_id,
-        number: parseInt(r.table_id.replace(/\D/g, '') || '0'),
-        status: r.status === 'open' ? 'available' : (r.status === 'closed' ? 'suspended' : 'occupied'),
-        cost_center: r.cost_center,
-        currentBill: ordersMap.get(`${r.cost_center}:${r.table_id}`)
-      }));
+      const tables: TableStatus[] = rows.map(r => {
+        const hasActiveShift = activeShifts.has(r.cost_center);
+        const hasBill = !!ordersMap.get(`${r.cost_center}:${r.table_id}`);
+        let status: 'available' | 'occupied' | 'suspended' = 'available';
+        if (r.status === 'closed') {
+          status = 'suspended';
+        } else if (hasActiveShift && (r.status !== 'open' || hasBill)) {
+          status = 'occupied';
+        }
+        return {
+          table_id: r.table_id,
+          number: parseInt(r.table_id.replace(/\D/g, '') || '0'),
+          status,
+          cost_center: r.cost_center,
+          currentBill: ordersMap.get(`${r.cost_center}:${r.table_id}`)
+        };
+      });
 
       setAllTables(tables);
     } catch (err) {
