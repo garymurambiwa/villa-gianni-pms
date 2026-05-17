@@ -23,6 +23,7 @@ export const POSManagement: React.FC = () => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [allTables, setAllTables] = useState<TableStatus[]>([]);
+  const [activeOrders, setActiveOrders] = useState<any[]>([]);
   const [filterCentre, setFilterCentre] = useState<string>('all');
   const [search, setSearch] = useState('');
 
@@ -35,11 +36,12 @@ export const POSManagement: React.FC = () => {
       
       // 2. Fetch active orders from DataContext (proxy via localStorage for now if needed, or better, use the same DB logic)
       // For a Management Module, we want the source of truth.
-      const ordersRes = await db.query(`SELECT table_id, items, total, cost_center FROM pos_orders WHERE status = 'open'`);
-      const activeOrders = (ordersRes && 'rows' in ordersRes && Array.isArray(ordersRes.rows)) ? ordersRes.rows : [];
+      const ordersRes = await db.query(`SELECT table_id, items, total, cost_center FROM pos_orders WHERE status IN ('open','active') OR status IS NULL`);
+      const activeOrdersList = (ordersRes && 'rows' in ordersRes && Array.isArray(ordersRes.rows)) ? ordersRes.rows : [];
+      setActiveOrders(activeOrdersList);
       
       const ordersMap = new Map();
-      activeOrders.forEach(o => {
+      activeOrdersList.forEach(o => {
         ordersMap.set(`${o.cost_center}:${o.table_id}`, { id: o.table_id, total: Number(o.total), items: o.items });
       });
 
@@ -109,11 +111,11 @@ export const POSManagement: React.FC = () => {
   }, [allTables, filterCentre, search]);
 
   const stats = useMemo(() => {
-    const totalBills = allTables.filter(t => t.currentBill).length;
-    const totalValue = allTables.reduce((s, t) => s + (t.currentBill?.total || 0), 0);
+    const totalBills = allTables.filter(t => t.currentBill).length || activeOrders.length;
+    const totalValue = allTables.reduce((s, t) => s + (t.currentBill?.total || 0), 0) || activeOrders.reduce((s,o:any)=>s+Number(o.total||0),0);
     const occupied = allTables.filter(t => t.status === 'occupied').length;
     return { totalBills, totalValue, occupied };
-  }, [allTables]);
+  }, [allTables, activeOrders]);
 
   if (!user || (user.role !== 'admin' && user.role !== 'manager')) {
     return <div className="p-8 text-center bg-white rounded-xl shadow">Manager Authorization Required</div>;
