@@ -556,10 +556,10 @@ export const POSFrontOffice: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => {
-    if (!costCentre) return;
-    fetchTablesForCostCentre(costCentre);
-  }, [costCentre, fetchTablesForCostCentre]);
+   useEffect(() => {
+     if (!costCentre) return;
+     fetchTablesForCostCentre(costCentre);
+   }, [activeShift, costCentre, fetchTablesForCostCentre]);
 
   const updateTableStatus = useCallback(async (tableId: string, status: 'available' | 'occupied' | 'suspended') => {
     const mapped = status === 'suspended' ? 'closed' : (status === 'available' ? 'open' : status);
