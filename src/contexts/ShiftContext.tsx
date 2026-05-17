@@ -279,29 +279,29 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       } catch { /* non-fatal — void log remains in localStorage */ }
 
-      // ── Atomic table state cleanup on shift close ─────────────────────────
-      // Three-layer wipe so no stale bill survives shift closure:
-      //  1. localStorage — clear all occupied table entries
-      //  2. DB pos_orders — close any orphaned open orders (shift_id=null or this shift)
-      //  3. DB table_status — reset all 'open' rows to 'available'
-      try {
-        // Layer 1: wipe localStorage table states (all tables → available)
-        localStorage.removeItem('corepms_pos_table_states');
-      } catch { /* non-fatal */ }
+       // ── Atomic table state cleanup on shift close ─────────────────────────
+       // Three-layer wipe so no stale bill survives shift closure:
+       //  1. localStorage — clear all occupied table entries
+       //  2. DB pos_orders — close any orphaned open orders (shift_id=null or this shift)
+       //  3. DB table_status — reset all occupied tables to available
+       try {
+         // Layer 1: wipe localStorage table states (all tables → available)
+         localStorage.removeItem('corepms_pos_table_states');
+       } catch { /* non-fatal */ }
 
-      try {
-        const { db: dbClean } = await import('../lib/db');
-        // Layer 2: close all open orders regardless of shift association
-        await dbClean.query(
-          `UPDATE pos_orders SET status='closed' WHERE status='open'`
-        );
-        // Layer 3: reset table_status — orphaned 'open' rows mean no active bill
-        await dbClean.query(
-          `UPDATE table_status SET status='available', last_update=NOW() WHERE status='open'`
-        );
-      } catch (cleanErr) {
-        console.warn('[ShiftContext] Table cleanup on shift end failed (non-fatal):', cleanErr);
-      }
+       try {
+         const { db: dbClean } = await import('../lib/db');
+         // Layer 2: close all open orders regardless of shift association
+         await dbClean.query(
+           `UPDATE pos_orders SET status='closed' WHERE status='open'`
+         );
+         // Layer 3: reset table_status — set all occupied tables to available (as no shift is active)
+         await dbClean.query(
+           `UPDATE table_status SET status='open', last_update=NOW() WHERE status='occupied'`
+         );
+       } catch (cleanErr) {
+         console.warn('[ShiftContext] Table cleanup on shift end failed (non-fatal):', cleanErr);
+       }
 
       // Clear active shift
       setActiveShift(null);
