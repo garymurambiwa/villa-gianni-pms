@@ -1370,3 +1370,93 @@ INSERT INTO public.breakfast_packages (id, code, name, description, base_price, 
   ('bp_hb', 'HB', 'Half Board', 'Breakfast and dinner included', 35, 25, 15, 2, NOW()),
   ('bp_fb', 'FB', 'Full Board', 'Three meals included', 50, 35, 20, 3, NOW())
 ON CONFLICT (code) DO NOTHING;
+
+
+-- ============================================================================
+-- INVENTORY RECONCILIATION (V10) — Period-based stock audit & COGS tracking
+-- Surgically added to schema.sql so fresh deployments (init-db) include these
+-- tables. All statements are IF NOT EXISTS — safe on existing deployments.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.inventory_periods (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  period_name     TEXT NOT NULL,
+  period_year     INTEGER NOT NULL,
+  period_month    INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),
+  start_date      DATE NOT NULL,
+  end_date        DATE NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('future','open','reconciling','closed','locked')),
+  opening_stock_value NUMERIC(14,2) DEFAULT 0,
+  closing_stock_value NUMERIC(14,2),
+  received_value  NUMERIC(14,2) DEFAULT 0,
+  variance_value  NUMERIC(14,2),
+  kitchen_cogs    NUMERIC(14,2) DEFAULT 0,
+  cellar_cogs     NUMERIC(14,2) DEFAULT 0,
+  cogs_value      NUMERIC(14,2),
+  closed_at       TIMESTAMPTZ,
+  closed_by       TEXT,
+  closed_reason   TEXT,
+  reopened_at     TIMESTAMPTZ,
+  reopened_by     TEXT,
+  is_locked       BOOLEAN DEFAULT false,
+  locked_at       TIMESTAMPTZ,
+  locked_by       TEXT,
+  created_by      TEXT,
+  inserted_at     TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (period_year, period_month)
+);
+
+CREATE TABLE IF NOT EXISTS public.inventory_transactions (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  transaction_type      TEXT NOT NULL CHECK (transaction_type IN ('purchase','grv','adjustment','transfer','variance_writeoff')),
+  transaction_number    TEXT NOT NULL,
+  period_id             UUID REFERENCES public.inventory_periods(id) ON DELETE RESTRICT,
+  transaction_date      DATE NOT NULL,
+  department            TEXT NOT NULL DEFAULT 'General',
+  total_quantity        NUMERIC(12,4) DEFAULT 0,
+  total_value           NUMERIC(14,2) DEFAULT 0,
+  supplier_name         TEXT,
+  created_by            TEXT,
+  is_historical_backfill BOOLEAN DEFAULT false,
+  is_deleted            BOOLEAN DEFAULT false,
+  inserted_at           TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.inventory_snapshots (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  period_id         UUID NOT NULL REFERENCES public.inventory_periods(id) ON DELETE CASCADE,
+  product_id        TEXT NOT NULL,
+  physical_qty      NUMERIC(12,4) NOT NULL DEFAULT 0,
+  variance          NUMERIC(12,4) NOT NULL DEFAULT 0,
+  opening_qty       NUMERIC(12,4) DEFAULT 0,
+  received_qty      NUMERIC(12,4) DEFAULT 0,
+  system_usage_qty  NUMERIC(12,4) DEFAULT 0,
+  inserted_at       TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (period_id, product_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.inventory_period_audit (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  period_id       UUID REFERENCES public.inventory_periods(id) ON DELETE SET NULL,
+  action          TEXT NOT NULL,
+  user_id         TEXT,
+  user_name       TEXT,
+  change_reason   TEXT,
+  is_historical_backfill BOOLEAN DEFAULT false,
+  timestamp       TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Add reconciliation columns to products if they don't exist
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS last_inventory_period_id UUID REFERENCES public.inventory_periods(id) ON DELETE SET NULL;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS last_physical_qty NUMERIC(12,4);
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS last_physical_date DATE;
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_inv_periods_status      ON public.inventory_periods(status);
+CREATE INDEX IF NOT EXISTS idx_inv_periods_year_month  ON public.inventory_periods(period_year, period_month);
+CREATE INDEX IF NOT EXISTS idx_inv_tx_period           ON public.inventory_transactions(period_id);
+CREATE INDEX IF NOT EXISTS idx_inv_tx_type             ON public.inventory_transactions(transaction_type);
+CREATE INDEX IF NOT EXISTS idx_inv_snapshots_period    ON public.inventory_snapshots(period_id);
+CREATE INDEX IF NOT EXISTS idx_inv_audit_period        ON public.inventory_period_audit(period_id);

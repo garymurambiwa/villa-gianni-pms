@@ -124,6 +124,12 @@ CREATE INDEX IF NOT EXISTS inventory_transactions_department_idx ON public.inven
 -- 3. INVENTORY RECONCILIATIONS TABLE
 -- Reconciliation records with full audit trail
 -- ----------------------------------------------------------------------------
+-- PHASE-4 ARCHITECTURE NOTE: This table (inventory_reconciliations) is defined
+-- but currently unused — all reconciliation data is stored in inventory_snapshots
+-- and aggregated from inventory_periods. This table is kept for potential future
+-- use (detailed department-level reconciliation worksheets). Do NOT drop it;
+-- it is part of the audit schema. No code reads or writes to it currently.
+-- STR-01 from the audit report: "Ghost table — defined, never used."
 CREATE TABLE IF NOT EXISTS public.inventory_reconciliations (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     
