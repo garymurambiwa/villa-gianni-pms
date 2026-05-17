@@ -641,7 +641,7 @@ check_in_date = ?, check_out_date = ?, status = ?,
         table_number: String(orderData.table || ''),
         items: Array.isArray(orderData.items) ? orderData.items : [],
         total_amount: Number(orderData.total || 0),
-        status: 'OPEN',
+        status: 'open',
         cost_center: orderData.cost_center,
         shift_id: orderData.shift_id
       };
@@ -649,7 +649,7 @@ check_in_date = ?, check_out_date = ?, status = ?,
       setPosOrders((prev: any[]) => {
         const idx = prev.findIndex((p: any) => 
           String(p.table_number) === provisional.table_number && 
-          String(p.status) === 'OPEN' &&
+          String(p.status).toLowerCase() === 'open' &&
           p.cost_center === provisional.cost_center
         );
         if (idx >= 0) {

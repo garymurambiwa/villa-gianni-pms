@@ -368,7 +368,7 @@ export const POSFrontOffice: React.FC = () => {
       return safePrev.map(table => {
         // Find any open order for this table
         const tableOrder = posOrders.find(order =>
-          order.table_number === table.id && order.status === 'open'
+          order.table_number === table.id && String(order.status).toLowerCase() === 'open'
         );
 
         if (tableOrder) {
