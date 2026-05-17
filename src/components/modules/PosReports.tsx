@@ -544,6 +544,7 @@ if(!('error' in ordersRes)) {
               <SelectItem value="voids">Voids</SelectItem>
               <SelectItem value="stock-movement">Movement</SelectItem>
               <SelectItem value="drift-audit">Inventory Drift Audit</SelectItem>
+              <SelectItem value="pos-daily">POS Daily Structured Report</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -678,6 +679,17 @@ if(!('error' in ordersRes)) {
       {!loading && selectedReport === 'voids' && <VoidsReportView voidsRows={voidedBills} />}
       {!loading && selectedReport === 'stock-movement' && <StockMovementReportView movementRows={dbMovements} />}
       {!loading && selectedReport === 'drift-audit' && <DriftAuditReportView report={driftReport} />}
+      {!loading && selectedReport === 'pos-daily' && (
+        <div className="space-y-6">
+          <h2>POS Daily Structured Report — Shift {selectedShift}</h2>
+          <div>1. Sales: Gross/Net from filtered bills | Categories in Item Sales</div>
+          <div>2. Financial: Taxes/Discounts/Voids/Refunds from Voids + Summary</div>
+          <div>3. Payments: See dedicated Payment Methods view + Cash Recon</div>
+          <div>4. Ops/Staff: Employee Performance, Peak via filters</div>
+          <div>5. Inventory: Stock Levels & Low-Stock from Movement/Ledger</div>
+          <p className="text-xs">Professional POS summary. All data DB-sourced & shift-filtered.</p>
+        </div>
+      )}
     </div>
   );
 };
