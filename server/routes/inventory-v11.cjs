@@ -128,10 +128,12 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inv_uom_definitions ADD COLUMN IF NOT EXISTS description TEXT`);
       await client.query(`ALTER TABLE public.inv_items ADD COLUMN IF NOT EXISTS selling_price NUMERIC(10,2) DEFAULT 0.00`);
       await client.query(`ALTER TABLE public.inv_items ADD COLUMN IF NOT EXISTS short_id TEXT UNIQUE`);
-      // Enforce 4-char max on short_id via CHECK constraint (idempotent — ignore if already exists)
+      // Enforce 10-char max on short_id via CHECK constraint (idempotent — ignore if already exists)
+      await client.query(`ALTER TABLE public.inv_items DROP CONSTRAINT IF EXISTS inv_items_short_len`).catch(() => {});
+      await client.query(`ALTER TABLE public.inv_items DROP CONSTRAINT IF EXISTS inv_items_short_id_len`).catch(() => {});
       await client.query(
         `DO $$ BEGIN
-           ALTER TABLE public.inv_items ADD CONSTRAINT inv_items_short_id_len CHECK (short_id IS NULL OR char_length(short_id) <= 4);
+           ALTER TABLE public.inv_items ADD CONSTRAINT inv_items_short_id_len CHECK (short_id IS NULL OR char_length(short_id) <= 10);
          EXCEPTION WHEN duplicate_object THEN NULL; END $$`
       );
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ`);
@@ -230,10 +232,12 @@ async function ensureInventoryTables() {
           inserted_at TIMESTAMPTZ DEFAULT NOW()
         )`);
       await client.query(`ALTER TABLE public.inv_stock_ledger ADD COLUMN IF NOT EXISTS inserted_at TIMESTAMPTZ DEFAULT NOW()`);
-      // Enforce 4-char max on short_id
+      // Enforce 10-char max on short_id
+      await client.query(`ALTER TABLE public.inv_items DROP CONSTRAINT IF EXISTS inv_items_short_len`).catch(() => {});
+      await client.query(`ALTER TABLE public.inv_items DROP CONSTRAINT IF EXISTS inv_items_short_id_len`).catch(() => {});
       await client.query(
         `DO $$ BEGIN
-           ALTER TABLE public.inv_items ADD CONSTRAINT inv_items_short_id_len CHECK (short_id IS NULL OR char_length(short_id) <= 4);
+           ALTER TABLE public.inv_items ADD CONSTRAINT inv_items_short_id_len CHECK (short_id IS NULL OR char_length(short_id) <= 10);
          EXCEPTION WHEN duplicate_object THEN NULL; END $$`
       );
       await client.query(`
