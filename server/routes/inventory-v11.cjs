@@ -21,7 +21,13 @@ const fs = require('fs');
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
 const router = express.Router();
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  connectionTimeoutMillis: 15000,
+  idleTimeoutMillis: 10000,
+  max: 10,
+  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false }
+});
 
 // ============================================================================
 // SEED FUNCTIONS — extracted so they can be called from BOTH branches of bootstrap
