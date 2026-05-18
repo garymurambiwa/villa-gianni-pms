@@ -131,6 +131,139 @@ const GL_USALI_DEFAULTS = {
   AP_CONTROL:    { accountId: '2100', name: 'Accounts Payable',       category: 'Liability', usali: 'AP' },
 };
 
+// ─── GL Journal Entries (Daily Journal — DB-backed, single source of truth) ──
+// GET  /api/gl/journal-entries?date=YYYY-MM-DD&from=...&to=...
+// POST /api/gl/journal-entries  { id, date, reference, source, lines:[{accountId,debit,credit,description}] }
+// GET  /api/gl/journal-entries/pl?from=YYYY-MM-DD&to=YYYY-MM-DD
+
+app.get('/api/gl/journal-entries', async (req, res) => {
+  try {
+    const { date, from, to, source, limit } = req.query;
+    let sql = `SELECT je.*, COALESCE(json_agg(jl ORDER BY jl.id) FILTER (WHERE jl.id IS NOT NULL),'[]') as lines
+               FROM gl_journal_entries je
+               LEFT JOIN gl_journal_lines jl ON jl.journal_entry_id = je.id
+               WHERE je.status != 'voided'`;
+    const params = [];
+    if (date)   { sql += ` AND je.business_date = $${params.length+1}::date`; params.push(date); }
+    if (from)   { sql += ` AND je.business_date >= $${params.length+1}::date`; params.push(from); }
+    if (to)     { sql += ` AND je.business_date <= $${params.length+1}::date`; params.push(to); }
+    if (source) { sql += ` AND je.source = $${params.length+1}`; params.push(source); }
+    sql += ` GROUP BY je.id ORDER BY je.business_date DESC, je.inserted_at DESC`;
+    if (limit)  { sql += ` LIMIT $${params.length+1}`; params.push(parseInt(limit)); }
+    safeJson(res, await db.query(sql, params));
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+app.post('/api/gl/journal-entries', async (req, res) => {
+  const { id, date, business_date, reference, source, description, lines, created_by } = req.body || {};
+  const entryDate = business_date || date;
+  if (!entryDate || !Array.isArray(lines) || lines.length === 0)
+    return safeJson(res, { ok: false, error: 'business_date and lines[] required' });
+
+  // Validate balanced entry: sum(debit) must equal sum(credit)
+  const sumDebit  = lines.reduce((s, l) => s + Number(l.debit  || 0), 0);
+  const sumCredit = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+  if (Math.abs(sumDebit - sumCredit) > 0.005)
+    return safeJson(res, { ok: false, error: `Journal not balanced: debits $${sumDebit.toFixed(2)} ≠ credits $${sumCredit.toFixed(2)}` });
+
+  try {
+    const entryId = id || `GLJE_${entryDate}_${Date.now().toString(36)}`;
+    const src = source || 'manual';
+    const ops = [
+      {
+        sql: `INSERT INTO gl_journal_entries
+                (id, entry_date, business_date, description, reference, source, status,
+                 total_debit, total_credit, is_balanced, created_by, posted_by, posted_at, inserted_at)
+              VALUES ($1, $2::date, $2::date, $3, $4, $5, 'posted', $6, $7, true, $8, $8, NOW(), NOW())
+              ON CONFLICT (id) DO UPDATE SET
+                description=EXCLUDED.description, reference=EXCLUDED.reference,
+                total_debit=EXCLUDED.total_debit, total_credit=EXCLUDED.total_credit,
+                updated_at=NOW()
+              RETURNING id`,
+        params: [entryId, entryDate, description || reference || `Journal ${entryDate}`,
+                 reference || null, src, sumDebit, sumCredit, created_by || 'system']
+      },
+      // Delete existing lines before re-inserting (upsert pattern)
+      { sql: `DELETE FROM gl_journal_lines WHERE journal_entry_id=$1`, params: [entryId] },
+      ...lines.map((l, i) => ({
+        sql: `INSERT INTO gl_journal_lines (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
+              VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+        params: [`${entryId}_L${i+1}`, entryId, l.accountId || l.gl_account_id,
+                 Number(l.debit||0), Number(l.credit||0), l.description || null]
+      }))
+    ];
+
+    const txResult = await db.transaction(ops);
+    if (!txResult.ok) throw new Error(txResult.error || 'Transaction failed');
+    safeJson(res, { ok: true, id: entryId, date: entryDate, totalDebit: sumDebit, totalCredit: sumCredit });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// GET /api/gl/journal-entries/pl — P&L summary from DB journal lines
+app.get('/api/gl/journal-entries/pl', async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return safeJson(res, { ok: false, error: 'from and to dates required' });
+  try {
+    const result = await db.query(
+      `SELECT
+         a.category,
+         a.name as account_name,
+         jl.gl_account_id,
+         COALESCE(SUM(jl.debit_amount),0)  as total_debit,
+         COALESCE(SUM(jl.credit_amount),0) as total_credit,
+         COALESCE(SUM(jl.credit_amount),0) - COALESCE(SUM(jl.debit_amount),0) as net_balance
+       FROM gl_journal_lines jl
+       JOIN gl_journal_entries je ON je.id = jl.journal_entry_id
+       LEFT JOIN gl_accounts   a  ON a.id  = jl.gl_account_id
+       WHERE je.business_date >= $1::date
+         AND je.business_date <= $2::date
+         AND je.status = 'posted'
+       GROUP BY a.category, a.name, jl.gl_account_id
+       ORDER BY a.category, a.name`,
+      [from, to]
+    );
+    const rows = result.rows || [];
+    const revenue = rows.filter(r => r.category === 'Revenue').reduce((s, r) => s + Number(r.net_balance||0), 0);
+    const expense = rows.filter(r => r.category === 'Expense').reduce((s, r) => s + Number(r.total_debit||0) - Number(r.total_credit||0), 0);
+    safeJson(res, { ok: true, from, to, lines: rows, revenue: Number(revenue.toFixed(2)), expense: Number(expense.toFixed(2)), netIncome: Number((revenue - expense).toFixed(2)) });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// GET /api/gl/daily-journal-report?date=YYYY-MM-DD — Daily Journal Report for Reports module
+app.get('/api/gl/daily-journal-report', async (req, res) => {
+  const { date } = req.query;
+  if (!date) return safeJson(res, { ok: false, error: 'date required' });
+  try {
+    // Fetch journal entries for the date with their lines + night audit snapshot
+    const [journalRes, auditRes] = await Promise.all([
+      db.query(
+        `SELECT je.id, je.business_date, je.description, je.reference, je.source,
+                je.total_debit, je.total_credit, je.status, je.posted_at,
+                COALESCE(json_agg(jl ORDER BY jl.id) FILTER (WHERE jl.id IS NOT NULL),'[]') as lines
+         FROM gl_journal_entries je
+         LEFT JOIN gl_journal_lines jl ON jl.journal_entry_id = je.id
+         WHERE je.business_date = $1::date AND je.status='posted'
+         GROUP BY je.id ORDER BY je.inserted_at DESC`,
+        [date]
+      ),
+      db.query(
+        `SELECT business_date, room_revenue, total_revenue, occupancy_percent, adr, revpar,
+                rooms_posted, reports_snapshot, status
+         FROM night_audit_runs WHERE business_date::date = $1::date LIMIT 1`,
+        [date]
+      )
+    ]);
+    safeJson(res, {
+      ok: true,
+      date,
+      journalEntries: journalRes.rows || [],
+      nightAudit: auditRes.rows?.[0] || null,
+      totalDebit:  (journalRes.rows || []).reduce((s, e) => s + Number(e.total_debit||0), 0),
+      totalCredit: (journalRes.rows || []).reduce((s, e) => s + Number(e.total_credit||0), 0),
+    });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 app.get('/api/gl/mappings', async (req, res) => {
   try {
     const result = await db.query(`SELECT value FROM system_configs WHERE key='gl_mappings'`);
@@ -616,19 +749,45 @@ app.post('/api/night-audit/run', async (req, res) => {
       [JSON.stringify({ date: nextDateStr })]
     );
 
-    // Record audit run
-    const runId = `run_${date.replace(/-/g,'')}_${Date.now().toString(36)}`;
-    await db.query(
+    // Build reports_snapshot (same shape NightAuditReports.tsx reads from DB)
+    const snapshot = {
+      date,
+      roomRevenue,
+      fbRevenue: posRevenue,
+      totalRevenue,
+      occupancy: occupancyPct,
+      avgDailyRate: adr,
+      revPAR: revpar,
+      postingsCount: roomsPosted,
+      cityLedgerCount: 0
+    };
+
+    // Record audit run — three bugs fixed here:
+    // BUG-A: next_business_date (NOT NULL) was missing → PostgreSQL violation → silent false-positive
+    // BUG-B: ON CONFLICT (id) was wrong — id is random; real UNIQUE key is business_date
+    // BUG-C: reports_snapshot was absent → Reports summary showed empty data even if row existed
+    // BUG-D: INSERT result was never checked — db.query() returns {ok:false} not throws on error
+    const insertResult = await db.query(
       `INSERT INTO night_audit_runs
-         (id,business_date,status,rooms_posted,occupied_rooms,available_rooms,
-          room_revenue,total_revenue,occupancy_percent,adr,revpar,completed_at,inserted_at)
-       VALUES ($1,$2::date,'completed',$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())
-       ON CONFLICT (id) DO NOTHING`,
-      [runId, date, roomsPosted, totalOccupied, totalAvailable,
-       roomRevenue, totalRevenue, occupancyPct, adr, revpar]
+         (id,business_date,next_business_date,status,rooms_posted,occupied_rooms,available_rooms,
+          room_revenue,total_revenue,occupancy_percent,adr,revpar,
+          run_by,started_at,completed_at,reports_snapshot,inserted_at)
+       VALUES (gen_random_uuid(),$1::date,$2::date,'completed',$3,$4,$5,$6,$7,$8,$9,$10,
+               'catch_up_manual',$1::date,NOW(),$11::jsonb,NOW())
+       ON CONFLICT (business_date) DO NOTHING
+       RETURNING id`,
+      [date, nextDateStr, roomsPosted, totalOccupied, totalAvailable,
+       roomRevenue, totalRevenue, occupancyPct, adr, revpar, JSON.stringify(snapshot)]
     );
 
-    safeJson(res, { ok: true, date, roomsPosted, roomRevenue, totalRevenue, occupancyPct: occupancyPct.toFixed(1), nextBusinessDate: nextDateStr });
+    // BUG-D fix: explicitly check INSERT result and surface errors
+    if (!insertResult.ok) {
+      console.error(`[night-audit/run] INSERT failed for ${date}:`, insertResult.error);
+      return safeJson(res, { ok: false, error: `Failed to record audit for ${date}: ${insertResult.error}` });
+    }
+
+    const inserted = insertResult.rows?.length > 0;
+    safeJson(res, { ok: true, date, roomsPosted, roomRevenue, fbRevenue: posRevenue, totalRevenue, occupancyPct: occupancyPct.toFixed(1), nextBusinessDate: nextDateStr, recorded: inserted, skipped: !inserted });
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 

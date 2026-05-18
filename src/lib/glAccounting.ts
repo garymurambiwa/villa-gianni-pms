@@ -275,7 +275,6 @@ export const postDailyJournalFromNightAudit = (businessDate: string, bundle: any
   const mappingsOk = validateMappingsComplete();
   if (!mappingsOk.ok) return { ok: false, error: `Missing GL mappings: ${mappingsOk.missing.join(', ')}` };
   const entry = createDailyJournalFromNightAudit(businessDate, bundle);
-  // Extend attachments with context
   try {
     const backup = readJSON<any>('corepms_backup_last', null);
     entry.attachments = {
@@ -287,8 +286,49 @@ export const postDailyJournalFromNightAudit = (businessDate: string, bundle: any
     };
   } catch {}
   if (!isBalanced(entry.lines)) return { ok: false, error: 'Journal is not balanced' };
+  // Layer 1: localStorage (fast, offline-capable)
   appendLedger(entry);
+  // Layer 2: DB persistence (async, fire-and-forget — localStorage is the fallback if offline)
+  // This makes Accounting > Daily Journal the single source of truth for financial data.
+  persistJournalEntryToDB(entry, 'night_audit').catch(err =>
+    console.warn('[glAccounting] DB journal persist failed (non-fatal):', err?.message)
+  );
   return { ok: true, entry };
+};
+
+/**
+ * Persist a journal entry to the DB gl_journal_entries + gl_journal_lines tables.
+ * Called after every appendLedger() to keep the DB in sync.
+ * Non-blocking — caller should not await unless strict ACID is required.
+ */
+export const persistJournalEntryToDB = async (
+  entry: GLJournalEntry,
+  source: string = 'manual'
+): Promise<{ ok: boolean; error?: string }> => {
+  try {
+    const res = await fetch('/api/gl/journal-entries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: entry.id,
+        business_date: entry.date,
+        reference: entry.reference,
+        description: entry.reference || `Journal ${entry.date}`,
+        source,
+        lines: entry.lines.map(l => ({
+          accountId: l.accountId,
+          debit: l.debit,
+          credit: l.credit,
+          description: l.description
+        })),
+        created_by: (entry.attachments as any)?.userId || 'system'
+      })
+    });
+    const data = await res.json();
+    return { ok: data.ok, error: data.error };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
 };
 
 // Reporting utilities

@@ -178,6 +178,8 @@ const NightAudit: React.FC = () => {
     setCatchupRunning(true);
     setCatchupLog([]);
     const log: string[] = [];
+    let successCount = 0, failCount = 0, skipCount = 0;
+
     for (const date of catchupDates) {
       log.push(`Running audit for ${date}…`);
       setCatchupLog([...log]);
@@ -186,24 +188,42 @@ const NightAudit: React.FC = () => {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ date })
         }).then(x => x.json());
+
         if (r.ok) {
-          log.push(r.skipped
-            ? `  ✓ ${date} — already existed, skipped`
-            : `  ✓ ${date} — ${r.roomsPosted} rooms posted, revenue $${Number(r.totalRevenue||0).toFixed(2)}`
-          );
+          if (r.skipped) {
+            log.push(`  ↷ ${date} — already exists in DB, skipped`);
+            skipCount++;
+          } else {
+            // recorded:true confirms the DB INSERT actually went through
+            const recorded = r.recorded !== false; // default true for backward compat
+            log.push(recorded
+              ? `  ✓ ${date} — recorded (${r.roomsPosted||0} rooms, $${Number(r.totalRevenue||0).toFixed(2)})`
+              : `  ⚠ ${date} — returned ok but DB record not confirmed`
+            );
+            successCount++;
+          }
         } else {
-          log.push(`  ✗ ${date} — ${r.error}`);
+          // Surfacing real server errors — previously these were silently swallowed
+          log.push(`  ✗ ${date} — ${r.error || 'Unknown server error'}`);
+          failCount++;
         }
       } catch (e: any) {
         log.push(`  ✗ ${date} — ${e.message}`);
+        failCount++;
       }
       setCatchupLog([...log]);
     }
-    log.push('Catch-up complete. Refreshing…');
+
+    const summary = `${successCount} recorded, ${skipCount} skipped, ${failCount} failed`;
+    log.push(`\nCatch-up complete: ${summary}. Refreshing reports…`);
     setCatchupLog([...log]);
     setCatchupDates([]);
     setCatchupRunning(false);
-    toast({ title: 'Catch-up audits complete', description: `${catchupDates.length} dates processed.` });
+    toast({
+      title: failCount > 0 ? 'Catch-up completed with errors' : 'Catch-up audits complete',
+      description: summary,
+      variant: failCount > 0 ? 'destructive' : undefined
+    });
   };
 
   const forceReconciliation = () => {
