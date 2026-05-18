@@ -194,48 +194,6 @@ export const Header: React.FC = () => {
                    </>
                  )}
                </div>
-                  <div className="text-xs">{getTotals().count} orders</div>
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                {!activeShift ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => { setPinPurpose('start'); setShowPinModal(true); }}
-                    className="bg-red-600 hover:bg-red-700 border-red-600 text-current hover:text-current transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
-                  >
-                    Start Shift
-                  </Button>
-                ) : (
-                  <>
-                    {/* X-Reading — requires manager PIN for barmen/cashiers */}
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => requireManagerPin('z_reading')}
-                      className="transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
-                      title={canManagePOS(user?.role) ? 'Generate X-Reading' : 'Requires Manager PIN'}
-                    >
-                      X-Reading
-                      {!canManagePOS(user?.role) && <span className="ml-1 text-[10px] opacity-70">🔒</span>}
-                    </Button>
-
-                    {/* End Shift — requires manager PIN for barmen/cashiers */}
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => requireManagerPin('end_shift')}
-                      className="transition-all duration-200 transform hover:scale-105 hover:shadow-lg"
-                      title={canManagePOS(user?.role) ? 'End Shift' : 'Requires Manager PIN'}
-                    >
-                      End Shift
-                      {!canManagePOS(user?.role) && <span className="ml-1 text-[10px] opacity-70">🔒</span>}
-                    </Button>
-                  </>
-                )}
-              </div>
 
               {/* Management-only Settings button */}
               {canManagePOS(user?.role) && (

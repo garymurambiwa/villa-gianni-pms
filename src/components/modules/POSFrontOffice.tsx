@@ -366,10 +366,17 @@ export const POSFrontOffice: React.FC = () => {
     setTables(prev => {
       const safePrev = Array.isArray(prev) ? prev : [];
       return safePrev.map(table => {
-        // Find any open order for this table
-        const tableOrder = posOrders.find(order =>
-          order.table_number === table.id && String(order.status).toLowerCase() === 'open'
-        );
+        // RCA-H2 FIX: scope match to this outlet's cost_centre to prevent cross-outlet
+        // contamination. An open order for 't4' from 'Main Restaurant' must NOT mark
+        // t4 as occupied when the user is in the 'Conference' outlet.
+        const tableCostCentre = table.cost_center || costCentre || null;
+        const tableOrder = posOrders.find(order => {
+          const orderCostCentre = order.cost_center || null;
+          const costCentreMatch = !tableCostCentre || !orderCostCentre || tableCostCentre === orderCostCentre;
+          return order.table_number === table.id &&
+            String(order.status).toLowerCase() === 'open' &&
+            costCentreMatch;
+        });
 
         if (tableOrder) {
           // Convert database order format to frontend bill format
@@ -817,6 +824,14 @@ export const POSFrontOffice: React.FC = () => {
     );
     setTables(next);
     pendingBillRef.current = bill;
+
+    // RCA-RACE FIX: Write table_status to DB immediately (synchronously before debounce)
+    // so fetchTablesForCostCentre — which fires on activeShift changes — always finds
+    // the table marked 'occupied' and preserves currentBill. Without this, the 400ms
+    // debounce gap meant fetchTablesForCostCentre could read stale 'open' status
+    // from table_status and wipe the bill off the UI.
+    updateTableStatus(bill.tableId, 'occupied');
+
     if (debouncedTimerRef.current) clearTimeout(debouncedTimerRef.current);
     debouncedTimerRef.current = setTimeout(async () => {
       const current = pendingBillRef.current;
@@ -833,10 +848,11 @@ export const POSFrontOffice: React.FC = () => {
       if (!ok) {
         console.log('[POSFrontOffice] Order save failed');
         setTables(prev);
+        // Roll back the optimistic table_status write on failure
+        updateTableStatus(bill.tableId, 'available');
         alert('Database Write Failed: POS order could not be saved');
       } else {
         console.log('[POSFrontOffice] Order saved successfully');
-        updateTableStatus(current.tableId, 'occupied');
       }
     }, 400);
   };
