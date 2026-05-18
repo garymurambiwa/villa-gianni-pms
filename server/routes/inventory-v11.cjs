@@ -17,6 +17,10 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const fs = require('fs');
 
+// Import utility functions for robust ID generation and error handling
+const { generateSecureShortId, generateAlphanumericShortId, validateShortId } = require('../utils/shortIdGenerator');
+const { handleShortIdConstraintViolation, databaseErrorHandler, safeInventoryOperation } = require('../utils/dbErrorHandler');
+
 // Load environment
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
@@ -1786,44 +1790,66 @@ router.post('/items', async (req, res) => {
   } = req.body;
   if (!name) return res.status(400).json({ ok: false, error: 'name is required' });
 
-  try {
-    const itemId = id || (await generateShortItemId(name));
-    const shortId = itemId.match(/^[A-Z0-9]{4}#[0-9]{3}$/) ? itemId : (await generateShortItemId(name));
-    // Auto-generate SKU if not provided
-    const skuVal = sku || null;
+   try {
+     // Generate a compliant short ID using our utility function
+     // Fallback to the original method if needed, but ensure it's compliant
+     let generatedShortId;
+     if (!id) {
+       // For new items, generate a compliant short ID
+       generatedShortId = generateSecureShortId(10);
+     } else {
+       // For updates, use provided ID or generate from name if it matches pattern
+       const potentialId = id || (await generateShortItemId(name));
+       generatedShortId = potentialId.match(/^[A-Z0-9]{4}#[0-9]{3}$/) ? potentialId : generateSecureShortId(10);
+     }
+     
+     // Validate the generated short ID
+     const validation = validateShortId(generatedShortId);
+     if (!validation.valid) {
+       // Fallback to a safe default if validation fails
+       generatedShortId = `ITEM${Date.now().toString(36).toUpperCase().substring(0, 6)}`;
+       // Ensure it's still valid
+       const fallbackValidation = validateShortId(generatedShortId);
+       if (!fallbackValidation.valid) {
+         generatedShortId = 'ITEM001'; // Last resort fallback
+       }
+     }
 
-    const r = await pool.query(`
-      INSERT INTO public.inv_items
-        (id, short_id, name, category, sub_category, base_uom_id, sku, barcode,
-         last_cost_price, weighted_avg_cost, average_cost,
-         expiry_tracking, default_location_id, supplier_id,
-         media_url, notes, par_level, reorder_level, default_wastage_pct,
-         is_active, inserted_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$9,$10,$11,$12,$13,$14,$15,$16,$17,true,NOW(),NOW())
-      ON CONFLICT (id) DO UPDATE SET
-        short_id           = COALESCE(public.inv_items.short_id, EXCLUDED.short_id),
-        name               = EXCLUDED.name,
-        category           = EXCLUDED.category,
-        sub_category       = EXCLUDED.sub_category,
-        base_uom_id        = EXCLUDED.base_uom_id,
-        sku                = COALESCE(EXCLUDED.sku, public.inv_items.sku),
-        barcode            = EXCLUDED.barcode,
-        last_cost_price    = EXCLUDED.last_cost_price,
-        expiry_tracking    = EXCLUDED.expiry_tracking,
-        default_location_id= EXCLUDED.default_location_id,
-        supplier_id        = EXCLUDED.supplier_id,
-        media_url          = EXCLUDED.media_url,
-        notes              = EXCLUDED.notes,
-        par_level          = EXCLUDED.par_level,
-        reorder_level      = EXCLUDED.reorder_level,
-        default_wastage_pct= EXCLUDED.default_wastage_pct,
-        updated_at         = NOW()
-      RETURNING *
-    `, [itemId, shortId, name, category||'Food', sub_category||null, base_uom_id||'uom_unit',
-        skuVal, barcode||null, Number(last_cost_price||0),
-        !!expiry_tracking, default_location_id||null, supplier_id||null,
-        media_url||null, notes||null, Number(par_level||0), Number(reorder_level||0),
-        Number(default_wastage_pct||0)]);
+     // Auto-generate SKU if not provided
+     const skuVal = sku || null;
+
+     const r = await pool.query(`
+       INSERT INTO public.inv_items
+         (id, short_id, name, category, sub_category, base_uom_id, sku, barcode,
+          last_cost_price, weighted_avg_cost, average_cost,
+          expiry_tracking, default_location_id, supplier_id,
+          media_url, notes, par_level, reorder_level, default_wastage_pct,
+          is_active, inserted_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$9,$10,$11,$12,$13,$14,$15,$16,$17,true,NOW(),NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         short_id           = COALESCE(public.inv_items.short_id, EXCLUDED.short_id),
+         name               = EXCLUDED.name,
+         category           = EXCLUDED.category,
+         sub_category       = EXCLUDED.sub_category,
+         base_uom_id        = EXCLUDED.base_uom_id,
+         sku                = COALESCE(EXCLUDED.sku, public.inv_items.sku),
+         barcode            = EXCLUDED.barcode,
+         last_cost_price    = EXCLUDED.last_cost_price,
+         expiry_tracking    = EXCLUDED.expiry_tracking,
+         default_location_id= EXCLUDED.default_location_id,
+         supplier_id        = EXCLUDED.supplier_id,
+         media_url          = EXCLUDED.media_url,
+         notes              = EXCLUDED.notes,
+         par_level          = EXCLUDED.par_level,
+         reorder_level      = EXCLUDED.reorder_level,
+         default_wastage_pct= EXCLUDED.default_wastage_pct,
+         updated_at         = NOW()
+       RETURNING *
+     `, [itemId, generatedShortId, name, category||'Food', sub_category||null, base_uom_id||'uom_unit',
+         skuVal, barcode||null, Number(last_cost_price||0),
+         !!expiry_tracking, default_location_id||null, supplier_id||null,
+         media_url||null, notes||null, Number(par_level||0), Number(reorder_level||0),
+         Number(default_wastage_pct||0)]);
 
     const item = r.rows[0];
 
@@ -1857,31 +1883,64 @@ router.post('/items', async (req, res) => {
         sub_category || null, notes || null, media_url || null]);
 
     res.json({ ok: true, data: item });
-  } catch (err) {
-    // ── FK Constraint Guard: auto-seed UOMs and retry if missing ─────────────
-    // Catches: "insert or update on table inv_items violates foreign key constraint
-    //           inv_items_base_uom_id_fkey"
-    // Root cause: inv_uom_definitions exists but is empty (bootstrap seeding failed)
-    if (err.code === '23503' && err.message.includes('uom')) {
-      console.warn('[inv-v11] UOM FK violation — auto-seeding UOM definitions and retrying...');
-      try {
-        const client = await pool.connect();
-        await seedUomDefinitions(client);
-        client.release();
-        // Retry the request (will now find the UOM)
-        return res.status(409).json({
-          ok: false,
-          error: 'UOM definitions were missing — they have been seeded automatically. Please try saving again.',
-          retry: true,
-          hint: 'The Unit of Measure table was empty. It has now been populated. Click Save again.'
-        });
-      } catch (seedErr) {
-        console.error('[inv-v11] Auto-seed failed:', seedErr.message);
-      }
-    }
-    console.error('[inv-v11] items POST error:', err.message);
-    res.status(500).json({ ok: false, error: err.message });
-  }
+   } catch (err) {
+     // Handle specific constraint violations with our error handler
+     const constraintError = handleShortIdConstraintViolation(err, {
+       short_id: generatedShortId,
+       name: name,
+       category: category
+     });
+     
+     if (constraintError) {
+       // Return formatted error response for constraint violations
+       const statusCode = constraintError.error === 'VALIDATION_ERROR' ? 400 : 
+                         constraintError.error === 'CONFLICT' ? 409 : 500;
+       return res.status(statusCode).json(constraintError);
+     }
+     
+     // ── FK Constraint Guard: auto-seed UOMs and retry if missing ─────────────
+     // Catches: "insert or update on table inv_items violates foreign key constraint
+     //           inv_items_base_uom_id_fkey"
+     // Root cause: inv_uom_definitions exists but is empty (bootstrap seeding failed)
+     if (err.code === '23503' && err.message.includes('uom')) {
+       console.warn('[inv-v11] UOM FK violation — auto-seeding UOM definitions and retrying...');
+       try {
+         const client = await pool.connect();
+         await seedUomDefinitions(client);
+         client.release();
+         // Retry the request (will now find the UOM)
+         return res.status(409).json({
+           ok: false,
+           error: 'UOM definitions were missing — they have been seeded automatically. Please try saving again.',
+           retry: true,
+           hint: 'The Unit of Measure table was empty. It has now been populated. Click Save again.'
+         });
+       } catch (seedErr) {
+         console.error('[inv-v11] Auto-seed failed:', seedErr.message);
+       }
+     }
+     
+     // For unexpected errors, use our database error handler or fallback to generic
+     console.error('[inv-v11] items POST error:', err.message);
+     // Try to use our database error handler first
+     try {
+       // Create a mock req/res for the error handler
+       const mockReq = { headers: {} };
+       const mockRes = {
+         status: function(code) {
+           this.statusCode = code;
+           return this;
+         },
+         json: function(data) {
+           return res.status(this.statusCode || 500).json(data);
+         }
+       };
+       databaseErrorHandler(err, mockReq, mockRes, () => {});
+     } catch (handlerErr) {
+       // Fallback to generic error if handler fails
+       res.status(500).json({ ok: false, error: err.message });
+     }
+   }
 });
 
 /** PUT /api/v1/inventory/items/:id — full update (FIX: was broken router.handle pattern) */
@@ -1947,19 +2006,33 @@ router.put('/items/:id', async (req, res) => {
         Number(selling_price||0), Number(last_cost_price||0), uomCode, notes||null, media_url||null]);
 
     res.json({ ok: true, data: item });
-  } catch (err) {
-    // Same FK guard as POST — auto-seed if UOM missing
-    if (err.code === '23503' && err.message.includes('uom')) {
-      const c = await pool.connect();
-      await seedUomDefinitions(c).catch(() => {});
-      c.release();
-      return res.status(409).json({
-        ok: false, error: 'UOM definitions were missing — now seeded. Please retry.',
-        retry: true
-      });
-    }
-    res.status(500).json({ ok: false, error: err.message });
-  }
+   } catch (err) {
+     // Handle specific constraint violations with our error handler
+     const constraintError = handleShortIdConstraintViolation(err, {
+       short_id: null, // PUT doesn't modify short_id, but check if there's an existing issue
+       name: name,
+       category: category
+     });
+     
+     if (constraintError) {
+       // Return formatted error response for constraint violations
+       const statusCode = constraintError.error === 'VALIDATION_ERROR' ? 400 : 
+                         constraintError.error === 'CONFLICT' ? 409 : 500;
+       return res.status(statusCode).json(constraintError);
+     }
+     
+     // Same FK guard as POST — auto-seed if UOM missing
+     if (err.code === '23503' && err.message.includes('uom')) {
+       const c = await pool.connect();
+       await seedUomDefinitions(c).catch(() => {});
+       c.release();
+       return res.status(409).json({
+         ok: false, error: 'UOM definitions were missing — now seeded. Please retry.',
+         retry: true
+       });
+     }
+     res.status(500).json({ ok: false, error: err.message });
+   }
 });
 
 /** DELETE /api/v1/inventory/items/:id — soft-delete (FIX: also deactivates in products table) */
