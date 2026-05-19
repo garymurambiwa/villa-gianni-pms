@@ -857,7 +857,10 @@ export const POSFrontOffice: React.FC = () => {
   };
 
   const processPayment = async (paymentData: any) => {
-    const bill = paymentModal.bill;
+    // PaymentModal calls onPaymentComplete inside a setTimeout(200ms), after onClose() already
+    // sets paymentModal.bill = null (at 100ms). Use paymentData.bill as fallback so we still
+    // have the bill reference when processPayment executes.
+    const bill = paymentModal.bill || paymentData?.bill;
     if (!bill) return;
     const total = bill.total;
 

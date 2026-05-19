@@ -332,6 +332,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     const isCityLedgerPosting = (paymentMethod === 'city-ledger' || (paymentMethod === 'room-charge' && roomChargeType === 'city-ledger')) && selectedAccount;
 
     const paymentData = {
+      bill,
       billId: bill.id,
       amount: discountedTotal,
       paymentMethod,
