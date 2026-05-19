@@ -403,7 +403,12 @@ export const POSFrontOffice: React.FC = () => {
           return { ...table, status: 'occupied', currentBill };
         }
 
-        // If no order found, ensure table is available (unless it was manually suspended)
+        // If no order found, keep occupied tables that still have a currentBill —
+        // this prevents premature reset while the DB write is in-flight or during
+        // the brief window between "Send to Kitchen" and posOrders re-fetch.
+        // The table is only cleared to available when processPayment explicitly
+        // calls setTables(..., status: 'available', currentBill: undefined).
+        if (table.status === 'occupied' && table.currentBill) return table;
         return table.status === 'suspended' ? table : { ...table, status: 'available', currentBill: undefined };
       });
     });
@@ -842,7 +847,7 @@ export const POSFrontOffice: React.FC = () => {
             items: current.items,
             total: current.total,
             cost_center: costCentre || 'Main Restaurant',
-            shift_id: shiftId
+            shift_id: activeShift?.id || shiftId
           })
         : Promise.resolve(true));
       if (!ok) {
