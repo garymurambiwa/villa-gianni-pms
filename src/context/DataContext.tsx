@@ -706,11 +706,9 @@ check_in_date = ?, check_out_date = ?, status = ?,
         return false;
       }
 
-      // Update table status to occupied
-      const tableSql = provisional.cost_center
-        ? "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'occupied', ?, NOW()) ON CONFLICT (table_id, cost_center) DO UPDATE SET status = 'occupied', last_update = NOW()"
-        : "INSERT INTO table_status (table_id, status, last_update) VALUES (?, 'occupied', NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'occupied', last_update = NOW()";
-      const tableParams = provisional.cost_center ? [provisional.table_number, provisional.cost_center] : [provisional.table_number];
+      // Update table status to occupied — always conflict on table_id (the actual PK)
+      const tableSql = "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'occupied', ?, NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'occupied', cost_center = EXCLUDED.cost_center, last_update = NOW()";
+      const tableParams = [provisional.table_number, provisional.cost_center || 'Main Restaurant'];
       await db.query(tableSql, tableParams);
 
       return true;

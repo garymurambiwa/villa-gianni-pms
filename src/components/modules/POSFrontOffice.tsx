@@ -373,9 +373,14 @@ export const POSFrontOffice: React.FC = () => {
         const tableOrder = posOrders.find(order => {
           const orderCostCentre = order.cost_center || null;
           const costCentreMatch = !tableCostCentre || !orderCostCentre || tableCostCentre === orderCostCentre;
+          // RCA-STALE FIX: ignore orders from previous shifts — if there is an active
+          // shift, only orders whose shift_id matches are current. Orders with a
+          // different (or null) shift_id are orphans from crashed/unclosed sessions.
+          const shiftMatch = !activeShift?.id || order.shift_id === activeShift.id;
           return order.table_number === table.id &&
             String(order.status).toLowerCase() === 'open' &&
-            costCentreMatch;
+            costCentreMatch &&
+            shiftMatch;
         });
 
         if (tableOrder) {
@@ -411,7 +416,21 @@ export const POSFrontOffice: React.FC = () => {
         return table.status === 'suspended' ? table : { ...table, status: 'available', currentBill: undefined };
       });
     });
-  }, [posOrders]);
+  }, [posOrders, activeShift]);
+
+  // One-time cleanup: when a shift becomes active, close any open orders that belong to a
+  // *different* (or null) shift — these are orphans from a previous session that crashed
+  // or wasn't shut down cleanly. Without this, stale orders persist in pos_orders and
+  // cause tables to appear occupied on the next session.
+  const staleOrderCleanupDone = React.useRef(false);
+  useEffect(() => {
+    if (!activeShift?.id || staleOrderCleanupDone.current) return;
+    staleOrderCleanupDone.current = true;
+    db.query(
+      `UPDATE pos_orders SET status='closed' WHERE status='open' AND (shift_id IS NULL OR shift_id != $1)`,
+      [activeShift.id]
+    ).catch(() => { /* non-fatal */ });
+  }, [activeShift?.id]);
 
   // Track how long since mount so GUARD 1 doesn't fire before shift is restored from storage
   const mountTimeRef = React.useRef<number>(Date.now());
@@ -575,7 +594,7 @@ export const POSFrontOffice: React.FC = () => {
         `
           INSERT INTO table_status (table_id, status, cost_center, last_update)
           VALUES ($1, $2, $3, NOW())
-          ON CONFLICT (table_id, cost_center) DO UPDATE SET status = EXCLUDED.status, last_update = NOW()
+          ON CONFLICT (table_id) DO UPDATE SET status = EXCLUDED.status, cost_center = EXCLUDED.cost_center, last_update = NOW()
         `,
         [tableId, mapped, costCentre || 'Main Restaurant']
       );
