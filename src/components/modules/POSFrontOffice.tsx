@@ -516,15 +516,27 @@ export const POSFrontOffice: React.FC = () => {
   };
 
   // Determine outlet from bill items (bar vs restaurant/food)
+  // Real menuItems use department: 'Bar' | 'Restaurant' (capital case),
+  // plus bar_visibility / restaurant_visibility flags, and category_ids like
+  // 'CAT_BAR_GEN'. Check all of these for robust classification.
   const getOutletFromBill = (bill: any): string => {
     if (!bill || !Array.isArray(bill.items) || !bill.items.length) {
-      return 'Restaurant POS'; // Default to restaurant
+      return 'Restaurant POS';
     }
-    // Count bar vs food items
-    const barCount = bill.items.filter((i: any) => i.menuItem?.category === 'bar').length;
-    const foodCount = bill.items.filter((i: any) => i.menuItem?.category === 'food').length;
-    // If majority are bar items, it's a Bar POS transaction
-    return barCount > foodCount ? 'Bar POS' : 'Restaurant POS';
+    const isBarItem = (i: any) => {
+      const m = i.menuItem || i;
+      const dept = String(m.department || '').toLowerCase();
+      const cat = String(m.category || '').toLowerCase();
+      const subId = String(m.sub_id || '').toLowerCase();
+      const categoryId = String(m.category_id || '').toLowerCase();
+      return dept === 'bar' ||
+             m.bar_visibility === true ||
+             cat.includes('bar') ||
+             subId.includes('bar') ||
+             categoryId.includes('bar');
+    };
+    const barCount = bill.items.filter(isBarItem).length;
+    return barCount > (bill.items.length / 2) ? 'Bar POS' : 'Restaurant POS';
   };
   const posIsLoading = loading || !Array.isArray(posOrders);
   const [connError, setConnError] = useState<string | null>(null);
@@ -917,6 +929,15 @@ export const POSFrontOffice: React.FC = () => {
     // Mark table as paid — prevents posOrders effect from re-occupying it during
     // the race window between optimistic state clear and DB UPDATE completing.
     paidTablesRef.current.add(bill.tableId);
+
+    // Cancel any pending debounced save for this table — if the user pays within
+    // 400ms of saving the order, the debounced savePosOrder would otherwise fire
+    // AFTER closePosOrder and re-add the order to posOrders, re-occupying the table.
+    if (debouncedTimerRef.current && pendingBillRef.current?.tableId === bill.tableId) {
+      clearTimeout(debouncedTimerRef.current);
+      debouncedTimerRef.current = null;
+      pendingBillRef.current = null;
+    }
 
     // Close POS order in DB (fire-and-forget)
     if (closePosOrder) {
