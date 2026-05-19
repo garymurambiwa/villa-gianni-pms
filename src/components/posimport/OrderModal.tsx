@@ -844,30 +844,49 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
               <div className="flex gap-2">
                 <Button variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
 
-                {/* If there are existing items, show payment option */}
-                {bill && items.length > 0 && onPayment && (
+                {/* Process Payment — visible for both new and existing orders.
+                    Bar items (drinks) often don't need a kitchen ticket; staff can
+                    select items and go straight to payment. For a new order this
+                    saves the order first so it appears in shift history. */}
+                {items.length > 0 && onPayment && (
                   <Button
                     variant="secondary"
                     onClick={() => {
                       const finalTotal = total * (1 + posSettings.service_charge);
                       const vatAmount = total - (total / (1 + posSettings.vat_rate));
                       const scAmount = total * posSettings.service_charge;
+                      const billId = bill?.id || `bill-${Date.now()}`;
 
-                      const currentBill = {
-                        id: bill?.id || `bill-${Date.now()}`,
+                      // For a brand-new order, persist it first so it appears in
+                      // shift reports (fire-and-forget — payment modal opens immediately)
+                      if (!bill) {
+                        onSave({
+                          id: billId,
+                          tableId: `t${tableNumber}`,
+                          items,
+                          status: 'open',
+                          createdAt: new Date().toISOString(),
+                          total: finalTotal,
+                          shift_id: activeShift?.id,
+                          user_id: user?.id,
+                          vat_amount: vatAmount,
+                          service_charge_amount: scAmount
+                        });
+                      }
+
+                      onPayment({
+                        id: billId,
                         tableId: `t${tableNumber}`,
-                         items: items.map(item => ({
-                           name: item.menuItem?.name || 'Unknown Item',
-                           quantity: item.quantity,
-                           price: item.menuItem?.price || 0,
-                           subtotal: item.subtotal
+                        items: items.map(item => ({
+                          name: item.menuItem?.name || 'Unknown Item',
+                          quantity: item.quantity,
+                          price: item.menuItem?.price || 0,
+                          subtotal: item.subtotal
                         })),
                         total: finalTotal,
                         customerName: bill?.customerName,
                         roomNumber: bill?.roomNumber
-                      };
-
-                      onPayment(currentBill);
+                      });
                     }}
                     className="flex-1"
                   >
@@ -898,7 +917,6 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                     });
 
                     toast({ title: 'Order saved', description: 'Items are now committed — manager PIN required for modifications.' });
-                    // Close modal after saving order
                     onClose();
                   }}
                   className="flex-1"

@@ -641,15 +641,15 @@ check_in_date = ?, check_out_date = ?, status = ?,
         table_number: String(orderData.table || ''),
         items: Array.isArray(orderData.items) ? orderData.items : [],
         total_amount: Number(orderData.total || 0),
-        status: 'OPEN',
+        status: 'open',  // lowercase — must match the posOrders useEffect check in POSFrontOffice
         cost_center: orderData.cost_center,
         shift_id: orderData.shift_id
       };
-      
+
       setPosOrders((prev: any[]) => {
-        const idx = prev.findIndex((p: any) => 
-          String(p.table_number) === provisional.table_number && 
-          String(p.status) === 'OPEN' &&
+        const idx = prev.findIndex((p: any) =>
+          String(p.table_number) === provisional.table_number &&
+          String(p.status).toLowerCase() === 'open' &&
           p.cost_center === provisional.cost_center
         );
         if (idx >= 0) {
@@ -662,14 +662,15 @@ check_in_date = ?, check_out_date = ?, status = ?,
 
       // Generate unique ID for the POS order
       const orderId = `POS${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      
-      // Try to update existing order for this table AND cost center
-      const updateSql = "UPDATE pos_orders SET items = ?::jsonb, total_amount = ?, status = ?, shift_id = ? WHERE table_number = ? AND status = 'open' AND cost_center = ? RETURNING id";
+
+      // Update existing open order for this table — also match legacy NULL cost_center rows
+      // (orders created before the cost_center column was added) to avoid INSERT conflicts
+      const updateSql = "UPDATE pos_orders SET items = ?::jsonb, total_amount = ?, status = 'open', shift_id = ?, cost_center = ? WHERE table_number = ? AND status = 'open' AND (cost_center = ? OR cost_center IS NULL) RETURNING id";
       const updateParams = [
-        JSON.stringify(provisional.items), 
-        provisional.total_amount, 
-        'open', 
+        JSON.stringify(provisional.items),
+        provisional.total_amount,
         provisional.shift_id,
+        provisional.cost_center,
         provisional.table_number,
         provisional.cost_center
       ];
@@ -677,11 +678,12 @@ check_in_date = ?, check_out_date = ?, status = ?,
 
       // If no rows updated, insert new order
       if (!('error' in updateResult) && 'rows' in updateResult && (updateResult as any).rows.length === 0) {
-        const insertSql = "INSERT INTO pos_orders (id, table_number, items, total_amount, status, cost_center, shift_id) VALUES (?, ?, ?::jsonb, ?, 'open', ?, ?)";
+        // ON CONFLICT handles the rare race where the stale-order cleanup hasn't finished yet
+        const insertSql = "INSERT INTO pos_orders (id, table_number, items, total_amount, status, cost_center, shift_id) VALUES (?, ?, ?::jsonb, ?, 'open', ?, ?) ON CONFLICT (table_number, cost_center) WHERE status = 'open' DO UPDATE SET items = EXCLUDED.items, total_amount = EXCLUDED.total_amount, shift_id = EXCLUDED.shift_id";
         const insertParams = [
-          orderId, 
-          provisional.table_number, 
-          JSON.stringify(provisional.items), 
+          orderId,
+          provisional.table_number,
+          JSON.stringify(provisional.items),
           provisional.total_amount,
           provisional.cost_center,
           provisional.shift_id
@@ -690,8 +692,8 @@ check_in_date = ?, check_out_date = ?, status = ?,
         if ('error' in insertResult) {
           console.error('POS order insert details:', { params: insertParams, error: (insertResult as any).error });
           const dbError = (insertResult as any).error?.message || (insertResult as any).error || 'Unknown DB Error';
-          setPosOrders((prev: any[]) => prev.filter((p: any) => 
-            !(String(p.table_number) === provisional.table_number && String(p.status) === 'OPEN' && p.cost_center === provisional.cost_center)
+          setPosOrders((prev: any[]) => prev.filter((p: any) =>
+            !(String(p.table_number) === provisional.table_number && String(p.status).toLowerCase() === 'open' && p.cost_center === provisional.cost_center)
           ));
           toast({ title: 'Database Write Failed', description: `POS order insert failed: ${dbError}`, variant: 'destructive' });
           return false;
@@ -700,7 +702,7 @@ check_in_date = ?, check_out_date = ?, status = ?,
         console.error('POS order update details:', { params: updateParams, error: (updateResult as any).error });
         const dbError = (updateResult as any).error?.message || (updateResult as any).error || 'Unknown DB Error';
         setPosOrders((prev: any[]) => prev.filter((p: any) =>
-          !(String(p.table_number) === provisional.table_number && String(p.status) === 'OPEN' && p.cost_center === provisional.cost_center)
+          !(String(p.table_number) === provisional.table_number && String(p.status).toLowerCase() === 'open' && p.cost_center === provisional.cost_center)
         ));
         toast({ title: 'Database Write Failed', description: `POS order update failed: ${dbError}`, variant: 'destructive' });
         return false;

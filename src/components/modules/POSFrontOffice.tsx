@@ -370,7 +370,7 @@ export const POSFrontOffice: React.FC = () => {
         // (orphans from crashed/unclosed previous sessions)
         const tableOrder = posOrders.find(order =>
           order.table_number === table.id &&
-          order.status === 'open' &&
+          String(order.status).toLowerCase() === 'open' &&
           (!activeShift?.id || order.shift_id === activeShift.id)
         );
 
