@@ -17,9 +17,68 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const fs = require('fs');
 
-// Import utility functions for robust ID generation and error handling
-const { generateSecureShortId, generateAlphanumericShortId, validateShortId } = require('../utils/shortIdGenerator');
-const { handleShortIdConstraintViolation, databaseErrorHandler, safeInventoryOperation } = require('../utils/dbErrorHandler');
+// Import utility functions for robust ID generation and error handling with fallbacks
+let generateSecureShortId, generateAlphanumericShortId, validateShortId;
+let handleShortIdConstraintViolation, databaseErrorHandler, safeInventoryOperation;
+
+try {
+  const shortIdUtils = require('../utils/shortIdGenerator');
+  generateSecureShortId = shortIdUtils.generateSecureShortId;
+  generateAlphanumericShortId = shortIdUtils.generateAlphanumericShortId;
+  validateShortId = shortIdUtils.validateShortId;
+} catch (e) {
+  console.warn('[inventory-v11] Failed to load shortIdGenerator utilities, using fallbacks:', e.message);
+  // Fallback implementations
+  const { randomUUID } = require('crypto');
+  generateSecureShortId = (length = 10) => {
+    // Generate cryptographically secure random ID
+    const randomBytes = require('crypto').randomBytes(Math.ceil(length * 0.75));
+    return randomBytes.toString('base64url').slice(0, length);
+  };
+  generateAlphanumericShortId = (length = 10) => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let id = '';
+    for (let i = 0; i < length; i++) {
+      const randomIndex = Math.floor(Math.random() * chars.length);
+      id += chars[randomIndex];
+    }
+    return id;
+  };
+  validateShortId = (shortId) => {
+    if (shortId === null) return { valid: true, message: 'Short ID is null (allowed)' };
+    if (typeof shortId !== 'string') return { valid: false, message: 'Short ID must be a string or null' };
+    const length = shortId.length;
+    if (length > 10) return { valid: false, message: `Short ID exceeds maximum length of 10 characters`, providedLength: length, maxAllowed: 10 };
+    return { valid: true, message: `Short ID is valid (length: ${length})`, length: length };
+  };
+}
+
+try {
+  const dbErrorUtils = require('../utils/dbErrorHandler');
+  handleShortIdConstraintViolation = dbErrorUtils.handleShortIdConstraintViolation;
+  databaseErrorHandler = dbErrorUtils.databaseErrorHandler;
+  safeInventoryOperation = dbErrorUtils.safeInventoryOperation;
+} catch (e) {
+  console.warn('[inventory-v11] Failed to load dbErrorHandler utilities, using fallbacks:', e.message);
+  // Fallback implementations
+  handleShortIdConstraintViolation = (error, itemData) => {
+    // Simple fallback - return null to let other error handling take over
+    return null;
+  };
+  databaseErrorHandler = (error, req, res, next) => {
+    // Simple fallback - send generic error
+    console.error('Database error:', error);
+    return res.status(500).json({ ok: false, error: 'Internal server error' });
+  };
+  safeInventoryOperation = async (operationFn, itemData) => {
+    try {
+      const result = await operationFn();
+      return { ok: true, data: result };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  };
+}
 
 // Load environment
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });

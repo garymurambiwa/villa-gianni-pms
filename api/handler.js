@@ -984,7 +984,8 @@ app.post('/api/inventory/periods', async (req, res) => {
 });
 
 app.put('/api/inventory/periods/:id', async (req, res) => {
-  const allowed = ['period_name','status','closing_stock_value','variance_value','cogs_value','kitchen_cogs','cellar_cogs','closed_by','closed_reason'];
+  // Parity with Villa Gianni — same 14 allowed fields (added: reopened_at, reopened_by, is_locked, locked_at, locked_by)
+  const allowed = ['period_name','status','closing_stock_value','variance_value','cogs_value','kitchen_cogs','cellar_cogs','closed_by','closed_reason','reopened_at','reopened_by','is_locked','locked_at','locked_by'];
   const fields = []; const vals = [];
   for (const f of allowed) {
     if (req.body[f] !== undefined) { fields.push(`${f}=$${vals.length+1}`); vals.push(req.body[f]); }
@@ -1032,19 +1033,34 @@ app.get('/api/inventory/audit', async (req, res) => {
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
+<<<<<<< HEAD
 // ─── Inventory Reconciliation — 3 routes missing from Vercel handler (PHASE-1 FIX) ──
+=======
+// ─── Inventory Reconciliation — 3 endpoints matching Villa Gianni ─────────────
+
+>>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
 // POST /api/inventory/batch-reconcile
 app.post('/api/inventory/batch-reconcile', async (req, res) => {
   const { period_id, user_id, items } = req.body || {};
   if (!period_id || !Array.isArray(items) || items.length === 0)
     return safeJson(res, { ok: false, error: 'period_id and items[] required' });
   try {
+<<<<<<< HEAD
     const periodRes = await db.query("SELECT status, is_locked FROM inventory_periods WHERE id=$1", [period_id]);
     if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
     const period = periodRes.rows[0];
     if (period.is_locked) return res.status(403).json({ ok: false, error: 'Period is locked' });
     if (period.status !== 'reconciling') return res.status(403).json({ ok: false, error: 'Period must be in reconciling state' });
 
+=======
+    const periodRes = await db.query(`SELECT status, is_locked FROM inventory_periods WHERE id=$1`, [period_id]);
+    if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
+    const period = periodRes.rows[0];
+    if (period.is_locked) return res.status(403).json({ ok: false, error: 'Period is locked' });
+    if (period.status !== 'reconciling') return res.status(403).json({ ok: false, error: `Period must be in reconciling state, current: ${period.status}` });
+
+    // Pre-fetch all products (reads outside transaction)
+>>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     const productIds = items.map(i => i.product_id).filter(Boolean);
     const placeholders = productIds.map((_, i) => `$${i + 1}`).join(',');
     const allProds = productIds.length > 0
@@ -1065,12 +1081,18 @@ app.post('/api/inventory/batch-reconcile', async (req, res) => {
       const totalValue = variance * newCost;
 
       ops.push({ sql: `INSERT INTO inventory_snapshots (period_id,product_id,physical_qty,variance,opening_qty,received_qty,system_usage_qty) VALUES ($1,$2,$3,$4,0,0,0) ON CONFLICT (period_id,product_id) DO UPDATE SET physical_qty=EXCLUDED.physical_qty,variance=EXCLUDED.variance,updated_at=NOW()`, params: [period_id, product_id, physQty, variance] });
+<<<<<<< HEAD
       if (variance !== 0) ops.push({ sql: `INSERT INTO inventory_transactions (transaction_type,transaction_number,period_id,transaction_date,department,total_quantity,total_value,created_by) VALUES ('adjustment',$1,$2,$3,$4,$5,$6,$7)`, params: [`BATCH-${Date.now()}-${String(product_id).slice(0,8)}`, period_id, today, product.department || 'General', variance, totalValue, user_id || 'system'] });
       if (cost_price != null) {
         ops.push({ sql: 'UPDATE products SET stock_level=$1,cost_price=$2,last_inventory_period_id=$3,last_physical_qty=$4,last_physical_date=NOW(),updated_at=NOW() WHERE id=$5', params: [physQty, newCost, period_id, physQty, product_id] });
       } else {
         ops.push({ sql: 'UPDATE products SET stock_level=$1,last_inventory_period_id=$2,last_physical_qty=$3,last_physical_date=NOW(),updated_at=NOW() WHERE id=$4', params: [physQty, period_id, physQty, product_id] });
       }
+=======
+      if (variance !== 0) ops.push({ sql: `INSERT INTO inventory_transactions (transaction_type,transaction_number,period_id,transaction_date,department,total_quantity,total_value,created_by) VALUES ('adjustment',$1,$2,$3,$4,$5,$6,$7)`, params: [`BATCH-${Date.now()}-${String(product_id).slice(0,8)}`, period_id, today, product.department||'General', variance, totalValue, user_id||'system'] });
+      if (cost_price != null) { ops.push({ sql: 'UPDATE products SET stock_level=$1,cost_price=$2,last_inventory_period_id=$3,last_physical_qty=$4,last_physical_date=NOW(),updated_at=NOW() WHERE id=$5', params: [physQty, newCost, period_id, physQty, product_id] }); }
+      else { ops.push({ sql: 'UPDATE products SET stock_level=$1,last_inventory_period_id=$2,last_physical_qty=$3,last_physical_date=NOW(),updated_at=NOW() WHERE id=$4', params: [physQty, period_id, physQty, product_id] }); }
+>>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     }
     if (ops.length > 0) {
       const txResult = await db.transaction(ops);
@@ -1085,23 +1107,38 @@ app.post('/api/inventory/close', async (req, res) => {
   const { period_id, closed_by, closed_reason, manager_override } = req.body || {};
   if (!period_id || !closed_by) return safeJson(res, { ok: false, error: 'period_id and closed_by required' });
   try {
+<<<<<<< HEAD
     const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id=$1', [period_id]);
+=======
+    const periodRes = await db.query(`SELECT * FROM inventory_periods WHERE id=$1`, [period_id]);
+>>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
     const period = periodRes.rows[0];
     if (period.is_locked) return res.status(403).json({ ok: false, error: 'Period already locked' });
     if (period.status !== 'reconciling') return res.status(403).json({ ok: false, error: `Period must be reconciling, current: ${period.status}` });
 
+<<<<<<< HEAD
     const txCountRes = await db.query("SELECT COUNT(*) as cnt FROM inventory_transactions WHERE period_id=$1 AND transaction_type IN ('purchase','grv')", [period_id]);
     const txCount = Number(txCountRes.rows?.[0]?.cnt || 0);
     if (txCount === 0 && !manager_override) return res.status(403).json({ ok: false, error: 'ZERO_CAPTURE', message: 'No receipts found. Set manager_override:true to force close.' });
 
     const prodRes = await db.query('SELECT id,name,department,stock_level,cost_price,last_physical_qty FROM products WHERE last_inventory_period_id=$1', [period_id]);
+=======
+    const txCountRes = await db.query(`SELECT COUNT(*) as cnt FROM inventory_transactions WHERE period_id=$1 AND transaction_type IN ('purchase','grv')`, [period_id]);
+    const txCount = Number(txCountRes.rows?.[0]?.cnt || 0);
+    if (txCount === 0 && !manager_override) return res.status(403).json({ ok: false, error: 'ZERO_CAPTURE', message: 'No receipts found. Set manager_override:true to force close.' });
+
+    const prodRes = await db.query(`SELECT id,name,department,stock_level,cost_price,last_physical_qty FROM products WHERE last_inventory_period_id=$1`, [period_id]);
+>>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     if (!prodRes.rows?.length) return res.status(400).json({ ok: false, error: 'No physical counts recorded. Perform a stock take first.' });
 
     let totalClosingValue = 0, totalVarianceValue = 0, kitchenVar = 0, cellarVar = 0;
     const today = new Date().toISOString().split('T')[0];
     const ops = [];
+<<<<<<< HEAD
 
+=======
+>>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     for (const p of prodRes.rows) {
       const physQty = Number(p.last_physical_qty || 0);
       const variance = physQty - Number(p.stock_level || 0);
@@ -1109,6 +1146,7 @@ app.post('/api/inventory/close', async (req, res) => {
       const varianceValue = variance * costPrice;
       totalClosingValue += physQty * costPrice;
       totalVarianceValue += varianceValue;
+<<<<<<< HEAD
       if ((p.department || '').toLowerCase() === 'kitchen') kitchenVar += varianceValue;
       else if ((p.department || '').toLowerCase() === 'cellar') cellarVar += varianceValue;
 
@@ -1119,6 +1157,16 @@ app.post('/api/inventory/close', async (req, res) => {
 
     const cogsValue = Number(period.opening_stock_value || 0) + Number(period.received_value || 0) - totalClosingValue;
     ops.push({ sql: `UPDATE inventory_periods SET status='closed',closing_stock_value=$1,variance_value=$2,cogs_value=$3,kitchen_cogs=$4,cellar_cogs=$5,closed_at=NOW(),closed_by=$6,closed_reason=$7,is_locked=true,locked_at=NOW() WHERE id=$8`, params: [totalClosingValue, totalVarianceValue, cogsValue, kitchenVar, cellarVar, closed_by, closed_reason || '', period_id] });
+=======
+      if ((p.department||'').toLowerCase() === 'kitchen') kitchenVar += varianceValue;
+      else if ((p.department||'').toLowerCase() === 'cellar') cellarVar += varianceValue;
+      ops.push({ sql: `INSERT INTO inventory_snapshots (period_id,product_id,physical_qty,variance,opening_qty,received_qty,system_usage_qty) VALUES ($1,$2,$3,$4,0,0,0) ON CONFLICT (period_id,product_id) DO UPDATE SET physical_qty=EXCLUDED.physical_qty,variance=EXCLUDED.variance,updated_at=NOW()`, params: [period_id, p.id, physQty, variance] });
+      if (variance !== 0) ops.push({ sql: `INSERT INTO inventory_transactions (transaction_type,transaction_number,period_id,transaction_date,department,total_quantity,total_value,created_by) VALUES ('adjustment',$1,$2,$3,$4,$5,$6,$7)`, params: [`CLS-${Date.now()}-${p.id.slice(0,8)}`, period_id, today, p.department||'General', variance, varianceValue, closed_by] });
+      ops.push({ sql: 'UPDATE products SET stock_level=$1,updated_at=NOW() WHERE id=$2', params: [physQty, p.id] });
+    }
+    const cogsValue = Number(period.opening_stock_value||0) + Number(period.received_value||0) - totalClosingValue;
+    ops.push({ sql: `UPDATE inventory_periods SET status='closed',closing_stock_value=$1,variance_value=$2,cogs_value=$3,kitchen_cogs=$4,cellar_cogs=$5,closed_at=NOW(),closed_by=$6,closed_reason=$7,is_locked=true,locked_at=NOW() WHERE id=$8`, params: [totalClosingValue, totalVarianceValue, cogsValue, kitchenVar, cellarVar, closed_by, closed_reason||'', period_id] });
+>>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     if (txCount === 0 && manager_override) ops.push({ sql: `INSERT INTO inventory_period_audit (period_id,action,user_id,user_name,change_reason) VALUES ($1,'ZERO_CAPTURE_OVERRIDE',$2,$3,$4)`, params: [period_id, closed_by, closed_by, 'Manager override: zero receipts'] });
 
     const txResult = await db.transaction(ops);
@@ -1132,6 +1180,7 @@ app.post('/api/inventory/reopen', async (req, res) => {
   const { period_id, reopened_by } = req.body || {};
   if (!period_id) return safeJson(res, { ok: false, error: 'period_id required' });
   try {
+<<<<<<< HEAD
     const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id=$1', [period_id]);
     if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
     if (!periodRes.rows[0].is_locked) return res.status(400).json({ ok: false, error: 'Period is not locked' });
@@ -1143,6 +1192,19 @@ app.post('/api/inventory/reopen', async (req, res) => {
     const txResult = await db.transaction(ops);
     if (!txResult.ok) throw new Error(txResult.error);
     safeJson(res, { ok: true, message: 'Period reopened' });
+=======
+    const periodRes = await db.query(`SELECT * FROM inventory_periods WHERE id=$1`, [period_id]);
+    if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
+    if (!periodRes.rows[0].is_locked) return res.status(400).json({ ok: false, error: 'Period is not locked and cannot be reopened' });
+
+    const ops = [
+      { sql: `UPDATE inventory_periods SET status='open',closed_at=NULL,closed_by=NULL,closed_reason=NULL,is_locked=false,locked_at=NULL,locked_by=NULL,reopened_at=NOW(),reopened_by=$1 WHERE id=$2`, params: [reopened_by||'system', period_id] },
+      { sql: `INSERT INTO inventory_period_audit (period_id,action,user_id,user_name,change_reason) VALUES ($1,'PERIOD_REOPENED',$2,$3,$4)`, params: [period_id, reopened_by||'system', reopened_by||'system', 'Period reopened for correction'] }
+    ];
+    const txResult = await db.transaction(ops);
+    if (!txResult.ok) throw new Error(txResult.error);
+    safeJson(res, { ok: true, message: 'Period reopened successfully' });
+>>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
