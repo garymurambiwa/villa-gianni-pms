@@ -948,29 +948,43 @@ export const POSFrontOffice: React.FC = () => {
     paidTablesRef.current.add(bill.tableId);
     setTimeout(() => paidTablesRef.current.delete(bill.tableId), 60000);
 
-    // Cancel any pending debounced save for this table — if the user pays within
-    // 400ms of saving the order, the debounced savePosOrder would otherwise fire
-    // AFTER closePosOrder and re-add the order to posOrders, re-occupying the table.
-    if (debouncedTimerRef.current && pendingBillRef.current?.tableId === bill.tableId) {
+    // Cancel ANY pending debounced save (regardless of tableId) — if a save fires
+    // after closePosOrder it could re-insert an open order into the DB, leaving
+    // the last paid table stuck on next re-fetch. We're processing a payment, so
+    // no pending saves should run.
+    if (debouncedTimerRef.current) {
       clearTimeout(debouncedTimerRef.current);
       debouncedTimerRef.current = null;
       pendingBillRef.current = null;
     }
 
-    // Close POS order in DB (fire-and-forget)
+    // Close POS order in DB. We close twice — the second close (1s later) catches
+    // any racing INSERT from a savePosOrder that managed to fire between our
+    // optimistic state clear and the first UPDATE landing in the DB. This is the
+    // root cause of the "last paid table stays occupied" symptom.
     if (closePosOrder) {
-      closePosOrder(bill.tableId, costCentre || undefined)
+      const doClose = () => closePosOrder(bill.tableId, costCentre || undefined);
+      doClose()
         .then(() => {
-          console.log('POS order closed successfully');
-          // Keep table in paid set — don't delete here (let 60s timeout or new
-          // saveOrder for this table handle removal). This prevents any late
-          // re-fetch from re-occupying the table.
+          console.log('POS order closed (first pass)');
+          // Second pass to catch any racing INSERT
+          setTimeout(() => {
+            doClose().catch(() => {});
+          }, 1000);
         })
         .catch(err => {
           console.warn('POS order close failed:', err);
           paidTablesRef.current.delete(bill.tableId);
         });
     }
+
+    // Force-resync table state from DB shortly after payment — this catches any
+    // case where the in-memory tables state got stuck on 'occupied' but the DB
+    // table_status is already 'open'. This is what makes refresh fix it; doing
+    // it explicitly here gives the same effect without needing a refresh.
+    setTimeout(() => {
+      if (costCentre) fetchTablesForCostCentre(costCentre);
+    }, 1500);
 
     // Update UI state immediately
     setTables(prev => prev.map(t =>
