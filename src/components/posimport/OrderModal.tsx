@@ -79,7 +79,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [subPath, setSubPath] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [itemSize, setItemSize] = useState<'sm' | 'md' | 'lg'>('md');
-  const [posSettings, setPosSettings] = useState({ vat_rate: 0.15, service_charge: 0, currency_symbol: '$' });
+  // Tax fix: seed at 0 so the UI never shows a hardcoded rate before getPosSettings() resolves.
+  // getPosSettings() reads from pos_settings DB table — fully dynamic per property.
+  const [posSettings, setPosSettings] = useState({ vat_rate: 0, service_charge: 0, currency_symbol: '$' });
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: MenuItem } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -416,6 +418,16 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   };
 
   const total = (Array.isArray(items) ? items : []).reduce((sum, item) => sum + item.subtotal, 0);
+
+  // Bill composition — drives button label and kitchen slip filtering
+  const safeItems = Array.isArray(items) ? items : [];
+  const hasFood      = safeItems.some(i => i.menuItem?.category === 'food');
+  const hasBeverage  = safeItems.some(i => i.menuItem?.category === 'bar');
+  const beverageOnly = hasBeverage && !hasFood;
+  // Label: "Save Order" when no food items (bar-only), "Update Order" on edit, "Send to Kitchen" otherwise
+  const saveButtonLabel = bill ? 'Update Order' : beverageOnly ? 'Save Order' : 'Send to Kitchen';
+  // Kitchen slip items: exclude beverages so only food goes to kitchen printer
+  const kitchenItems = safeItems.filter(i => i.menuItem?.category === 'food');
 
   // Search: filter across ALL items when searching
   const isSearching = searchQuery.trim().length > 0;
@@ -878,16 +890,20 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 <Button
                   onClick={() => {
                     const finalTotal = total * (1 + posSettings.service_charge);
-                    const vatAmount = total - (total / (1 + posSettings.vat_rate));
-                    const scAmount = total * posSettings.service_charge;
+                    const vatAmount  = posSettings.vat_rate > 0
+                      ? total - (total / (1 + posSettings.vat_rate))
+                      : 0;
+                    const scAmount   = total * posSettings.service_charge;
 
                     // Mark all current items as committed — PIN required to remove them later
-                    setCommittedItemIds(new Set(items.map(i => i.menuItem.id)));
+                    setCommittedItemIds(new Set(safeItems.map(i => i.menuItem.id)));
 
                     onSave({
                       id: bill?.id || `bill-${Date.now()}`,
                       tableId: `t${tableNumber}`,
-                      items,
+                      items,           // full item list saved to DB — beverages included
+                      kitchenItems,    // food-only slice for kitchen printer (UI-only, not persisted)
+                      beverageOnly,    // flag so caller knows no kitchen slip needed
                       status: 'open',
                       createdAt: new Date().toISOString(),
                       total: finalTotal,
@@ -897,14 +913,14 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       service_charge_amount: scAmount
                     });
 
-                    toast({ title: 'Order saved', description: 'Items are now committed — manager PIN required for modifications.' });
-                    // Close modal after saving order
+                    const label = beverageOnly ? 'Order saved to bar' : 'Order sent to kitchen';
+                    toast({ title: label, description: 'Items committed — manager PIN required for modifications.' });
                     onClose();
                   }}
                   className="flex-1"
-                  disabled={items.length === 0}
+                  disabled={safeItems.length === 0}
                 >
-                  {bill ? 'Update Order' : 'Send to Kitchen'}
+                  {saveButtonLabel}
                 </Button>
               </div>
             </div>

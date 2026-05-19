@@ -1268,14 +1268,16 @@ export const POSFrontOffice: React.FC = () => {
                   <Button variant="outline" onClick={() => setKitchenOpen(false)}>Cancel</Button>
                     <Button onClick={() => {
                       if (!currentBill) return;
-                      const items = Array.isArray(currentBill.items)
-                        ? currentBill.items.map((i: any) => ({
+                      // Kitchen slip: food-only — beverages go to bar, not kitchen printer
+                      const sourceItems = Array.isArray(currentBill.kitchenItems) && currentBill.kitchenItems.length > 0
+                        ? currentBill.kitchenItems
+                        : (Array.isArray(currentBill.items) ? currentBill.items : []).filter((i: any) => i.menuItem?.category !== 'bar');
+                      const items = sourceItems.map((i: any) => ({
                             name: i.menuItem?.name || 'Unknown Item',
                             quantity: i.quantity,
                             price: i.menuItem?.price || 0,
                             subtotal: i.subtotal
-                          }))
-                        : [];
+                          }));
                      const html = generateReceiptHTML({
                       id: currentBill.id,
                       items,
