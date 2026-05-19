@@ -728,7 +728,50 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       {!!item.manual_notes && (
                         <div className="text-xs text-gray-500 italic whitespace-pre-line">{item.manual_notes}</div>
                       )}
-                      <div className="text-sm text-gray-600 mt-1">{item.quantity} x {formatCurrency(item.menuItem.price)}</div>
+                      {/* Quantity multiplier — tap − / + or type a number directly */}
+                      <div className="flex items-center gap-1 mt-1">
+                        <button
+                          type="button"
+                          className="w-6 h-6 rounded bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm flex items-center justify-center"
+                          onClick={() => {
+                            const newQty = item.quantity - 1;
+                            if (newQty <= 0) { removeItem(item.menuItem.id); return; }
+                            setItems(prev => prev.map(i =>
+                              i.menuItem.id === item.menuItem.id
+                                ? { ...i, quantity: newQty, subtotal: newQty * i.menuItem.price }
+                                : i
+                            ));
+                          }}
+                        >−</button>
+                        <input
+                          type="number"
+                          min={1}
+                          max={999}
+                          value={item.quantity}
+                          onChange={e => {
+                            const newQty = Math.max(1, Math.min(999, parseInt(e.target.value) || 1));
+                            setItems(prev => prev.map(i =>
+                              i.menuItem.id === item.menuItem.id
+                                ? { ...i, quantity: newQty, subtotal: newQty * i.menuItem.price }
+                                : i
+                            ));
+                          }}
+                          className="w-12 text-center text-sm border rounded py-0.5 font-semibold"
+                        />
+                        <button
+                          type="button"
+                          className="w-6 h-6 rounded bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm flex items-center justify-center"
+                          onClick={() => {
+                            const newQty = item.quantity + 1;
+                            setItems(prev => prev.map(i =>
+                              i.menuItem.id === item.menuItem.id
+                                ? { ...i, quantity: newQty, subtotal: newQty * i.menuItem.price }
+                                : i
+                            ));
+                          }}
+                        >+</button>
+                        <span className="text-xs text-gray-500 ml-1">× {formatCurrency(item.menuItem.price)}</span>
+                      </div>
                     </div>
                     <div className="text-right">
                       <div className="font-bold text-purple-600">{formatCurrency(item.subtotal)}</div>
