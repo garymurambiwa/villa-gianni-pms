@@ -722,6 +722,16 @@ check_in_date = ?, check_out_date = ?, status = ?,
   };
 
   const closePosOrder = async (tableNumber: string, costCentre?: string): Promise<boolean> => {
+    // Optimistic update — remove from local state immediately so posOrders effect
+    // never re-occupies the table while the DB update is in-flight.
+    const filterFn = (p: any) => {
+      const sameTable = String(p.table_number) === String(tableNumber);
+      const isOpen    = String(p.status || '').toLowerCase() === 'open';
+      const sameCc    = !costCentre || p.cost_center === costCentre;
+      return !(sameTable && isOpen && sameCc);
+    };
+    setPosOrders((prev: any[]) => prev.filter(filterFn));
+
     try {
       // 1. Close the order in pos_orders
       const query = costCentre
@@ -739,16 +749,6 @@ check_in_date = ?, check_out_date = ?, status = ?,
         console.error('Close POS order failed:', (result as any).error);
         return false;
       }
-
-      // FIX: case-insensitive status comparison — DB stores 'open' lowercase
-      // Previous bug: p.status==='OPEN' never matched 'open', so orders stayed
-      // in posOrders state and syncTablesWithOrders immediately re-occupied table.
-      setPosOrders((prev: any[]) => prev.filter((p: any) => {
-        const sameTable = String(p.table_number) === String(tableNumber);
-        const isOpen    = String(p.status || '').toLowerCase() === 'open';
-        const sameCc    = !costCentre || p.cost_center === costCentre;
-        return !(sameTable && isOpen && sameCc);
-      }));
 
       return true;
     } catch (e: any) {
