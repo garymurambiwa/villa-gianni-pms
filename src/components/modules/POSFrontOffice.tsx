@@ -407,6 +407,16 @@ export const POSFrontOffice: React.FC = () => {
           return { ...table, status: 'occupied', currentBill };
         }
 
+        // RACE BRIDGE: don't wipe a table that has a fresh localStorage bill
+        // (user may have saved and navigated before the 400ms DB debounce completed)
+        try {
+          const ls = JSON.parse(localStorage.getItem('corepms_pos_table_states') || '{}');
+          const saved = ls[table.id];
+          if (saved?.status === 'occupied' && saved?.currentBill?.createdAt) {
+            const ageH = (Date.now() - new Date(saved.currentBill.createdAt).getTime()) / 3_600_000;
+            if (ageH < 12) return table; // preserve — localStorage says occupied and bill is fresh
+          }
+        } catch {}
         // If no order found, ensure table is available (unless it was manually suspended)
         return table.status === 'suspended' ? table : { ...table, status: 'available', currentBill: undefined };
       });
@@ -581,15 +591,39 @@ export const POSFrontOffice: React.FC = () => {
           });
         }
 
+        // RACE BRIDGE: read localStorage as a third source for bills that were saved
+        // to React state and localStorage but may not yet be in pos_orders (DB debounce
+        // has 400ms window where navigation can happen before the DB write completes).
+        let localStates: Record<string, any> = {};
+        try { localStates = JSON.parse(localStorage.getItem('corepms_pos_table_states') || '{}'); } catch {}
+
         setTables(prev => {
           const safePrev = Array.isArray(prev) ? prev : [];
           return safePrev.map(t => {
-            const dbStatus = statusMap[t.id];
-            const status: 'available' | 'occupied' | 'suspended' = dbStatus || 'available';
-            // DB bill takes priority over in-memory bill; falls back to existing if DB has none
+            const dbStatus    = statusMap[t.id];
+            const hasLiveOrder = !!billMap[t.id];         // confirmed in pos_orders DB
+            const localState   = localStates[t.id];       // saved in localStorage
+            const localBill    = localState?.currentBill; // might be ahead of DB if nav was fast
+
+            // Bill age guard: localStorage bill older than 12h is stale (from our existing guard)
+            const billAge = localBill?.createdAt
+              ? (Date.now() - new Date(localBill.createdAt).getTime()) / 3_600_000
+              : 0;
+            const localBillFresh = localBill && billAge < 12;
+
+            // Status priority: pos_orders DB → table_status DB → fresh localStorage → available
+            // Never downgrade an occupied table if either DB or localStorage confirms an order
+            const status: 'available' | 'occupied' | 'suspended' =
+              hasLiveOrder                              ? 'occupied'   // DB pos_orders
+              : (dbStatus === 'occupied')               ? 'occupied'   // DB table_status
+              : (localState?.status === 'occupied' && localBillFresh) ? 'occupied' // localStorage bridge
+              : (dbStatus || 'available');
+
+            // Bill sources: DB order → localStorage bill → in-memory → undefined
             const currentBill = status === 'occupied'
-              ? (billMap[t.id] || t.currentBill || undefined)
+              ? (billMap[t.id] || (localBillFresh ? localBill : undefined) || t.currentBill || undefined)
               : undefined;
+
             return { ...t, status, cost_center: cc || 'Main Restaurant', currentBill };
           });
         });
