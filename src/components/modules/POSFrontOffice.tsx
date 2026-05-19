@@ -515,27 +515,41 @@ export const POSFrontOffice: React.FC = () => {
     return numericPart.slice(-4).padStart(4, '0');
   };
 
-  // Determine outlet from bill items (bar vs restaurant/food)
-  // Real menuItems use department: 'Bar' | 'Restaurant' (capital case),
-  // plus bar_visibility / restaurant_visibility flags, and category_ids like
-  // 'CAT_BAR_GEN'. Check all of these for robust classification.
+  // Determine outlet from bill items (bar vs restaurant/food).
+  // Falls back to the cost centre name if items lack classification fields.
   const getOutletFromBill = (bill: any): string => {
+    // Cost-centre override: if the station name contains 'bar', everything sold
+    // from here counts as a bar sale regardless of item flags.
+    if (costCentre && String(costCentre).toLowerCase().includes('bar')) {
+      return 'Bar POS';
+    }
     if (!bill || !Array.isArray(bill.items) || !bill.items.length) {
       return 'Restaurant POS';
     }
     const isBarItem = (i: any) => {
       const m = i.menuItem || i;
-      const dept = String(m.department || '').toLowerCase();
+      const dept = String(m.department || m.type || '').toLowerCase();
       const cat = String(m.category || '').toLowerCase();
       const subId = String(m.sub_id || '').toLowerCase();
       const categoryId = String(m.category_id || '').toLowerCase();
-      return dept === 'bar' ||
+      const invCat = String(m.inventoryCategory || '').toLowerCase();
+      const cc = String(m.costCenter || '').toLowerCase();
+      return dept.includes('bar') ||
              m.bar_visibility === true ||
-             cat.includes('bar') ||
+             cat === 'bar' || cat.includes('bar') ||
              subId.includes('bar') ||
-             categoryId.includes('bar');
+             categoryId.includes('bar') ||
+             invCat === 'cellar' ||
+             cc.includes('bar');
     };
     const barCount = bill.items.filter(isBarItem).length;
+    // Debug log so we can diagnose if classification still misses
+    console.log('[Outlet classification]', {
+      costCentre,
+      itemCount: bill.items.length,
+      barCount,
+      sampleItem: bill.items[0]?.menuItem || bill.items[0]
+    });
     return barCount > (bill.items.length / 2) ? 'Bar POS' : 'Restaurant POS';
   };
   const posIsLoading = loading || !Array.isArray(posOrders);
@@ -841,6 +855,8 @@ export const POSFrontOffice: React.FC = () => {
 
   const saveOrder = async (bill: any) => {
     console.log('[POSFrontOffice] saveOrder called with bill:', bill);
+    // User is explicitly creating a new bill for this table — clear any paid guard
+    paidTablesRef.current.delete(bill.tableId);
     const safeTables = Array.isArray(tables) ? tables : [];
     const prev = safeTables;
     const next = safeTables.map(t =>
@@ -927,8 +943,10 @@ export const POSFrontOffice: React.FC = () => {
       });
 
     // Mark table as paid — prevents posOrders effect from re-occupying it during
-    // the race window between optimistic state clear and DB UPDATE completing.
+    // any race window. Stays in set until the user explicitly opens a new order
+    // for this table (cleared in saveOrder) or for 60s as a safety fallback.
     paidTablesRef.current.add(bill.tableId);
+    setTimeout(() => paidTablesRef.current.delete(bill.tableId), 60000);
 
     // Cancel any pending debounced save for this table — if the user pays within
     // 400ms of saving the order, the debounced savePosOrder would otherwise fire
@@ -944,8 +962,9 @@ export const POSFrontOffice: React.FC = () => {
       closePosOrder(bill.tableId, costCentre || undefined)
         .then(() => {
           console.log('POS order closed successfully');
-          // DB confirmed — safe to remove the paid guard
-          paidTablesRef.current.delete(bill.tableId);
+          // Keep table in paid set — don't delete here (let 60s timeout or new
+          // saveOrder for this table handle removal). This prevents any late
+          // re-fetch from re-occupying the table.
         })
         .catch(err => {
           console.warn('POS order close failed:', err);
