@@ -374,7 +374,7 @@ export const POSFrontOffice: React.FC = () => {
           (!activeShift?.id || order.shift_id === activeShift.id)
         );
 
-        if (tableOrder) {
+        if (tableOrder && !paidTablesRef.current.has(table.id)) {
           // Convert database order format to frontend bill format
           const currentBill = {
             id: tableOrder.id,
@@ -408,6 +408,10 @@ export const POSFrontOffice: React.FC = () => {
       });
     });
   }, [posOrders, activeShift]);
+
+  // Tables that had payment processed — prevent posOrders effect from re-occupying them
+  // during the race window between optimistic state clear and DB UPDATE completing.
+  const paidTablesRef = React.useRef<Set<string>>(new Set());
 
   // One-time cleanup: on shift activation, close any open orders from previous sessions
   // (shift_id mismatch or null = orphan from crash/unclean shutdown)
@@ -891,7 +895,8 @@ export const POSFrontOffice: React.FC = () => {
     }
 
     try {
-      addTransaction(paymentData.paymentMethod, Number(total.toFixed(2)), bill.id);
+      const outlet = getOutletFromBill(bill) === 'Bar POS' ? 'bar' : 'restaurant';
+      addTransaction(paymentData.paymentMethod, Number(total.toFixed(2)), bill.id, outlet);
     } catch (err) {
       console.warn('Shift logging failed:', err);
       logPaymentError('shift_log', err, { method: paymentData.paymentMethod, amount: total, billId: bill.id });
@@ -909,11 +914,22 @@ export const POSFrontOffice: React.FC = () => {
         logPaymentError('inventory', err, { billId: bill.id });
       });
 
+    // Mark table as paid — prevents posOrders effect from re-occupying it during
+    // the race window between optimistic state clear and DB UPDATE completing.
+    paidTablesRef.current.add(bill.tableId);
+
     // Close POS order in DB (fire-and-forget)
     if (closePosOrder) {
       closePosOrder(bill.tableId, costCentre || undefined)
-        .then(() => console.log('POS order closed successfully'))
-        .catch(err => console.warn('POS order close failed:', err));
+        .then(() => {
+          console.log('POS order closed successfully');
+          // DB confirmed — safe to remove the paid guard
+          paidTablesRef.current.delete(bill.tableId);
+        })
+        .catch(err => {
+          console.warn('POS order close failed:', err);
+          paidTablesRef.current.delete(bill.tableId);
+        });
     }
 
     // Update UI state immediately
