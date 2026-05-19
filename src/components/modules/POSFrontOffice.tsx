@@ -534,7 +534,15 @@ export const POSFrontOffice: React.FC = () => {
       } else {
         setConnError(null);
       }
-      const res = await db.query(`SELECT table_id, status FROM table_status WHERE cost_center = $1`, [cc || 'Main Restaurant']);
+      // PHASE-3 FIX: fetch table_status AND live pos_orders in parallel so occupied
+      // tables always have their actual bill restored from DB — not from volatile
+      // in-memory state. Previously t.currentBill was undefined on remount, causing
+      // "OCCUPIED / No active bill / ACTION REQUIRED" for every table on navigation.
+      const [res, ordersRes] = await Promise.all([
+        db.query(`SELECT table_id, status FROM table_status WHERE cost_center = $1`, [cc || 'Main Restaurant']),
+        db.query(`SELECT * FROM pos_orders WHERE status='open' AND cost_center=$1`, [cc || 'Main Restaurant'])
+      ]);
+
       if ('rows' in res) {
         const statusMap: Record<string, 'available' | 'occupied' | 'suspended'> = {};
         const safeRows = Array.isArray(res.rows) ? res.rows : [];
@@ -548,11 +556,41 @@ export const POSFrontOffice: React.FC = () => {
           }
         });
 
+        // Rebuild currentBill from live DB orders — eliminates dependency on React state
+        const billMap: Record<string, any> = {};
+        if ('rows' in ordersRes && Array.isArray((ordersRes as any).rows)) {
+          ((ordersRes as any).rows as any[]).forEach((order: any) => {
+            const tId = String(order.table_number || '');
+            if (!tId) return;
+            billMap[tId] = {
+              id: order.id,
+              tableId: tId,
+              items: Array.isArray(order.items) ? order.items.map((item: any) => {
+                const mi = item.menuItem || {};
+                return {
+                  id: mi.id || item.id,
+                  menuItem: { id: mi.id || item.id, name: mi.name || item.name || 'Item', price: mi.price || item.price || 0, category: mi.category || item.category },
+                  quantity: item.quantity || 1,
+                  price: mi.price || item.price || 0,
+                  subtotal: item.subtotal || ((item.quantity || 1) * (mi.price || item.price || 0))
+                };
+              }) : [],
+              total: Number(order.total_amount || 0),
+              createdAt: order.created_at || new Date().toISOString()
+            };
+          });
+        }
+
         setTables(prev => {
           const safePrev = Array.isArray(prev) ? prev : [];
           return safePrev.map(t => {
-            const status = statusMap[t.id] || 'available';
-            return { ...t, status, cost_center: cc || 'Main Restaurant', currentBill: statusMap[t.id] === 'occupied' ? t.currentBill : undefined };
+            const dbStatus = statusMap[t.id];
+            const status: 'available' | 'occupied' | 'suspended' = dbStatus || 'available';
+            // DB bill takes priority over in-memory bill; falls back to existing if DB has none
+            const currentBill = status === 'occupied'
+              ? (billMap[t.id] || t.currentBill || undefined)
+              : undefined;
+            return { ...t, status, cost_center: cc || 'Main Restaurant', currentBill };
           });
         });
       }

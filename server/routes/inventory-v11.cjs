@@ -138,14 +138,11 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inv_uom_definitions ADD COLUMN IF NOT EXISTS description TEXT`);
       await client.query(`ALTER TABLE public.inv_items ADD COLUMN IF NOT EXISTS selling_price NUMERIC(10,2) DEFAULT 0.00`);
       await client.query(`ALTER TABLE public.inv_items ADD COLUMN IF NOT EXISTS short_id TEXT UNIQUE`);
-      // Enforce 10-char max on short_id via CHECK constraint (idempotent — ignore if already exists)
+      // PHASE-1 FIX: Drop ALL short_id length constraints — they caused "violates check
+      // constraint" errors when short_id = full generated ID (e.g. 'AMAR#001', 8 chars).
+      // The short_id now stores only the 4-char prefix so no length constraint is needed.
       await client.query(`ALTER TABLE public.inv_items DROP CONSTRAINT IF EXISTS inv_items_short_len`).catch(() => {});
       await client.query(`ALTER TABLE public.inv_items DROP CONSTRAINT IF EXISTS inv_items_short_id_len`).catch(() => {});
-      await client.query(
-        `DO $$ BEGIN
-           ALTER TABLE public.inv_items ADD CONSTRAINT inv_items_short_id_len CHECK (short_id IS NULL OR char_length(short_id) <= 10);
-         EXCEPTION WHEN duplicate_object THEN NULL; END $$`
-      );
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_by TEXT`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS supplier_id TEXT`);
@@ -1790,30 +1787,12 @@ router.post('/items', async (req, res) => {
   } = req.body;
   if (!name) return res.status(400).json({ ok: false, error: 'name is required' });
 
-   try {
-     // Generate a compliant short ID using our utility function
-     // Fallback to the original method if needed, but ensure it's compliant
-     let generatedShortId;
-     if (!id) {
-       // For new items, generate a compliant short ID
-       generatedShortId = generateSecureShortId(10);
-     } else {
-       // For updates, use provided ID or generate from name if it matches pattern
-       const potentialId = id || (await generateShortItemId(name));
-       generatedShortId = potentialId.match(/^[A-Z0-9]{4}#[0-9]{3}$/) ? potentialId : generateSecureShortId(10);
-     }
-     
-     // Validate the generated short ID
-     const validation = validateShortId(generatedShortId);
-     if (!validation.valid) {
-       // Fallback to a safe default if validation fails
-       generatedShortId = `ITEM${Date.now().toString(36).toUpperCase().substring(0, 6)}`;
-       // Ensure it's still valid
-       const fallbackValidation = validateShortId(generatedShortId);
-       if (!fallbackValidation.valid) {
-         generatedShortId = 'ITEM001'; // Last resort fallback
-       }
-     }
+  try {
+    const itemId = id || (await generateShortItemId(name));
+    // PHASE-1 FIX: short_id stores ONLY the 4-char prefix (e.g. 'AMAR' from 'AMAR#001').
+    // Eliminates inv_items_short_id_len CHECK constraint violation — prefix always <= 4 chars.
+    const rawId = itemId.match(/^[A-Z0-9]{4}#[0-9]{3}$/) ? itemId : (await generateShortItemId(name));
+    const shortId = rawId.split('#')[0]; // 'AMAR' (4 chars) — safe under any constraint
 
      // Auto-generate SKU if not provided
      const skuVal = sku || null;
@@ -1862,12 +1841,17 @@ router.post('/items', async (req, res) => {
     const uomRes     = await pool.query(`SELECT code FROM public.inv_uom_definitions WHERE id=$1`, [base_uom_id||'uom_unit']);
     const uomCode    = uomRes.rows[0]?.code || 'units';
 
+    // PHASE-2 FIX: Set bar_visibility/restaurant_visibility based on category so items
+    // immediately appear in the POS menu after creation. Previously both were false
+    // (hidden), causing Inventory→POS sync failure. Items are POS-ready on creation.
+    const barVis  = isBeverage;
+    const restVis = !isBeverage;
     await pool.query(`
       INSERT INTO public.products
         (id, name, category, department, price, cost_price, stock_level, unit,
          active, visibility, bar_visibility, restaurant_visibility,
-         category_id, notes, picture_data, inserted_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,0,$7,true,'{}',false,false,$8,$9,$10,NOW(),NOW())
+         is_stock_item, category_id, notes, picture_data, inserted_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,0,$7,true,'{}',$11,$12,true,$8,$9,$10,NOW(),NOW())
       ON CONFLICT (id) DO UPDATE SET
         name                 = EXCLUDED.name,
         department           = EXCLUDED.department,
@@ -1875,12 +1859,15 @@ router.post('/items', async (req, res) => {
         price                = CASE WHEN EXCLUDED.price > 0 THEN EXCLUDED.price ELSE products.price END,
         cost_price           = EXCLUDED.cost_price,
         unit                 = EXCLUDED.unit,
+        bar_visibility       = EXCLUDED.bar_visibility,
+        restaurant_visibility= EXCLUDED.restaurant_visibility,
+        is_stock_item        = true,
         notes                = EXCLUDED.notes,
         picture_data         = EXCLUDED.picture_data,
         updated_at           = NOW()
     `, [item.id, name, sub_category || (isBeverage ? 'bar' : 'restaurant'), dept,
         Number(selling_price || 0), Number(last_cost_price || 0), uomCode,
-        sub_category || null, notes || null, media_url || null]);
+        sub_category || null, notes || null, media_url || null, barVis, restVis]);
 
     res.json({ ok: true, data: item });
    } catch (err) {
