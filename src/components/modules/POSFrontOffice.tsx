@@ -366,9 +366,12 @@ export const POSFrontOffice: React.FC = () => {
     setTables(prev => {
       const safePrev = Array.isArray(prev) ? prev : [];
       return safePrev.map(table => {
-        // Find any open order for this table
+        // Find any open order for this table — skip orders from other shifts
+        // (orphans from crashed/unclosed previous sessions)
         const tableOrder = posOrders.find(order =>
-          order.table_number === table.id && order.status === 'open'
+          order.table_number === table.id &&
+          order.status === 'open' &&
+          (!activeShift?.id || order.shift_id === activeShift.id)
         );
 
         if (tableOrder) {
@@ -404,7 +407,19 @@ export const POSFrontOffice: React.FC = () => {
         return table.status === 'suspended' ? table : { ...table, status: 'available', currentBill: undefined };
       });
     });
-  }, [posOrders]);
+  }, [posOrders, activeShift]);
+
+  // One-time cleanup: on shift activation, close any open orders from previous sessions
+  // (shift_id mismatch or null = orphan from crash/unclean shutdown)
+  const staleOrderCleanupDone = React.useRef(false);
+  useEffect(() => {
+    if (!activeShift?.id || staleOrderCleanupDone.current) return;
+    staleOrderCleanupDone.current = true;
+    db.query(
+      `UPDATE pos_orders SET status='closed' WHERE status='open' AND (shift_id IS NULL OR shift_id != $1)`,
+      [activeShift.id]
+    ).catch(() => { /* non-fatal */ });
+  }, [activeShift?.id]);
 
   // Track how long since mount so GUARD 1 doesn't fire before shift is restored from storage
   const mountTimeRef = React.useRef<number>(Date.now());
@@ -568,7 +583,7 @@ export const POSFrontOffice: React.FC = () => {
         `
           INSERT INTO table_status (table_id, status, cost_center, last_update)
           VALUES ($1, $2, $3, NOW())
-          ON CONFLICT (table_id, cost_center) DO UPDATE SET status = EXCLUDED.status, last_update = NOW()
+          ON CONFLICT (table_id) DO UPDATE SET status = EXCLUDED.status, cost_center = EXCLUDED.cost_center, last_update = NOW()
         `,
         [tableId, mapped, costCentre || 'Main Restaurant']
       );

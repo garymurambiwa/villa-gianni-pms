@@ -706,11 +706,9 @@ check_in_date = ?, check_out_date = ?, status = ?,
         return false;
       }
 
-      // Update table status to occupied
-      const tableSql = provisional.cost_center
-        ? "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'occupied', ?, NOW()) ON CONFLICT (table_id, cost_center) DO UPDATE SET status = 'occupied', last_update = NOW()"
-        : "INSERT INTO table_status (table_id, status, last_update) VALUES (?, 'occupied', NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'occupied', last_update = NOW()";
-      const tableParams = provisional.cost_center ? [provisional.table_number, provisional.cost_center] : [provisional.table_number];
+      // Update table status to occupied — conflict on table_id (the actual PK)
+      const tableSql = "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'occupied', ?, NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'occupied', cost_center = EXCLUDED.cost_center, last_update = NOW()";
+      const tableParams = [provisional.table_number, provisional.cost_center || 'Main Restaurant'];
       await db.query(tableSql, tableParams);
 
       return true;
@@ -724,17 +722,15 @@ check_in_date = ?, check_out_date = ?, status = ?,
   const closePosOrder = async (tableNumber: string, costCentre?: string): Promise<boolean> => {
     try {
       // 1. Close the order in pos_orders
-      const query = costCentre 
+      const query = costCentre
         ? "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open' AND cost_center = ?"
         : "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open'";
       const params = costCentre ? [tableNumber, costCentre] : [tableNumber];
       const result = await db.query(query, params);
 
-      // 2. Update table_status to 'open' (available)
-      const tableSql = costCentre
-        ? "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'open', ?, NOW()) ON CONFLICT (table_id, cost_center) DO UPDATE SET status = 'open', last_update = NOW()"
-        : "INSERT INTO table_status (table_id, status, last_update) VALUES (?, 'open', NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'open', last_update = NOW()";
-      const tableParams = costCentre ? [tableNumber, costCentre] : [tableNumber];
+      // 2. Update table_status to 'open' (available) — conflict on table_id (the actual PK)
+      const tableSql = "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'open', ?, NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'open', cost_center = EXCLUDED.cost_center, last_update = NOW()";
+      const tableParams = [tableNumber, costCentre || 'Main Restaurant'];
       await db.query(tableSql, tableParams);
 
       if ('error' in result) {
