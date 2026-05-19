@@ -355,18 +355,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       }
     };
 
-    // Print receipt before closing modal
+    // Fire payment completion FIRST so processPayment still has paymentModal.bill in state.
+    // Previously this ran at 200ms (after onClose at 100ms cleared paymentModal.bill),
+    // so processPayment always got bill=null and returned without closing the table.
+    if (onPaymentComplete) {
+      onPaymentComplete(paymentData);
+    }
+
+    // Print receipt (fire-and-forget)
     handlePrintBill().catch(err => console.warn('Receipt printing failed:', err));
 
-    // Close modal after printing attempt
-    setTimeout(() => onClose(), 100);
-
-    // Call payment completion handler asynchronously (non-blocking)
-    setTimeout(() => {
-      if (onPaymentComplete) {
-        onPaymentComplete(paymentData);
-      }
-    }, 200);
+    // Close modal after a short delay to let the completion handler update state first
+    setTimeout(() => onClose(), 300);
   };
 
   if (!isOpen) return null;
