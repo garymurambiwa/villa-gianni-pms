@@ -665,7 +665,7 @@ check_in_date = ?, check_out_date = ?, status = ?,
 
       // Update existing open order for this table — also match legacy NULL cost_center rows
       // (orders created before the cost_center column was added) to avoid INSERT conflicts
-      const updateSql = "UPDATE pos_orders SET items = ?::jsonb, total_amount = ?, status = 'open', shift_id = ?, cost_center = ? WHERE table_number = ? AND status = 'open' AND (cost_center = ? OR cost_center IS NULL) RETURNING id";
+      const updateSql = "UPDATE pos_orders SET items = ?::jsonb, total_amount = ?, status = 'open', shift_id = ?, cost_center = ? WHERE table_number = ? AND status = 'open' AND (LOWER(cost_center) = LOWER(?) OR cost_center IS NULL) RETURNING id";
       const updateParams = [
         JSON.stringify(provisional.items),
         provisional.total_amount,
@@ -724,18 +724,21 @@ check_in_date = ?, check_out_date = ?, status = ?,
   const closePosOrder = async (tableNumber: string, costCentre?: string): Promise<boolean> => {
     // Optimistic update — remove from local state immediately so posOrders effect
     // never re-occupies the table while the DB update is in-flight.
+    // Use case-insensitive comparison for cost_center — DB may store 'conference'
+    // while costCentre state holds 'Conference' (or vice versa).
+    const ccLower = costCentre ? costCentre.toLowerCase() : null;
     const filterFn = (p: any) => {
       const sameTable = String(p.table_number) === String(tableNumber);
       const isOpen    = String(p.status || '').toLowerCase() === 'open';
-      const sameCc    = !costCentre || p.cost_center === costCentre;
+      const sameCc    = !ccLower || String(p.cost_center || '').toLowerCase() === ccLower;
       return !(sameTable && isOpen && sameCc);
     };
     setPosOrders((prev: any[]) => prev.filter(filterFn));
 
     try {
-      // 1. Close the order in pos_orders
+      // 1. Close the order in pos_orders (case-insensitive cost_center match)
       const query = costCentre
-        ? "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open' AND cost_center = ?"
+        ? "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open' AND LOWER(cost_center) = LOWER(?)"
         : "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open'";
       const params = costCentre ? [tableNumber, costCentre] : [tableNumber];
       const result = await db.query(query, params);
