@@ -17,17 +17,21 @@ export const API_URL = () => {
   return import.meta.env.VITE_API_URL || 'http://localhost:3001';
 };
 
-export const fetchApi = async (endpoint: string, options: RequestInit = {}) => {
+export const fetchApi = async (endpoint: string, options: RequestInit = {}, timeoutMs = 20000) => {
   const baseUrl = API_URL();
   const url = endpoint.startsWith('/') ? `${baseUrl}${endpoint}` : `${baseUrl}/${endpoint}`;
-  
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   const response = await fetch(url, {
     headers: {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
     },
+    signal: controller.signal,
     ...options,
-  });
+  }).finally(() => clearTimeout(timer));
   
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));

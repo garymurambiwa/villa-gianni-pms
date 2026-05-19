@@ -730,7 +730,9 @@ check_in_date = ?, check_out_date = ?, status = ?,
     const filterFn = (p: any) => {
       const sameTable = String(p.table_number) === String(tableNumber);
       const isOpen    = String(p.status || '').toLowerCase() === 'open';
-      const sameCc    = !ccLower || String(p.cost_center || '').toLowerCase() === ccLower;
+      // Match if: no cost_center filter, the order has no cost_center (legacy null rows),
+      // or case-insensitive match — any of these means this order should be closed.
+      const sameCc    = !ccLower || !p.cost_center || String(p.cost_center).toLowerCase() === ccLower;
       return !(sameTable && isOpen && sameCc);
     };
     setPosOrders((prev: any[]) => prev.filter(filterFn));
