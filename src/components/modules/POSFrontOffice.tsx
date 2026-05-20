@@ -714,6 +714,8 @@ export const POSFrontOffice: React.FC = () => {
   }, [tables, search, statusFilter, sortKey, sortDir, page, pageSize]);
 
   const activeTableId = useMemo(() => {
+    // No shift → no active table (Current Bill panel must be empty before/after shift)
+    if (!activeShift) return undefined;
     const safeTables = Array.isArray(tables) ? tables : [];
     if (selectedIds.length) {
       const id = selectedIds.find(id => !!safeTables.find(t => t.id === id && t.currentBill));
@@ -721,13 +723,27 @@ export const POSFrontOffice: React.FC = () => {
     }
     const occupiedWithBill = safeTables.find(t => t.currentBill);
     return occupiedWithBill ? occupiedWithBill.id : undefined;
-  }, [tables, selectedIds]);
+  }, [tables, selectedIds, activeShift]);
 
   const currentBill = useMemo(() => {
+    // No shift → no current bill, regardless of stale table state
+    if (!activeShift) return null;
     const safeTables = Array.isArray(tables) ? tables : [];
     const t = safeTables.find(t => t.id === activeTableId);
     return t && t.currentBill ? t.currentBill : null;
-  }, [tables, activeTableId]);
+  }, [tables, activeTableId, activeShift]);
+
+  // When the shift ends (or no shift is active), wipe all currentBills from
+  // in-memory table state so nothing lingers into the next shift.
+  useEffect(() => {
+    if (activeShift) return;
+    setTables(prev => {
+      const safePrev = Array.isArray(prev) ? prev : [];
+      const hasAny = safePrev.some(t => t.currentBill || t.status === 'occupied');
+      if (!hasAny) return prev;
+      return safePrev.map(t => ({ ...t, status: 'available' as const, currentBill: undefined }));
+    });
+  }, [activeShift]);
 
   const actions = useMemo(() => {
     return [
