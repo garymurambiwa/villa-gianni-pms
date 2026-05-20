@@ -827,7 +827,21 @@ check_in_date = ?, check_out_date = ?, status = ?,
           params: [roomId]
         },
         {
-          // Create or update folio for this guest
+          // Update existing folio for this reservation, if any.
+          // (folios.reservation_id is NOT unique on the live DB — only indexed —
+          //  so ON CONFLICT (reservation_id) fails with "no unique constraint
+          //  matching the ON CONFLICT specification" and kills the transaction.
+          //  Splitting into UPDATE-then-conditional-INSERT avoids that.)
+          sql: `UPDATE folios
+                SET room_number = $2,
+                    status = 'open',
+                    package_code = COALESCE($3, package_code),
+                    updated_at = NOW()
+                WHERE reservation_id = $1`,
+          params: [reservationId, room.number, options.packageCode || null]
+        },
+        {
+          // Insert a folio only if none exists for this reservation.
           sql: `INSERT INTO folios (id, guest_id, reservation_id, room_number, status, balance, package_code, created_by, inserted_at, updated_at)
                 SELECT
                   gen_random_uuid()::text,
@@ -842,11 +856,7 @@ check_in_date = ?, check_out_date = ?, status = ?,
                   NOW()
                 FROM reservations r
                 WHERE r.id = $1
-                ON CONFLICT (reservation_id) DO UPDATE
-                  SET room_number = EXCLUDED.room_number,
-                      status = 'open',
-                      package_code = COALESCE(EXCLUDED.package_code, folios.package_code),
-                      updated_at = NOW()`,
+                  AND NOT EXISTS (SELECT 1 FROM folios WHERE reservation_id = $1)`,
           params: [reservationId, room.number, options.packageCode || null]
         }
       ]);
