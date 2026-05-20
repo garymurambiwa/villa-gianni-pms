@@ -103,9 +103,13 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
 
         try {
             const selectedRoom = rooms.find((r: any) => r.id === roomId);
-            const effectiveRate = rate || String(selectedRoom?.rate || 0);
+            // Sanitize rate — fall back to room rate if user-entered rate is empty/invalid
+            const parsedRate = parseFloat(rate);
+            const effectiveRate = isFinite(parsedRate) && parsedRate > 0
+                ? parsedRate
+                : Number(selectedRoom?.rate) || 0;
 
-            console.log('[QuickCheckIn] Calling createReservation...');
+            console.log('[QuickCheckIn] Calling createReservation with rate:', effectiveRate);
 
             const resResult = await createReservation({
                 guestName,
@@ -115,9 +119,9 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
                 roomId,
                 checkIn: checkInDate,
                 checkOut: checkOutDate,
-                rate: parseFloat(rate),
+                rate: effectiveRate,
                 packageCode,
-                adults: parseInt(adults),
+                adults: parseInt(adults) || 1,
                 children: 0,
                 roomType: selectedRoom?.type || 'Standard',
                 status: 'confirmed'
@@ -127,14 +131,17 @@ export const QuickCheckInModal: React.FC<QuickCheckInModalProps> = ({ isOpen, on
                 throw new Error(resResult.error || 'Failed to create reservation');
             }
 
-            console.log('[QuickCheckIn] createReservation successful, generating check-in...');
+            console.log('[QuickCheckIn] createReservation successful, reservationId:', resResult.reservationId);
 
             // Attempt to check them in immediately if we got the reservation ID back.
             if (resResult.reservationId) {
-                await checkInGuest(resResult.reservationId, roomId, {
-                    rateOverride: parseFloat(rate),
+                const checkInOk = await checkInGuest(resResult.reservationId, roomId, {
+                    rateOverride: effectiveRate,
                     packageCode
                 });
+                if (checkInOk === false) {
+                    throw new Error('Reservation created but check-in step failed. See console for details.');
+                }
                 toast.success(`Walk-in guest ${guestName} checked in successfully!`);
             } else {
                 toast.success(`Walk-in guest ${guestName} reservation created (Check-In manual step required).`);

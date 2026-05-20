@@ -459,17 +459,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
-        // If no existing guest found, create a new one
+        // If no existing guest found, create a new one.
+        // Note: id_number was previously included here but the column doesn't exist
+        // on all live DBs (added via runtime migration that may not have run yet).
+        // The ID number is also stored in reservations.id_document_enc, so omitting
+        // it from the guest insert is safe.
         if (!guestId) {
           const newGuestId = `G${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-          const guestSql = "INSERT INTO guests (id, full_name, email, phone, id_number) VALUES (?, ?, ?, ?, ?)";
-          const guestParams = [newGuestId, guestName, guestEmail, guestPhone, resData.idNumber || resData.passportNumber || null];
+          const guestSql = "INSERT INTO guests (id, full_name, email, phone) VALUES (?, ?, ?, ?)";
+          const guestParams = [newGuestId, guestName, guestEmail, guestPhone];
           const guestResult = await db.query(guestSql, guestParams);
 
           if ('error' in guestResult) {
             const errorMsg = (guestResult as any).error || 'Failed to create guest record';
-            console.error('Guest insert failed:', errorMsg);
-            return { success: false, error: errorMsg };
+            console.error('Guest insert failed:', errorMsg, { guestSql, guestParams });
+            return { success: false, error: `Guest insert failed: ${errorMsg}` };
           }
           guestId = newGuestId;
         }
