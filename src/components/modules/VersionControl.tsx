@@ -1,559 +1,242 @@
-import React, { useState, useEffect } from 'react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { Checkbox } from '../ui/checkbox';
-import { 
-  Table, 
-  TableBody, 
-  TableCaption, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
-} from '../ui/table';
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogDescription, 
-  DialogFooter, 
-  DialogHeader, 
-  DialogTitle 
-} from '../ui/dialog';
-import { useToast } from '../../hooks/use-toast';
-import { Version } from '../../types/versionControl';
-import { 
-  getVersions, 
-  getCurrentVersion, 
-  restoreVersion, 
-  createVersion, 
-  compareVersions, 
-  deleteVersion, 
-  tagVersion 
-} from '../../lib/versionControlService';
-import { 
-  createEntityBackup, 
-  scheduleAutomaticBackups, 
-  stopAutomaticBackups, 
-  getBackupSchedule, 
-  updateBackupSchedule 
-} from '../../lib/backupUtils';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { toast } from 'sonner';
+import { fetchApi } from '../../lib/apiService';
 
-// Mock data for demonstration
-const MOCK_ENTITIES = [
-  { id: 'folio-1', type: 'folio', name: 'Guest Folio - John Smith' },
-  { id: 'reservation-1', type: 'reservation', name: 'Reservation #12345' },
-  { id: 'inventory-1', type: 'inventory', name: 'Room Inventory' }
-];
+interface CodeVersion {
+  id: number;
+  label: string;
+  deployment_id: string | null;
+  deployment_url: string | null;
+  created_at: string;
+  created_by: string;
+  notes: string | null;
+}
 
 const VersionControl: React.FC = () => {
-  const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState('history');
-  const [selectedEntity, setSelectedEntity] = useState(MOCK_ENTITIES[0]);
-  const [versions, setVersions] = useState<Version[]>([]);
-  const [selectedVersion, setSelectedVersion] = useState<Version | null>(null);
-  const [comparisonVersion, setComparisonVersion] = useState<Version | null>(null);
-  const [backupDescription, setBackupDescription] = useState('');
-  const [showRestoreDialog, setShowRestoreDialog] = useState(false);
-  const [selectiveRestore, setSelectiveRestore] = useState(false);
-  const [backupInterval, setBackupInterval] = useState(60); // minutes
-  const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
-  const [comparisonResult, setComparisonResult] = useState<any>(null);
+  const [versions, setVersions] = useState<CodeVersion[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [restoring, setRestoring] = useState<number | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<CodeVersion | null>(null);
+  const [restoreConfirm, setRestoreConfirm] = useState<CodeVersion | null>(null);
+  const [label, setLabel] = useState('');
+  const [notes, setNotes] = useState('');
 
-  // Load versions when entity changes
-  useEffect(() => {
-    if (selectedEntity) {
-      const entityVersions = getVersions(selectedEntity.id);
-      setVersions(entityVersions);
-      setSelectedVersion(null);
-      setComparisonVersion(null);
-      
-      // Check if auto backup is enabled
-      const schedule = getBackupSchedule(selectedEntity.id);
-      if (schedule) {
-        setAutoBackupEnabled(schedule.enabled);
-        setBackupInterval(schedule.intervalMinutes);
+  const loadVersions = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchApi('/api/version/list');
+      if (data.ok) setVersions(data.versions || []);
+      else toast.error(data.error || 'Failed to load versions');
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to load versions');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadVersions(); }, [loadVersions]);
+
+  const handleSaveSnapshot = async () => {
+    setSaving(true);
+    try {
+      const data = await fetchApi('/api/version/snapshot', {
+        method: 'POST',
+        body: JSON.stringify({ label: label.trim() || undefined, notes: notes.trim() || undefined, createdBy: 'staff' }),
+      });
+      if (data.ok) {
+        toast.success(`Snapshot "${data.version.label}" saved successfully.`);
+        setLabel('');
+        setNotes('');
+        loadVersions();
       } else {
-        setAutoBackupEnabled(false);
-        setBackupInterval(60);
+        toast.error(data.error || 'Failed to save snapshot');
       }
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to save snapshot');
+    } finally {
+      setSaving(false);
     }
-  }, [selectedEntity]);
+  };
 
-  // Create a manual backup
-  const handleCreateBackup = () => {
-    if (!selectedEntity) return;
-    
-    // In a real app, we would get the actual data
-    const mockData = { id: selectedEntity.id, name: selectedEntity.name, timestamp: new Date().toISOString() };
-    
+  const handleRestore = async (version: CodeVersion) => {
+    setRestoring(version.id);
+    setRestoreConfirm(null);
     try {
-      createEntityBackup(
-        selectedEntity.id,
-        selectedEntity.type,
-        mockData,
-        'current-user', // In a real app, get from auth context
-        backupDescription || 'Manual backup'
-      );
-      
-      // Refresh versions
-      const entityVersions = getVersions(selectedEntity.id);
-      setVersions(entityVersions);
-      
-      toast({
-        title: 'Backup created',
-        description: 'A new backup version has been created successfully.',
+      const data = await fetchApi('/api/version/restore', {
+        method: 'POST',
+        body: JSON.stringify({ versionId: version.id }),
       });
-      
-      setBackupDescription('');
-    } catch (error) {
-      toast({
-        title: 'Backup failed',
-        description: 'There was an error creating the backup.',
-        variant: 'destructive'
-      });
-    }
-  };
-
-  // Toggle automatic backups
-  const handleToggleAutoBackup = () => {
-    if (!selectedEntity) return;
-    
-    if (!autoBackupEnabled) {
-      // Enable auto backup
-      scheduleAutomaticBackups(
-        selectedEntity.id,
-        selectedEntity.type,
-        backupInterval,
-        'current-user' // In a real app, get from auth context
-      );
-      setAutoBackupEnabled(true);
-      
-      toast({
-        title: 'Automatic backups enabled',
-        description: `Backups will be created every ${backupInterval} minutes.`,
-      });
-    } else {
-      // Disable auto backup
-      stopAutomaticBackups(selectedEntity.id);
-      setAutoBackupEnabled(false);
-      
-      toast({
-        title: 'Automatic backups disabled',
-        description: 'Automatic backups have been turned off.',
-      });
-    }
-  };
-
-  // Update backup interval
-  const handleUpdateBackupInterval = () => {
-    if (!selectedEntity || !autoBackupEnabled) return;
-    
-    updateBackupSchedule(selectedEntity.id, { intervalMinutes: backupInterval });
-    
-    toast({
-      title: 'Backup schedule updated',
-      description: `Backups will now be created every ${backupInterval} minutes.`,
-    });
-  };
-
-  // Restore a version
-  const handleRestoreVersion = () => {
-    if (!selectedEntity || !selectedVersion) return;
-    
-    try {
-      restoreVersion(selectedEntity.id, selectedVersion.id, { selective: selectiveRestore });
-      
-      toast({
-        title: 'Version restored',
-        description: `Successfully restored to version from ${new Date(selectedVersion.timestamp).toLocaleString()}.`,
-      });
-      
-      setShowRestoreDialog(false);
-    } catch (error) {
-      toast({
-        title: 'Restore failed',
-        description: 'There was an error restoring the version.',
-        variant: 'destructive'
-      });
-    }
-  };
-
-  // Compare versions
-  const handleCompareVersions = () => {
-    if (!selectedEntity || !selectedVersion || !comparisonVersion) return;
-    
-    const result = compareVersions(
-      selectedEntity.id,
-      selectedVersion.id,
-      comparisonVersion.id
-    );
-    
-    setComparisonResult(result);
-    setActiveTab('compare');
-  };
-
-  // Delete a version
-  const handleDeleteVersion = (version: Version) => {
-    if (!selectedEntity) return;
-    
-    try {
-      deleteVersion(selectedEntity.id, version.id);
-      
-      // Refresh versions
-      const entityVersions = getVersions(selectedEntity.id);
-      setVersions(entityVersions);
-      
-      if (selectedVersion?.id === version.id) {
-        setSelectedVersion(null);
+      if (data.ok) {
+        toast.success(data.message || `Restore initiated for "${version.label}".`);
+      } else {
+        toast.error(data.error || 'Restore failed');
       }
-      
-      if (comparisonVersion?.id === version.id) {
-        setComparisonVersion(null);
-      }
-      
-      toast({
-        title: 'Version deleted',
-        description: 'The selected version has been deleted.',
-      });
-    } catch (error) {
-      toast({
-        title: 'Delete failed',
-        description: 'There was an error deleting the version.',
-        variant: 'destructive'
-      });
+    } catch (e: any) {
+      toast.error(e.message || 'Restore failed');
+    } finally {
+      setRestoring(null);
     }
+  };
+
+  const handleDelete = async (version: CodeVersion) => {
+    setDeleteConfirm(null);
+    try {
+      const data = await fetchApi(`/api/version/${version.id}`, { method: 'DELETE' });
+      if (data.ok) {
+        toast.success(`Snapshot "${version.label}" deleted.`);
+        loadVersions();
+      } else {
+        toast.error(data.error || 'Delete failed');
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Delete failed');
+    }
+  };
+
+  const fmt = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) +
+      ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
-    <div className="container mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-4">Version Control System</h1>
-      
-      <div className="flex mb-4 space-x-4">
-        <div className="w-1/3">
-          <Label htmlFor="entity-select">Select Entity</Label>
-          <select
-            id="entity-select"
-            className="w-full p-2 border rounded"
-            value={selectedEntity.id}
-            onChange={(e) => {
-              const entity = MOCK_ENTITIES.find(entity => entity.id === e.target.value);
-              if (entity) setSelectedEntity(entity);
-            }}
-          >
-            {MOCK_ENTITIES.map(entity => (
-              <option key={entity.id} value={entity.id}>
-                {entity.name}
-              </option>
-            ))}
-          </select>
-        </div>
+    <div className="max-w-3xl mx-auto p-6 space-y-8">
+      <div>
+        <h1 className="text-2xl font-bold">Code Version Control</h1>
+        <p className="text-muted-foreground mt-1 text-sm">
+          Save a snapshot of the current working system. If something breaks after changes, restore any previous snapshot to roll the code back — your data is never affected.
+        </p>
       </div>
-      
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="history">Version History</TabsTrigger>
-          <TabsTrigger value="backup">Backup</TabsTrigger>
-          <TabsTrigger value="restore">Restore</TabsTrigger>
-          <TabsTrigger value="compare">Compare</TabsTrigger>
-        </TabsList>
-        
-        <TabsContent value="history" className="p-4 border rounded-md mt-2">
-          <h2 className="text-xl font-semibold mb-4">Version History</h2>
-          
-          {versions.length === 0 ? (
-            <p>No versions found for this entity.</p>
-          ) : (
-            <Table>
-              <TableCaption>Version history for {selectedEntity.name}</TableCaption>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Version</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Created By</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {versions.map(version => (
-                  <TableRow 
-                    key={version.id}
-                    className={selectedVersion?.id === version.id ? 'bg-muted' : ''}
-                  >
-                    <TableCell>{version.id.substring(0, 8)}...</TableCell>
-                    <TableCell>{new Date(version.timestamp).toLocaleString()}</TableCell>
-                    <TableCell>{version.description}</TableCell>
-                    <TableCell>{version.createdBy}</TableCell>
-                    <TableCell>{version.isBackup ? 'Backup' : 'Change'}</TableCell>
-                    <TableCell>
-                      <div className="flex space-x-2">
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={() => setSelectedVersion(version)}
-                        >
-                          Select
-                        </Button>
-                        <Button 
-                          variant="destructive" 
-                          size="sm"
-                          onClick={() => handleDeleteVersion(version)}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-          
-          {selectedVersion && (
-            <div className="mt-4 p-4 border rounded-md">
-              <h3 className="text-lg font-semibold">Selected Version</h3>
-              <p>ID: {selectedVersion.id}</p>
-              <p>Date: {new Date(selectedVersion.timestamp).toLocaleString()}</p>
-              <p>Description: {selectedVersion.description}</p>
-              
-              <div className="flex space-x-2 mt-4">
-                <Button onClick={() => setShowRestoreDialog(true)}>
-                  Restore This Version
-                </Button>
-                <Button 
-                  variant="outline"
-                  onClick={() => setActiveTab('compare')}
-                  disabled={!selectedVersion}
-                >
-                  Compare With Another Version
-                </Button>
+
+      {/* Save snapshot panel */}
+      <div className="border rounded-lg p-5 space-y-4 bg-card">
+        <h2 className="font-semibold text-lg">Save Current Version</h2>
+        <div className="space-y-2">
+          <Label htmlFor="snap-label">Label (optional)</Label>
+          <Input
+            id="snap-label"
+            value={label}
+            onChange={e => setLabel(e.target.value)}
+            placeholder={`e.g. "Before price changes — ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}"`}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="snap-notes">Notes (optional)</Label>
+          <Input
+            id="snap-notes"
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            placeholder="What's working well right now?"
+          />
+        </div>
+        <Button onClick={handleSaveSnapshot} disabled={saving} className="w-full sm:w-auto">
+          {saving ? 'Saving snapshot...' : 'Save Snapshot'}
+        </Button>
+      </div>
+
+      {/* Version history */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-lg">Saved Snapshots</h2>
+          <Button variant="outline" size="sm" onClick={loadVersions} disabled={loading}>
+            {loading ? 'Loading...' : 'Refresh'}
+          </Button>
+        </div>
+
+        {loading && versions.length === 0 && (
+          <p className="text-muted-foreground text-sm py-4">Loading...</p>
+        )}
+
+        {!loading && versions.length === 0 && (
+          <div className="border rounded-lg p-6 text-center text-muted-foreground text-sm">
+            No snapshots saved yet. Press "Save Snapshot" above to record the current code version.
+          </div>
+        )}
+
+        {versions.map((v, i) => (
+          <div key={v.id} className="border rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium truncate">{v.label}</span>
+                {i === 0 && (
+                  <span className="text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-2 py-0.5 rounded-full font-medium">Latest</span>
+                )}
               </div>
-            </div>
-          )}
-        </TabsContent>
-        
-        <TabsContent value="backup" className="p-4 border rounded-md mt-2">
-          <h2 className="text-xl font-semibold mb-4">Create Backup</h2>
-          
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="backup-description">Backup Description</Label>
-              <Input
-                id="backup-description"
-                value={backupDescription}
-                onChange={(e) => setBackupDescription(e.target.value)}
-                placeholder="Enter a description for this backup"
-              />
-            </div>
-            
-            <Button onClick={handleCreateBackup}>
-              Create Manual Backup
-            </Button>
-            
-            <div className="border-t pt-4 mt-6">
-              <h3 className="text-lg font-semibold mb-2">Automatic Backups</h3>
-              
-              <div className="flex items-center space-x-2 mb-4">
-                <Checkbox
-                  id="auto-backup"
-                  checked={autoBackupEnabled}
-                  onCheckedChange={() => handleToggleAutoBackup()}
-                />
-                <Label htmlFor="auto-backup">Enable automatic backups</Label>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                {fmt(v.created_at)} · Saved by {v.created_by}
+                {v.notes && <span> · {v.notes}</span>}
               </div>
-              
-              {autoBackupEnabled && (
-                <div className="space-y-4">
-                  <div>
-                    <Label htmlFor="backup-interval">Backup Interval (minutes)</Label>
-                    <div className="flex space-x-2">
-                      <Input
-                        id="backup-interval"
-                        type="number"
-                        min={5}
-                        value={backupInterval}
-                        onChange={(e) => setBackupInterval(parseInt(e.target.value))}
-                      />
-                      <Button onClick={handleUpdateBackupInterval}>
-                        Update
-                      </Button>
-                    </div>
-                  </div>
+              {v.deployment_url && (
+                <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                  Deployment: <span className="font-mono">{v.deployment_url}</span>
                 </div>
               )}
+              {!v.deployment_id && (
+                <div className="text-xs text-amber-600 mt-0.5">No deployment ID — restore may not be available</div>
+              )}
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setRestoreConfirm(v)}
+                disabled={restoring === v.id}
+              >
+                {restoring === v.id ? 'Restoring...' : 'Restore'}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setDeleteConfirm(v)}
+              >
+                Delete
+              </Button>
             </div>
           </div>
-        </TabsContent>
-        
-        <TabsContent value="restore" className="p-4 border rounded-md mt-2">
-          <h2 className="text-xl font-semibold mb-4">Restore Version</h2>
-          
-          {versions.length === 0 ? (
-            <p>No versions available to restore.</p>
-          ) : (
-            <>
-              <p className="mb-4">Select a version from the Version History tab to restore.</p>
-              
-              {selectedVersion ? (
-                <div className="p-4 border rounded-md">
-                  <h3 className="text-lg font-semibold">Selected Version</h3>
-                  <p>ID: {selectedVersion.id}</p>
-                  <p>Date: {new Date(selectedVersion.timestamp).toLocaleString()}</p>
-                  <p>Description: {selectedVersion.description}</p>
-                  
-                  <Button 
-                    className="mt-4"
-                    onClick={() => setShowRestoreDialog(true)}
-                  >
-                    Restore This Version
-                  </Button>
-                </div>
-              ) : (
-                <p>No version selected. Please select a version from the Version History tab.</p>
-              )}
-            </>
-          )}
-        </TabsContent>
-        
-        <TabsContent value="compare" className="p-4 border rounded-md mt-2">
-          <h2 className="text-xl font-semibold mb-4">Compare Versions</h2>
-          
-          {versions.length < 2 ? (
-            <p>Need at least two versions to compare.</p>
-          ) : (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Version A</Label>
-                  <select
-                    className="w-full p-2 border rounded"
-                    value={selectedVersion?.id || ''}
-                    onChange={(e) => {
-                      const version = versions.find(v => v.id === e.target.value);
-                      if (version) setSelectedVersion(version);
-                    }}
-                  >
-                    <option value="">Select a version</option>
-                    {versions.map(version => (
-                      <option key={version.id} value={version.id}>
-                        {new Date(version.timestamp).toLocaleString()} - {version.description}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                
-                <div>
-                  <Label>Version B</Label>
-                  <select
-                    className="w-full p-2 border rounded"
-                    value={comparisonVersion?.id || ''}
-                    onChange={(e) => {
-                      const version = versions.find(v => v.id === e.target.value);
-                      if (version) setComparisonVersion(version);
-                    }}
-                  >
-                    <option value="">Select a version</option>
-                    {versions.map(version => (
-                      <option key={version.id} value={version.id}>
-                        {new Date(version.timestamp).toLocaleString()} - {version.description}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              
-              <Button
-                onClick={handleCompareVersions}
-                disabled={!selectedVersion || !comparisonVersion}
-              >
-                Compare Versions
-              </Button>
-              
-              {comparisonResult && (
-                <div className="mt-4 p-4 border rounded-md">
-                  <h3 className="text-lg font-semibold mb-2">Comparison Results</h3>
-                  
-                  {comparisonResult.changes.length === 0 ? (
-                    <p>No differences found between these versions.</p>
-                  ) : (
-                    <Table>
-                      <TableCaption>Changes between versions</TableCaption>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Path</TableHead>
-                          <TableHead>Change Type</TableHead>
-                          <TableHead>Old Value</TableHead>
-                          <TableHead>New Value</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {comparisonResult.changes.map((change: any, index: number) => (
-                          <TableRow key={index}>
-                            <TableCell>{change.path}</TableCell>
-                            <TableCell>
-                              <span className={
-                                change.changeType === 'added' ? 'text-green-500' :
-                                change.changeType === 'removed' ? 'text-red-500' :
-                                'text-amber-500'
-                              }>
-                                {change.changeType}
-                              </span>
-                            </TableCell>
-                            <TableCell>{JSON.stringify(change.oldValue)}</TableCell>
-                            <TableCell>{JSON.stringify(change.newValue)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
-      
-      {/* Restore Confirmation Dialog */}
-      <Dialog open={showRestoreDialog} onOpenChange={setShowRestoreDialog}>
+        ))}
+      </div>
+
+      {/* Restore confirmation dialog */}
+      <Dialog open={!!restoreConfirm} onOpenChange={() => setRestoreConfirm(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Restore Version</DialogTitle>
+            <DialogTitle>Restore "{restoreConfirm?.label}"?</DialogTitle>
             <DialogDescription>
-              Are you sure you want to restore to this version? This action cannot be undone.
+              This will roll the site's code back to the snapshot saved on{' '}
+              <strong>{restoreConfirm ? fmt(restoreConfirm.created_at) : ''}</strong>.
+              <br /><br />
+              All database data (reservations, transactions, guests, inventory) is kept exactly as it is — only the code changes.
+              The site will be back online in about 30 seconds.
             </DialogDescription>
           </DialogHeader>
-          
-          <div className="py-4">
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="selective-restore"
-                checked={selectiveRestore}
-                onCheckedChange={(checked) => setSelectiveRestore(!!checked)}
-              />
-              <Label htmlFor="selective-restore">
-                Selective restore (only restore specific parts)
-              </Label>
-            </div>
-            
-            {selectiveRestore && (
-              <div className="mt-4 p-2 border rounded-md">
-                <p className="text-sm text-muted-foreground">
-                  In a real implementation, you would be able to select specific
-                  fields or sections to restore.
-                </p>
-              </div>
-            )}
-          </div>
-          
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowRestoreDialog(false)}>
-              Cancel
+            <Button variant="outline" onClick={() => setRestoreConfirm(null)}>Cancel</Button>
+            <Button onClick={() => restoreConfirm && handleRestore(restoreConfirm)}>
+              Yes, Restore This Version
             </Button>
-            <Button onClick={handleRestoreVersion}>
-              Restore
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete snapshot?</DialogTitle>
+            <DialogDescription>
+              Remove "{deleteConfirm?.label}" from the list. The actual deployment on Vercel is not deleted — you just won't be able to restore to this point from inside the system.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => deleteConfirm && handleDelete(deleteConfirm)}>
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

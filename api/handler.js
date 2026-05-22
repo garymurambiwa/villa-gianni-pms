@@ -1279,6 +1279,119 @@ app.put('/api/rooms/:id', async (req, res) => {
   catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
+// ─── Code Version Control (Vercel deployment snapshots) ──────────────────────
+// Lets any staff member save the current deployed code as a named snapshot and
+// restore it later — without touching the database data.
+//
+// Requires these Vercel env vars:
+//   VERCEL_TOKEN       — personal access token (Settings → Tokens)
+//   VERCEL_PROJECT_ID  — from project Settings → General → Project ID
+//   VERCEL_TEAM_ID     — optional, only for team-scoped projects
+
+// Ensure the code_versions table exists (idempotent)
+async function ensureCodeVersionsTable() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS code_versions (
+      id          SERIAL PRIMARY KEY,
+      label       TEXT NOT NULL,
+      deployment_id   TEXT,
+      deployment_url  TEXT,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_by  TEXT NOT NULL DEFAULT 'system',
+      notes       TEXT
+    )
+  `);
+}
+
+// GET /api/version/list — return all saved snapshots newest-first
+app.get('/api/version/list', async (req, res) => {
+  try {
+    await ensureCodeVersionsTable();
+    const result = await db.query(`SELECT * FROM code_versions ORDER BY created_at DESC LIMIT 50`);
+    safeJson(res, { ok: true, versions: result.rows || [] });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// POST /api/version/snapshot — save the current live deployment as a snapshot
+app.post('/api/version/snapshot', async (req, res) => {
+  const { label, notes, createdBy } = req.body || {};
+  const token = process.env.VERCEL_TOKEN;
+  const projectId = process.env.VERCEL_PROJECT_ID;
+
+  try {
+    await ensureCodeVersionsTable();
+
+    let deploymentId = null;
+    let deploymentUrl = null;
+
+    if (token && projectId) {
+      // Fetch the current production deployment from Vercel
+      const teamId = process.env.VERCEL_TEAM_ID;
+      const qs = teamId ? `?teamId=${teamId}&limit=1&target=production` : '?limit=1&target=production';
+      const vRes = await fetch(`https://api.vercel.com/v6/deployments${qs}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (vRes.ok) {
+        const vData = await vRes.json();
+        const dep = vData.deployments?.[0];
+        if (dep) { deploymentId = dep.uid; deploymentUrl = dep.url ? `https://${dep.url}` : null; }
+      }
+    }
+
+    const snapshotLabel = label || `Snapshot ${new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })}`;
+    const result = await db.query(
+      `INSERT INTO code_versions (label, deployment_id, deployment_url, created_by, notes)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [snapshotLabel, deploymentId, deploymentUrl, createdBy || 'staff', notes || null]
+    );
+    safeJson(res, { ok: true, version: result.rows[0] });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// POST /api/version/restore — promote a saved deployment back to production
+app.post('/api/version/restore', async (req, res) => {
+  const { versionId } = req.body || {};
+  const token = process.env.VERCEL_TOKEN;
+  const projectId = process.env.VERCEL_PROJECT_ID;
+
+  if (!versionId) return safeJson(res, { ok: false, error: 'versionId required' });
+  if (!token || !projectId) return safeJson(res, { ok: false, error: 'VERCEL_TOKEN and VERCEL_PROJECT_ID env vars are not set — cannot restore deployments automatically. Ask your developer to set these in Vercel project settings.' });
+
+  try {
+    await ensureCodeVersionsTable();
+    const vResult = await db.query(`SELECT * FROM code_versions WHERE id=$1`, [versionId]);
+    if (!vResult.rows?.length) return safeJson(res, { ok: false, error: 'Version not found' });
+    const version = vResult.rows[0];
+
+    if (!version.deployment_id) {
+      return safeJson(res, { ok: false, error: 'This snapshot has no Vercel deployment ID recorded. It may have been saved before Vercel integration was configured.' });
+    }
+
+    const teamId = process.env.VERCEL_TEAM_ID;
+    const qs = teamId ? `?teamId=${teamId}` : '';
+    // Promote (alias) the saved deployment to production
+    const promoteRes = await fetch(`https://api.vercel.com/v10/projects/${projectId}/promote/${version.deployment_id}${qs}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: `restore-${versionId}-${Date.now()}` })
+    });
+    const promoteData = await promoteRes.json();
+    if (!promoteRes.ok) {
+      return safeJson(res, { ok: false, error: promoteData.error?.message || `Vercel API error ${promoteRes.status}` });
+    }
+
+    safeJson(res, { ok: true, message: `Restore initiated for "${version.label}". The site will update in ~30 seconds.`, version });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// DELETE /api/version/:id — remove a saved snapshot record
+app.delete('/api/version/:id', async (req, res) => {
+  try {
+    await db.query(`DELETE FROM code_versions WHERE id=$1`, [req.params.id]);
+    safeJson(res, { ok: true });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 // ─── Catch-all: return JSON 404 (NOT HTML) ───────────────────────────────────
 // This prevents the "Unexpected token T" error — always return JSON
 app.use((req, res) => {
