@@ -642,11 +642,14 @@ export const buildPosReconciliation = async (forDate?: string) => {
     const { db } = await import('@/lib/db');
     // Fetch shifts for the given date
     const shiftRes = await db.query<any>(
-      `SELECT s.*, 
+      `SELECT s.*,
+       u.name        AS opened_by_name,
+       u.username    AS opened_by_username,
        (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed') as total_sales,
        (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"cash"%') as cash_sales,
        (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"card"%') as card_sales
-       FROM pos_shifts s 
+       FROM pos_shifts s
+       LEFT JOIN app_users u ON u.id = s.opened_by
        WHERE s.opened_at::date = $1`,
       [date]
     );
@@ -654,8 +657,10 @@ export const buildPosReconciliation = async (forDate?: string) => {
     if ('rows' in shiftRes && shiftRes.rows.length > 0) {
       const rows = shiftRes.rows.map((s: any) => {
         const metadata = typeof s.metadata === 'string' ? JSON.parse(s.metadata) : (s.metadata || {});
+        // Prefer human-readable name, then username, then raw id as last resort
+        const cashier = s.opened_by_name || s.opened_by_username || s.opened_by || s.id;
         return {
-          cashier: s.opened_by || s.id,
+          cashier,
           outlet: metadata.department || 'POS',
           sales: Number(s.total_sales || 0),
           cash: Number(s.cash_sales || 0),
