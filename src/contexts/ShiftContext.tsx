@@ -40,7 +40,7 @@ interface ShiftContextType {
   endShift: (closingCash?: number) => Promise<{ success: boolean; zReading?: ShiftReading; error?: string }>;
   addTransaction: (method: PaymentMethod, amount: number, reference?: string, outlet?: 'bar' | 'restaurant') => ShiftTransaction | null;
   voidTransaction: (transactionId: string, reason: string) => boolean;
-  getTotals: () => { cash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number };
+  getTotals: () => { cash: number; ecocash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number };
   getEndedShifts: () => Shift[];
   clearEndedShifts: () => void;
   clearActiveShift: () => void;
@@ -220,19 +220,37 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ended.zReadingId = zReading.id;
 
       // --- GL POSTING: Post daily POS revenue to General Ledger ---
+      // Now posts 4 separate debit lines (Cash / EcoCash / Card / Room Charge)
+      // so the chart of accounts reflects each payment method distinctly.
+      // Errors are persisted to localStorage failure queue (not swallowed) so
+      // a recovery run can replay them.
       try {
         const gl = await import('../lib/glAccounting');
         const businessDate = new Date().toISOString().slice(0, 10);
         const mappings = gl.getMappings();
-        const totalSales = totals.cash + totals.card + totals.roomCharge;
+        const totalSales = totals.cash + totals.ecocash + totals.card + totals.roomCharge;
 
-        if (totalSales > 0 && (mappings.FB_REVENUE || mappings.CASH || mappings.CARD)) {
-          // Read tax rate from system config
+        if (totalSales > 0 && mappings.FB_REVENUE) {
+          // Read tax rate from DB first, falling back to localStorage
           let taxRate = 0;
           try {
-            const taxConfig = JSON.parse(localStorage.getItem('corepms_tax_config') || '{}');
-            taxRate = Number(taxConfig.pos_tax_rate || taxConfig.default_rate || 0);
-          } catch { /* use 0 */ }
+            const resp = await fetch('/api/db/query', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sql: `SELECT value FROM system_configs WHERE key='tax_config'` }),
+            });
+            const data = await resp.json();
+            if (data?.ok && data.rows?.length) {
+              const cfg = JSON.parse(data.rows[0].value || '{}');
+              taxRate = Number(cfg.pos_tax_rate || cfg.default_rate || 0);
+            }
+          } catch { /* fall through to localStorage */ }
+          if (!taxRate) {
+            try {
+              const taxConfig = JSON.parse(localStorage.getItem('corepms_tax_config') || '{}');
+              taxRate = Number(taxConfig.pos_tax_rate || taxConfig.default_rate || 0);
+            } catch { /* use 0 */ }
+          }
 
           const taxCollected = taxRate > 0
             ? parseFloat((totalSales * (taxRate / (100 + taxRate))).toFixed(2))
@@ -241,12 +259,15 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           const lines: import('../lib/glAccounting').GLPostingLine[] = [];
 
-          // Debit asset accounts (Cash, Card)
+          // Debit asset accounts — one per payment method
           if (totals.cash > 0 && mappings.CASH) {
             lines.push({ accountId: mappings.CASH, description: 'Cash POS Sales', debit: totals.cash, credit: 0 });
           }
+          if (totals.ecocash > 0 && (mappings.ECOCASH || mappings.CARD)) {
+            lines.push({ accountId: mappings.ECOCASH || mappings.CARD, description: 'EcoCash POS Sales', debit: totals.ecocash, credit: 0 });
+          }
           if (totals.card > 0 && mappings.CARD) {
-            lines.push({ accountId: mappings.CARD, description: 'Card POS Sales', debit: totals.card, credit: 0 });
+            lines.push({ accountId: mappings.CARD, description: 'Swipe / Card POS Sales', debit: totals.card, credit: 0 });
           }
           if (totals.roomCharge > 0 && mappings.ROOM_CHARGE) {
             lines.push({ accountId: mappings.ROOM_CHARGE, description: 'Room Charge POS', debit: totals.roomCharge, credit: 0 });
@@ -255,8 +276,6 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           // Credit revenue account
           if (netRevenue > 0 && mappings.FB_REVENUE) {
             lines.push({ accountId: mappings.FB_REVENUE, description: `F&B Revenue — Shift ${ended.id}`, debit: 0, credit: netRevenue });
-          } else if (totalSales > 0 && mappings.FB_REVENUE) {
-            lines.push({ accountId: mappings.FB_REVENUE, description: `F&B Revenue — Shift ${ended.id}`, debit: 0, credit: totalSales });
           }
 
           // Credit tax liability account
@@ -265,6 +284,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
 
           if (lines.length >= 2) {
+            // postJournalEntry validates balance and throws on failure (no silent swallow)
             gl.postJournalEntry({
               id: `GLJE_POS_${ended.id}_${Date.now()}`,
               date: businessDate,
@@ -275,7 +295,16 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         }
       } catch (glErr) {
-        console.warn('[ShiftContext] GL posting failed (non-fatal):', glErr);
+        console.error('[ShiftContext] GL posting failed:', glErr);
+        // Persist failure so a recovery process can replay it; do NOT block shift close
+        try {
+          const queue = JSON.parse(localStorage.getItem('corepms_gl_failures') || '[]');
+          queue.unshift({
+            shiftId: ended.id, error: String(glErr instanceof Error ? glErr.message : glErr),
+            totals, occurredAt: new Date().toISOString(),
+          });
+          localStorage.setItem('corepms_gl_failures', JSON.stringify(queue.slice(0, 200)));
+        } catch {}
       }
 
       // Attempt to print Z reading
@@ -434,22 +463,25 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return true;
   };
 
-   const getTotals = (): { cash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number } => {
-     if (!activeShift) return { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0, barSales: 0, restaurantSales: 0 };
+   const getTotals = (): { cash: number; ecocash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number } => {
+     if (!activeShift) return { cash: 0, ecocash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0, barSales: 0, restaurantSales: 0 };
      const txs = Array.isArray(activeShift.transactions) ? activeShift.transactions : [];
      const voidedTxs = Array.isArray(activeShift.voidedTransactions) ? activeShift.voidedTransactions : [];
 
      const totals = txs.reduce((acc, t) => {
+       // Four separate payment methods now. EcoCash gets its own bucket so
+       // the GL and reports can debit the EcoCash clearing account distinctly.
        if (t.method === 'cash') acc.cash += t.amount;
-       else if (t.method === 'ecocash' || t.method === 'swipe') acc.card += t.amount;
+       else if (t.method === 'ecocash') acc.ecocash += t.amount;
+       else if (t.method === 'swipe') acc.card += t.amount;
        else if (t.method === 'room-charge') acc.roomCharge += t.amount;
-       
+
        if (t.outlet === 'bar') acc.barSales += t.amount;
        else acc.restaurantSales += t.amount;
-       
+
        acc.count += 1;
        return acc;
-     }, { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0, barSales: 0, restaurantSales: 0 });
+     }, { cash: 0, ecocash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0, barSales: 0, restaurantSales: 0 });
 
      // Add voided transaction totals
      totals.voidedCount = voidedTxs.length;

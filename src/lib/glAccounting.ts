@@ -70,6 +70,7 @@ export const GL_USALI_DEFAULTS: Record<string, string> = {
   TAX:           '2300',  // Liability: VAT/Sales Tax Payable
   CASH:          '1000',  // Asset: Cash on Hand
   CARD:          '1100',  // Asset: Card/Bank Clearing
+  ECOCASH:       '1180',  // Asset: EcoCash Mobile Money Clearing (separate from swipe)
   ROOM_CHARGE:   '1200',  // Control: In-house Guest Ledger (transient AR)
   CITY_LEDGER:   '1300',  // Control: Accounts Receivable (non-guest/corporate)
   FB_COST:       '5100',  // Expense: F&B Cost of Sales
@@ -215,6 +216,31 @@ export const getLedger = (): GLJournalEntry[] => readJSON<GLJournalEntry[]>(K_LE
 export const appendLedger = (entry: GLJournalEntry) => {
   const ledger = getLedger();
   writeJSON(K_LEDGER, [entry, ...ledger].slice(0, 5000));
+};
+
+// postJournalEntry — public posting API used by ShiftContext.endShift() and night audit.
+// Validates the entry is balanced, persists to local ledger, and fire-and-forget posts
+// to the DB ledger endpoint so the GL survives a browser-wipe. Returns the entry or
+// throws (no silent swallowing — the caller decides what to do on failure).
+export const postJournalEntry = (entry: GLJournalEntry): GLJournalEntry => {
+  if (!Array.isArray(entry.lines) || entry.lines.length < 2) {
+    throw new Error('Journal entry needs at least 2 lines (debit + credit)');
+  }
+  if (!isBalanced(entry.lines)) {
+    const sumD = entry.lines.reduce((s, l) => s + Number(l.debit || 0), 0);
+    const sumC = entry.lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+    throw new Error(`Journal entry is not balanced — debits=${sumD.toFixed(2)} credits=${sumC.toFixed(2)}`);
+  }
+  appendLedger(entry);
+  // Fire-and-forget DB persistence
+  try {
+    fetch('/api/gl/journal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entry }),
+    }).catch(() => { /* DB write failed but local ledger has it */ });
+  } catch {}
+  return entry;
 };
 
 export const isBalanced = (lines: GLPostingLine[]): boolean => {

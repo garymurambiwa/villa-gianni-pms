@@ -113,7 +113,7 @@ app.post('/api/db/test', async (req, res) => {
 //   FB_REVENUE, BANK, AP_CONTROL etc. extended as needed.
 
 const GL_REQUIRED_CODES = [
-  'ROOM_REVENUE','FB_REVENUE','CONF_REVENUE','TAX','CASH','CARD','ROOM_CHARGE','CITY_LEDGER'
+  'ROOM_REVENUE','FB_REVENUE','CONF_REVENUE','TAX','CASH','CARD','ECOCASH','ROOM_CHARGE','CITY_LEDGER'
 ];
 
 // USALI-aligned safe default account numbers (seed if no user mapping exists)
@@ -124,6 +124,7 @@ const GL_USALI_DEFAULTS = {
   TAX:           { accountId: '2300', name: 'VAT/Sales Tax Payable',  category: 'Liability', usali: 'Tax' },
   CASH:          { accountId: '1000', name: 'Cash on Hand',           category: 'Asset',     usali: 'Cash' },
   CARD:          { accountId: '1100', name: 'Card/Bank Clearing',     category: 'Asset',     usali: 'Bank' },
+  ECOCASH:       { accountId: '1180', name: 'EcoCash Mobile Money',   category: 'Asset',     usali: 'Bank' },
   ROOM_CHARGE:   { accountId: '1200', name: 'In-house Guest Ledger',  category: 'Asset',     usali: 'GuestLedger' },
   CITY_LEDGER:   { accountId: '1300', name: 'City Ledger/AR',         category: 'Asset',     usali: 'AR' },
   FB_COST:       { accountId: '5100', name: 'F&B Cost of Sales',      category: 'Expense',   usali: 'F&B Cost' },
@@ -1289,7 +1290,7 @@ app.put('/api/rooms/:id', async (req, res) => {
 // fill in any missed dates.
 async function ensureNightAuditLogTable() {
   await db.query(`
-    CREATE TABLE IF NOT EXISTS night_audit_runs (
+    CREATE TABLE IF NOT EXISTS night_audit_log (
       id            SERIAL PRIMARY KEY,
       audit_date    DATE NOT NULL UNIQUE,
       ran_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1300,64 +1301,259 @@ async function ensureNightAuditLogTable() {
   `);
 }
 
+// ─── Helper: run a single night-audit pass for a given date ──────────────────
+// Idempotent (safe to call multiple times per date) — each step records what
+// it did into the night_audit_runs.notes column so a manager can audit the
+// history. Returns { ok, date, notes } never throws — errors go into notes.
+async function runNightAuditForDate(date, source = 'manual') {
+  await ensureNightAuditLogTable();
+  const notes = [];
+  let allOk = true;
+
+  // Read live tax rate from system_configs (default 15% if unset)
+  let taxRate = 0.15;
+  try {
+    const cfgRes = await db.query(`SELECT value FROM system_configs WHERE key='tax_config' LIMIT 1`);
+    if (cfgRes.ok && cfgRes.rows?.length) {
+      const cfg = typeof cfgRes.rows[0].value === 'string' ? JSON.parse(cfgRes.rows[0].value) : cfgRes.rows[0].value;
+      const r = Number(cfg?.room_tax_rate ?? cfg?.default_rate ?? cfg?.pos_tax_rate ?? 0);
+      if (r > 1) taxRate = r / 100;
+      else if (r > 0) taxRate = r;
+    }
+  } catch (e) { notes.push(`tax_config read failed: ${e.message}`); }
+
+  // Step 1: Close stuck shifts
+  try {
+    const r = await db.query(
+      `UPDATE pos_shifts SET status='closed', closed_at=COALESCE(closed_at, NOW())
+       WHERE status='open' AND opened_at::date <= $1 RETURNING id`,
+      [date]
+    );
+    notes.push(`Closed ${r.rows?.length || 0} stuck shifts`);
+  } catch (e) { allOk = false; notes.push(`shift-close error: ${e.message}`); }
+
+  // Step 2: Void stale open POS orders (>18h)
+  try {
+    const r = await db.query(
+      `UPDATE pos_orders SET status='voided', updated_at=NOW()
+       WHERE status='open' AND created_at < NOW() - INTERVAL '18 hours' RETURNING id`
+    );
+    notes.push(`Voided ${r.rows?.length || 0} stale POS orders`);
+  } catch (e) { allOk = false; notes.push(`order-void error: ${e.message}`); }
+
+  // Step 3: Post room charges for occupied rooms (with idempotency via source_reference)
+  try {
+    const occRooms = await db.query(
+      `SELECT ro.id as room_id, ro.number, ro.type, ro.rate as default_rate,
+              r.id as reservation_id, COALESCE(NULLIF(r.rate::numeric, 0), ro.rate, 0) as reservation_rate,
+              g.id as guest_id, g.full_name,
+              f.id as folio_id
+       FROM rooms ro
+       JOIN reservations r ON r.room_id = ro.id AND r.status = 'checked-in'
+       JOIN guests g ON g.id = r.guest_id
+       LEFT JOIN folios f ON f.reservation_id = r.id AND f.status = 'open'
+       WHERE ro.status IN ('OC', 'OD')`
+    );
+    let chargesPosted = 0;
+    let totalRevenue = 0;
+    if (occRooms.ok && occRooms.rows?.length) {
+      for (const room of occRooms.rows) {
+        const rate = Number(room.reservation_rate || 0);
+        if (rate <= 0) continue;
+        const tax = Number((rate * (taxRate / (1 + taxRate))).toFixed(2));
+        const base = Number((rate - tax).toFixed(2));
+        const chargeRef = `NA_${date}_RM${room.number}`;
+
+        // Auto-create folio if missing
+        let folioId = room.folio_id;
+        if (!folioId) {
+          const nf = await db.query(
+            `INSERT INTO folios (id, guest_id, reservation_id, room_number, status, balance, guest_name, arrival_date, inserted_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, 'open', 0, $4, NOW(), NOW()) RETURNING id`,
+            [room.guest_id, room.reservation_id, room.number, room.full_name]
+          );
+          folioId = nf.ok ? nf.rows[0]?.id : null;
+        }
+        if (!folioId) continue;
+
+        // Idempotency check — skip if already posted for this date
+        const exists = await db.query(
+          `SELECT 1 FROM folio_charges WHERE source_reference=$1 AND folio_id=$2 LIMIT 1`,
+          [chargeRef, folioId]
+        );
+        if (exists.ok && exists.rows?.length) continue;
+
+        await db.query(
+          `INSERT INTO folio_charges (id, folio_id, guest_id, reservation_id, room_number, charge_type, category,
+              description, amount, tax_amount, total_amount, source, source_reference, posting_date, business_date, department, service_date, inserted_at)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, 'charge', 'Room', $5, $6, $7, $8, 'night_audit', $9, $10, $11, 'Rooms', $11, NOW())`,
+          [folioId, room.guest_id, room.reservation_id, room.number,
+           `Room ${room.number} - ${room.type}`, base, tax, rate, chargeRef, date, date]
+        );
+        await db.query(`UPDATE folios SET balance = balance + $1, updated_at=NOW() WHERE id=$2`, [rate, folioId]);
+        chargesPosted += 1;
+        totalRevenue += rate;
+      }
+    }
+    notes.push(`Posted ${chargesPosted} room charges (revenue $${totalRevenue.toFixed(2)})`);
+  } catch (e) { allOk = false; notes.push(`room-charge error: ${e.message}`); }
+
+  // Step 4: Reset stuck table_status rows
+  try {
+    await db.query(`UPDATE table_status SET status='available', last_update=NOW() WHERE status='open'`);
+    notes.push('Reset stuck table_status rows');
+  } catch (e) { notes.push(`table-status reset error: ${e.message}`); }
+
+  // Step 5: Roll business_date forward
+  try {
+    await db.query(
+      `INSERT INTO system_configs (key, value) VALUES ('business_date', $1)
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
+      [JSON.stringify(date)]
+    );
+    notes.push(`business_date set to ${date}`);
+  } catch (e) { notes.push(`date-roll error: ${e.message}`); }
+
+  // Record the run in the lightweight log
+  try {
+    await db.query(
+      `INSERT INTO night_audit_log (audit_date, source, ok, notes) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (audit_date) DO UPDATE SET ran_at=NOW(), ok=EXCLUDED.ok, notes=EXCLUDED.notes, source=EXCLUDED.source`,
+      [date, source, allOk, notes.join('; ')]
+    );
+  } catch (e) { notes.push(`run-log error: ${e.message}`); }
+
+  // Also record in the full night_audit_runs table so the existing
+  // NightAuditReports / Reports UI surfaces the backfilled date.
+  try {
+    const d = new Date(date + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1);
+    const nextDate = d.toISOString().slice(0, 10);
+    await db.query(
+      `INSERT INTO night_audit_runs
+         (id, business_date, next_business_date, status, run_by, started_at, completed_at, inserted_at)
+       VALUES (gen_random_uuid(), $1::date, $2::date, $3, $4, $1::date, NOW(), NOW())
+       ON CONFLICT DO NOTHING`,
+      [date, nextDate, allOk ? 'completed' : 'completed_with_warnings', `${source}_runner`]
+    );
+  } catch { /* non-fatal — older schema may lack required columns */ }
+
+  return { ok: allOk, date, notes };
+}
+
+// POST /api/admin/night-audit/backfill — fill missing audits from a start date.
+// Body: { from: 'YYYY-MM-DD', to?: 'YYYY-MM-DD' }   (to defaults to today)
+// Use case: Baradzanwa night audit stuck since 2026-05-18 — backfill restores
+// missing room charges, closes orphaned shifts, and rolls business_date forward
+// one day at a time so accounting periods reconcile cleanly.
+app.post('/api/admin/night-audit/backfill', async (req, res) => {
+  const { from, to } = req.body || {};
+  if (!from || !/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+    return safeJson(res, { ok: false, error: 'from date required (YYYY-MM-DD)' });
+  }
+  const endDate = (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) ? to : new Date().toISOString().slice(0, 10);
+
+  const startMs = new Date(from + 'T00:00:00Z').getTime();
+  const endMs   = new Date(endDate + 'T00:00:00Z').getTime();
+  if (endMs < startMs) return safeJson(res, { ok: false, error: 'to must be >= from' });
+  const dayMs = 86400000;
+  const dates = [];
+  for (let t = startMs; t <= endMs; t += dayMs) {
+    dates.push(new Date(t).toISOString().slice(0, 10));
+  }
+  if (dates.length > 90) return safeJson(res, { ok: false, error: 'Backfill range too large (>90 days). Run in smaller batches.' });
+
+  const results = [];
+  for (const d of dates) {
+    try {
+      const r = await runNightAuditForDate(d, 'backfill');
+      results.push(r);
+    } catch (e) {
+      results.push({ ok: false, date: d, notes: [`fatal: ${e.message}`] });
+    }
+  }
+
+  safeJson(res, {
+    ok: true,
+    backfilled: dates.length,
+    from, to: endDate,
+    results,
+  });
+});
+
+// GET /api/admin/night-audit/status — quick health view: last run, missed dates
+app.get('/api/admin/night-audit/status', async (req, res) => {
+  try {
+    await ensureNightAuditLogTable();
+    const recent = await db.query(
+      `SELECT audit_date, ran_at, source, ok, notes FROM night_audit_log
+       ORDER BY audit_date DESC LIMIT 30`
+    );
+    const last = recent.rows?.[0];
+    // Compute missing dates between last run and today
+    const today = new Date().toISOString().slice(0, 10);
+    const missing = [];
+    if (last) {
+      const lastMs = new Date(last.audit_date).getTime();
+      const todayMs = new Date(today).getTime();
+      for (let t = lastMs + 86400000; t <= todayMs; t += 86400000) {
+        missing.push(new Date(t).toISOString().slice(0, 10));
+      }
+    }
+    safeJson(res, { ok: true, lastRun: last || null, missingDates: missing, recent: recent.rows || [] });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 app.get('/api/cron/night-audit', async (req, res) => {
   try {
     await ensureNightAuditLogTable();
     const today = new Date().toISOString().slice(0, 10);
 
     // Idempotency check — don't run twice for the same date
-    const already = await db.query(`SELECT 1 FROM night_audit_runs WHERE audit_date=$1`, [today]);
+    const already = await db.query(`SELECT 1 FROM night_audit_log WHERE audit_date=$1 AND ok=TRUE`, [today]);
     if (already.ok && already.rows?.length) {
       return safeJson(res, { ok: true, skipped: true, reason: 'already ran today', date: today });
     }
 
-    const notes = [];
-
-    // 1. Auto-close any still-open POS shifts (stuck/abandoned by power-cuts etc.)
-    try {
-      const closedShifts = await db.query(
-        `UPDATE pos_shifts SET status='closed', closed_at=COALESCE(closed_at, NOW()) WHERE status='open' RETURNING id`
-      );
-      notes.push(`Closed ${closedShifts.rows?.length || 0} stuck shifts`);
-    } catch (e) { notes.push(`shift close error: ${e.message}`); }
-
-    // 2. Void stale open POS orders (> 18 hours old)
-    try {
-      const staleOrders = await db.query(
-        `UPDATE pos_orders SET status='voided', updated_at=NOW()
-         WHERE status='open' AND created_at < NOW() - INTERVAL '18 hours' RETURNING id`
-      );
-      notes.push(`Voided ${staleOrders.rows?.length || 0} stale orders`);
-    } catch (e) { notes.push(`order void error: ${e.message}`); }
-
-    // 3. Reset table statuses for closed/voided orders
-    try {
-      await db.query(`UPDATE table_status SET status='available', last_update=NOW() WHERE status='open'`);
-      notes.push('Reset table_status');
-    } catch (e) { notes.push(`table reset error: ${e.message}`); }
-
-    // 4. Roll business date forward in system_configs
-    try {
-      await db.query(
-        `INSERT INTO system_configs (key, value) VALUES ('business_date', $1)
-         ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
-        [JSON.stringify(today)]
-      );
-      notes.push(`business_date set to ${today}`);
-    } catch (e) { notes.push(`date roll error: ${e.message}`); }
-
-    // 5. Log the run
-    await db.query(
-      `INSERT INTO night_audit_runs (audit_date, source, ok, notes) VALUES ($1, 'cron', TRUE, $2)
-       ON CONFLICT (audit_date) DO UPDATE SET ran_at=NOW(), ok=TRUE, notes=EXCLUDED.notes`,
-      [today, notes.join('; ')]
-    );
-
-    safeJson(res, { ok: true, date: today, notes });
+    const result = await runNightAuditForDate(today, 'cron');
+    safeJson(res, result);
   } catch (e) {
     console.error('[cron/night-audit] Failed:', e);
     safeJson(res, { ok: false, error: e.message });
   }
+});
+
+// ─── GL Journal persistence ──────────────────────────────────────────────────
+// Receives journal entries posted by the client (ShiftContext.endShift) so the
+// ledger survives a browser wipe. Idempotent on entry.id.
+async function ensureGlJournalsTable() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS gl_journals (
+      id          TEXT PRIMARY KEY,
+      entry_date  DATE NOT NULL,
+      reference   TEXT,
+      lines       JSONB NOT NULL,
+      attachments JSONB,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+app.post('/api/gl/journal', async (req, res) => {
+  const { entry } = req.body || {};
+  if (!entry || !entry.id || !Array.isArray(entry.lines)) {
+    return safeJson(res, { ok: false, error: 'entry with id and lines required' });
+  }
+  try {
+    await ensureGlJournalsTable();
+    await db.query(
+      `INSERT INTO gl_journals (id, entry_date, reference, lines, attachments)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+      [entry.id, entry.date, entry.reference || null,
+       JSON.stringify(entry.lines), JSON.stringify(entry.attachments || {})]
+    );
+    safeJson(res, { ok: true });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
 // ─── Code Version Control (Vercel deployment snapshots) ──────────────────────

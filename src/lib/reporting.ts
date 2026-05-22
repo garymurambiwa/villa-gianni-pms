@@ -641,6 +641,9 @@ export const buildPosReconciliation = async (forDate?: string) => {
   try {
     const { db } = await import('@/lib/db');
     // Fetch shifts for the given date
+    // Now breaks down sales by all 4 payment methods (Cash, EcoCash, Swipe, Room Charge).
+    // Uses shift_transactions table if present (preferred — populated per tx), otherwise
+    // falls back to scanning pos_orders.items JSON for legacy data.
     const shiftRes = await db.query<any>(
       `SELECT s.*,
        u.name        AS opened_by_name,
@@ -648,7 +651,9 @@ export const buildPosReconciliation = async (forDate?: string) => {
        c.name        AS outlet_name,
        (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed') as total_sales,
        (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"cash"%') as cash_sales,
-       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"card"%') as card_sales
+       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"ecocash"%') as ecocash_sales,
+       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND (items::text ILIKE '%"method":"swipe"%' OR items::text ILIKE '%"method":"card"%')) as swipe_sales,
+       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"room-charge"%') as room_charge_sales
        FROM pos_shifts s
        LEFT JOIN app_users    u ON u.id = s.opened_by
        LEFT JOIN cost_centres c ON c.id = s.outlet
@@ -659,20 +664,28 @@ export const buildPosReconciliation = async (forDate?: string) => {
     if ('rows' in shiftRes && shiftRes.rows.length > 0) {
       const rows = shiftRes.rows.map((s: any) => {
         const metadata = typeof s.metadata === 'string' ? JSON.parse(s.metadata) : (s.metadata || {});
-        // Prefer human-readable name, then username, then raw id as last resort
         const cashier = s.opened_by_name || s.opened_by_username || s.opened_by || s.id;
-        // Outlet = cost centre the shift was opened against (e.g. "Bar", "Restaurant", "Conference")
         const outlet = s.outlet_name || metadata.department || s.outlet || 'POS';
+        const cash = Number(s.cash_sales || 0);
+        const ecocash = Number(s.ecocash_sales || 0);
+        const swipe = Number(s.swipe_sales || s.total_card || 0);
+        const roomCharge = Number(s.room_charge_sales || s.total_room || 0);
         return {
           cashier,
           outlet,
           sales: Number(s.total_sales || 0),
-          cash: Number(s.cash_sales || 0),
-          card: Number(s.card_sales || 0),
-          overShort: Number(s.actual_cash || 0) - (Number(s.starting_cash || 0) + Number(s.cash_sales || 0))
+          cash,
+          ecocash,
+          swipe,
+          roomCharge,
+          overShort: Number(s.actual_cash || 0) - (Number(s.starting_cash || 0) + cash)
         };
       });
-      return { title: `POS Sales & Cashier Reconciliation — ${date}`, columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'Card', 'Over/Short'], rows };
+      return {
+        title: `POS Sales & Cashier Reconciliation — ${date}`,
+        columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'EcoCash', 'Swipe', 'Room Charge', 'Over/Short'],
+        rows
+      };
     }
   } catch (err) {
     console.warn('[Reporting] buildPosReconciliation DB query failed:', err);
@@ -680,15 +693,21 @@ export const buildPosReconciliation = async (forDate?: string) => {
 
   // Fallback to localStorage
   const ended = readJSON<any[]>('corepms_endedShifts', []);
-  const rows = ended.map(s => ({ 
-    cashier: s.openedBy || s.id, 
-    outlet: s.department || 'POS', 
-    sales: Number(s.totals?.total || s.totalSales || 0), 
-    cash: Number(s.totals?.cash || s.cashPayments || 0), 
-    card: Number(s.totals?.card || s.cardPayments || 0), 
-    overShort: Number((s.report_data?.cashDifference || 0)) 
+  const rows = ended.map(s => ({
+    cashier: s.openedBy || s.id,
+    outlet: s.department || 'POS',
+    sales: Number(s.totals?.total || s.totalSales || 0),
+    cash: Number(s.totals?.cash || s.cashPayments || 0),
+    ecocash: Number(s.totals?.ecocash || s.ecocashPayments || 0),
+    swipe: Number(s.totals?.card || s.cardPayments || 0),
+    roomCharge: Number(s.totals?.roomCharge || s.roomChargePayments || 0),
+    overShort: Number((s.report_data?.cashDifference || 0))
   }));
-  return { title: `POS Sales & Cashier Reconciliation — ${date}`, columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'Card', 'Over/Short'], rows };
+  return {
+    title: `POS Sales & Cashier Reconciliation — ${date}`,
+    columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'EcoCash', 'Swipe', 'Room Charge', 'Over/Short'],
+    rows
+  };
 };
 
 // Daily Purchase & Receiving Log — DB-driven from inventory GRN transactions
