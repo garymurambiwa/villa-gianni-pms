@@ -1279,6 +1279,87 @@ app.put('/api/rooms/:id', async (req, res) => {
   catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
+// ─── Cron: nightly auto-run of Night Audit ───────────────────────────────────
+// Hit by Vercel cron daily at 22:00 UTC (00:00 Africa/Harare CAT, UTC+2).
+// Schedule defined in vercel.json. Runs even when no browser is open.
+//
+// Idempotent — records last-run date in system_configs so a manual run earlier
+// in the day prevents double-execution. Best-effort: failures don't crash the
+// server, they're logged and the next morning's catch-up in the browser will
+// fill in any missed dates.
+async function ensureNightAuditLogTable() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS night_audit_runs (
+      id            SERIAL PRIMARY KEY,
+      audit_date    DATE NOT NULL UNIQUE,
+      ran_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      source        TEXT NOT NULL DEFAULT 'cron',
+      ok            BOOLEAN NOT NULL DEFAULT TRUE,
+      notes         TEXT
+    )
+  `);
+}
+
+app.get('/api/cron/night-audit', async (req, res) => {
+  try {
+    await ensureNightAuditLogTable();
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Idempotency check — don't run twice for the same date
+    const already = await db.query(`SELECT 1 FROM night_audit_runs WHERE audit_date=$1`, [today]);
+    if (already.ok && already.rows?.length) {
+      return safeJson(res, { ok: true, skipped: true, reason: 'already ran today', date: today });
+    }
+
+    const notes = [];
+
+    // 1. Auto-close any still-open POS shifts (stuck/abandoned by power-cuts etc.)
+    try {
+      const closedShifts = await db.query(
+        `UPDATE pos_shifts SET status='closed', closed_at=COALESCE(closed_at, NOW()) WHERE status='open' RETURNING id`
+      );
+      notes.push(`Closed ${closedShifts.rows?.length || 0} stuck shifts`);
+    } catch (e) { notes.push(`shift close error: ${e.message}`); }
+
+    // 2. Void stale open POS orders (> 18 hours old)
+    try {
+      const staleOrders = await db.query(
+        `UPDATE pos_orders SET status='voided', updated_at=NOW()
+         WHERE status='open' AND created_at < NOW() - INTERVAL '18 hours' RETURNING id`
+      );
+      notes.push(`Voided ${staleOrders.rows?.length || 0} stale orders`);
+    } catch (e) { notes.push(`order void error: ${e.message}`); }
+
+    // 3. Reset table statuses for closed/voided orders
+    try {
+      await db.query(`UPDATE table_status SET status='available', last_update=NOW() WHERE status='open'`);
+      notes.push('Reset table_status');
+    } catch (e) { notes.push(`table reset error: ${e.message}`); }
+
+    // 4. Roll business date forward in system_configs
+    try {
+      await db.query(
+        `INSERT INTO system_configs (key, value) VALUES ('business_date', $1)
+         ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
+        [JSON.stringify(today)]
+      );
+      notes.push(`business_date set to ${today}`);
+    } catch (e) { notes.push(`date roll error: ${e.message}`); }
+
+    // 5. Log the run
+    await db.query(
+      `INSERT INTO night_audit_runs (audit_date, source, ok, notes) VALUES ($1, 'cron', TRUE, $2)
+       ON CONFLICT (audit_date) DO UPDATE SET ran_at=NOW(), ok=TRUE, notes=EXCLUDED.notes`,
+      [today, notes.join('; ')]
+    );
+
+    safeJson(res, { ok: true, date: today, notes });
+  } catch (e) {
+    console.error('[cron/night-audit] Failed:', e);
+    safeJson(res, { ok: false, error: e.message });
+  }
+});
+
 // ─── Code Version Control (Vercel deployment snapshots) ──────────────────────
 // Lets any staff member save the current deployed code as a named snapshot and
 // restore it later — without touching the database data.

@@ -74,19 +74,62 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const [activeShift, setActiveShift] = useState<Shift | null>(() => {
-    // Optionally restore from localStorage
+    // Optionally restore from localStorage as a fast-path; the DB lookup below
+    // takes over within ~1s of mount and is authoritative if a power-cut wiped
+    // localStorage but the DB still has an open shift for this station.
     try {
       const raw = localStorage.getItem('corepms_activeShift');
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       const normalized = normalizeShift(parsed);
-      // Write back to fix legacy shapes
       localStorage.setItem('corepms_activeShift', JSON.stringify(normalized));
       return normalized;
     } catch {
       return null;
     }
   });
+
+  // Restore open shift from DB on mount — survives power cuts that wipe localStorage.
+  // Looks up by stationId (cost centre); falls back to any open shift for the user.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // Try to detect the active cost centre from localStorage (set by AuthPortal)
+        const stationId = (() => {
+          try { return localStorage.getItem('corepms_active_cost_centre') || ''; }
+          catch { return ''; }
+        })();
+
+        if (!stationId) return; // no station selected → nothing to restore
+
+        const dbShift = await pmsAuthDb.getActiveShift(stationId);
+        if (cancelled || !dbShift) return;
+
+        // If we already have the same shift in state from localStorage, do nothing.
+        if (activeShift && activeShift.id === dbShift.id) return;
+
+        // Hydrate from DB. Transactions arrays remain empty here — they live in
+        // localStorage between events; the DB has aggregate totals for reporting.
+        const restored: Shift = normalizeShift({
+          id: dbShift.id,
+          startedAt: dbShift.opened_at,
+          openedBy: dbShift.opened_by,
+          openingCash: Number(dbShift.opening_cash || 0),
+          status: 'open',
+          transactions: activeShift?.transactions || [],
+          voidedTransactions: activeShift?.voidedTransactions || [],
+        });
+        setActiveShift(restored);
+        try { localStorage.setItem('corepms_activeShift', JSON.stringify(restored)); } catch {}
+        console.log('[ShiftContext] Restored open shift from DB:', restored.id);
+      } catch (e) {
+        console.warn('[ShiftContext] DB shift restore failed (non-fatal):', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [endedShifts, setEndedShifts] = useState<Shift[]>(() => {
     try {

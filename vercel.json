@@ -13,5 +13,11 @@
             "source": "/((?!api/).*)$",
             "destination": "/index.html"
         }
+    ],
+    "crons": [
+        {
+            "path": "/api/cron/night-audit",
+            "schedule": "0 22 * * *"
+        }
     ]
 }

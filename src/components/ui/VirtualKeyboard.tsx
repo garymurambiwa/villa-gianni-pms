@@ -8,7 +8,6 @@ const SKIP_TYPES = new Set(['file', 'checkbox', 'radio', 'submit', 'button', 'im
 // CSS class to opt-out of keyboard on a specific input
 const OPT_OUT_CLASS = 'no-vkb';
 
-const KEYBOARD_HEIGHT = 280; // approximate px height
 const MARGIN = 12;           // gap between input and keyboard
 
 export const VirtualKeyboard: React.FC = () => {
@@ -17,9 +16,19 @@ export const VirtualKeyboard: React.FC = () => {
   const [input, setInput]             = useState('');
   const [position, setPosition]       = useState({ x: 0, bottom: 0 });
   const [isDragging, setIsDragging]   = useState(false);
+  const [isResizing, setIsResizing]   = useState(false);
   const [dragStart, setDragStart]     = useState({ x: 0, y: 0 });
   const [manualPos, setManualPos]     = useState<{ x: number; y: number } | null>(null);
-  const [size, setSize]               = useState({ width: 760 });
+  const [size, setSize]               = useState<{ width: number; height: number }>(() => {
+    try {
+      const raw = localStorage.getItem('corepms_vkb_size');
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s && Number.isFinite(s.width) && Number.isFinite(s.height)) return s;
+      }
+    } catch {}
+    return { width: 760, height: 280 };
+  });
 
   const activeInputRef  = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const keyboardRef     = useRef<any>(null);
@@ -32,7 +41,7 @@ export const VirtualKeyboard: React.FC = () => {
     const vw     = window.innerWidth;
     const vh     = window.innerHeight;
     const kbW    = Math.min(size.width, vw - 16);
-    const kbH    = KEYBOARD_HEIGHT;
+    const kbH    = size.height;
 
     let x = Math.max(8, Math.min(rect.left, vw - kbW - 8));
 
@@ -52,7 +61,39 @@ export const VirtualKeyboard: React.FC = () => {
     }
 
     setPosition({ x, bottom: y });
-  }, [manualPos, size.width]);
+  }, [manualPos, size.width, size.height]);
+
+  // ── Resize support ────────────────────────────────────────────────────────
+  const onResizeMouseDown = (e: React.MouseEvent) => {
+    setIsResizing(true);
+    setDragStart({ x: e.clientX, y: e.clientY });
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const onMove = (e: MouseEvent) => {
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      setSize(prev => {
+        const next = {
+          width: Math.max(320, Math.min(window.innerWidth - 16, prev.width + dx)),
+          height: Math.max(160, Math.min(window.innerHeight - 16, prev.height + dy)),
+        };
+        try { localStorage.setItem('corepms_vkb_size', JSON.stringify(next)); } catch {}
+        return next;
+      });
+      setDragStart({ x: e.clientX, y: e.clientY });
+    };
+    const onUp = () => setIsResizing(false);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [isResizing, dragStart]);
 
   // ── Focus listener — track active input but do NOT auto-show ─────────────
   // Keyboard only appears when user manually clicks the toggle button.
@@ -139,6 +180,7 @@ export const VirtualKeyboard: React.FC = () => {
     left:     manualPos?.x ?? position.x,
     top:      manualPos?.y ?? position.bottom,
     width:    Math.min(size.width, window.innerWidth - 16),
+    height:   size.height,
     boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
     borderRadius: 10,
     overflow: 'hidden',
@@ -191,7 +233,7 @@ export const VirtualKeyboard: React.FC = () => {
             </div>
           </div>
 
-          <div style={{ padding: '6px 8px 8px' }}>
+          <div style={{ padding: '6px 8px 8px', height: 'calc(100% - 36px)', overflow: 'hidden' }}>
             <Keyboard
               keyboardRef={r => (keyboardRef.current = r)}
               layoutName={layoutName}
@@ -231,6 +273,18 @@ export const VirtualKeyboard: React.FC = () => {
               ]}
             />
           </div>
+
+          {/* Resize handle — bottom-right corner */}
+          <div
+            onMouseDown={onResizeMouseDown}
+            style={{
+              position: 'absolute', right: 0, bottom: 0, width: 18, height: 18,
+              cursor: 'nwse-resize', background: 'transparent',
+              borderRight: '3px solid #475569', borderBottom: '3px solid #475569',
+              borderBottomRightRadius: 8,
+            }}
+            title="Drag to resize"
+          />
         </div>
       )}
 

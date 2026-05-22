@@ -120,6 +120,17 @@ export function useNightAuditScheduler(options: NightAuditSchedulerOptions = {})
   useEffect(() => {
     if (!enabled) return;
 
+    // ── Catch-up: if midnight passed while no browser was open, run the audit now.
+    // Compares last-run date in localStorage; if it's before today, the system
+    // missed at least one rollover. Fires immediately rather than waiting for
+    // the next midnight (which would skip yet another day).
+    const lastRun = localStorage.getItem(LS_LAST_AUTO_RUN);
+    if (lastRun !== todayLocal()) {
+      console.log('[AutoNightAudit] Catch-up run — last completed:', lastRun || 'never');
+      // Small delay so the app has time to mount data contexts before audit reads them
+      setTimeout(() => runAutoAudit(), 8000);
+    }
+
     const scheduleNext = () => {
       // Clear any previous timer
       if (timeoutRef.current) clearTimeout(timeoutRef.current);

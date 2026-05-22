@@ -288,7 +288,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       effectiveSettings,
       'receipt',
       {
-        includeSignature: false,
+        // Room-charge guests must sign for the folio posting — always include
+        // signature block and a guest-name / room banner on these receipts.
+        includeSignature: paymentMethod === 'room-charge',
         showTaxBreakdown: effectiveSettings.show_tax_breakdown,
         serverName: currentUser?.name,
         taxLines,

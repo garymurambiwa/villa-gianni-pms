@@ -938,16 +938,17 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 )}
 
                 <Button
-                  onClick={() => {
+                  onClick={async () => {
                     const finalTotal = total * (1 + posSettings.service_charge);
                     const vatAmount = total - (total / (1 + posSettings.vat_rate));
                     const scAmount = total * posSettings.service_charge;
+                    const billId = bill?.id || `bill-${Date.now()}`;
 
                     // Mark all current items as committed — PIN required to remove them later
                     setCommittedItemIds(new Set(items.map(i => i.menuItem.id)));
 
                     onSave({
-                      id: bill?.id || `bill-${Date.now()}`,
+                      id: billId,
                       tableId: `t${tableNumber}`,
                       items,
                       status: 'open',
@@ -959,7 +960,47 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       service_charge_amount: scAmount
                     });
 
-                    toast({ title: 'Order saved', description: 'Items are now committed — manager PIN required for modifications.' });
+                    // Print kitchen order ticket (KOT) — fire-and-forget so save doesn't block
+                    try {
+                      const { generateReceiptHTML, printDocument } = await import('@/lib/posIntegration');
+                      const branding = (() => {
+                        try { return JSON.parse(localStorage.getItem('corepms_receipt_branding') || '{}'); }
+                        catch { return {}; }
+                      })();
+                      const html = generateReceiptHTML(
+                        {
+                          id: billId,
+                          tableId: `t${tableNumber}`,
+                          items: items.map(i => ({
+                            name: i.menuItem?.name || 'Unknown Item',
+                            quantity: i.quantity,
+                            price: i.menuItem?.price || 0,
+                            subtotal: i.subtotal,
+                          })),
+                          total: finalTotal,
+                        },
+                        {
+                          restaurant_name: branding.restaurant_name || 'Kitchen Ticket',
+                          address: branding.address || '',
+                          phone: branding.phone || '',
+                          email: branding.email || '',
+                          tax_rate: 0,
+                          show_tax_breakdown: false,
+                          paper_size: branding.paper_size || '80mm',
+                          logo_url: branding.logo_url,
+                          show_logo: branding.show_logo,
+                          header_text: 'Kitchen Order Ticket',
+                          footer_text: branding.footer_text || '',
+                        },
+                        'confirmation',
+                        { includeSignature: false, showTaxBreakdown: false, serverName: user?.name }
+                      );
+                      printDocument(html, `KOT-${billId}`);
+                    } catch (err) {
+                      console.warn('[OrderModal] KOT print failed:', err);
+                    }
+
+                    toast({ title: 'Order saved', description: 'Kitchen ticket printed. Manager PIN required to modify items.' });
                     onClose();
                   }}
                   className="flex-1"

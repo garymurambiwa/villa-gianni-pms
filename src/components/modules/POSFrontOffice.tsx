@@ -1007,6 +1007,12 @@ export const POSFrontOffice: React.FC = () => {
       t.id === bill.tableId ? { ...t, status: 'available', currentBill: undefined } : t
     ));
 
+    // Deselect the paid table so the Current Bill panel doesn't keep showing its info.
+    // Without this, the table id lingers in selectedIds and activeTableId memo keeps
+    // pointing at it (or falls through to another occupied table) — leaving the bill
+    // on screen until the user clicks elsewhere.
+    setSelectedIds(prev => prev.filter(id => id !== bill.tableId));
+
     // Update database status (legacy fallback, fire-and-forget)
     updateTableStatus(bill.tableId, 'available');
     setPaymentModal({ bill: null, open: false });
