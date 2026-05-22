@@ -775,12 +775,13 @@ router.post('/grn', async (req, res) => {
         const expiryDate = line.expiry_date || null;
 
         // Detect which column names actually exist in this DB instance (cached once per request).
-        // Handles schema divergence: old = (uom_id, total_cost), new = (received_uom_id, line_total)
+        // Handles schema divergence: old = (uom_id, total_cost), new = (received_uom_id, line_total).
+        // VAT columns (vat_rate, row_vat) are checked here too so the ALTER TABLE above is picked up.
         if (!client._grn_cols_checked) {
           const colCheck = await client.query(
             `SELECT column_name FROM information_schema.columns
              WHERE table_schema='public' AND table_name='inv_grn_lines'
-             AND column_name IN ('received_uom_id','uom_id','expiry_date','notes','line_total','total_cost')`
+             AND column_name IN ('received_uom_id','uom_id','expiry_date','notes','line_total','total_cost','vat_rate','row_vat')`
           );
           client._grn_cols = colCheck.rows.map(r => r.column_name);
           client._grn_cols_checked = true;
@@ -790,24 +791,12 @@ router.post('/grn', async (req, res) => {
         const hasUomId    = hasCols.includes('uom_id');
         const hasExpiry   = hasCols.includes('expiry_date');
         const hasNotes    = hasCols.includes('notes');
+        const hasVatRate  = hasCols.includes('vat_rate');
+        const hasRowVat   = hasCols.includes('row_vat');
         // line_total (new schema) vs total_cost (old schema) — use whichever exists
         const lineTotalCol = hasCols.includes('line_total') ? 'line_total'
                            : hasCols.includes('total_cost') ? 'total_cost'
                            : 'line_total'; // fallback assumes new schema
-
-        // Re-check columns now that VAT columns may have just been added above
-        if (!client._grn_cols_checked) {
-          const colCheck2 = await client.query(
-            `SELECT column_name FROM information_schema.columns
-             WHERE table_schema='public' AND table_name='inv_grn_lines'
-             AND column_name IN ('received_uom_id','uom_id','expiry_date','notes','line_total','total_cost','vat_rate','row_vat')`
-          );
-          client._grn_cols = colCheck2.rows.map(r => r.column_name);
-          client._grn_cols_checked = true;
-        }
-        const hasColsRefreshed = client._grn_cols || [];
-        const hasVatRate = hasColsRefreshed.includes('vat_rate');
-        const hasRowVat  = hasColsRefreshed.includes('row_vat');
 
         // Build INSERT dynamically — works on both old and new schema versions
         const colNames = ['id','grn_header_id','item_id','qty_received','unit_cost', lineTotalCol,'line_number','inserted_at'];
