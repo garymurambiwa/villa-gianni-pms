@@ -1420,6 +1420,27 @@ async function runNightAuditForDate(date, source = 'manual') {
     if (posRes.ok && posRes.rows?.length) posRevenueForDay = Number(posRes.rows[0].total || 0);
   } catch { /* leave at 0 */ }
 
+  // True-up stats from the DB rather than from this run's loop counters.
+  // The loop only counts charges posted THIS run; if previous backfills wrote
+  // them already, idempotency would skip and our counter would read 0 even
+  // though the charges are present. Source-of-truth: folio_charges for this date.
+  try {
+    const fc = await db.query(
+      `SELECT COUNT(*)::int AS n, COALESCE(SUM(total_amount),0)::numeric AS total
+         FROM folio_charges
+        WHERE source='night_audit'
+          AND source_reference LIKE $1
+          AND category='Room'`,
+      [`NA_${date}_RM%`]
+    );
+    if (fc.ok && fc.rows?.length) {
+      const dbCount = Number(fc.rows[0].n || 0);
+      const dbTotal = Number(fc.rows[0].total || 0);
+      if (dbCount > chargesPosted) chargesPosted = dbCount;
+      if (dbTotal > totalRevenue) totalRevenue = dbTotal;
+    }
+  } catch { /* keep loop counters */ }
+
   // Step 4: Reset stuck table_status rows
   try {
     await db.query(`UPDATE table_status SET status='available', last_update=NOW() WHERE status='open'`);
