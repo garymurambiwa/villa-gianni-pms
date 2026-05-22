@@ -725,14 +725,29 @@ router.post('/grn', async (req, res) => {
 
     const grn = grnRes.rows[0];
 
+    // Ensure VAT columns exist (additive — safe on every request, no-op when present)
+    try {
+      await client.query(`ALTER TABLE public.inv_grn_lines ADD COLUMN IF NOT EXISTS vat_rate NUMERIC(6,3) NOT NULL DEFAULT 0`);
+      await client.query(`ALTER TABLE public.inv_grn_lines ADD COLUMN IF NOT EXISTS row_vat NUMERIC(12,2) NOT NULL DEFAULT 0`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS vat_total NUMERIC(12,2) NOT NULL DEFAULT 0`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS grn_total NUMERIC(12,2) NOT NULL DEFAULT 0`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS notes TEXT`);
+      // Invalidate cached column list so the new ones get picked up below
+      client._grn_cols_checked = false;
+    } catch (e) { /* non-fatal — columns may already exist or the DB user lacks DDL privileges */ }
+
     // Add line items if provided
     if (Array.isArray(lines) && lines.length > 0) {
       let totalValue = 0;
+      let totalVat = 0;
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const lineTotal = line.qty_received * line.unit_cost;
+        const vatRate = Number(line.vat_rate || 0);
+        const rowVat = Number((lineTotal * (vatRate / 100)).toFixed(2));
         totalValue += lineTotal;
+        totalVat += rowVat;
 
         // Ensure item exists, create if necessary
         let itemId = line.item_id;
@@ -780,6 +795,20 @@ router.post('/grn', async (req, res) => {
                            : hasCols.includes('total_cost') ? 'total_cost'
                            : 'line_total'; // fallback assumes new schema
 
+        // Re-check columns now that VAT columns may have just been added above
+        if (!client._grn_cols_checked) {
+          const colCheck2 = await client.query(
+            `SELECT column_name FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='inv_grn_lines'
+             AND column_name IN ('received_uom_id','uom_id','expiry_date','notes','line_total','total_cost','vat_rate','row_vat')`
+          );
+          client._grn_cols = colCheck2.rows.map(r => r.column_name);
+          client._grn_cols_checked = true;
+        }
+        const hasColsRefreshed = client._grn_cols || [];
+        const hasVatRate = hasColsRefreshed.includes('vat_rate');
+        const hasRowVat  = hasColsRefreshed.includes('row_vat');
+
         // Build INSERT dynamically — works on both old and new schema versions
         const colNames = ['id','grn_header_id','item_id','qty_received','unit_cost', lineTotalCol,'line_number','inserted_at'];
         const colVals  = [randomUUID(), grn.id, itemId, line.qty_received, line.unit_cost, lineTotal, i + 1, new Date()];
@@ -787,6 +816,8 @@ router.post('/grn', async (req, res) => {
         if (hasUomId)    { colNames.push('uom_id');          colVals.push(resolvedUomId); }
         if (hasExpiry)   { colNames.push('expiry_date');     colVals.push(expiryDate); }
         if (hasNotes && line.notes) { colNames.push('notes'); colVals.push(line.notes); }
+        if (hasVatRate)  { colNames.push('vat_rate');        colVals.push(vatRate); }
+        if (hasRowVat)   { colNames.push('row_vat');         colVals.push(rowVat); }
         const placeholders = colVals.map((_, idx) => `$${idx + 1}`).join(', ');
         await client.query(
           `INSERT INTO public.inv_grn_lines (${colNames.join(', ')}) VALUES (${placeholders})`,
@@ -794,17 +825,34 @@ router.post('/grn', async (req, res) => {
         );
       }
 
-      // Update GRN total + header fields
+      // Update GRN totals + header fields. total_value stays as the sub-total
+      // for backward compatibility with downstream consumers; vat_total and
+      // grn_total are the new VAT-aware columns.
+      const grnTotal = Number((totalValue + totalVat).toFixed(2));
+      const headerNotes = req.body.header_notes || req.body.notes || null;
       await client.query(
         `UPDATE public.inv_grn_headers SET
            total_value = $1,
-           supplier_invoice_number = COALESCE($2, supplier_invoice_number),
-           receipt_date = COALESCE($3::date, receipt_date)
-         WHERE id = $4`,
-        [totalValue, req.body.supplier_invoice_number || null, req.body.receipt_date || null, grn.id]
+           vat_total = $2,
+           grn_total = $3,
+           supplier_invoice_number = COALESCE($4, supplier_invoice_number),
+           receipt_date = COALESCE($5::date, receipt_date),
+           notes = COALESCE($6, notes)
+         WHERE id = $7`,
+        [totalValue, totalVat, grnTotal,
+         req.body.supplier_invoice_number || null,
+         req.body.receipt_date || null,
+         headerNotes,
+         grn.id]
       ).catch(() => {
-        // Fallback for older schema without those columns
-        return client.query(`UPDATE public.inv_grn_headers SET total_value = $1 WHERE id = $2`, [totalValue, grn.id]);
+        // Fallback for older schema without VAT columns — still updates total_value
+        return client.query(
+          `UPDATE public.inv_grn_headers SET total_value = $1,
+              supplier_invoice_number = COALESCE($2, supplier_invoice_number),
+              receipt_date = COALESCE($3::date, receipt_date)
+            WHERE id = $4`,
+          [totalValue, req.body.supplier_invoice_number || null, req.body.receipt_date || null, grn.id]
+        );
       });
     }
 

@@ -156,10 +156,10 @@ export const InventoryV11GRNForm: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           supplier_name: supplierName,
-          supplier_invoice: supplierInvoice || null,
+          supplier_invoice_number: supplierInvoice || null,
           destination_location_id: destinationLocation,
           receipt_date: receiptDate,
-          notes: notes || null,
+          header_notes: notes || null,
           created_by: 'current-user',
           lines: linesWithVat,
           totals: {
