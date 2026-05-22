@@ -429,13 +429,49 @@ if(!('error' in ordersRes)) {
     return { rows: Array.from(map.entries()).map(([name, r]) => ({ name, ...r, percent: totalGross ? (r.grossSales / totalGross) * 100 : 0, profit: r.netSales - r.cogs })), totalGross };
   }, [nonVoidedBills, itemIndexByName, dbInventoryItems]);
 
+  // Display labels for the four POS payment methods so the report shows the
+  // same names a cashier sees on the till, not the raw column value.
+  const PAYMENT_LABELS: Record<string, string> = {
+    'cash':        'CASH',
+    'ecocash':     'ECOCASH (MOBILE MONEY)',
+    'swipe':       'SWIPE (CARD)',
+    'card':        'SWIPE (CARD)',           // legacy alias
+    'room-charge': 'ROOM CHARGE',
+    'room_charge': 'ROOM CHARGE',            // legacy alias
+    'city-ledger': 'CITY LEDGER',
+  };
+
+  // Pull the payment method from the bill column first; if that's null, peek
+  // inside items[].method (some legacy paths stored it there only).
+  const resolveMethod = (bill: any): string => {
+    const raw = bill.payment_method;
+    if (raw) return String(raw).toLowerCase();
+    const items = Array.isArray(bill.items) ? bill.items : [];
+    for (const it of items) {
+      const m = it?.method || it?.paymentMethod || it?.payment_method;
+      if (m) return String(m).toLowerCase();
+    }
+    return 'unknown';
+  };
+
   const paymentSummary = React.useMemo(() => {
     const map = new Map<string, number>();
     nonVoidedBills.forEach((bill: any) => {
-       const method = (bill.payment_method || 'Unknown').toUpperCase();
-       map.set(method, (map.get(method) || 0) + Number(bill.total_amount || 0));
+      const key = resolveMethod(bill);
+      const label = PAYMENT_LABELS[key] || key.toUpperCase();
+      map.set(label, (map.get(label) || 0) + Number(bill.total_amount || 0));
     });
-    return Array.from(map.entries()).map(([method, total]) => ({ method, total }));
+    // Sort so the canonical four methods appear first, in a predictable order.
+    const order = ['CASH', 'ECOCASH (MOBILE MONEY)', 'SWIPE (CARD)', 'ROOM CHARGE', 'CITY LEDGER'];
+    return Array.from(map.entries())
+      .map(([method, total]) => ({ method, total }))
+      .sort((a, b) => {
+        const ia = order.indexOf(a.method); const ib = order.indexOf(b.method);
+        if (ia === -1 && ib === -1) return a.method.localeCompare(b.method);
+        if (ia === -1) return 1;
+        if (ib === -1) return -1;
+        return ia - ib;
+      });
   }, [nonVoidedBills]);
 
   const itemSalesSummary = React.useMemo(() => {

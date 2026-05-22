@@ -979,7 +979,9 @@ export const POSFrontOffice: React.FC = () => {
     // optimistic state clear and the first UPDATE landing in the DB. This is the
     // root cause of the "last paid table stays occupied" symptom.
     if (closePosOrder) {
-      const doClose = () => closePosOrder(bill.tableId, costCentre || undefined);
+      // Pass paymentData.paymentMethod so the DB row records cash/ecocash/swipe/
+      // room-charge — Reports → Payment Methods reads this column directly.
+      const doClose = () => closePosOrder(bill.tableId, costCentre || undefined, paymentData?.paymentMethod);
       doClose()
         .then(() => {
           console.log('POS order closed (first pass)');

@@ -725,7 +725,7 @@ check_in_date = ?, check_out_date = ?, status = ?,
     }
   };
 
-  const closePosOrder = async (tableNumber: string, costCentre?: string): Promise<boolean> => {
+  const closePosOrder = async (tableNumber: string, costCentre?: string, paymentMethod?: string): Promise<boolean> => {
     // Optimistic update — remove from local state immediately so posOrders effect
     // never re-occupies the table while the DB update is in-flight.
     // Use case-insensitive comparison for cost_center — DB may store 'conference'
@@ -742,11 +742,17 @@ check_in_date = ?, check_out_date = ?, status = ?,
     setPosOrders((prev: any[]) => prev.filter(filterFn));
 
     try {
-      // 1. Close the order in pos_orders (case-insensitive cost_center match)
+      // 1. Close the order in pos_orders (case-insensitive cost_center match).
+      // Also persist payment_method so the Reports → Payment Methods breakdown
+      // shows cash/ecocash/swipe/room-charge instead of "Unknown".
+      const setMethod = paymentMethod ? ", payment_method = ?" : "";
+      const baseParams: any[] = paymentMethod ? [paymentMethod] : [];
       const query = costCentre
-        ? "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open' AND LOWER(cost_center) = LOWER(?)"
-        : "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open'";
-      const params = costCentre ? [tableNumber, costCentre] : [tableNumber];
+        ? `UPDATE pos_orders SET status = 'closed'${setMethod} WHERE table_number = ? AND status = 'open' AND LOWER(cost_center) = LOWER(?)`
+        : `UPDATE pos_orders SET status = 'closed'${setMethod} WHERE table_number = ? AND status = 'open'`;
+      const params = costCentre
+        ? [...baseParams, tableNumber, costCentre]
+        : [...baseParams, tableNumber];
       const result = await db.query(query, params);
 
       // 2. Update table_status to 'open' (available) — conflict on table_id (the actual PK)
