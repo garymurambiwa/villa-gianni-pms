@@ -1070,6 +1070,105 @@ router.get('/grn/:id', async (req, res) => {
  * DELETE /api/v1/inventory/grn/:id
  * Delete a GRN and reverse its stock ledger entries (if posted)
  */
+/**
+ * PUT /api/v1/inventory/grn/:id
+ * Update a draft GRN. Posted GRNs are immutable — they would require reversing
+ * the stock ledger which we don't expose. Replaces header fields and lines.
+ */
+router.put('/grn/:id', async (req, res) => {
+  const { id } = req.params;
+  const { supplier_name, supplier_id, supplier_invoice_number, destination_location_id,
+          receipt_date, notes, lines } = req.body || {};
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const cur = await client.query(`SELECT id, status FROM public.inv_grn_headers WHERE id=$1`, [id]);
+    if (!cur.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ ok: false, error: 'GRN not found' }); }
+    if (cur.rows[0].status === 'posted') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ ok: false, error: 'Cannot edit a posted GRN. Delete it and create a new one instead.' });
+    }
+
+    // Ensure VAT columns exist (idempotent)
+    try {
+      await client.query(`ALTER TABLE public.inv_grn_lines ADD COLUMN IF NOT EXISTS vat_rate NUMERIC(6,3) NOT NULL DEFAULT 0`);
+      await client.query(`ALTER TABLE public.inv_grn_lines ADD COLUMN IF NOT EXISTS row_vat NUMERIC(12,2) NOT NULL DEFAULT 0`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS vat_total NUMERIC(12,2) NOT NULL DEFAULT 0`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS grn_total NUMERIC(12,2) NOT NULL DEFAULT 0`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS notes TEXT`);
+    } catch { /* non-fatal */ }
+
+    // Detect available columns on inv_grn_lines (same logic as POST handler)
+    const colCheck = await client.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='inv_grn_lines'
+       AND column_name IN ('received_uom_id','uom_id','expiry_date','notes','line_total','total_cost','vat_rate','row_vat')`
+    );
+    const hasCols = colCheck.rows.map(r => r.column_name);
+    const hasReceived = hasCols.includes('received_uom_id');
+    const hasUomId    = hasCols.includes('uom_id');
+    const hasExpiry   = hasCols.includes('expiry_date');
+    const hasVatRate  = hasCols.includes('vat_rate');
+    const hasRowVat   = hasCols.includes('row_vat');
+    const lineTotalCol = hasCols.includes('line_total') ? 'line_total'
+                       : hasCols.includes('total_cost') ? 'total_cost'
+                       : 'line_total';
+
+    // Replace lines: delete-then-insert is simpler than diffing
+    await client.query(`DELETE FROM public.inv_grn_lines WHERE grn_header_id=$1`, [id]);
+
+    let totalValue = 0;
+    let totalVat = 0;
+    if (Array.isArray(lines)) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const lineTotal = Number(line.qty_received || 0) * Number(line.unit_cost || 0);
+        const vatRate = Number(line.vat_rate || 0);
+        const rowVat = Number((lineTotal * (vatRate / 100)).toFixed(2));
+        totalValue += lineTotal;
+        totalVat += rowVat;
+        const resolvedUomId = line.received_uom_id || line.uom_id || 'uom_unit';
+
+        const colNames = ['id','grn_header_id','item_id','qty_received','unit_cost', lineTotalCol, 'line_number','inserted_at'];
+        const colVals  = [randomUUID(), id, line.item_id, line.qty_received, line.unit_cost, lineTotal, i + 1, new Date()];
+        if (hasReceived) { colNames.push('received_uom_id'); colVals.push(resolvedUomId); }
+        if (hasUomId)    { colNames.push('uom_id');          colVals.push(resolvedUomId); }
+        if (hasExpiry)   { colNames.push('expiry_date');     colVals.push(line.expiry_date || null); }
+        if (hasVatRate)  { colNames.push('vat_rate');        colVals.push(vatRate); }
+        if (hasRowVat)   { colNames.push('row_vat');         colVals.push(rowVat); }
+        const placeholders = colVals.map((_, idx) => `$${idx + 1}`).join(', ');
+        await client.query(`INSERT INTO public.inv_grn_lines (${colNames.join(', ')}) VALUES (${placeholders})`, colVals);
+      }
+    }
+
+    const grnTotal = Number((totalValue + totalVat).toFixed(2));
+    await client.query(
+      `UPDATE public.inv_grn_headers SET
+         supplier_name = COALESCE($1, supplier_name),
+         supplier_id   = COALESCE($2, supplier_id),
+         supplier_invoice_number = COALESCE($3, supplier_invoice_number),
+         destination_location_id = COALESCE($4, destination_location_id),
+         receipt_date  = COALESCE($5::date, receipt_date),
+         notes         = COALESCE($6, notes),
+         total_value   = $7,
+         vat_total     = $8,
+         grn_total     = $9,
+         updated_at    = NOW()
+       WHERE id = $10`,
+      [supplier_name || null, supplier_id || null, supplier_invoice_number || null,
+       destination_location_id || null, receipt_date || null, notes || null,
+       totalValue, totalVat, grnTotal, id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, data: { id, total_value: totalValue, vat_total: totalVat, grn_total: grnTotal } });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ ok: false, error: e.message });
+  } finally { client.release(); }
+});
+
 router.delete('/grn/:id', async (req, res) => {
   const { id } = req.params;
   const client = await pool.connect();
