@@ -1342,6 +1342,12 @@ async function runNightAuditForDate(date, source = 'manual') {
   } catch (e) { allOk = false; notes.push(`order-void error: ${e.message}`); }
 
   // Step 3: Post room charges for occupied rooms (with idempotency via source_reference)
+  // Capture stats that get written to night_audit_runs for report visibility.
+  let chargesPosted = 0;
+  let totalRevenue = 0;
+  let occupiedRoomsCount = 0;
+  let posRevenueForDay = 0;
+  let totalRoomsCount = 0;
   try {
     const occRooms = await db.query(
       `SELECT ro.id as room_id, ro.number, ro.type, ro.rate as default_rate,
@@ -1354,8 +1360,14 @@ async function runNightAuditForDate(date, source = 'manual') {
        LEFT JOIN folios f ON f.reservation_id = r.id AND f.status = 'open'
        WHERE ro.status IN ('OC', 'OD')`
     );
-    let chargesPosted = 0;
-    let totalRevenue = 0;
+    if (occRooms.ok && occRooms.rows?.length) {
+      occupiedRoomsCount = occRooms.rows.length;
+    }
+    // Also capture total room inventory for occupancy % calculation
+    try {
+      const tot = await db.query(`SELECT COUNT(*) AS n FROM rooms WHERE is_active IS NOT FALSE`);
+      if (tot.ok && tot.rows?.length) totalRoomsCount = Number(tot.rows[0].n || 0);
+    } catch { totalRoomsCount = 0; }
     if (occRooms.ok && occRooms.rows?.length) {
       for (const room of occRooms.rows) {
         const rate = Number(room.reservation_rate || 0);
@@ -1398,6 +1410,16 @@ async function runNightAuditForDate(date, source = 'manual') {
     notes.push(`Posted ${chargesPosted} room charges (revenue $${totalRevenue.toFixed(2)})`);
   } catch (e) { allOk = false; notes.push(`room-charge error: ${e.message}`); }
 
+  // Capture POS revenue for the day (for the night_audit_runs report row)
+  try {
+    const posRes = await db.query(
+      `SELECT COALESCE(SUM(total_amount),0)::numeric AS total FROM pos_orders
+       WHERE status='closed' AND created_at::date = $1::date`,
+      [date]
+    );
+    if (posRes.ok && posRes.rows?.length) posRevenueForDay = Number(posRes.rows[0].total || 0);
+  } catch { /* leave at 0 */ }
+
   // Step 4: Reset stuck table_status rows
   try {
     await db.query(`UPDATE table_status SET status='available', last_update=NOW() WHERE status='open'`);
@@ -1424,20 +1446,71 @@ async function runNightAuditForDate(date, source = 'manual') {
   } catch (e) { notes.push(`run-log error: ${e.message}`); }
 
   // Also record in the full night_audit_runs table so the existing
-  // NightAuditReports / Reports UI surfaces the backfilled date.
+  // NightAuditReports / Reports UI surfaces the backfilled date with real stats.
   try {
     const d = new Date(date + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1);
     const nextDate = d.toISOString().slice(0, 10);
-    await db.query(
-      `INSERT INTO night_audit_runs
-         (id, business_date, next_business_date, status, run_by, started_at, completed_at, inserted_at)
-       VALUES (gen_random_uuid(), $1::date, $2::date, $3, $4, $1::date, NOW(), NOW())
-       ON CONFLICT DO NOTHING`,
-      [date, nextDate, allOk ? 'completed' : 'completed_with_warnings', `${source}_runner`]
-    );
-  } catch { /* non-fatal — older schema may lack required columns */ }
 
-  return { ok: allOk, date, notes };
+    const taxRevenue = Number((totalRevenue * (taxRate / (1 + taxRate))).toFixed(2));
+    const fullTotalRevenue = totalRevenue + posRevenueForDay;
+    const occupancyPct = totalRoomsCount > 0
+      ? Number(((occupiedRoomsCount / totalRoomsCount) * 100).toFixed(2))
+      : 0;
+    const adr = occupiedRoomsCount > 0
+      ? Number((totalRevenue / occupiedRoomsCount).toFixed(2))
+      : 0;
+    const revpar = totalRoomsCount > 0
+      ? Number((totalRevenue / totalRoomsCount).toFixed(2))
+      : 0;
+    const snapshot = {
+      fbRevenue: posRevenueForDay,
+      roomRevenue: totalRevenue,
+      taxRevenue,
+      occupiedRooms: occupiedRoomsCount,
+      availableRooms: totalRoomsCount,
+      source,
+      notes: notes.join('; '),
+    };
+    const statusVal = allOk ? 'completed' : 'completed_with_warnings';
+
+    // UPSERT — if row already exists for this date (e.g. earlier backfill with
+    // empty stats), enrich it with the real numbers from this run.
+    const existing = await db.query(
+      `SELECT id FROM night_audit_runs WHERE business_date::date=$1::date LIMIT 1`,
+      [date]
+    );
+    if (existing.ok && existing.rows?.length) {
+      await db.query(
+        `UPDATE night_audit_runs SET
+           rooms_posted=$2, room_revenue=$3, tax_revenue=$4, total_revenue=$5,
+           occupied_rooms=$6, available_rooms=$7, occupancy_percent=$8, adr=$9, revpar=$10,
+           status=$11, run_by=$12, completed_at=NOW(), reports_snapshot=$13::jsonb,
+           next_business_date=$14::date
+         WHERE business_date::date=$1::date`,
+        [date, chargesPosted, totalRevenue, taxRevenue, fullTotalRevenue,
+         occupiedRoomsCount, totalRoomsCount, occupancyPct, adr, revpar,
+         statusVal, `${source}_runner`, JSON.stringify(snapshot), nextDate]
+      );
+    } else {
+      await db.query(
+        `INSERT INTO night_audit_runs
+           (id, business_date, next_business_date, rooms_posted, room_revenue,
+            tax_revenue, total_revenue, city_ledger_transfers, city_ledger_amount,
+            occupied_rooms, available_rooms, occupancy_percent, adr, revpar,
+            status, run_by, started_at, completed_at, reports_snapshot, inserted_at)
+         VALUES (gen_random_uuid(), $1::date, $2::date, $3, $4, $5, $6, 0, 0,
+                 $7, $8, $9, $10, $11, $12, $13, $1::date, NOW(), $14::jsonb, NOW())
+         ON CONFLICT DO NOTHING`,
+        [date, nextDate, chargesPosted, totalRevenue, taxRevenue, fullTotalRevenue,
+         occupiedRoomsCount, totalRoomsCount, occupancyPct, adr, revpar,
+         statusVal, `${source}_runner`, JSON.stringify(snapshot)]
+      );
+    }
+  } catch (e) {
+    notes.push(`night_audit_runs upsert error: ${e.message}`);
+  }
+
+  return { ok: allOk, date, notes, stats: { chargesPosted, totalRevenue, occupiedRoomsCount, totalRoomsCount, posRevenueForDay } };
 }
 
 // POST /api/admin/night-audit/backfill — fill missing audits from a start date.
