@@ -645,11 +645,13 @@ export const buildPosReconciliation = async (forDate?: string) => {
       `SELECT s.*,
        u.name        AS opened_by_name,
        u.username    AS opened_by_username,
+       c.name        AS outlet_name,
        (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed') as total_sales,
        (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"cash"%') as cash_sales,
        (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"card"%') as card_sales
        FROM pos_shifts s
-       LEFT JOIN app_users u ON u.id = s.opened_by
+       LEFT JOIN app_users    u ON u.id = s.opened_by
+       LEFT JOIN cost_centres c ON c.id = s.outlet
        WHERE s.opened_at::date = $1`,
       [date]
     );
@@ -659,9 +661,11 @@ export const buildPosReconciliation = async (forDate?: string) => {
         const metadata = typeof s.metadata === 'string' ? JSON.parse(s.metadata) : (s.metadata || {});
         // Prefer human-readable name, then username, then raw id as last resort
         const cashier = s.opened_by_name || s.opened_by_username || s.opened_by || s.id;
+        // Outlet = cost centre the shift was opened against (e.g. "Bar", "Restaurant", "Conference")
+        const outlet = s.outlet_name || metadata.department || s.outlet || 'POS';
         return {
           cashier,
-          outlet: metadata.department || 'POS',
+          outlet,
           sales: Number(s.total_sales || 0),
           cash: Number(s.cash_sales || 0),
           card: Number(s.card_sales || 0),
