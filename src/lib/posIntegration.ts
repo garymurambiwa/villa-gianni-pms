@@ -269,8 +269,19 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<any>> => 
       `);
 
       if ('rows' in res && Array.isArray(res.rows) && res.rows.length > 0) {
-        const lowerCC = String(costCentre || '').toLowerCase();
-        const isBarCC = ['bar', 'flamehouse_bar', 'conference_bar', 'beverage_cellar'].includes(lowerCC);
+        const lowerCC = String(costCentre || '').toLowerCase().trim();
+        // Detect a "bar" outlet from the actual cost-centre NAME. Real names use
+        // spaces and arbitrary casing ("FlameHouse Bar", "Conference Bar"), so a
+        // hardcoded underscore list ('flamehouse_bar') never matched them — which
+        // wrongly classified those bars as restaurants and hid every bar-only item.
+        //
+        // Match the word "bar" (and other beverage-outlet words) on a word
+        // boundary so "FlameHouse Bar" → bar, but "Baradzanwa lounge" isn't matched
+        // by the substring 'bar' inside "Baradzanwa". 'lounge' is its own keyword.
+        const barWord = /\b(bar|lounge|cellar|pub|tavern|cocktail)\b/.test(lowerCC);
+        const legacyList = ['bar', 'flamehouse_bar', 'conference_bar', 'beverage_cellar']
+          .includes(lowerCC.replace(/\s+/g, '_'));
+        const isBarCC = barWord || legacyList;
         const isRestCC = !isBarCC && lowerCC.length > 0;
 
         return res.rows

@@ -67,10 +67,16 @@ const getVisibleUnits = (blacklist: string[]) => {
   return INITIAL_UNITS.filter(u => !blacklist.includes(u));
 };
 
-// Map cost centers to departments (Bar or Restaurant)
+// Map cost centers to departments (Bar or Restaurant).
+// Matches the word "bar" (and other beverage-outlet words) on a word boundary so
+// real cost-centre names like "FlameHouse Bar" / "Conference Bar" are detected,
+// not just the legacy underscore aliases. Avoids false-matching "Baradzanwa".
 const getCostCenterDepartment = (costCenter: string): 'Bar' | 'Restaurant' => {
-  const barCenters = ['bar', 'flamehouse_bar', 'conference_bar', 'beverage_cellar'];
-  return barCenters.includes(String(costCenter || '').toLowerCase()) ? 'Bar' : 'Restaurant';
+  const cc = String(costCenter || '').toLowerCase().trim();
+  const barWord = /\b(bar|lounge|cellar|pub|tavern|cocktail)\b/.test(cc);
+  const legacyList = ['bar', 'flamehouse_bar', 'conference_bar', 'beverage_cellar']
+    .includes(cc.replace(/\s+/g, '_'));
+  return (barWord || legacyList) ? 'Bar' : 'Restaurant';
 };
 
 const Section: React.FC<{ title: string; id?: string; children: React.ReactNode }> = ({ title, id, children }) => (
