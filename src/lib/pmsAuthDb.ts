@@ -931,6 +931,47 @@ export const pmsAuthDb = {
     }
   },
 
+  // Reconstruct a shift's individual payment transactions from the pos_orders
+  // table (the DB source of truth). Used to rehydrate the shift after a
+  // logout/login or device switch, so X/Z readings and shift-close have the
+  // full payment breakdown even when this browser's localStorage is empty.
+  // Each closed order = one transaction (method + amount + outlet).
+  async getShiftTransactions(shiftId: string): Promise<Array<{
+    id: string; method: string; amount: number; reference: string;
+    createdAt: string; userId?: string; outlet: 'bar' | 'restaurant';
+  }>> {
+    try {
+      const res = await db.query<any>(
+        `SELECT id, total_amount, payment_method, status,
+                COALESCE(cost_center, outlet) AS centre, opened_by,
+                COALESCE(updated_at, created_at) AS ts
+         FROM pos_orders
+         WHERE shift_id = ? AND status = 'closed'
+         ORDER BY COALESCE(updated_at, created_at) ASC`,
+        [shiftId]
+      );
+      if ('error' in res || !res.rows) return [];
+      return res.rows.map((o: any) => {
+        // Normalise legacy 'card' → 'swipe'; default missing method to 'cash'
+        let method = String(o.payment_method || 'cash').toLowerCase();
+        if (method === 'card') method = 'swipe';
+        const centre = String(o.centre || '').toLowerCase();
+        const outlet: 'bar' | 'restaurant' = centre.includes('bar') ? 'bar' : 'restaurant';
+        return {
+          id: `SFTX_${o.id}`,
+          method,
+          amount: Number(o.total_amount || 0),
+          reference: String(o.id),
+          createdAt: o.ts ? new Date(o.ts).toISOString() : new Date().toISOString(),
+          userId: o.opened_by || undefined,
+          outlet,
+        };
+      });
+    } catch {
+      return [];
+    }
+  },
+
   async listShifts(stationId?: string): Promise<Shift[]> {
     try {
       let sql = `

@@ -52,8 +52,10 @@ interface ShiftContextType {
 const ShiftContext = createContext<ShiftContextType | undefined>(undefined);
 
 export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Capture user at context level — never call hooks inside functions
-  const { user } = useAuth();
+  // Capture user + active cost centre at context level — never call hooks inside functions.
+  // costCentre drives the shift-restore effect: when a barman selects their station
+  // (Bar/Restaurant/Conference), we rehydrate that station's open shift from the DB.
+  const { user, costCentre } = useAuth();
 
   // Normalize a Shift object to ensure backward compatibility with older stored shapes
   const normalizeShift = (s: any): Shift => {
@@ -89,47 +91,68 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   });
 
-  // Restore open shift from DB on mount — survives power cuts that wipe localStorage.
-  // Looks up by stationId (cost centre); falls back to any open shift for the user.
+  // Restore open shift from DB — survives logout/login, device switches, and
+  // power cuts that wipe localStorage. Critical for shared-terminal use where
+  // several barmen rotate on one POS: whoever opens the Bar cost centre sees
+  // the day's open shift WITH its full payment history, so they can always close.
+  //
+  // Re-runs whenever the selected cost centre changes (not just on mount) so a
+  // mid-day station switch or a fresh login rehydrates correctly.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        // Try to detect the active cost centre from localStorage (set by AuthPortal)
-        const stationId = (() => {
-          try { return localStorage.getItem('corepms_active_cost_centre') || ''; }
-          catch { return ''; }
-        })();
+        // Prefer the live costCentre from AuthContext; fall back to localStorage keys.
+        const stationId = costCentre
+            || (() => {
+                 try {
+                   return localStorage.getItem('pms_selected_cost_centre')
+                       || localStorage.getItem('corepms_active_cost_centre')
+                       || '';
+                 } catch { return ''; }
+               })();
 
         if (!stationId) return; // no station selected → nothing to restore
 
         const dbShift = await pmsAuthDb.getActiveShift(stationId);
         if (cancelled || !dbShift) return;
 
-        // If we already have the same shift in state from localStorage, do nothing.
-        if (activeShift && activeShift.id === dbShift.id) return;
+        // Always rebuild transactions from pos_orders (the DB source of truth) so
+        // the day's sales survive even when this browser's localStorage is empty
+        // (different user, different device, or after a clear). Merge with any
+        // local transactions by reference id so nothing is double-counted.
+        const dbTxns = await pmsAuthDb.getShiftTransactions(dbShift.id);
+        if (cancelled) return;
 
-        // Hydrate from DB. Transactions arrays remain empty here — they live in
-        // localStorage between events; the DB has aggregate totals for reporting.
+        const localTxns = (activeShift && activeShift.id === dbShift.id)
+          ? (activeShift.transactions || [])
+          : [];
+        // De-dupe: prefer DB rows; add any local-only txns not present in DB.
+        const seen = new Set(dbTxns.map(t => t.reference));
+        const merged = [
+          ...dbTxns,
+          ...localTxns.filter((t: any) => !seen.has(t.reference)),
+        ];
+
         const restored: Shift = normalizeShift({
           id: dbShift.id,
           startedAt: dbShift.opened_at,
           openedBy: dbShift.opened_by,
           openingCash: Number(dbShift.opening_cash || 0),
           status: 'open',
-          transactions: activeShift?.transactions || [],
+          transactions: merged,
           voidedTransactions: activeShift?.voidedTransactions || [],
         });
         setActiveShift(restored);
         try { localStorage.setItem('corepms_activeShift', JSON.stringify(restored)); } catch {}
-        console.log('[ShiftContext] Restored open shift from DB:', restored.id);
+        console.log(`[ShiftContext] Restored shift ${restored.id} from DB with ${merged.length} transactions (${dbTxns.length} from pos_orders).`);
       } catch (e) {
         console.warn('[ShiftContext] DB shift restore failed (non-fatal):', e);
       }
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [costCentre, user?.id]);
 
   const [endedShifts, setEndedShifts] = useState<Shift[]>(() => {
     try {
