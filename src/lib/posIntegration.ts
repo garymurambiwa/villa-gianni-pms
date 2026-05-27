@@ -284,10 +284,27 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<any>> => 
         const isBarCC = barWord || legacyList;
         const isRestCC = !isBarCC && lowerCC.length > 0;
 
+        // ── TEMPORARY BYPASS (requested 2026-05-27) ──────────────────────────
+        // Operator wants every sellable item to appear in EVERY outlet for now
+        // (food should show at the bar, drinks at the restaurant) rather than be
+        // filtered by bar/restaurant visibility. We still exclude raw stock /
+        // ingredients (items not flagged visible in ANY outlet — e.g. Mop, flour,
+        // $0.00 cleaning supplies) so the till isn't flooded with non-menu items.
+        //
+        // TODO(revisit): restore per-outlet filtering once each product's
+        // bar_visibility / restaurant_visibility flags are cleaned up. The
+        // isBarCC/isRestCC detection below is kept intact for that future switch.
+        const SHOW_ALL_OUTLETS = true;
+        void isBarCC; void isRestCC; // referenced again when bypass is removed
+
         return res.rows
           .filter((r: any) => {
-            // Respect per-item visibility flags when a cost centre is active
             if (!costCentre) return true;
+            if (SHOW_ALL_OUTLETS) {
+              // Sellable in at least one outlet → show everywhere. Raw stock
+              // (both flags false) stays hidden.
+              return r.bar_visibility === true || r.restaurant_visibility === true;
+            }
             if (isBarCC)  return r.bar_visibility !== false;
             if (isRestCC) return r.restaurant_visibility !== false;
             return true;
