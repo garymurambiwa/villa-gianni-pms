@@ -608,9 +608,19 @@ app.post('/api/night-audit/run', async (req, res) => {
     const posRevenue = posRes.ok ? Number(posRes.rows?.[0]?.pos_rev || 0) : 0;
     const totalRevenue = roomRevenue + posRevenue;
 
-    // Advance business date
+    // Advance business date — but CLAMP so it never runs ahead of the real
+    // server date. A manual run for a future date previously pushed
+    // business_date to e.g. 2026-06-02, silently breaking the night-audit
+    // catch-up. We cap nextDate at CURRENT_DATE.
     const nextDate = new Date(date); nextDate.setDate(nextDate.getDate() + 1);
-    const nextDateStr = nextDate.toISOString().split('T')[0];
+    let nextDateStr = nextDate.toISOString().split('T')[0];
+    try {
+      const nowRes = await db.query(`SELECT CURRENT_DATE::text AS d`);
+      const serverToday = nowRes.ok && nowRes.rows?.length ? nowRes.rows[0].d : null;
+      if (serverToday && nextDateStr > serverToday) {
+        nextDateStr = serverToday; // never advance past today
+      }
+    } catch { /* if clock check fails, fall through with computed nextDate */ }
     await db.query(
       `INSERT INTO system_configs (key,value) VALUES ('business_date',$1)
        ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
