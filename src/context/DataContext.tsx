@@ -1695,12 +1695,40 @@ check_in_date = ?, check_out_date = ?, status = ?,
       const fields = [];
       const values = [];
 
+      // Map frontend camelCase field names to their snake_case DB columns.
+      // Missing mappings previously produced SQL like `SET contactName = ?`,
+      // which Postgres rejects ("column does not exist") — this is why closing
+      // an account via Edit Details (which sends contactName/billingCycle/…)
+      // failed with "City ledger account could not be updated".
+      // NOTE: column names below match the LIVE runtime table created by
+      // loadCityLedger()'s DDL — it uses `type` (not account_type) and
+      // `balance` (not current_balance), and has no last_activity_date.
+      const COLUMN_MAP: Record<string, string> = {
+        name: 'account_name',
+        accountName: 'account_name',
+        accountType: 'type',
+        type: 'type',
+        contactName: 'contact_name',
+        contactPhone: 'contact_phone',
+        contactEmail: 'contact_email',
+        billingCycle: 'billing_cycle',
+        paymentTerms: 'payment_terms',
+        creditLimit: 'credit_limit',
+        currentBalance: 'balance',
+        balance: 'balance',
+        activatedOn: 'activated_on',
+      };
+      // Only allow real columns through, so an unexpected key can never inject
+      // an invalid column name and break the whole update again.
+      const VALID_COLUMNS = new Set([
+        'account_name', 'type', 'credit_limit', 'balance',
+        'payment_terms', 'billing_cycle', 'contact_name', 'contact_phone',
+        'contact_email', 'address', 'status', 'activated_on',
+      ]);
+
       Object.keys(updateData).forEach(key => {
-        // Map the frontend field names to database column names
-        let columnName = key;
-        if (key === 'name') {
-          columnName = 'account_name';
-        }
+        const columnName = COLUMN_MAP[key] || key;
+        if (!VALID_COLUMNS.has(columnName)) return; // skip unknown / unmapped fields
         fields.push(`${columnName} = ?`);
         values.push(updateData[key]);
       });
