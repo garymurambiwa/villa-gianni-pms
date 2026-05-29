@@ -75,9 +75,11 @@ interface Props {
     onRecordBill?: () => void;
     onMarkPaid?: (referenceNumber: string) => Promise<void>;
     onViewDetails?: (group: InvoiceGroup) => void;
+    /** When true, hide this view's own filter row (parent owns the shared filter bar). */
+    hideFilters?: boolean;
 }
 
-export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense, onAddCreditNote, onRecordBill, onMarkPaid, onViewDetails }) => {
+export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense, onAddCreditNote, onRecordBill, onMarkPaid, onViewDetails, hideFilters }) => {
     const { toast } = useToast();
 
     // UI state
@@ -276,6 +278,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
     return (
         <div className="space-y-4">
             {/* Filters row */}
+            {!hideFilters && (
             <div className="flex flex-wrap items-end gap-3 justify-between">
                 <div className="flex flex-wrap items-end gap-3 flex-1">
                     <div className="flex-1 min-w-[200px]">
@@ -331,6 +334,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                     </div>
                 )}
             </div>
+            )}
 
             {/* List Header */}
             <div className="flex justify-between items-center text-sm text-gray-500 bg-gray-50 p-2 rounded-md">

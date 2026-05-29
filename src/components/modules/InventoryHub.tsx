@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
+import { TransactionFilterBar } from '@/components/shared/TransactionFilterBar';
+import { filterRows, printTransactionList, EMPTY_TRANSACTION_FILTER, type TransactionFilterValue } from '@/lib/transactionFilters';
 
 const API = '/api/v1/inventory';
 const DB  = '/api/db/query';
@@ -73,8 +75,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const { items, locations, uoms, vendors, reload } = data;
   const { toast } = useToast();
   const { user } = useAuth();
-  const [search, setSearch] = useState('');
-  const [dateFilter, setDateFilter] = useState('');
+  const [filters, setFilters] = useState<TransactionFilterValue>({ ...EMPTY_TRANSACTION_FILTER });
   const [editItem, setEditItem] = useState<any | null>(null);
   const [form, setForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
@@ -141,13 +142,35 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
     w.document.open(); w.document.write(html); w.document.close();
   };
 
-  const filtered = items.filter(i =>
-    (!search || i.name.toLowerCase().includes(search.toLowerCase()) ||
-    (i.sku||'').toLowerCase().includes(search.toLowerCase()) ||
-    (i.short_id||'').toLowerCase().includes(search.toLowerCase()) ||
-    (i.id||'').toLowerCase().includes(search.toLowerCase())) &&
-    (!dateFilter || new Date(i.inserted_at).toDateString() === new Date(dateFilter).toDateString())
-  );
+  const filtered = filterRows(items, filters, {
+    date: (i:any) => i.inserted_at,
+    category: (i:any) => i.category,
+    search: (i:any) => [i.name, i.sku, i.short_id, i.id],
+  });
+
+  // Categories actually present (fall back to the master list for new setups).
+  const itemCategories = (() => {
+    const present = Array.from(new Set(items.map((i:any) => i.category).filter(Boolean))).sort();
+    return present.length ? present : CATEGORIES;
+  })();
+
+  const printItems = () => printTransactionList({
+    title: 'Inventory Items',
+    filters,
+    columns: [
+      { header: 'Short ID', value: (i:any) => '#' + (i.short_id || String(i.id || '').slice(-4)).toUpperCase() },
+      { header: 'SKU', value: (i:any) => i.sku || '—' },
+      { header: 'Name', value: (i:any) => i.name || '' },
+      { header: 'Category', value: (i:any) => i.category || '' },
+      { header: 'UOM', value: (i:any) => i.base_uom_code || i.base_uom_id || '' },
+      { header: 'Cost', value: (i:any) => fmt(i.last_cost_price), align: 'right' },
+      { header: 'Avg Cost', value: (i:any) => fmt(i.weighted_avg_cost), align: 'right' },
+      { header: 'Location', value: (i:any) => locations.find((l:any) => l.id === i.default_location_id)?.name || '—' },
+      { header: 'Date', value: (i:any) => i.inserted_at ? new Date(i.inserted_at).toLocaleDateString() : '' },
+    ],
+    rows: filtered,
+    footer: [{ label: 'Items', value: filtered.length }],
+  });
 
   const openNew = () => {
     setForm({ category: 'Food', base_uom_id: 'uom_unit', expiry_tracking: false });
@@ -209,14 +232,19 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
   return (
     <div className="h-full flex flex-col">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <Input placeholder="Search by ID, short ID, name, or SKU…" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
-        <Input type="date" placeholder="Filter by date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="max-w-xs" />
-        <span className="text-sm text-gray-500">{filtered.length} items</span>
-        <div className="ml-auto flex gap-2">
+      <TransactionFilterBar
+        value={filters}
+        onChange={setFilters}
+        show={{ department: false, status: false }}
+        categories={itemCategories}
+        searchPlaceholder="Search by ID, short ID, name, or SKU…"
+        resultCount={filtered.length}
+        onPrint={printItems}
+        rightActions={
           <Button onClick={openNew} className="bg-indigo-600 text-white hover:bg-indigo-700">＋ New Item</Button>
-        </div>
-      </div>
+        }
+        className="mb-4"
+      />
 
       {/* Table */}
       <div className="flex-1 overflow-auto rounded-lg border border-gray-200">
@@ -481,10 +509,41 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   // GRN header fields — these were the missing state variables causing ReferenceError
   const [grnDate, setGrnDate] = useState(new Date().toISOString().split('T')[0]);
   const [grnNotes, setGrnNotes] = useState('');
+  // Shared transaction filters (date period / status / search)
+  const [filters, setFilters] = useState<TransactionFilterValue>({ ...EMPTY_TRANSACTION_FILTER });
 
   useEffect(() => {
-    apiGet('/grn?limit=30').then(r => { if (r.ok) setGrns(r.data); });
+    apiGet('/grn?limit=500').then(r => { if (r.ok) setGrns(r.data); });
   }, []);
+
+  const locName = (id: string) => locations.find((l:any) => l.id === id)?.name || id || '';
+
+  // Apply shared filters. GRNs have no category/department, so we filter on
+  // date (receipt/created), status (posted/draft) and free-text search.
+  const filteredGrns = filterRows(grns, filters, {
+    date: (g:any) => g.receipt_date || g.inserted_at,
+    status: (g:any) => g.status,
+    search: (g:any) => [g.grn_number, g.supplier_name, g.supplier_invoice_number, locName(g.destination_location_id)],
+  });
+
+  const printGrns = () => printTransactionList({
+    title: 'Goods Received Notes',
+    filters,
+    columns: [
+      { header: 'GRN #', value: (g:any) => g.grn_number || '' },
+      { header: 'Supplier', value: (g:any) => g.supplier_name || '' },
+      { header: 'Invoice #', value: (g:any) => g.supplier_invoice_number || '—' },
+      { header: 'Destination', value: (g:any) => locName(g.destination_location_id) },
+      { header: 'Total', value: (g:any) => fmt(g.total_value), align: 'right' },
+      { header: 'Status', value: (g:any) => g.status || '' },
+      { header: 'Date', value: (g:any) => { const d = g.receipt_date || g.inserted_at; return d ? new Date(d).toLocaleDateString() : ''; } },
+    ],
+    rows: filteredGrns,
+    footer: [
+      { label: 'GRNs', value: filteredGrns.length },
+      { label: 'Total Value', value: fmt(filteredGrns.reduce((s:number, g:any) => s + Number(g.total_value || 0), 0)) },
+    ],
+  });
 
   // Auto-initialize destLocation to first ACTIVE storage location from the API.
   // Prevents the React controlled-select mismatch where hardcoded 'loc_main_cellar'
@@ -702,7 +761,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
       setLines([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, expiry_date:'' }]);
       setSupplier(''); setSupplierId(''); setInvoiceNum('');
       setGrnDate(new Date().toISOString().split('T')[0]); setGrnNotes('');
-      apiGet('/grn?limit=30').then(res => { if (res.ok) setGrns(res.data); });
+      apiGet('/grn?limit=500').then(res => { if (res.ok) setGrns(res.data); });
     } else {
       toast({ title: 'GRN failed', description: r.error, variant:'destructive' });
     }
@@ -711,18 +770,29 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-base font-bold text-gray-700">Goods Received Notes</h3>
-        <Button
-          onClick={() => {
-            // Reset to a clean slate when opening as "New GRN"
-            setEditingGrnId(null);
-            setSupplier(''); setSupplierId(''); setInvoiceNum('');
-            setGrnDate(new Date().toISOString().split('T')[0]); setGrnNotes('');
-            setLines([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, vat_type:'15.50', expiry_date:'' }]);
-            setShowForm(true);
-          }}
-          className="bg-green-700 text-white hover:bg-green-800">＋ New GRN</Button>
+      <div className="mb-4">
+        <h3 className="text-base font-bold text-gray-700 mb-3">Goods Received Notes</h3>
+        <TransactionFilterBar
+          value={filters}
+          onChange={setFilters}
+          show={{ category: false, department: false }}
+          statuses={[{ value: 'posted', label: 'Posted' }, { value: 'draft', label: 'Draft' }]}
+          searchPlaceholder="Search GRN #, supplier, invoice…"
+          resultCount={filteredGrns.length}
+          onPrint={printGrns}
+          rightActions={
+            <Button
+              onClick={() => {
+                // Reset to a clean slate when opening as "New GRN"
+                setEditingGrnId(null);
+                setSupplier(''); setSupplierId(''); setInvoiceNum('');
+                setGrnDate(new Date().toISOString().split('T')[0]); setGrnNotes('');
+                setLines([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, vat_type:'15.50', expiry_date:'' }]);
+                setShowForm(true);
+              }}
+              className="bg-green-700 text-white hover:bg-green-800">＋ New GRN</Button>
+          }
+        />
       </div>
 
       {/* GRN history */}
@@ -736,8 +806,8 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {grns.length === 0 && <tr><td colSpan={8} className="text-center py-10 text-gray-400">No GRNs yet</td></tr>}
-            {grns.map((g:any) => (
+            {filteredGrns.length === 0 && <tr><td colSpan={8} className="text-center py-10 text-gray-400">{grns.length === 0 ? 'No GRNs yet' : 'No GRNs match the current filter'}</td></tr>}
+            {filteredGrns.map((g:any) => (
               <tr key={g.id}
                 className={`hover:bg-indigo-50 cursor-pointer transition-colors ${detailGrn?.id === g.id ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-300' : ''}`}
                 onClick={() => openDetailGrn(g)}>
@@ -1085,13 +1155,13 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   const [saving, setSaving] = useState(false);
   const [balances, setBalances] = useState<any[]>([]);
   const [itemSearch, setItemSearch] = useState<Record<number,string>>({});
-  const [dateFilter, setDateFilter] = useState('');
+  const [filters, setFilters] = useState<TransactionFilterValue>({ ...EMPTY_TRANSACTION_FILTER });
   const [fullScreen, setFullScreen] = useState(false);
   const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
-    apiGet('/transfer?limit=30').then(r => { if (r.ok) setTransfers(r.data); });
+    apiGet('/transfer?limit=500').then(r => { if (r.ok) setTransfers(r.data); });
   }, []);
 
   // Auto-initialize src/dst to first active storage/outlet locations from the API
@@ -1108,7 +1178,29 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
     if (srcLoc) apiGet(`/balance/${srcLoc}`).then(r => { if (r.ok) setBalances(r.data || []); });
   }, [srcLoc]);
 
-  const filteredTransfers = transfers.filter(t => !dateFilter || new Date(t.inserted_at).toDateString() === new Date(dateFilter).toDateString());
+  const locName = (id: string) => locations.find((l:any) => l.id === id)?.name || id || '';
+
+  // Shared transaction filters (date period / status / search). No category/department for transfers.
+  const filteredTransfers = filterRows(transfers, filters, {
+    date: (t:any) => t.inserted_at,
+    status: (t:any) => t.status,
+    search: (t:any) => [t.transfer_number, t.reference_note, locName(t.source_location_id), locName(t.destination_location_id)],
+  });
+
+  const printTransfers = () => printTransactionList({
+    title: 'Stock Transfers / Requisitions',
+    filters,
+    columns: [
+      { header: 'Transfer #', value: (t:any) => t.transfer_number || '' },
+      { header: 'From', value: (t:any) => locName(t.source_location_id) },
+      { header: 'To', value: (t:any) => locName(t.destination_location_id) },
+      { header: 'Ref', value: (t:any) => t.reference_note || '—' },
+      { header: 'Status', value: (t:any) => t.status || '' },
+      { header: 'Date', value: (t:any) => { const d = new Date(t.inserted_at); return isNaN(d.getTime()) ? '' : d.toLocaleDateString(); } },
+    ],
+    rows: filteredTransfers,
+    footer: [{ label: 'Transfers', value: filteredTransfers.length }],
+  });
 
   const addTLine = () => setTLines(l => [...l, { item_id:'', item_name:'', qty:1, uom:'uom_unit', date:'' }]);
   const removeTLine = (i: number) => setTLines(l => l.filter((_,idx) => idx !== i));
@@ -1154,7 +1246,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
       setReqRef('');
       setTransferDate('');
       setNotes('');
-      apiGet('/transfer?limit=30').then(res => { if (res.ok) setTransfers(res.data); });
+      apiGet('/transfer?limit=500').then(res => { if (res.ok) setTransfers(res.data); });
     } else {
       toast({ title: 'Transfer failed', description: r.error, variant:'destructive' });
     }
@@ -1163,12 +1255,18 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <h3 className="text-base font-bold text-gray-700">Stock Transfers</h3>
-          <Input type="date" placeholder="Filter by date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="max-w-xs" />
-        </div>
-        <Button onClick={() => setShowForm(true)} className="bg-amber-600 text-white hover:bg-amber-700">＋ New Transfer</Button>
+      <div className="mb-4">
+        <h3 className="text-base font-bold text-gray-700 mb-3">Stock Transfers</h3>
+        <TransactionFilterBar
+          value={filters}
+          onChange={setFilters}
+          show={{ category: false, department: false }}
+          statuses={[{ value: 'approved', label: 'Approved' }, { value: 'pending', label: 'Pending' }, { value: 'draft', label: 'Draft' }]}
+          searchPlaceholder="Search transfer #, ref, location…"
+          resultCount={filteredTransfers.length}
+          onPrint={printTransfers}
+          rightActions={<Button onClick={() => setShowForm(true)} className="bg-amber-600 text-white hover:bg-amber-700">＋ New Transfer</Button>}
+        />
       </div>
 
       <div className="flex-1 overflow-auto rounded-lg border border-gray-200">
