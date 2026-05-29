@@ -20,6 +20,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Label } from '@/components/ui/label';
 import { ALL_DEPARTMENTS } from '@/lib/usaliCategories';
 import { formatDateForCSV, toDisplayId, escapeCSV } from '@/lib/csvUtils';
+import { usePagination } from '@/hooks/usePagination';
+import PaginationBar from '@/components/shared/PaginationBar';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -272,6 +274,8 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
 
     const totalFiltered = filteredGroups.reduce((s, g) => s + g.netAmount, 0);
 
+    const expensePg = usePagination(filteredGroups);
+
     /* ---------------------------------------------------------------------- */
     /*  Render                                                                 */
     /* ---------------------------------------------------------------------- */
@@ -365,7 +369,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                                 </TableCell>
                             </TableRow>
                         )}
-                        {filteredGroups.map((group, idx) => {
+                        {expensePg.pageItems.map((group, idx) => {
                             const statusColors: Record<string, string> = {
                                 paid: 'bg-green-100 text-green-700',
                                 approved: 'bg-blue-100 text-blue-700',
@@ -378,7 +382,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                                 <React.Fragment key={group.referenceNumber}>
                                     <TableRow className="hover:bg-gray-50">
                                         <TableCell className="text-center text-gray-300 select-none">·</TableCell>
-                                        <TableCell className="font-mono text-sm">{toDisplayId(idx + 1, 'INV')}</TableCell>
+                                        <TableCell className="font-mono text-sm">{toDisplayId(expensePg.from + idx, 'INV')}</TableCell>
                                         <TableCell className="font-medium">{group.vendorName}</TableCell>
                                         <TableCell className="text-sm text-gray-600">{group.department}</TableCell>
                                         <TableCell className="text-sm">{formatDateShort(group.date)}</TableCell>
@@ -446,6 +450,7 @@ export const ExpenseInvoiceView: React.FC<Props> = ({ expenses, onDeleteExpense,
                     </TableBody>
                 </Table>
             </div>
+            <PaginationBar {...expensePg} itemLabel="invoices" />
 
             {/* 2-Step Delete Confirmation Dialog */}
             <Dialog open={!!deleteTarget} onOpenChange={() => { setDeleteTarget(null); setDeleteConfirmText(''); }}>

@@ -9,6 +9,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { TransactionFilterBar } from '@/components/shared/TransactionFilterBar';
 import { filterRows, printTransactionList, EMPTY_TRANSACTION_FILTER, type TransactionFilterValue } from '@/lib/transactionFilters';
+import { usePagination } from '@/hooks/usePagination';
+import PaginationBar from '@/components/shared/PaginationBar';
 
 const API = '/api/v1/inventory';
 const DB  = '/api/db/query';
@@ -147,6 +149,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
     category: (i:any) => i.category,
     search: (i:any) => [i.name, i.sku, i.short_id, i.id],
   });
+  const itemsPg = usePagination<any>(filtered);
 
   // Categories actually present (fall back to the master list for new setups).
   const itemCategories = (() => {
@@ -260,7 +263,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
             {filtered.length === 0 && (
               <tr><td colSpan={11} className="text-center py-12 text-gray-400">No items found</td></tr>
             )}
-            {filtered.map((item: any) => (
+            {itemsPg.pageItems.map((item: any) => (
               <tr key={item.id} className="hover:bg-gray-50">
                 <td className="px-3 py-2 font-mono text-xs text-gray-500">
                   <span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold tracking-wide">
@@ -312,6 +315,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
           </tbody>
         </table>
       </div>
+      <PaginationBar {...itemsPg} itemLabel="items" />
 
       {/* Item Edit/Create Modal — SINGLE SOURCE OF TRUTH */}
       {editItem !== null && (
@@ -525,6 +529,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
     status: (g:any) => g.status,
     search: (g:any) => [g.grn_number, g.supplier_name, g.supplier_invoice_number, locName(g.destination_location_id)],
   });
+  const grnsPg = usePagination<any>(filteredGrns);
 
   const printGrns = () => printTransactionList({
     title: 'Goods Received Notes',
@@ -807,7 +812,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {filteredGrns.length === 0 && <tr><td colSpan={8} className="text-center py-10 text-gray-400">{grns.length === 0 ? 'No GRNs yet' : 'No GRNs match the current filter'}</td></tr>}
-            {filteredGrns.map((g:any) => (
+            {grnsPg.pageItems.map((g:any) => (
               <tr key={g.id}
                 className={`hover:bg-indigo-50 cursor-pointer transition-colors ${detailGrn?.id === g.id ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-300' : ''}`}
                 onClick={() => openDetailGrn(g)}>
@@ -851,6 +856,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
           </tbody>
         </table>
       </div>
+      <PaginationBar {...grnsPg} itemLabel="GRNs" />
 
       {/* GRN Detail Panel */}
       {detailGrn && (
@@ -1186,6 +1192,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
     status: (t:any) => t.status,
     search: (t:any) => [t.transfer_number, t.reference_note, locName(t.source_location_id), locName(t.destination_location_id)],
   });
+  const transfersPg = usePagination<any>(filteredTransfers);
 
   const printTransfers = () => printTransactionList({
     title: 'Stock Transfers / Requisitions',
@@ -1280,7 +1287,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
           </thead>
           <tbody className="divide-y divide-gray-100">
             {filteredTransfers.length === 0 && <tr><td colSpan={6} className="text-center py-10 text-gray-400">No transfers found</td></tr>}
-            {filteredTransfers.map((t:any) => (
+            {transfersPg.pageItems.map((t:any) => (
               <tr key={t.id} className="hover:bg-gray-50">
                 <td className="px-3 py-2 font-mono font-bold text-amber-700">{t.transfer_number}</td>
                 <td className="px-3 py-2">{locations.find((l:any) => l.id === t.source_location_id)?.name || t.source_location_id}</td>
@@ -1297,6 +1304,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
           </tbody>
         </table>
       </div>
+      <PaginationBar {...transfersPg} itemLabel="transfers" />
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto pt-8 pb-8">

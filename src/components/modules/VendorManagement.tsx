@@ -16,6 +16,8 @@ import { RecordVendorBill } from '@/components/modules/RecordVendorBill';
 import { BillDetailModal } from '@/components/modules/BillDetailModal';
 import { TransactionFilterBar } from '@/components/shared/TransactionFilterBar';
 import { filterRows, printTransactionList, isFilterActive, EMPTY_TRANSACTION_FILTER, type TransactionFilterValue } from '@/lib/transactionFilters';
+import { usePagination } from '@/hooks/usePagination';
+import PaginationBar from '@/components/shared/PaginationBar';
 
 // Canonical expense categories (mirrors the Add/Batch expense forms)
 const EXPENSE_CATEGORIES = [
@@ -627,6 +629,10 @@ const VendorManagement: React.FC = () => {
     status: (e: any) => e.status,
     search: (e: any) => [e.vendor_name, e.description, e.reference_number, e.id],
   });
+  // Pagination for the long lists in this module
+  const vendorsPg = usePagination<any>(vendors || []);
+  const vmExpensesPg = usePagination<any>(filteredExpenses);
+  const paymentsPg = usePagination<any>(vendorPayments || []);
 
   // Departments actually present + canonical USALI list, de-duplicated.
   const expenseDepartments = Array.from(new Set([
@@ -981,7 +987,7 @@ const VendorManagement: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {vendors.map((vendor: Vendor) => (
+                  {vendorsPg.pageItems.map((vendor: Vendor) => (
                     <TableRow key={vendor.id}>
                       <TableCell>{vendor.name}</TableCell>
                       <TableCell>{vendor.contact_person}</TableCell>
@@ -1018,6 +1024,7 @@ const VendorManagement: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
+              <PaginationBar {...vendorsPg} itemLabel="vendors" />
             </CardContent>
           </Card>
         </TabsContent>
@@ -1533,7 +1540,7 @@ const VendorManagement: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredExpenses.map((expense: VendorExpense) => {
+                        {vmExpensesPg.pageItems.map((expense: VendorExpense) => {
                           // Check if this is a batch parent expense
                           const isBatchParent = expense.is_batch_parent;
                           const batchDetails = expense.batch_details ? JSON.parse(expense.batch_details) : null;
@@ -1662,6 +1669,7 @@ const VendorManagement: React.FC = () => {
                         )}
                       </TableBody>
                     </Table>
+                    <PaginationBar {...vmExpensesPg} itemLabel="expenses" />
 
                     {vendorExpenses.length > 0 && (
                       <div className="mt-4 border-t pt-4">
@@ -1727,7 +1735,7 @@ const VendorManagement: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {vendorPayments.map((payment: VendorPayment) => (
+                  {paymentsPg.pageItems.map((payment: VendorPayment) => (
                     <TableRow key={payment.id}>
                       <TableCell>{payment.id}</TableCell>
                       <TableCell>{payment.vendor_name}</TableCell>
@@ -1747,6 +1755,7 @@ const VendorManagement: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
+              <PaginationBar {...paymentsPg} itemLabel="payments" />
             </CardContent>
           </Card>
         </TabsContent>

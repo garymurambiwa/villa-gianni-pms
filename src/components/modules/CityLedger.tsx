@@ -4,6 +4,8 @@ import { useData } from '../../context/DataContext';
 import { downloadBlob } from '../../lib/documentUtils';
 import { useAuth } from '../../context/AuthContext';
 import { printDocument, generateCityLedgerReceiptHTML } from '../../lib/posIntegration';
+import { usePagination } from '@/hooks/usePagination';
+import PaginationBar from '@/components/shared/PaginationBar';
 
 export const CityLedger: React.FC = () => {
   const { 
@@ -51,7 +53,11 @@ export const CityLedger: React.FC = () => {
   const [closeAccountAfterTransfer, setCloseAccountAfterTransfer] = useState(false);
   // Collapsible accounts state
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
-  
+
+  // Pagination for the main accounts list and the AR Aging Report table
+  const accountsPg = usePagination<any>(cityLedger || []);
+  const agingPg = usePagination<any>(cityLedger || []);
+
   const resetTxnForm = () => setTxnForm({ date: new Date().toISOString().slice(0, 10), reference: '', description: '', amount: '' });
   const computeAging = (account: any) => {
     if (!account) return { current: 0, d30: 0, d60: 0, d90: 0, total: 0 };
@@ -424,7 +430,7 @@ export const CityLedger: React.FC = () => {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {(cityLedger || []).map(account => {
+        {accountsPg.pageItems.map(account => {
           const isClosed = account.status === 'Closed';
           const accountStatus = account.status || 'Active';
           const statusColor = isClosed ? 'bg-gray-50 border-l-gray-400' : accountStatus === 'On Hold' ? 'bg-white border-l-yellow-500' : 'bg-white border-l-blue-500';
@@ -732,6 +738,7 @@ export const CityLedger: React.FC = () => {
           );
         })}
       </div>
+      <PaginationBar {...accountsPg} itemLabel="accounts" />
 
       {/* Transfer to Guest/Account Modal */}
       {transferTxn && (
@@ -873,7 +880,7 @@ export const CityLedger: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {(cityLedger || []).map(account => {
+              {agingPg.pageItems.map(account => {
                 const aging = computeAging(account);
                 return (
                   <tr key={account.id} className="hover:bg-gray-50">
@@ -889,6 +896,7 @@ export const CityLedger: React.FC = () => {
             </tbody>
           </table>
         </div>
+        <PaginationBar {...agingPg} itemLabel="accounts" />
       </div>
 
         {/* Additional Reports Section */}

@@ -13,6 +13,8 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import BackToAccountingButton from '@/components/modules/common/BackToAccountingButton';
+import { usePagination } from '@/hooks/usePagination';
+import PaginationBar from '@/components/shared/PaginationBar';
 
 export const GLAccounting: React.FC = () => {
   const [coa, setCoa] = useState(gl.getAccounts());
@@ -77,6 +79,8 @@ export const GLAccounting: React.FC = () => {
   const [vendorsList, setVendorsList] = useState<any[]>([]);
   const [approveThreshold] = useState(500);
   const [pending, setPending] = useState<any[]>([]);
+  const coaPg = usePagination<any>(coa);
+  const expensesPg = usePagination<any>(expenses);
   const [apAging, setApAging] = useState<any>({ current: [], d1_30: [], d31_60: [], d61_90: [], over90: [] });
   const [deptBreakdown, setDeptBreakdown] = useState<any[]>([]);
   const [dailyCashFlow, setDailyCashFlow] = useState<number>(0);
@@ -167,7 +171,7 @@ export const GLAccounting: React.FC = () => {
                 <th className="p-2">Actions</th>
               </tr>
             </thead>
-            <tbody>{coa.map(a => {
+            <tbody>{coaPg.pageItems.map(a => {
               const isEditing = editingId === a.id;
               const draft = { name: pendingEdits[a.id]?.name ?? a.name, category: pendingEdits[a.id]?.category ?? a.category, department: pendingEdits[a.id]?.department ?? a.department } as any;
               const validateDraft = (): string | null => {
@@ -228,6 +232,7 @@ export const GLAccounting: React.FC = () => {
             })}</tbody>
           </table>
         </div>
+        <PaginationBar {...coaPg} itemLabel="accounts" />
       </div>
       {Object.keys(pendingEdits).length > 0 && (
             <div className="mt-3 p-2 border rounded bg-yellow-50 text-xs">
@@ -454,7 +459,7 @@ export const GLAccounting: React.FC = () => {
           <table className="text-sm w-full">
             <thead><tr><th className="p-2">Date</th><th className="p-2">Vendor</th><th className="p-2">Invoice</th><th className="p-2 text-right">Amount</th><th className="p-2">GL</th><th className="p-2">Cost Center</th><th className="p-2">Status</th><th className="p-2">Actions</th></tr></thead>
             <tbody>
-              {expenses.map(r=> (
+              {expensesPg.pageItems.map(r=> (
                 <tr key={r.id}>
                   <td className="p-2">{r.date}</td>
                   <td className="p-2">{vendorsList.find(v=>v.id===r.vendorId)?.name || r.vendorId}</td>
@@ -474,6 +479,7 @@ export const GLAccounting: React.FC = () => {
             </tbody>
           </table>
         </div>
+        <PaginationBar {...expensesPg} itemLabel="expenses" />
       </div>
 
       {/* Budgets */}
