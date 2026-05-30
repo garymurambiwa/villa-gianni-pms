@@ -972,6 +972,41 @@ export const pmsAuthDb = {
     }
   },
 
+  // Read the running aggregate totals the POS syncs to pos_shifts on EVERY
+  // sale (via updateShiftTotals). These are written straight to the server, so
+  // they survive a desktop power-cut/crash that wipes the browser's local copy.
+  // Used as a "never under-report" floor when closing a shift whose local
+  // transaction list was lost — so the Z-reading can't show less than what the
+  // server already recorded.
+  async getShiftAggregates(shiftId: string): Promise<{
+    total_sales: number; total_cash: number; total_card: number;
+    total_room: number; tx_count: number;
+  } | null> {
+    try {
+      const res = await db.query<any>(
+        `SELECT COALESCE(total_sales, 0) AS total_sales,
+                COALESCE(total_cash,  0) AS total_cash,
+                COALESCE(total_card,  0) AS total_card,
+                COALESCE(total_room,  0) AS total_room,
+                COALESCE(tx_count,    0) AS tx_count
+         FROM pos_shifts WHERE id = ?`,
+        [shiftId]
+      );
+      if ('error' in res || !res.rows || res.rows.length === 0) return null;
+      const r = res.rows[0];
+      return {
+        total_sales: Number(r.total_sales || 0),
+        total_cash:  Number(r.total_cash  || 0),
+        total_card:  Number(r.total_card  || 0),
+        total_room:  Number(r.total_room  || 0),
+        tx_count:    Number(r.tx_count    || 0),
+      };
+    } catch {
+      // Columns may not exist yet if no sale was ever synced — treat as no data.
+      return null;
+    }
+  },
+
   async listShifts(stationId?: string): Promise<Shift[]> {
     try {
       let sql = `

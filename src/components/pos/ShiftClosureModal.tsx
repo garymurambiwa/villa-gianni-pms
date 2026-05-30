@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,14 +20,33 @@ export const ShiftClosureModal: React.FC<ShiftClosureModalProps> = ({
   onClose,
   onSuccess
 }) => {
-  const { activeShift, endShift, getTotals } = useShift();
+  const { activeShift, endShift, getTotals, getReconciledTotals } = useShift();
   const [closingCash, setClosingCash] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
 
-  const totals = getTotals();
+  // Start from the in-memory totals for an instant render, then replace with the
+  // DB-reconciled figures once they load. This makes the Expected Cash the cashier
+  // counts against match the printed Z-reading even after a desktop crash wiped
+  // this browser's local copy of the shift.
+  const [totals, setTotals] = useState(() => getTotals());
+  const [reconciling, setReconciling] = useState(false);
+
+  useEffect(() => {
+    if (!open || !activeShift) return;
+    let cancelled = false;
+    setReconciling(true);
+    setTotals(getTotals()); // reflect any local changes immediately
+    getReconciledTotals()
+      .then(t => { if (!cancelled) setTotals(t); })
+      .catch(() => { /* keep local totals on failure */ })
+      .finally(() => { if (!cancelled) setReconciling(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, activeShift?.id]);
+
   const openingCashNum = Number(activeShift ? activeShift.openingCash : 0);
   const totalsCashNum = Number(totals?.cash ?? 0);
   const expectedCash = openingCashNum + totalsCashNum;
@@ -144,6 +163,7 @@ export const ShiftClosureModal: React.FC<ShiftClosureModalProps> = ({
               />
               <div className="text-xs text-gray-600">
                 Expected: {formatCurrency(expectedCash)}
+                {reconciling && <span className="ml-1 text-gray-400">(verifying against server…)</span>}
               </div>
             </div>
 

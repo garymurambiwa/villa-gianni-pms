@@ -41,6 +41,8 @@ interface ShiftContextType {
   addTransaction: (method: PaymentMethod, amount: number, reference?: string, outlet?: 'bar' | 'restaurant') => ShiftTransaction | null;
   voidTransaction: (transactionId: string, reason: string) => boolean;
   getTotals: () => { cash: number; ecocash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number };
+  /** DB-reconciled totals (per-bucket max of local + pos_orders + pos_shifts) — use for shift close so a wiped desktop can't under-report. */
+  getReconciledTotals: () => Promise<{ cash: number; ecocash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number }>;
   getEndedShifts: () => Shift[];
   clearEndedShifts: () => void;
   clearActiveShift: () => void;
@@ -217,7 +219,9 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // Import Z reading service functions
       const { generateZReading, printZReading, logZReadingAudit, storeZReading, getNextZReadingNumber } = await import('../lib/zReadingService');
 
-      const totals = getTotals();
+      // Reconcile against the DB so a crash that wiped this desktop's local copy
+      // can't make the Z-reading (and the GL posting below) under-report.
+      const totals = await reconcileTotals(activeShift, getTotals());
       const ended: Shift = {
         ...activeShift,
         endedAt: new Date().toISOString(),
@@ -513,6 +517,69 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
      return totals;
    };
 
+  type ShiftTotals = ReturnType<typeof getTotals>;
+
+  // Reconcile in-memory shift totals against the database so a wiped or partial
+  // localStorage (e.g. after a desktop power-cut) can NEVER make the Z-reading
+  // under-report. We compute three INDEPENDENT views of the shift and take the
+  // per-bucket maximum:
+  //   1. local   — the in-memory transaction list (what the screen shows)
+  //   2. recon   — rebuilt from pos_orders closed rows (survives a local wipe)
+  //   3. agg     — the running pos_shifts totals synced to the server per sale
+  // Per-bucket max means no single source can drag a total down, and because we
+  // never SUM across sources, a transaction present in two of them is not
+  // double-counted. Falls back to local totals if the DB lookups fail.
+  const reconcileTotals = async (shift: Shift, local: ShiftTotals): Promise<ShiftTotals> => {
+    try {
+      const bucket = (txs: Array<{ method: string; amount: number; outlet?: string }>) =>
+        txs.reduce((acc, t) => {
+          const m = String(t.method);
+          const amt = Number(t.amount) || 0;
+          if (m === 'cash') acc.cash += amt;
+          else if (m === 'ecocash') acc.ecocash += amt;
+          else if (m === 'swipe') acc.card += amt;
+          else if (m === 'room-charge') acc.roomCharge += amt;
+          if (t.outlet === 'bar') acc.barSales += amt; else acc.restaurantSales += amt;
+          acc.count += 1;
+          return acc;
+        }, { cash: 0, ecocash: 0, card: 0, roomCharge: 0, count: 0, barSales: 0, restaurantSales: 0 });
+
+      const [dbTxns, agg] = await Promise.all([
+        pmsAuthDb.getShiftTransactions(shift.id).catch(() => [] as any[]),
+        pmsAuthDb.getShiftAggregates(shift.id).catch(() => null),
+      ]);
+      const recon = bucket(dbTxns as any);
+
+      const max = (...n: number[]) => Math.max(...n.map(x => Number(x) || 0));
+      // The DB aggregate folds EcoCash into total_card (see addTransaction), so
+      // reconcile the combined card+ecocash figure, then re-split.
+      const ecocash = max(local.ecocash, recon.ecocash);
+      const combinedCardEco = max(local.card + local.ecocash, recon.card + recon.ecocash, agg?.total_card ?? 0);
+
+      return {
+        cash:            max(local.cash, recon.cash, agg?.total_cash ?? 0),
+        ecocash,
+        card:            Math.max(0, combinedCardEco - ecocash),
+        roomCharge:      max(local.roomCharge, recon.roomCharge, agg?.total_room ?? 0),
+        count:           max(local.count, recon.count, agg?.tx_count ?? 0),
+        // pos_orders reconstruction excludes voids; keep the local void figures.
+        voidedCount:     local.voidedCount,
+        voidedAmount:    local.voidedAmount,
+        // pos_shifts has no bar/restaurant split — reconcile against local + recon only.
+        barSales:        max(local.barSales, recon.barSales),
+        restaurantSales: max(local.restaurantSales, recon.restaurantSales),
+      };
+    } catch (e) {
+      console.warn('[ShiftContext] totals reconciliation failed, using local totals:', e);
+      return local;
+    }
+  };
+
+  const getReconciledTotals = async (): Promise<ShiftTotals> => {
+    if (!activeShift) return getTotals();
+    return reconcileTotals(activeShift, getTotals());
+  };
+
   const getEndedShifts = (): Shift[] => endedShifts;
   const clearEndedShifts = (): void => {
     setEndedShifts([]);
@@ -584,6 +651,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     addTransaction,
     voidTransaction,
     getTotals,
+    getReconciledTotals,
     getEndedShifts,
     clearEndedShifts,
     clearActiveShift,
