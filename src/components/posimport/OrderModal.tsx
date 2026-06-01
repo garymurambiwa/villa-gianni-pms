@@ -14,6 +14,9 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { useShift } from '@/contexts/ShiftContext';
 import { useAuth } from '@/context/AuthContext';
 import { canManagePOS } from '@/lib/permissions';
+import { putDraft, getRecentDraft, clearDraft } from '@/lib/billDraftStore';
+import { isServiceTotalEnabled, setServiceTotalEnabled } from '@/lib/serviceTotalFlag';
+import { commitServiceTotal } from '@/lib/serviceTotal';
 
 export interface MenuItem {
   id: string;
@@ -83,10 +86,41 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: MenuItem } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Service Total pilot (Phase B) — default OFF; toggled per device by a manager ──
+  const [stEnabled, setStEnabled] = useState<boolean>(() => isServiceTotalEnabled());
+  const [mirrorReady, setMirrorReady] = useState(false);
+  const draftKey = `t${tableNumber}`;
+  const recoveredRef = useRef(false);
+
   // Fetch POS settings on mount
   useEffect(() => {
     getPosSettings().then(setPosSettings);
   }, []);
+
+  // Recover unsent items after an interruption, then allow the crash-mirror to
+  // run. Only recovers when there is no saved bill to trust (i.e. work lost
+  // before it was ever sent). No-op unless the pilot flag is on.
+  useEffect(() => {
+    if (!stEnabled || recoveredRef.current) return;
+    recoveredRef.current = true;
+    const finish = () => setMirrorReady(true);
+    if (bill?.items?.length) { finish(); return; }
+    getRecentDraft<BillItem>(draftKey).then(d => {
+      if (d && d.length) {
+        setItems(d);
+        toast({ title: 'Recovered unsent items', description: `${d.length} item(s) restored after an interruption.` });
+      }
+      finish();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stEnabled, draftKey]);
+
+  // Crash-proof mirror: write every change to the uncommitted cart to IndexedDB.
+  // Runs only after recovery has settled, so it can never clobber a saved draft.
+  useEffect(() => {
+    if (!stEnabled || !mirrorReady) return;
+    putDraft(draftKey, items);
+  }, [items, stEnabled, mirrorReady, draftKey]);
 
   // Close context menu when clicking elsewhere
   useEffect(() => {
@@ -716,10 +750,15 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
             </h3>
             <div className="flex-1 overflow-y-auto mb-4">
               {items.map(item => (
-                <div key={item.menuItem.id} className="bg-white p-3 rounded-lg mb-2 shadow">
+                <div key={item.menuItem.id} className={`bg-white p-3 rounded-lg mb-2 shadow ${stEnabled && !committedItemIds.has(item.menuItem.id) ? 'ring-1 ring-amber-300' : ''}`}>
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
-                       <div className="font-semibold">{item.menuItem?.name || 'Unknown Item'}</div>
+                       <div className="font-semibold">
+                         {item.menuItem?.name || 'Unknown Item'}
+                         {stEnabled && !committedItemIds.has(item.menuItem.id) && (
+                           <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded align-middle">＋ unsent</span>
+                         )}
+                       </div>
                       {!!item.preparation_level && item.preparation_level !== 'n/a' && (
                         <div className="text-xs text-gray-600 italic">({
                           item.preparation_level.replace('-', ' ')
@@ -884,6 +923,16 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                 <span>Total:</span>
                 <span className="text-purple-600">{formatCurrency(total * (1 + posSettings.service_charge))}</span>
               </div>
+              {/* Service Total pilot toggle — managers only, off by default. */}
+              {user && canManagePOS(user.role as any) && (
+                <button
+                  type="button"
+                  onClick={() => { const next = !stEnabled; setServiceTotalEnabled(next); setStEnabled(next); }}
+                  className={`w-full mb-3 text-xs font-medium rounded-md py-2 border transition-colors ${stEnabled ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'}`}
+                >
+                  Service Total mode (crash-safe): {stEnabled ? 'ON — unsent items mirrored & committed' : 'OFF'}
+                </button>
+              )}
               <div className="flex gap-2">
                 <Button variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
 
@@ -959,6 +1008,32 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
                       vat_amount: vatAmount,
                       service_charge_amount: scAmount
                     });
+
+                    // Service Total (Phase B): durable, idempotent dual-write to the
+                    // pos_checks/lines tables, then drop the local crash-draft. Best-effort —
+                    // it never blocks the existing save/print flow, and is a no-op when the
+                    // pilot flag is off.
+                    if (stEnabled) {
+                      try {
+                        await commitServiceTotal({
+                          tableNumber: String(tableNumber),
+                          costCenter: activeCategory === 'bar' ? 'Bar' : 'Restaurant',
+                          shiftId: activeShift?.id,
+                          userId: user?.id,
+                          lines: items.map((it, idx) => ({
+                            id: `${billId}_${idx}_${it.menuItem.id}`,
+                            itemId: it.menuItem.id,
+                            name: it.menuItem?.name || 'Item',
+                            qty: it.quantity,
+                            unitPrice: it.menuItem?.price || 0,
+                            station: it.menuItem.category === 'bar' ? 'bar' : 'kitchen',
+                          })),
+                        });
+                        await clearDraft(draftKey);
+                      } catch (e) {
+                        console.warn('[OrderModal] Service Total durable commit failed (non-fatal):', e);
+                      }
+                    }
 
                     // Print kitchen order ticket (KOT) — fire-and-forget so save doesn't block
                     try {
