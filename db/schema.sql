@@ -1370,3 +1370,98 @@ INSERT INTO public.breakfast_packages (id, code, name, description, base_price, 
   ('bp_hb', 'HB', 'Half Board', 'Breakfast and dinner included', 35, 25, 15, 2, NOW()),
   ('bp_fb', 'FB', 'Full Board', 'Three meals included', 50, 35, 20, 3, NOW())
 ON CONFLICT (code) DO NOTHING;
+
+-- ============================================================================
+-- SERVICE TOTAL transaction lifecycle (MICROS-style) — Phase A
+-- Canonical mirror of the runtime DDL in src/lib/serviceTotal.ts
+-- (ensureServiceTotalSchema). Additive: never alters existing tables.
+-- ============================================================================
+
+CREATE SEQUENCE IF NOT EXISTS pos_check_number_seq START 1;
+
+-- HEADER: the "check". One open check per table per outlet.
+CREATE TABLE IF NOT EXISTS pos_checks (
+  id             TEXT PRIMARY KEY,
+  client_txn_id  TEXT UNIQUE,                 -- idempotency key for retried commits
+  check_number   BIGINT,                      -- permanent, assigned at first Service Total
+  table_number   TEXT NOT NULL,
+  cost_center    TEXT NOT NULL,
+  shift_id       TEXT,
+  status         TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed','voided')),
+  opened_by      TEXT,
+  total_amount   NUMERIC(12,2) NOT NULL DEFAULT 0,
+  payment_method TEXT,                         -- set at media close
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  committed_at   TIMESTAMPTZ,                  -- first Service Total
+  closed_at      TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS one_open_check_per_table
+  ON pos_checks (table_number, cost_center) WHERE status = 'open';
+
+-- LINES: append-only. A committed line is never edited or deleted.
+CREATE TABLE IF NOT EXISTS pos_check_lines (
+  id            TEXT PRIMARY KEY,
+  check_id      TEXT NOT NULL REFERENCES pos_checks(id) ON DELETE RESTRICT,
+  seq           INTEGER NOT NULL,
+  item_id       TEXT,
+  name          TEXT NOT NULL,
+  qty           NUMERIC(10,3) NOT NULL CHECK (qty > 0),
+  unit_price    NUMERIC(12,2) NOT NULL,
+  line_total    NUMERIC(12,2) NOT NULL,
+  route_station TEXT,                          -- 'kitchen' | 'bar'
+  state         TEXT NOT NULL DEFAULT 'committed' CHECK (state IN ('committed','voided')),
+  printed_at    TIMESTAMPTZ,
+  committed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (check_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_check_lines_check ON pos_check_lines(check_id);
+
+-- VOIDS: the only sanctioned mutation path for a committed line (manager-signed).
+CREATE TABLE IF NOT EXISTS pos_voids (
+  id             TEXT PRIMARY KEY,
+  check_id       TEXT NOT NULL REFERENCES pos_checks(id) ON DELETE RESTRICT,
+  line_id        TEXT NOT NULL REFERENCES pos_check_lines(id) ON DELETE RESTRICT,
+  qty_voided     NUMERIC(10,3) NOT NULL CHECK (qty_voided > 0),
+  amount         NUMERIC(12,2) NOT NULL,
+  reason         TEXT NOT NULL,
+  authorized_by  TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- PRINT JOBS: enqueued inside the commit txn; printed by a worker, never in-txn.
+CREATE TABLE IF NOT EXISTS pos_print_jobs (
+  id          TEXT PRIMARY KEY,
+  check_id    TEXT NOT NULL REFERENCES pos_checks(id) ON DELETE RESTRICT,
+  station     TEXT NOT NULL,
+  payload     JSONB NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','printed','failed')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  printed_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_print_pending ON pos_print_jobs(station) WHERE status = 'pending';
+
+-- Defence-in-depth freeze: committed lines cannot be deleted or have their
+-- content changed; the only permitted UPDATE is committed -> voided.
+CREATE OR REPLACE FUNCTION block_committed_line_mutation() RETURNS trigger AS $body$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.state = 'committed' THEN
+      RAISE EXCEPTION 'Committed line % is frozen and cannot be deleted; issue a VOID', OLD.id;
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF OLD.state = 'committed' THEN
+    IF NEW.qty <> OLD.qty OR NEW.unit_price <> OLD.unit_price
+       OR NEW.line_total <> OLD.line_total OR NEW.name <> OLD.name
+       OR NEW.item_id IS DISTINCT FROM OLD.item_id THEN
+      RAISE EXCEPTION 'Committed line % is frozen; content cannot change. Issue a VOID.', OLD.id;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$body$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS freeze_committed_lines ON pos_check_lines;
+CREATE TRIGGER freeze_committed_lines
+  BEFORE UPDATE OR DELETE ON pos_check_lines
+  FOR EACH ROW EXECUTE FUNCTION block_committed_line_mutation();
