@@ -16,7 +16,7 @@ import { useAuth } from '@/context/AuthContext';
 import { canManagePOS } from '@/lib/permissions';
 import { putDraft, getRecentDraft, clearDraft } from '@/lib/billDraftStore';
 import { isServiceTotalEnabled, setServiceTotalEnabled } from '@/lib/serviceTotalFlag';
-import { commitServiceTotal } from '@/lib/serviceTotal';
+import { commitServiceTotal, voidCommittedItem } from '@/lib/serviceTotal';
 
 export interface MenuItem {
   id: string;
@@ -387,6 +387,18 @@ export const OrderModal: React.FC<OrderModalProps> = ({ tableNumber, bill, onClo
   };
 
   const executeRemoveItem = (itemId: string) => {
+    // Service Total (Phase C): if this item was durably committed, record a
+    // manager-authorized VOID in pos_voids and flip the line(s) to 'voided'.
+    // Best-effort + flag-gated; a no-op for uncommitted draft lines. The
+    // existing removal + localStorage void log below are unchanged.
+    if (stEnabled && committedItemIds.has(itemId)) {
+      voidCommittedItem({
+        tableNumber: String(tableNumber),
+        itemId,
+        authorizedBy: 'manager-pin',
+        reason: `Manager-authorized removal (operator: ${user?.name || user?.id || 'n/a'})`,
+      }).catch(e => console.warn('[OrderModal] durable void failed (non-fatal):', e));
+    }
     console.log('[OrderModal] Removing committed item:', itemId);
     setItems(prevItems => {
       const filtered = prevItems.filter(i => i.menuItem.id !== itemId);

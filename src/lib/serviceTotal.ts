@@ -286,4 +286,54 @@ export async function voidCommittedLine(args: VoidLineArgs): Promise<ServiceTota
   return { success: true, checkId: args.checkId };
 }
 
-export default { ensureServiceTotalSchema, commitServiceTotal, voidCommittedLine };
+export interface VoidItemArgs {
+  tableNumber: string;
+  /** The menu item id whose committed line(s) on the table's open check to void. */
+  itemId: string;
+  authorizedBy: string;   // manager authorization — REQUIRED
+  reason: string;
+}
+
+/**
+ * Void every committed line for a given item on a table's OPEN check, in one
+ * atomic transaction: write the pos_voids audit rows, flip the lines to
+ * 'voided' (the only mutation the freeze trigger permits), and recompute the
+ * check total. Idempotent — the audit id is derived from the line id, so a
+ * repeat call is a no-op. A no-op (not an error) if the item was never
+ * committed (e.g. an uncommitted draft line being removed).
+ */
+export async function voidCommittedItem(args: VoidItemArgs): Promise<ServiceTotalResult> {
+  if (!args.authorizedBy) {
+    return { success: false, error: 'Manager authorization required to void a committed line' };
+  }
+  await ensureServiceTotalSchema();
+  const res: any = await db.transaction([
+    {
+      sql: `INSERT INTO pos_voids (id, check_id, line_id, qty_voided, amount, reason, authorized_by)
+            SELECT 'VOID_' || l.id, l.check_id, l.id, l.qty, l.line_total, ?, ?
+            FROM pos_check_lines l JOIN pos_checks c ON c.id = l.check_id
+            WHERE c.table_number = ? AND c.status = 'open' AND l.item_id = ? AND l.state = 'committed'
+            ON CONFLICT (id) DO NOTHING`,
+      params: [args.reason, args.authorizedBy, args.tableNumber, args.itemId],
+    },
+    {
+      sql: `UPDATE pos_check_lines l SET state = 'voided'
+            FROM pos_checks c
+            WHERE l.check_id = c.id AND c.table_number = ? AND c.status = 'open'
+              AND l.item_id = ? AND l.state = 'committed'`,
+      params: [args.tableNumber, args.itemId],
+    },
+    {
+      sql: `UPDATE pos_checks
+            SET total_amount = (SELECT COALESCE(SUM(line_total),0) FROM pos_check_lines WHERE check_id = pos_checks.id AND state = 'committed')
+            WHERE table_number = ? AND status = 'open'`,
+      params: [args.tableNumber],
+    },
+  ]);
+  if (!res || res.ok === false) {
+    return { success: false, error: res?.error || 'Void failed' };
+  }
+  return { success: true };
+}
+
+export default { ensureServiceTotalSchema, commitServiceTotal, voidCommittedLine, voidCommittedItem };
