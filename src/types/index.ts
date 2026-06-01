@@ -101,6 +101,7 @@ export interface ShiftReading {
   bar_sales: number;
   restaurant_sales: number;
   cash_payments: number;
+  ecocash_payments: number;
   card_payments: number;
   room_charge_payments: number;
   created_at: string;

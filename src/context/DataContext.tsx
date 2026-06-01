@@ -2855,7 +2855,10 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
         // 2. Sync GL mappings from DB → localStorage so getMappings() returns DB values.
         // This fixes ISSUE 2: mappings set in browser A weren't visible server-side or in browser B.
         try {
-          const { syncMappingsFromDB, saveMappingsToDB, GL_USALI_DEFAULTS } = await import('../lib/glAccounting');
+          const { syncMappingsFromDB, saveMappingsToDB, GL_USALI_DEFAULTS, ensurePaymentAccounts } = await import('../lib/glAccounting');
+          // Make sure Cash / Swipe / EcoCash / Room-charge clearing accounts exist
+          // in the Chart of Accounts (additive — never touches existing accounts).
+          try { ensurePaymentAccounts(); } catch { /* non-fatal */ }
           const dbMappings = await syncMappingsFromDB();
           // Auto-seed USALI defaults for any codes not yet mapped (non-destructive)
           const needsSeed = Object.keys(GL_USALI_DEFAULTS).some(k => !dbMappings[k]);

@@ -128,7 +128,9 @@ export const ShiftClosureModal: React.FC<ShiftClosureModalProps> = ({
               <div className="font-medium">{formatCurrency(activeShift.openingCash)}</div>
               <div>Cash Sales:</div>
               <div className="font-medium">{formatCurrency(totals.cash)}</div>
-              <div>Card Sales:</div>
+              <div>EcoCash Sales:</div>
+              <div className="font-medium">{formatCurrency(totals.ecocash)}</div>
+              <div>Swipe Sales:</div>
               <div className="font-medium">{formatCurrency(totals.card)}</div>
               <div>Room Charges:</div>
               <div className="font-medium">{formatCurrency(totals.roomCharge)}</div>

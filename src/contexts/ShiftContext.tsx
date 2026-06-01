@@ -595,8 +595,8 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!activeShift) return null;
     
     const totals = getTotals();
-    const totalSales = totals.cash + totals.card + totals.roomCharge;
-    
+    const totalSales = totals.cash + totals.ecocash + totals.card + totals.roomCharge;
+
     return {
       id: `X_READING_${Date.now()}`,
       reading_number: Math.floor(Math.random() * 1000) + 1, // Simple counter
@@ -607,6 +607,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       bar_sales: totals.barSales,
       restaurant_sales: totals.restaurantSales,
       cash_payments: totals.cash,
+      ecocash_payments: totals.ecocash,
       card_payments: totals.card,
       room_charge_payments: totals.roomCharge,
       created_at: new Date().toISOString()
@@ -615,12 +616,12 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const generateZReading = (closingCash?: number): ShiftReading | null => {
     if (!activeShift) return null;
-    
+
     const totals = getTotals();
-    const totalSales = totals.cash + totals.card + totals.roomCharge;
+    const totalSales = totals.cash + totals.ecocash + totals.card + totals.roomCharge;
     const expectedCash = activeShift.openingCash + totals.cash;
     const cashDifference = closingCash !== undefined ? closingCash - expectedCash : 0;
-    
+
     return {
       id: `Z_READING_${Date.now()}`,
       reading_number: zReadings.length + 1,
@@ -631,6 +632,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       bar_sales: totals.barSales,
       restaurant_sales: totals.restaurantSales,
       cash_payments: totals.cash,
+      ecocash_payments: totals.ecocash,
       card_payments: totals.card,
       room_charge_payments: totals.roomCharge,
       created_at: new Date().toISOString(),
