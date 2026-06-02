@@ -748,8 +748,8 @@ check_in_date = ?, check_out_date = ?, status = ?,
       const setMethod = paymentMethod ? ", payment_method = ?" : "";
       const baseParams: any[] = paymentMethod ? [paymentMethod] : [];
       const query = costCentre
-        ? `UPDATE pos_orders SET status = 'closed'${setMethod} WHERE table_number = ? AND status = 'open' AND LOWER(cost_center) = LOWER(?)`
-        : `UPDATE pos_orders SET status = 'closed'${setMethod} WHERE table_number = ? AND status = 'open'`;
+        ? `UPDATE pos_orders SET status = 'closed'${setMethod}, updated_at = NOW() WHERE table_number = ? AND status = 'open' AND LOWER(cost_center) = LOWER(?)`
+        : `UPDATE pos_orders SET status = 'closed'${setMethod}, updated_at = NOW() WHERE table_number = ? AND status = 'open'`;
       const params = costCentre
         ? [...baseParams, tableNumber, costCentre]
         : [...baseParams, tableNumber];
@@ -1908,7 +1908,11 @@ check_in_date = ?, check_out_date = ?, status = ?,
       items JSONB,
       total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
       status VARCHAR(50) NOT NULL DEFAULT 'open',
-      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      cost_center VARCHAR(50),
+      shift_id VARCHAR(36),
+      payment_method VARCHAR(50),
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP
     );
 `);
 

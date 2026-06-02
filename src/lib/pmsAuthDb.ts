@@ -943,7 +943,7 @@ export const pmsAuthDb = {
     try {
       const res = await db.query<any>(
         `SELECT id, total_amount, payment_method, status,
-                COALESCE(cost_center, outlet) AS centre, opened_by,
+                cost_center AS centre,
                 COALESCE(updated_at, created_at) AS ts
          FROM pos_orders
          WHERE shift_id = ? AND status = 'closed'
