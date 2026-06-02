@@ -634,6 +634,17 @@ export const buildFlashReport = async (forDate?: string) => {
   };
 };
 
+// The built-in system account (username "admin", seeded name "System
+// Administrator"/"Super User Admin") is internal plumbing, not a real cashier.
+// Show it as the software brand on POS reports instead of "admin". This is a
+// DISPLAY relabel only — it never touches the role or username that auth uses.
+const BUILTIN_ADMIN_LABELS = new Set(['admin', 'admin-hardcoded', 'system administrator', 'system admin (override)', 'super user admin']);
+const labelCashier = (raw: any): string => {
+  const v = String(raw ?? '').trim();
+  if (!v) return 'POS';
+  return BUILTIN_ADMIN_LABELS.has(v.toLowerCase()) ? 'Coredigita' : v;
+};
+
 // POS Sales/Cashier Reconciliation
 export const buildPosReconciliation = async (forDate?: string) => {
   const date = forDate || getBusinessDate();
@@ -664,7 +675,7 @@ export const buildPosReconciliation = async (forDate?: string) => {
     if ('rows' in shiftRes && shiftRes.rows.length > 0) {
       const rows = shiftRes.rows.map((s: any) => {
         const metadata = typeof s.metadata === 'string' ? JSON.parse(s.metadata) : (s.metadata || {});
-        const cashier = s.opened_by_name || s.opened_by_username || s.opened_by || s.id;
+        const cashier = labelCashier(s.opened_by_name || s.opened_by_username || s.opened_by || s.id);
         const outlet = s.outlet_name || metadata.department || s.outlet || 'POS';
         const cash = Number(s.cash_sales || 0);
         const ecocash = Number(s.ecocash_sales || 0);
@@ -694,7 +705,7 @@ export const buildPosReconciliation = async (forDate?: string) => {
   // Fallback to localStorage
   const ended = readJSON<any[]>('corepms_endedShifts', []);
   const rows = ended.map(s => ({
-    cashier: s.openedBy || s.id,
+    cashier: labelCashier(s.openedBy || s.id),
     outlet: s.department || 'POS',
     sales: Number(s.totals?.total || s.totalSales || 0),
     cash: Number(s.totals?.cash || s.cashPayments || 0),
