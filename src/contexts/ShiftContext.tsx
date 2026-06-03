@@ -2,6 +2,16 @@ import React, { createContext, useContext, useMemo, useState, useEffect } from '
 import { ShiftReading } from '../types';
 import pmsAuthDb from '../lib/pmsAuthDb';
 import { useAuth } from '@/context/AuthContext';
+// Statically imported (not lazy) so closing a shift never depends on an
+// on-demand chunk fetch that could 404 on a stale tab. `generateZReading` is
+// aliased because this context also defines a local function of that name.
+import {
+  generateZReading as svcGenerateZReading,
+  printZReading,
+  logZReadingAudit,
+  storeZReading,
+  getNextZReadingNumber,
+} from '../lib/zReadingService';
 
 export type PaymentMethod = 'cash' | 'ecocash' | 'swipe' | 'room-charge';
 
@@ -216,8 +226,8 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const dbRes = await pmsAuthDb.endShift(activeShift.id, closingCash || 0);
       if (!dbRes.ok) console.warn('Database endShift failed:', dbRes.error);
 
-      // Import Z reading service functions
-      const { generateZReading, printZReading, logZReadingAudit, storeZReading, getNextZReadingNumber } = await import('../lib/zReadingService');
+      // Z reading service functions are imported statically at the top of this
+      // file (eager) so shift close never waits on a lazy chunk fetch.
 
       // Reconcile against the DB so a crash that wiped this desktop's local copy
       // can't make the Z-reading (and the GL posting below) under-report.
@@ -234,7 +244,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const nextReadingNumber = await getNextZReadingNumber();
 
       // Generate Z reading with correct reading number
-      const zReading = generateZReading(
+      const zReading = svcGenerateZReading(
         {
           shift: ended,
           totals,
