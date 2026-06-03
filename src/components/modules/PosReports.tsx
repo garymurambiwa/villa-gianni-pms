@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { canManagePOS } from '@/lib/permissions';
-import { formatCurrency } from '@/lib/posIntegration';
+import { formatCurrency, printDocument } from '@/lib/posIntegration';
 import menuCats from '@/lib/menuCategories';
 import cocktailEng from '@/lib/cocktailEngineering';
 import { useToast } from '@/hooks/use-toast';
@@ -21,6 +21,108 @@ const exportCSV = (filename: string, headers: string[], rows: string[][]) => {
   const url = URL.createObjectURL(blob); 
   const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); 
   URL.revokeObjectURL(url);
+};
+
+/**
+ * Thermal (80mm POS-printer) Z-Reading / End-of-Day Cash-Up slip. Vertical
+ * label:value layout so it fits a narrow receipt. The trailing
+ * <!-- ReceiptBrandingApplied --> marker tells printDocument() to treat it as a
+ * thermal receipt (no A4 wrapping).
+ */
+const cashupThermalHTML = (d: {
+  shiftRows: any[]; totals: any;
+  byMethod: Map<string, number>;
+  byCatMethod: Map<string, Map<string, number>>;
+  catTotal: Map<string, number>;
+  categoryRows: any[];
+  range: { start: string; end: string };
+  shiftLabel: string;
+}): string => {
+  const money = (n: any) => formatCurrency(Number(n) || 0);
+  let brand: any = {};
+  try { brand = JSON.parse(localStorage.getItem('corepms_receipt_branding') || '{}'); } catch { /* defaults */ }
+  const bizName = brand.restaurant_name || brand.name || 'Property Management System';
+
+  const shiftBlocks = d.shiftRows.map((r: any) => `
+    <div class="b">${r.cashier}${r.outlet && r.outlet !== '—' ? ' · ' + r.outlet : ''}</div>
+    <table>
+      <tr><td>Opening Till</td><td class="r">${money(r.opening)}</td></tr>
+      <tr><td>Cash</td><td class="r">${money(r.cash)}</td></tr>
+      <tr><td>EcoCash</td><td class="r">${money(r.ecocash)}</td></tr>
+      <tr><td>Swipe</td><td class="r">${money(r.card)}</td></tr>
+      <tr><td>Room Charge</td><td class="r">${money(r.room)}</td></tr>
+      <tr class="b"><td>Total Sales</td><td class="r">${money(r.sales)}</td></tr>
+      <tr><td>Expected Cash</td><td class="r">${money(r.expected)}</td></tr>
+      <tr><td>Counted</td><td class="r">${r.closing == null ? '—' : money(r.closing)}</td></tr>
+      <tr class="b"><td>Over/(Short)</td><td class="r">${r.variance == null ? '—' : money(r.variance)}</td></tr>
+      <tr><td>Voids</td><td class="r">${r.voidCount} (${money(r.voids)})</td></tr>
+      <tr><td>Transactions</td><td class="r">${r.txns}</td></tr>
+    </table>
+    <div class="div">--------------------------------</div>`).join('');
+
+  const methodRows = CANONICAL_METHODS.map(m => `<tr><td>${paymentMethodLabel(m)}</td><td class="r">${money(d.byMethod.get(m) || 0)}</td></tr>`).join('');
+  const methodTotal = Array.from(d.byMethod.values()).reduce((a: number, b: number) => a + b, 0);
+
+  const catMethodBlocks = ['Food', 'Bar'].map(cat => {
+    const cm = d.byCatMethod.get(cat) || new Map();
+    const rows = CANONICAL_METHODS.map(m => `<tr><td>&nbsp;&nbsp;${paymentMethodLabel(m)}</td><td class="r">${money(cm.get(m) || 0)}</td></tr>`).join('');
+    const t = CANONICAL_METHODS.reduce((a, m) => a + (cm.get(m) || 0), 0);
+    return `<tr class="b"><td>${cat === 'Food' ? 'FOOD (RESTAURANT)' : 'BAR'}</td><td class="r">${money(t)}</td></tr>${rows}`;
+  }).join('');
+
+  const itemCatRows = d.categoryRows.map((r: any) => `<tr><td>${r.name}</td><td class="r">${r.itemsSold}</td><td class="r">${money(r.grossSales)}</td><td class="r">${money(r.profit)}</td></tr>`).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Z Cash-Up</title><style>
+    @page { size: 80mm auto; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 74mm; background:#fff; color:#000; }
+    body { font-family:'Courier New', Courier, monospace; font-size:11px; padding:3mm 2mm 8mm; -webkit-print-color-adjust:exact; }
+    .c{text-align:center}.r{text-align:right}.b{font-weight:bold}
+    .div{text-align:center;margin:1.2mm 0;white-space:nowrap;overflow:hidden}
+    .biz{font-weight:bold;font-size:1.3em;text-align:center}
+    .ttl{font-weight:bold;text-align:center;text-transform:uppercase;margin:2mm 0 1mm}
+    .sec{font-weight:bold;margin-top:1.5mm}
+    table{width:100%;border-collapse:collapse}
+    td{padding:0.4mm 0;vertical-align:top}
+    .ft{text-align:center;font-size:0.85em;margin-top:3mm}
+  </style></head><body>
+    <div class="biz">${bizName}</div>
+    ${brand.address ? `<div class="c">${brand.address}</div>` : ''}
+    ${brand.phone ? `<div class="c">Tel: ${brand.phone}</div>` : ''}
+    <div class="div">================================</div>
+    <div class="ttl">Z-Reading &middot; End-of-Day Cash-Up</div>
+    <div class="div">--------------------------------</div>
+    <table>
+      <tr><td>Printed</td><td class="r">${new Date().toLocaleString()}</td></tr>
+      <tr><td>Period</td><td class="r">${d.range.start}${d.range.start !== d.range.end ? ' &rarr; ' + d.range.end : ''}</td></tr>
+      <tr><td>Shift</td><td class="r">${d.shiftLabel}</td></tr>
+    </table>
+    <div class="div">================================</div>
+    <div class="sec">CASHIER CASH-UP</div>
+    <div class="div">--------------------------------</div>
+    ${shiftBlocks || '<div class="c">No shifts in range</div>'}
+    <div class="sec">SALES BY PAYMENT METHOD</div>
+    <table>${methodRows}<tr class="b"><td>TOTAL</td><td class="r">${money(methodTotal)}</td></tr></table>
+    <div class="div">--------------------------------</div>
+    <div class="sec">SALES BY CATEGORY</div>
+    <table>
+      <tr><td>Food (Restaurant)</td><td class="r">${money(d.catTotal.get('Food') || 0)}</td></tr>
+      <tr><td>Bar</td><td class="r">${money(d.catTotal.get('Bar') || 0)}</td></tr>
+      <tr class="b"><td>TOTAL</td><td class="r">${money((d.catTotal.get('Food') || 0) + (d.catTotal.get('Bar') || 0))}</td></tr>
+    </table>
+    <div class="div">--------------------------------</div>
+    <div class="sec">SALES SPLIT &mdash; CATEGORY &times; METHOD</div>
+    <table>${catMethodBlocks}</table>
+    <div class="div">--------------------------------</div>
+    <div class="sec">ITEMS BY CATEGORY</div>
+    <table><tr class="b"><td>Category</td><td class="r">Qty</td><td class="r">Sales</td><td class="r">Profit</td></tr>${itemCatRows || '<tr><td colspan="4" class="c">No sales in range</td></tr>'}</table>
+    <div class="div">--------------------------------</div>
+    <div class="sec">VOIDS</div>
+    <table><tr><td>Count</td><td class="r">${d.totals.voidCount}</td></tr><tr><td>Amount</td><td class="r">${money(d.totals.voids)}</td></tr></table>
+    <div class="div">================================</div>
+    <div class="ft">Powered By Coredigita</div>
+    <!-- ReceiptBrandingApplied -->
+  </body></html>`;
 };
 
 const formatDetailsText = (d: any): string => {
@@ -666,6 +768,17 @@ if(!('error' in ordersRes)) {
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
+          {selectedReport === 'manager-cashup' && (
+            <Button size="sm" variant="secondary" onClick={() => printDocument(cashupThermalHTML({
+              shiftRows: cashup.shiftRows, totals: cashup.totals,
+              byMethod: cashup.byMethod, byCatMethod: cashup.byCatMethod, catTotal: cashup.catTotal,
+              categoryRows: categorySummary.rows, range,
+              shiftLabel: selectedShift === 'all' ? 'All' : String(selectedShift),
+            }), 'EOD-CashUp')}>
+              <Printer className="w-4 h-4 mr-2" />
+              Print on POS Printer
+            </Button>
+          )}
           <Button size="sm" onClick={() => window.print()}>
             <Printer className="w-4 h-4 mr-2" />
             Print
