@@ -652,19 +652,15 @@ export const buildPosReconciliation = async (forDate?: string) => {
   try {
     const { db } = await import('@/lib/db');
     // Fetch shifts for the given date
-    // Now breaks down sales by all 4 payment methods (Cash, EcoCash, Swipe, Room Charge).
-    // Uses shift_transactions table if present (preferred — populated per tx), otherwise
-    // falls back to scanning pos_orders.items JSON for legacy data.
+    // Read the persistent per-shift totals (written server-side as each sale
+    // lands, so they survive a glitch). Same source as the Manager End-of-Day
+    // report, with EcoCash and Swipe now in their own columns — so the front and
+    // back end agree on every payment method.
     const shiftRes = await db.query<any>(
       `SELECT s.*,
        u.name        AS opened_by_name,
        u.username    AS opened_by_username,
-       c.name        AS outlet_name,
-       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed') as total_sales,
-       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"cash"%') as cash_sales,
-       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"ecocash"%') as ecocash_sales,
-       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND (items::text ILIKE '%"method":"swipe"%' OR items::text ILIKE '%"method":"card"%')) as swipe_sales,
-       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"room-charge"%') as room_charge_sales
+       c.name        AS outlet_name
        FROM pos_shifts s
        LEFT JOIN app_users    u ON u.id = s.opened_by
        LEFT JOIN cost_centres c ON c.id = s.outlet
@@ -677,10 +673,14 @@ export const buildPosReconciliation = async (forDate?: string) => {
         const metadata = typeof s.metadata === 'string' ? JSON.parse(s.metadata) : (s.metadata || {});
         const cashier = labelCashier(s.opened_by_name || s.opened_by_username || s.opened_by || s.id);
         const outlet = s.outlet_name || metadata.department || s.outlet || 'POS';
-        const cash = Number(s.cash_sales || 0);
-        const ecocash = Number(s.ecocash_sales || 0);
-        const swipe = Number(s.swipe_sales || s.total_card || 0);
-        const roomCharge = Number(s.room_charge_sales || s.total_room || 0);
+        const cash = Number(s.total_cash || 0);
+        const ecocash = Number(s.total_ecocash || 0);
+        const swipe = Number(s.total_card || 0);                       // swipe only
+        const roomCharge = Number(s.total_room_charge || s.total_room || 0);
+        const opening = Number(s.opening_cash || 0);
+        const overShort = s.cash_variance != null
+          ? Number(s.cash_variance)
+          : (s.closing_cash != null ? Number(s.closing_cash) - (opening + cash) : 0);
         return {
           cashier,
           outlet,
@@ -689,7 +689,7 @@ export const buildPosReconciliation = async (forDate?: string) => {
           ecocash,
           swipe,
           roomCharge,
-          overShort: Number(s.actual_cash || 0) - (Number(s.starting_cash || 0) + cash)
+          overShort,
         };
       });
       return {

@@ -510,7 +510,8 @@ if(!('error' in ordersRes)) {
         id: s.id, cashier: cashierOf(s), outlet: s.outlet || '—',
         openedAt: s.opened_at, closedAt: s.closed_at, status: s.status,
         opening, cash,
-        card: Number(s.total_card || 0),
+        ecocash: Number(s.total_ecocash || 0),
+        card: Number(s.total_card || 0),   // swipe only
         room: Number(s.total_room_charge || s.total_room || 0),
         sales: Number(s.total_sales || 0),
         voids: Number(s.total_voids || 0), voidCount: Number(s.void_count || 0),
@@ -521,7 +522,7 @@ if(!('error' in ordersRes)) {
     });
     const sum = (k: string) => shiftRows.reduce((a: number, r: any) => a + (Number(r[k]) || 0), 0);
     const totals = {
-      opening: sum('opening'), cash: sum('cash'), card: sum('card'), room: sum('room'),
+      opening: sum('opening'), cash: sum('cash'), ecocash: sum('ecocash'), card: sum('card'), room: sum('room'),
       sales: sum('sales'), voids: sum('voids'), voidCount: sum('voidCount'), txns: sum('txns'),
     };
 
@@ -702,7 +703,7 @@ if(!('error' in ordersRes)) {
               <table className="ds-table">
                 <thead><tr>
                   <th>Cashier</th><th>Outlet</th><th className="right">Opening Till</th>
-                  <th className="right">Cash</th><th className="right">Card / EcoCash</th><th className="right">Room Chg</th>
+                  <th className="right">Cash</th><th className="right">EcoCash</th><th className="right">Swipe</th><th className="right">Room Chg</th>
                   <th className="right">Total Sales</th><th className="right">Expected</th><th className="right">Counted</th>
                   <th className="right">Over / Short</th><th className="right">Voids</th><th className="right">Txns</th>
                 </tr></thead>
@@ -710,7 +711,7 @@ if(!('error' in ordersRes)) {
                   {cashup.shiftRows.map((r: any) => (
                     <tr key={r.id}>
                       <td className="font-medium">{r.cashier}</td><td>{r.outlet}</td><td className="right">{formatCurrency(r.opening)}</td>
-                      <td className="right">{formatCurrency(r.cash)}</td><td className="right">{formatCurrency(r.card)}</td><td className="right">{formatCurrency(r.room)}</td>
+                      <td className="right">{formatCurrency(r.cash)}</td><td className="right">{formatCurrency(r.ecocash)}</td><td className="right">{formatCurrency(r.card)}</td><td className="right">{formatCurrency(r.room)}</td>
                       <td className="right font-bold">{formatCurrency(r.sales)}</td><td className="right">{formatCurrency(r.expected)}</td>
                       <td className="right">{r.closing == null ? '—' : formatCurrency(r.closing)}</td>
                       <td className={`right ${r.variance != null && r.variance < 0 ? 'text-red-600 font-bold' : ''}`}>{r.variance == null ? '—' : formatCurrency(r.variance)}</td>
@@ -718,19 +719,19 @@ if(!('error' in ordersRes)) {
                       <td className="right">{r.txns}</td>
                     </tr>
                   ))}
-                  {cashup.shiftRows.length === 0 && <tr><td colSpan={12} className="text-center p-4">No shifts found in this range</td></tr>}
+                  {cashup.shiftRows.length === 0 && <tr><td colSpan={13} className="text-center p-4">No shifts found in this range</td></tr>}
                 </tbody>
                 {cashup.shiftRows.length > 0 && (
                   <tfoot><tr className="font-bold border-t-2">
                     <td colSpan={2}>TOTAL</td><td className="right">{formatCurrency(cashup.totals.opening)}</td>
-                    <td className="right">{formatCurrency(cashup.totals.cash)}</td><td className="right">{formatCurrency(cashup.totals.card)}</td><td className="right">{formatCurrency(cashup.totals.room)}</td>
+                    <td className="right">{formatCurrency(cashup.totals.cash)}</td><td className="right">{formatCurrency(cashup.totals.ecocash)}</td><td className="right">{formatCurrency(cashup.totals.card)}</td><td className="right">{formatCurrency(cashup.totals.room)}</td>
                     <td className="right">{formatCurrency(cashup.totals.sales)}</td><td colSpan={3}></td>
                     <td className="right">{cashup.totals.voidCount} ({formatCurrency(cashup.totals.voids)})</td><td className="right">{cashup.totals.txns}</td>
                   </tr></tfoot>
                 )}
               </table>
             </div>
-            <p className="text-[11px] text-gray-400 mt-1">"Card / EcoCash" is the combined figure from the shift record; the Swipe vs EcoCash split is shown below.</p>
+            <p className="text-[11px] text-gray-400 mt-1">EcoCash and Swipe are tracked separately on each shift. Shifts opened before this change may still show their EcoCash inside Swipe.</p>
           </div>
 
           <div className="grid md:grid-cols-2 gap-6">

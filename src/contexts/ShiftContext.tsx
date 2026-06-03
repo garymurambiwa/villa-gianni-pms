@@ -450,11 +450,12 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
        const totalEco    = allTx.filter(t => t.method === 'ecocash').reduce((s, t) => s + t.amount, 0);
        const totalRoom   = allTx.filter(t => t.method === 'room-charge').reduce((s, t) => s + t.amount, 0);
        pmsAuthDb.updateShiftTotals(prev.id, {
-         total_sales:  totalSales,
-         total_cash:   totalCash,
-         total_card:   totalCard + totalEco,
-         total_room:   totalRoom,
-         tx_count:     allTx.length,
+         total_sales:   totalSales,
+         total_cash:    totalCash,
+         total_ecocash: totalEco,
+         total_card:    totalCard,   // swipe only — EcoCash now has its own column
+         total_room:    totalRoom,
+         tx_count:      allTx.length,
        }).catch(e => console.warn('[ShiftContext] DB total sync failed:', e));
 
        return next;
@@ -551,15 +552,12 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const recon = bucket(dbTxns as any);
 
       const max = (...n: number[]) => Math.max(...n.map(x => Number(x) || 0));
-      // The DB aggregate folds EcoCash into total_card (see addTransaction), so
-      // reconcile the combined card+ecocash figure, then re-split.
-      const ecocash = max(local.ecocash, recon.ecocash);
-      const combinedCardEco = max(local.card + local.ecocash, recon.card + recon.ecocash, agg?.total_card ?? 0);
-
+      // The DB aggregate now tracks EcoCash and Swipe in separate columns, so
+      // each method reconciles independently (per-bucket max, no re-split).
       return {
         cash:            max(local.cash, recon.cash, agg?.total_cash ?? 0),
-        ecocash,
-        card:            Math.max(0, combinedCardEco - ecocash),
+        ecocash:         max(local.ecocash, recon.ecocash, agg?.total_ecocash ?? 0),
+        card:            max(local.card, recon.card, agg?.total_card ?? 0),
         roomCharge:      max(local.roomCharge, recon.roomCharge, agg?.total_room ?? 0),
         count:           max(local.count, recon.count, agg?.tx_count ?? 0),
         // pos_orders reconstruction excludes voids; keep the local void figures.
