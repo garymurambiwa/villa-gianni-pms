@@ -216,6 +216,11 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inventory_transactions ADD COLUMN IF NOT EXISTS is_historical_backfill BOOLEAN DEFAULT false`).catch(() => {});
       await client.query(`ALTER TABLE public.inventory_transactions ADD COLUMN IF NOT EXISTS department TEXT`).catch(() => {});
 
+      // Period close columns
+      await client.query(`ALTER TABLE public.inventory_periods ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','locked'))`).catch(() => {});
+      await client.query(`ALTER TABLE public.inventory_periods ADD COLUMN IF NOT EXISTS locked_at TIMESTAMPTZ`).catch(() => {});
+      await client.query(`ALTER TABLE public.inventory_periods ADD COLUMN IF NOT EXISTS locked_by TEXT`).catch(() => {});
+
       // ── ISSUE 1 FIX: inv_grn_lines column alignment ───────────────────────
       // Older deployments created inv_grn_lines with `uom_id` (wrong name).
       // The backend INSERT and frontend payload both use `received_uom_id`.
