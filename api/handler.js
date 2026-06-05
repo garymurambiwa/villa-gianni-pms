@@ -493,6 +493,112 @@ app.put('/api/gl/accounts/:id', async (req, res) => {
   }
 });
 
+// ─── GL Pending Batches ───────────────────────────────────────────────────────
+
+// GET /api/gl/pending-batches
+app.get('/api/gl/pending-batches', async (req, res) => {
+  const { status } = req.query;
+  const st = status || 'PENDING';
+  try {
+    const r = await db.query(
+      `SELECT id, origin_table, origin_id, description, debit_gl_account, credit_gl_account,
+              amount, status, created_at
+       FROM gl_pending_batches
+       WHERE status = $1
+       ORDER BY created_at DESC`,
+      [st]
+    );
+    safeJson(res, { ok: true, rows: r.rows || [] });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// POST /api/gl/pending-batches (create)
+app.post('/api/gl/pending-batches', async (req, res) => {
+  const { origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount } = req.body || {};
+  if (!origin_table || !origin_id || !debit_gl_account || !credit_gl_account || amount == null)
+    return safeJson(res, { ok: false, error: 'origin_table, origin_id, debit_gl_account, credit_gl_account, amount required' });
+  try {
+    const r = await db.query(
+      `INSERT INTO gl_pending_batches (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (origin_table, origin_id) DO NOTHING
+       RETURNING id`,
+      [origin_table, origin_id, description || null, debit_gl_account, credit_gl_account, Number(amount)]
+    );
+    const id = r.rows?.[0]?.id || null;
+    safeJson(res, { ok: true, id, created: !!id });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// POST /api/gl/pending-batches/flush (MUST be BEFORE /:id routes)
+app.post('/api/gl/pending-batches/flush', async (req, res) => {
+  try {
+    const pending = await db.query(
+      `SELECT * FROM gl_pending_batches WHERE status='PENDING' ORDER BY created_at`
+    );
+    const rows = pending.rows || [];
+    if (!rows.length) return safeJson(res, { ok: true, flushed: 0, errors: [] });
+
+    let flushed = 0;
+    const errors = [];
+
+    for (const batch of rows) {
+      try {
+        const entryId = `GLJE_BATCH_${batch.id}`;
+        const ops = [
+          {
+            sql: `INSERT INTO gl_journal_entries
+                    (id, entry_date, business_date, description, source, status,
+                     total_debit, total_credit, is_balanced, created_by, posted_by, posted_at, inserted_at)
+                  VALUES ($1, NOW()::date, NOW()::date, $2, 'pending_batch', 'posted', $3, $3, true, 'system', 'system', NOW(), NOW())
+                  ON CONFLICT (id) DO NOTHING
+                  RETURNING id`,
+            params: [entryId, batch.description || `Batch ${batch.origin_table}/${batch.origin_id}`, Number(batch.amount)]
+          },
+          {
+            sql: `INSERT INTO gl_journal_lines (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
+                  VALUES ($1, $2, $3, $4, 0, $5, NOW())`,
+            params: [`${entryId}_DR`, entryId, batch.debit_gl_account, Number(batch.amount), batch.description || null]
+          },
+          {
+            sql: `INSERT INTO gl_journal_lines (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
+                  VALUES ($1, $2, $3, 0, $4, $5, NOW())`,
+            params: [`${entryId}_CR`, entryId, batch.credit_gl_account, Number(batch.amount), batch.description || null]
+          },
+          {
+            sql: `UPDATE gl_pending_batches SET status='POSTED', posted_at=NOW(), posted_journal_id=$1 WHERE id=$2`,
+            params: [entryId, batch.id]
+          }
+        ];
+        const txResult = await db.transaction(ops);
+        if (!txResult.ok) throw new Error(txResult.error || 'Transaction failed');
+        flushed++;
+      } catch (batchErr) {
+        errors.push({ id: batch.id, error: batchErr.message });
+      }
+    }
+
+    safeJson(res, { ok: true, flushed, errors });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// PATCH /api/gl/pending-batches/:id (MUST be AFTER /flush)
+app.patch('/api/gl/pending-batches/:id', async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body || {};
+  if (!['POSTED','IGNORED'].includes(status))
+    return safeJson(res, { ok: false, error: 'status must be POSTED or IGNORED' });
+  try {
+    const extra = status === 'POSTED' ? ', posted_at = NOW()' : '';
+    const r = await db.query(
+      `UPDATE gl_pending_batches SET status=$1${extra} WHERE id=$2 RETURNING id`,
+      [status, id]
+    );
+    if (!r.rows?.length) return safeJson(res, { ok: false, error: 'Not found' });
+    safeJson(res, { ok: true });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 // ─── System Branding (DB-backed, per-property) ───────────────────────────────
 // Reads/writes hotel branding from system_configs so each property keeps its own
 // name/logo regardless of which Vite build is deployed.
