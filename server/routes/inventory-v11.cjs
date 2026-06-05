@@ -1112,6 +1112,22 @@ router.post('/grn/:id/post', async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    // ── GL Pending Batch (post-commit, non-fatal) ──────────────────────────────
+    const glGrnValue = linesRes.rows.reduce((s, l) => s + Number(l.qty_received) * Number(l.unit_cost), 0);
+    if (glGrnValue > 0) {
+      try {
+        await pool.query(
+          `INSERT INTO gl_pending_batches (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount)
+           VALUES ('inv_grn_headers', $1, $2, '1400', '2100', $3)
+           ON CONFLICT (origin_table, origin_id) DO NOTHING`,
+          [id, `GRN ${grn.grn_number} — stock receipt`, glGrnValue]
+        );
+      } catch (glErr) {
+        console.warn('[inv-v11] gl_pending_batches insert skipped for GRN:', glErr.message);
+      }
+    }
+
     res.json({ ok: true, message: `GRN ${grn.grn_number} posted successfully` });
   } catch (error) {
     await client.query('ROLLBACK');
