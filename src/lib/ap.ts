@@ -87,6 +87,19 @@ export const createInvoice = (header: Omit<InvoiceHeader,'invoice_id'|'status'>,
   setInvoices([inv, ...listInvoices()].slice(0, 2000));
   const li: InvoiceLineItem[] = items.map(i => ({ line_item_id: `LI${id}_${Math.random().toString(36).slice(2,8)}`, invoice_id: id, gl_account_code: i.gl_account_code, cost_center_id: i.cost_center_id, line_amount: Number(i.line_amount || 0), description: i.description, is_capital: i.is_capital }));
   setLineItems([ ...li, ...listLineItems() ].slice(0, 5000));
+  // Fire-and-forget GL pending batch — don't await, don't block invoice save
+  fetch('/api/gl/pending-batches', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      origin_table: 'ap_invoices',
+      origin_id: id,
+      description: `AP Invoice ${header.invoice_number}`,
+      debit_gl_account: '5300',
+      credit_gl_account: '2100',
+      amount: total,
+    }),
+  }).catch(() => {/* network failure is non-fatal — invoice already saved */});
   return { ok:true, invoice: inv };
 };
 
