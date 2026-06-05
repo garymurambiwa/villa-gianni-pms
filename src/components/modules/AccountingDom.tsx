@@ -66,6 +66,10 @@ const accountingModule = (() => {
           window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'vendor-management' } } as any));
           break;
         }
+        case 'chart-of-accounts': {
+          window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'chart-of-accounts' } } as any));
+          break;
+        }
         default: {
           deps?.toast({ title: 'Unknown action', description: String(action || '') });
         }
@@ -122,6 +126,7 @@ const AccountingDom: React.FC = () => {
         <button type="button" data-action="gl" className="acct-btn" aria-label="GL Accounting"><span className="mr-2">📘</span>Accounting Utility (GL)</button>
         <button type="button" data-action="tax-config" className="acct-btn" aria-label="Tax Configuration"><span className="mr-2">🧮</span>Tax Configuration</button>
         <button type="button" data-action="inventory-recon" className="acct-btn" aria-label="Inventory Reconciliation"><span className="mr-2">📦</span>Inventory Reconciliation</button>
+        <button type="button" data-action="chart-of-accounts" className="acct-btn" aria-label="Chart of Accounts"><span className="mr-2">📒</span>Chart of Accounts</button>
       </div>
 
       {/* Daily Journal modal identical operation */}

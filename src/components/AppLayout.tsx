@@ -58,6 +58,7 @@ import RateManagement from './modules/RateManagement';
 import { useToast } from '@/components/ui/use-toast';
 import AccountingDom from './modules/AccountingDom';
 import AccountingTaxConfiguration from './modules/AccountingTaxConfiguration';
+import { ChartOfAccounts } from '@/components/modules/ChartOfAccounts';
 import FOSetting from './modules/FOSetting';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { logger } from '@/lib/logger';
@@ -310,6 +311,13 @@ const AppLayout: React.FC = () => {
           <ErrorBoundary fallbackTitle="Accounting Module Error" fallbackMessage="Please reload or contact support.">
             <AccountingDom />
           </ErrorBoundary>
+        );
+      }
+      case 'chart-of-accounts': {
+        return (
+          <div className="flex-1 overflow-y-auto">
+            <ChartOfAccounts />
+          </div>
         );
       }
       case 'accounting-tax': {
