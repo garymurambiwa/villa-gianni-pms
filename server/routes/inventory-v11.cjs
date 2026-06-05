@@ -1667,6 +1667,79 @@ router.get('/balance/:location_id', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/v1/inventory/report/stock-on-hand
+ * Stock balance per item for a location as of a point in time.
+ * Query: location_id (required), as_of (optional ISO timestamp, defaults to NOW)
+ */
+router.get('/report/stock-on-hand', async (req, res) => {
+  const { location_id } = req.query;
+  const as_of = req.query.as_of || new Date().toISOString();
+  if (!location_id) {
+    return res.status(400).json({ ok: false, error: 'location_id is required' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT i.id,
+              i.name,
+              i.category,
+              COALESCE(SUM(sl.quantity_change), 0) AS balance,
+              i.base_uom_id AS uom
+       FROM public.inv_items i
+       LEFT JOIN public.inv_stock_ledger sl
+         ON sl.item_id = i.id
+         AND sl.location_id = $1
+         AND sl.inserted_at <= $2::timestamptz
+       GROUP BY i.id, i.name, i.category, i.base_uom_id
+       ORDER BY i.category, i.name`,
+      [location_id, as_of]
+    );
+    res.json({ ok: true, rows: result.rows, location_id, as_of });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/v1/inventory/report/movement
+ * Stock ledger movement for a location between two dates.
+ * Query: location_id (required), from (YYYY-MM-DD), to (YYYY-MM-DD)
+ */
+router.get('/report/movement', async (req, res) => {
+  const { location_id } = req.query;
+  const from = req.query.from || new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+  const to   = req.query.to   || new Date().toISOString().split('T')[0];
+  if (!location_id) {
+    return res.status(400).json({ ok: false, error: 'location_id is required' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT sl.inserted_at::date AS date,
+              i.name AS item_name,
+              sl.ledger_type,
+              sl.reference_number,
+              sl.quantity_change,
+              sl.base_uom_id AS uom,
+              sl.posted_by,
+              SUM(sl.quantity_change) OVER (
+                PARTITION BY sl.item_id
+                ORDER BY sl.inserted_at
+                ROWS UNBOUNDED PRECEDING
+              ) AS running_balance
+       FROM public.inv_stock_ledger sl
+       JOIN public.inv_items i ON i.id = sl.item_id
+       WHERE sl.location_id = $1
+         AND sl.inserted_at >= $2::date
+         AND sl.inserted_at < ($3::date + interval '1 day')
+       ORDER BY sl.inserted_at DESC`,
+      [location_id, from, to]
+    );
+    res.json({ ok: true, rows: result.rows, location_id, from, to });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
  /**
   * GET /api/v1/inventory/items-with-balance/:location_id
   * Get inventory items with their current balances for a location
