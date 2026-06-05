@@ -865,12 +865,38 @@ export const buildCashBankDeposits = async (forDate?: string) => {
 // Trial Balance (monthly)
 export const buildTrialBalance = async (monthISO: string) => {
   const [y, m] = monthISO.split('-');
-  const start = `${y}-${m}-01`;
-  const endDate = new Date(Number(y), Number(m));
-  const end = endDate.toISOString().slice(0, 10);
-  const tb = gl.getTrialBalance(start, end);
-  const rows = tb.map(a => ({ accountId: a.accountId, name: a.name, debit: a.debit, credit: a.credit, balance: a.balance }));
-  return { title: `Trial Balance — ${monthISO}`, columns: ['Account', 'Name', 'Debit', 'Credit', 'Balance'], rows };
+  const from = `${y}-${m}-01`;
+  const to = new Date(Number(y), Number(m)).toISOString().slice(0, 10);
+
+  // DB-first: query gl_journal_lines via API endpoint
+  try {
+    const res = await fetch(`/api/reports/trial-balance?from=${from}&to=${to}`);
+    const data = await res.json();
+    if (data.ok && data.rows?.length > 0) {
+      return {
+        title: `Trial Balance — ${monthISO}`,
+        columns: ['Account', 'Name', 'Category', 'Debit', 'Credit', 'Balance'],
+        rows: data.rows.map((r: any) => ({
+          Account: r.accountId,
+          Name: r.name,
+          Category: r.category,
+          Debit: Number(r.debit).toFixed(2),
+          Credit: Number(r.credit).toFixed(2),
+          Balance: Number(r.balance).toFixed(2)
+        }))
+      };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildTrialBalance DB fetch failed, using localStorage:', err);
+  }
+
+  // Offline fallback: localStorage GL ledger
+  const tb = gl.getTrialBalance(from, to);
+  const rows = tb.map(a => ({
+    Account: a.accountId, Name: a.name, Category: '—',
+    Debit: a.debit.toFixed(2), Credit: a.credit.toFixed(2), Balance: a.balance.toFixed(2)
+  }));
+  return { title: `Trial Balance — ${monthISO}`, columns: ['Account', 'Name', 'Category', 'Debit', 'Credit', 'Balance'], rows };
 };
 
 // Monthly Operating Departmental Summary (USALI)
@@ -1028,26 +1054,80 @@ export const buildFixedAssetRecon = async (monthISO: string) => {
 // Monthly Profit & Loss (USALI-style summary using GL trial balance)
 export const buildMonthlyPL = async (monthISO: string) => {
   const [y, m] = monthISO.split('-');
-  const start = `${y}-${m}-01`;
-  const end = new Date(Number(y), Number(m)).toISOString().slice(0, 10); // first day of next month
-  const pl = gl.getPLStatement(start, end);
+  const from = `${y}-${m}-01`;
+  const to = new Date(Number(y), Number(m)).toISOString().slice(0, 10);
+
+  // DB-first: query gl_journal_lines via API endpoint
+  try {
+    const res = await fetch(`/api/reports/pl?from=${from}&to=${to}`);
+    const data = await res.json();
+    if (data.ok) {
+      const detailRows = (data.rows || []).map((r: any) => ({
+        Category: r.category,
+        Account: r.name,
+        Amount: Number(r.amount).toFixed(2)
+      }));
+      detailRows.push({ Category: '─── TOTAL Revenue', Account: '', Amount: Number(data.revenue).toFixed(2) });
+      detailRows.push({ Category: '─── TOTAL Expense', Account: '', Amount: Number(data.expense).toFixed(2) });
+      detailRows.push({ Category: 'Gross Operating Profit', Account: '', Amount: Number(data.gop).toFixed(2) });
+      return {
+        title: `Profit & Loss — ${monthISO}`,
+        columns: ['Category', 'Account', 'Amount'],
+        rows: detailRows
+      };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildMonthlyPL DB fetch failed, using localStorage:', err);
+  }
+
+  // Offline fallback: localStorage GL
+  const pl = gl.getPLStatement(from, to);
   const rows = [
-    { category: 'Revenue', amount: Number(pl.revenue || 0) },
-    { category: 'Expense', amount: Number(pl.expense || 0) },
-    { category: 'GOP (Revenue - Expense)', amount: Number((pl.revenue - pl.expense).toFixed(2)) },
-    { category: 'Net Income', amount: Number(pl.netIncome || 0) }
+    { Category: 'Revenue', Account: '—', Amount: Number(pl.revenue || 0).toFixed(2) },
+    { Category: 'Expense', Account: '—', Amount: Number(pl.expense || 0).toFixed(2) },
+    { Category: 'Gross Operating Profit', Account: '—', Amount: Number((pl.revenue - pl.expense).toFixed(2)) },
+    { Category: 'Net Income', Account: '—', Amount: Number(pl.netIncome || 0).toFixed(2) }
   ];
-  return { title: `Profit & Loss — ${monthISO}`, columns: ['Category', 'Amount'], rows };
+  return { title: `Profit & Loss — ${monthISO}`, columns: ['Category', 'Account', 'Amount'], rows };
 };
 
 // Aged Accounts Receivable (City Ledger Aging)
 export const buildAgedAR = async (asOf?: string) => {
   const date = asOf || getBusinessDate();
+
+  // DB-first: query city_ledger_transactions via API endpoint
+  try {
+    const res = await fetch(`/api/reports/aged-ar?as_of=${date}`);
+    const data = await res.json();
+    if (data.ok && data.rows?.length > 0) {
+      return {
+        title: `Aged Accounts Receivable — ${date}`,
+        columns: ['Account', 'Type', 'Date', 'Amount', 'Aging'],
+        rows: data.rows.map((r: any) => ({
+          Account: r.account,
+          Type:    r.type,
+          Date:    r.date,
+          Amount:  Number(r.amount).toFixed(2),
+          Aging:   r.bucket
+        }))
+      };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildAgedAR DB fetch failed, using localStorage:', err);
+  }
+
+  // Offline fallback: localStorage city ledger
   const ledger = readJSON<any[]>('corepms_city_ledger', []);
   const now = new Date(date);
   const ageDays = (d: string) => Math.floor((now.getTime() - new Date(d).getTime()) / (1000 * 60 * 60 * 24));
-  const rows = ledger.map(t => ({ account: t.guestName || t.accountName || 'Account', reference: t.reason || t.reference || '', date: t.date, amount: Number(t.amount || 0), bucket: (() => { const a = ageDays(t.date || date); return a <= 30 ? '0-30' : a <= 60 ? '31-60' : a <= 90 ? '61-90' : '90+'; })() }));
-  return { title: `Aged Accounts Receivable — ${date}`, columns: ['Account', 'Reference', 'Date', 'Amount', 'Aging'], rows };
+  const rows = ledger.map(t => ({
+    Account: t.guestName || t.accountName || 'Account',
+    Type:    'Legacy',
+    Date:    t.date || date,
+    Amount:  Number(t.amount || 0).toFixed(2),
+    Aging:   (() => { const a = ageDays(t.date || date); return a <= 30 ? '0-30' : a <= 60 ? '31-60' : a <= 90 ? '61-90' : '90+'; })()
+  }));
+  return { title: `Aged Accounts Receivable — ${date}`, columns: ['Account', 'Type', 'Date', 'Amount', 'Aging'], rows };
 };
 
 // Inventory & COGS — DB-driven using inventory_periods and transactions
