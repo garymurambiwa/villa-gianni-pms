@@ -1396,7 +1396,7 @@ router.post('/transfer', async (req, res) => {
  * Shared helper — executes per-line transfer operations inside an active pg client transaction.
  * Caller is responsible for BEGIN/COMMIT/ROLLBACK and releasing the client.
  */
-async function executeTransferLines(client, lines, headerId, sourceLocId, destLocId, transferNumber, actorId) {
+async function executeTransferLines(client, lines, sourceLocId, destLocId, transferNumber, actorId) {
   for (const line of lines) {
     await client.query(
       `SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`,
@@ -1526,7 +1526,7 @@ router.post('/transfer/execute', async (req, res) => {
       );
     }
 
-    await executeTransferLines(client, items, headerId, source_location_id, destination_location_id, transferNumber, created_by);
+    await executeTransferLines(client, items, source_location_id, destination_location_id, transferNumber, created_by);
 
     const destLoc = await client.query(
       `SELECT name, location_type FROM public.inv_locations WHERE id = $1`, [destination_location_id]
@@ -1590,7 +1590,7 @@ router.post('/transfer/:id/approve', async (req, res) => {
     const resolvedDest   = transfer.destination_location_id || transfer.to_location_id;
 
     // Process each line
-    await executeTransferLines(client, linesRes.rows, id, resolvedSource, resolvedDest, transfer.transfer_number, approved_by);
+    await executeTransferLines(client, linesRes.rows, resolvedSource, resolvedDest, transfer.transfer_number, approved_by);
 
     // Update transfer status (use SAVEPOINT to keep transaction valid if approved_at column missing)
     try {
