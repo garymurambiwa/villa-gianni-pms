@@ -1393,6 +1393,174 @@ router.post('/transfer', async (req, res) => {
 });
 
 /**
+ * Shared helper — executes per-line transfer operations inside an active pg client transaction.
+ * Caller is responsible for BEGIN/COMMIT/ROLLBACK and releasing the client.
+ */
+async function executeTransferLines(client, lines, headerId, sourceLocId, destLocId, transferNumber, actorId) {
+  for (const line of lines) {
+    await client.query(
+      `SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`,
+      [line.item_id, sourceLocId]
+    );
+
+    const balRes = await client.query(
+      `SELECT COALESCE(SUM(quantity_change), 0) AS balance
+       FROM public.inv_stock_ledger
+       WHERE item_id = $1 AND location_id = $2`,
+      [line.item_id, sourceLocId]
+    );
+    const balance = Number(balRes.rows[0]?.balance || 0);
+    const requested = Number(line.qty_requested);
+    if (balance < requested) {
+      throw new Error(
+        `Insufficient stock for item ${line.item_id}: available ${balance.toFixed(3)}, requested ${requested.toFixed(3)}`
+      );
+    }
+
+    await client.query(
+      `INSERT INTO public.inv_stock_ledger
+       (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
+       VALUES ($1,$2,$3,'TRANSFER_OUT',$4,$5,$6,$7,NOW())`,
+      [randomUUID(), line.item_id, sourceLocId, transferNumber, -requested, line.source_uom_id, actorId]
+    );
+
+    let destQty = requested;
+    const destUomId = line.destination_uom_id || line.source_uom_id;
+    if (line.breakdown_flag && line.destination_uom_id && line.destination_uom_id !== line.source_uom_id) {
+      const convRes = await client.query(
+        `SELECT conversion_factor FROM public.inv_uom_conversions
+         WHERE item_id=$1 AND from_uom_id=$2 AND to_uom_id=$3 AND breakdown_allowed=true`,
+        [line.item_id, line.source_uom_id, line.destination_uom_id]
+      );
+      if (convRes.rows.length) {
+        destQty = destQty * Number(convRes.rows[0].conversion_factor);
+      } else {
+        const globalConv = await client.query(
+          `SELECT conversion_factor FROM public.inv_uom_conversions
+           WHERE from_uom_id=$1 AND to_uom_id=$2 AND breakdown_allowed=true LIMIT 1`,
+          [line.source_uom_id, line.destination_uom_id]
+        );
+        if (globalConv.rows.length) {
+          destQty = destQty * Number(globalConv.rows[0].conversion_factor);
+        }
+      }
+    }
+
+    await client.query(
+      `INSERT INTO public.inv_stock_ledger
+       (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
+       VALUES ($1,$2,$3,'TRANSFER_IN',$4,$5,$6,$7,NOW())`,
+      [randomUUID(), line.item_id, destLocId, transferNumber, destQty, destUomId, actorId]
+    );
+  }
+}
+
+/**
+ * POST /api/v1/inventory/transfer/execute
+ * Atomic transfer: creates header + lines + posts TRANSFER_OUT and TRANSFER_IN in one transaction.
+ * Body: { source_location_id, destination_location_id, created_by, reference_text?, items: [{item_id, qty_requested, source_uom_id, breakdown_flag?, destination_uom_id?}] }
+ */
+router.post('/transfer/execute', async (req, res) => {
+  const { source_location_id, destination_location_id, created_by, items } = req.body;
+  const reference_text = req.body.reference_text || req.body.reference_note || null;
+
+  if (!source_location_id || !destination_location_id || !created_by) {
+    return res.status(400).json({ ok: false, error: 'Missing required fields: source_location_id, destination_location_id, created_by' });
+  }
+  if (source_location_id === destination_location_id) {
+    return res.status(400).json({ ok: false, error: 'Source and destination locations must be different' });
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ ok: false, error: 'items must be a non-empty array' });
+  }
+  for (const it of items) {
+    if (!it.item_id || !(Number(it.qty_requested) > 0)) {
+      return res.status(400).json({ ok: false, error: `Invalid line: item_id and qty_requested > 0 required` });
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const transCountRes = await client.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(transfer_number FROM 12) AS INTEGER)), 0) + 1 AS next_num
+       FROM public.inv_transfer_headers
+       WHERE transfer_number ~ ('^TRANS-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-\\d+$')`
+    );
+    const nextNum = transCountRes.rows[0].next_num;
+    const transferNumber = 'TRANS-' + new Date().getFullYear() + '-' + String(nextNum).padStart(4, '0');
+
+    let headerId;
+    await client.query('SAVEPOINT th_exec');
+    try {
+      const hRes = await client.query(
+        `INSERT INTO public.inv_transfer_headers
+         (id, transfer_number, source_location_id, destination_location_id,
+          from_location_id, to_location_id, created_by, reference_text,
+          status, approved_by, approved_at, inserted_at)
+         VALUES ($1,$2,$3,$4,$3,$4,$5,$6,'approved',$5,NOW(),NOW()) RETURNING id`,
+        [randomUUID(), transferNumber, source_location_id, destination_location_id, created_by, reference_text]
+      );
+      await client.query('RELEASE SAVEPOINT th_exec');
+      headerId = hRes.rows[0].id;
+    } catch {
+      await client.query('ROLLBACK TO SAVEPOINT th_exec');
+      const hRes = await client.query(
+        `INSERT INTO public.inv_transfer_headers
+         (id, transfer_number, from_location_id, to_location_id, status, inserted_at)
+         VALUES ($1,$2,$3,$4,'approved',NOW()) RETURNING id`,
+        [randomUUID(), transferNumber, source_location_id, destination_location_id]
+      );
+      headerId = hRes.rows[0].id;
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      await client.query(
+        `INSERT INTO public.inv_transfer_lines
+         (id, transfer_header_id, item_id, qty_requested, source_uom_id, breakdown_flag, destination_uom_id, line_number, inserted_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())`,
+        [randomUUID(), headerId, it.item_id, it.qty_requested, it.source_uom_id || 'uom_bottle',
+         it.breakdown_flag || false, it.destination_uom_id || null, i + 1]
+      );
+    }
+
+    await executeTransferLines(client, items, headerId, source_location_id, destination_location_id, transferNumber, created_by);
+
+    const destLoc = await client.query(
+      `SELECT name, location_type FROM public.inv_locations WHERE id = $1`, [destination_location_id]
+    );
+    if (destLoc.rows.length) {
+      const { name: locName, location_type } = destLoc.rows[0];
+      if (location_type === 'Outlet') {
+        const isBar        = /bar/i.test(locName);
+        const isRestaurant = /restaurant|kitchen|room.service/i.test(locName);
+        for (const it of items) {
+          await client.query(`
+            UPDATE public.products SET
+              bar_visibility        = CASE WHEN $2 THEN true ELSE bar_visibility END,
+              restaurant_visibility = CASE WHEN $3 THEN true ELSE restaurant_visibility END,
+              active                = true,
+              updated_at            = NOW()
+            WHERE id = $1
+          `, [it.item_id, isBar, isRestaurant]);
+        }
+      }
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, transfer_id: headerId, transfer_number: transferNumber, lines_moved: items.length });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    const statusCode = error.message.startsWith('Insufficient stock') ? 409 : 500;
+    res.status(statusCode).json({ ok: false, error: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
  * POST /api/v1/inventory/transfer/:id/approve
  * Approve and execute transfer
  */
@@ -1422,67 +1590,7 @@ router.post('/transfer/:id/approve', async (req, res) => {
     const resolvedDest   = transfer.destination_location_id || transfer.to_location_id;
 
     // Process each line
-    for (const line of linesRes.rows) {
-
-      const balRes = await client.query(
-        `SELECT COALESCE(SUM(quantity_change), 0) as balance
-        FROM public.inv_stock_ledger
-        WHERE item_id = $1 AND location_id = $2`,
-        [line.item_id, resolvedSource]
-      );
-
-      const balance = Number(balRes.rows[0]?.balance || 0);
-
-      // FIX: Hard enforce — block transfer if insufficient balance (not just warn)
-      if (balance < Number(line.qty_requested)) {
-        throw new Error(
-          `Insufficient stock for item ${line.item_id}: available ${balance.toFixed(3)}, requested ${Number(line.qty_requested).toFixed(3)}`
-        );
-      }
-
-      // Create TRANSFER_OUT entry (using resolved location IDs)
-      await client.query(
-        `INSERT INTO public.inv_stock_ledger
-         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
-         VALUES ($1,$2,$3,'TRANSFER_OUT',$4,$5,$6,$7,NOW())`,
-        [randomUUID(), line.item_id, resolvedSource, transfer.transfer_number,
-         -Number(line.qty_requested), line.source_uom_id, approved_by]
-      );
-
-      // FIX: breakdown_flag uses actual UOM conversion table, not hardcoded *30
-      let destQty   = Number(line.qty_requested);
-      const destUomId = line.destination_uom_id || line.source_uom_id;
-      if (line.breakdown_flag && line.destination_uom_id && line.destination_uom_id !== line.source_uom_id) {
-        // Look up conversion factor from inv_uom_conversions (uses breakdown_allowed column)
-        const convRes = await client.query(
-          `SELECT conversion_factor FROM public.inv_uom_conversions
-           WHERE item_id=$1 AND from_uom_id=$2 AND to_uom_id=$3
-           AND breakdown_allowed = true`,
-          [line.item_id, line.source_uom_id, line.destination_uom_id]
-        );
-        if (convRes.rows.length) {
-          destQty = destQty * Number(convRes.rows[0].conversion_factor);
-        } else {
-          // Fallback: global conversion (any item, same UOM pair)
-          const globalConv = await client.query(
-            `SELECT conversion_factor FROM public.inv_uom_conversions
-             WHERE from_uom_id=$1 AND to_uom_id=$2 AND breakdown_allowed=true LIMIT 1`,
-            [line.source_uom_id, line.destination_uom_id]
-          );
-          if (globalConv.rows.length) {
-            destQty = destQty * Number(globalConv.rows[0].conversion_factor);
-          }
-        }
-      }
-
-      await client.query(
-        `INSERT INTO public.inv_stock_ledger
-         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
-         VALUES ($1,$2,$3,'TRANSFER_IN',$4,$5,$6,$7,NOW())`,
-        [randomUUID(), line.item_id, resolvedDest, transfer.transfer_number,
-         destQty, destUomId, approved_by]
-      );
-    }
+    await executeTransferLines(client, linesRes.rows, id, resolvedSource, resolvedDest, transfer.transfer_number, approved_by);
 
     // Update transfer status (use SAVEPOINT to keep transaction valid if approved_at column missing)
     try {
