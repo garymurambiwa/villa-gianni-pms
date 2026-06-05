@@ -869,8 +869,10 @@ export const buildTrialBalance = async (monthISO: string) => {
   const to = new Date(Number(y), Number(m)).toISOString().slice(0, 10);
 
   // DB-first: query gl_journal_lines via API endpoint
+  // Uses the purpose-built /api/reports endpoint (server-side aggregation) rather than db.query.
   try {
     const res = await fetch(`/api/reports/trial-balance?from=${from}&to=${to}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.ok && data.rows?.length > 0) {
       return {
@@ -1058,9 +1060,13 @@ export const buildMonthlyPL = async (monthISO: string) => {
   const to = new Date(Number(y), Number(m)).toISOString().slice(0, 10);
 
   // DB-first: query gl_journal_lines via API endpoint
+  // Uses the purpose-built /api/reports endpoint (server-side aggregation) rather than db.query.
   try {
     const res = await fetch(`/api/reports/pl?from=${from}&to=${to}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    // Note: guard on data.ok ALONE (not rows.length) — a zero-activity month is a
+    // valid P&L result and must show zeros, not fall back to stale localStorage.
     if (data.ok) {
       const detailRows = (data.rows || []).map((r: any) => ({
         Category: r.category,
@@ -1096,8 +1102,10 @@ export const buildAgedAR = async (asOf?: string) => {
   const date = asOf || getBusinessDate();
 
   // DB-first: query city_ledger_transactions via API endpoint
+  // Uses the purpose-built /api/reports endpoint (server-side aggregation) rather than db.query.
   try {
     const res = await fetch(`/api/reports/aged-ar?as_of=${date}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.ok && data.rows?.length > 0) {
       return {
