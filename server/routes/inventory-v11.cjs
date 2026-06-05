@@ -2849,6 +2849,122 @@ router.get('/balance-check/:item_id', async (req, res) => {
 // ============================================================================
 
 /**
+ * POST /api/v1/inventory/close-period
+ * Record physical counts, calculate variance vs theoretical, lock period, post GL batch for variance.
+ *
+ * Body: { location_id, period_start, period_end, closed_by, counts: [{item_id, physical_qty, unit_cost}] }
+ * Response: { ok, report_id, variance_lines, gl_batch_id, locked_period_id }
+ */
+router.post('/close-period', async (req, res) => {
+  const { location_id, period_start, period_end, closed_by, counts } = req.body || {};
+  if (!location_id || !period_start || !period_end || !Array.isArray(counts) || counts.length === 0)
+    return res.status(400).json({ ok: false, error: 'location_id, period_start, period_end, counts[] required' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 1. Check for existing locked period
+    const lockCheck = await client.query(
+      `SELECT id, status FROM inventory_periods
+       WHERE location_id = $1
+         AND start_date <= $2::date
+         AND end_date >= $3::date
+       LIMIT 1`,
+      [location_id, period_end, period_start]
+    );
+    if (lockCheck.rows.length && lockCheck.rows[0].status === 'locked') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, error: 'Period already locked — back-dated changes are blocked' });
+    }
+    const existingPeriodId = lockCheck.rows[0]?.id || null;
+
+    // 2. Generate variance report number
+    const countRes = await client.query(`SELECT COUNT(*) FROM inv_variance_reports`);
+    const reportNumber = `VAR-${String(Number(countRes.rows[0].count) + 1).padStart(5, '0')}`;
+
+    // 3. Insert variance report header
+    const reportInsert = await client.query(
+      `INSERT INTO inv_variance_reports (report_number, location_id, period_start, period_end, created_by)
+       VALUES ($1, $2, $3::date, $4::date, $5)
+       RETURNING id`,
+      [reportNumber, location_id, period_start, period_end, closed_by || 'system']
+    );
+    const reportId = reportInsert.rows[0].id;
+
+    // 4. Per item: calculate theoretical balance, insert variance lines
+    let totalVarianceValue = 0;
+    let linesInserted = 0;
+
+    for (const count of counts) {
+      const { item_id, physical_qty, unit_cost = 0 } = count;
+      if (!item_id || physical_qty == null) continue;
+
+      const theoreticalRes = await client.query(
+        `SELECT COALESCE(SUM(quantity_change), 0)::numeric AS theoretical
+         FROM inv_stock_ledger
+         WHERE item_id = $1
+           AND location_id = $2
+           AND inserted_at <= $3::date + interval '1 day'`,
+        [item_id, location_id, period_end]
+      );
+      const theoretical = Number(theoreticalRes.rows[0]?.theoretical || 0);
+      const variance_qty = Number(physical_qty) - theoretical;
+      const variance_value = variance_qty * Number(unit_cost || 0);
+      totalVarianceValue += variance_value;
+
+      await client.query(
+        `INSERT INTO inv_variance_lines (report_id, item_id, physical_qty, theoretical_qty, variance_qty, unit_cost, variance_value)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [reportId, item_id, physical_qty, theoretical, variance_qty, unit_cost, variance_value]
+      );
+      linesInserted++;
+    }
+
+    // 5. GL pending batch for variance (only if non-zero)
+    let glBatchId = null;
+    const absVariance = Math.abs(totalVarianceValue);
+    if (absVariance > 0.005) {
+      const debitAcct  = totalVarianceValue < 0 ? '5100' : '1400';
+      const creditAcct = totalVarianceValue < 0 ? '1400' : '5100';
+      const batchRes = await client.query(
+        `INSERT INTO gl_pending_batches (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount)
+         VALUES ('inv_variance_reports', $1, $2, $3, $4, $5)
+         ON CONFLICT (origin_table, origin_id) DO NOTHING
+         RETURNING id`,
+        [reportId, `Stock variance ${reportNumber}`, debitAcct, creditAcct, absVariance]
+      );
+      glBatchId = batchRes.rows[0]?.id || null;
+    }
+
+    // 6. Lock or create inventory period
+    let lockedPeriodId = existingPeriodId;
+    if (existingPeriodId) {
+      await client.query(
+        `UPDATE inventory_periods SET status='locked', locked_at=NOW(), locked_by=$1 WHERE id=$2`,
+        [closed_by || 'system', existingPeriodId]
+      );
+    } else {
+      const periodInsert = await client.query(
+        `INSERT INTO inventory_periods (location_id, start_date, end_date, status, locked_at, locked_by)
+         VALUES ($1, $2::date, $3::date, 'locked', NOW(), $4)
+         RETURNING id`,
+        [location_id, period_start, period_end, closed_by || 'system']
+      );
+      lockedPeriodId = periodInsert.rows[0].id;
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, report_id: reportId, variance_lines: linesInserted, gl_batch_id: glBatchId, locked_period_id: lockedPeriodId });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
  * GET /api/v1/inventory/periods
  * List all inventory periods with lock status
  */
