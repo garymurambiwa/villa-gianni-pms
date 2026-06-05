@@ -378,6 +378,37 @@ const USALI_ACCOUNTS = [
 app.post('/api/gl/accounts/seed', async (req, res) => {
   try {
     await db.query(`ALTER TABLE gl_accounts ADD COLUMN IF NOT EXISTS account_number VARCHAR(20)`);
+
+    // ── GL Pending Batches tables ─────────────────────────────────────────────────
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS gl_account_mappings (
+        id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        source_type     TEXT NOT NULL CHECK (source_type IN ('SUPPLIER','CUSTOMER_CREDIT','STOCK_CATEGORY')),
+        source_ref_id   TEXT NOT NULL,
+        target_gl_account_id TEXT NOT NULL REFERENCES gl_accounts(id),
+        updated_at      TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (source_type, source_ref_id)
+      )
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS gl_pending_batches (
+        id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        origin_table      TEXT NOT NULL,
+        origin_id         TEXT NOT NULL,
+        description       TEXT,
+        debit_gl_account  TEXT NOT NULL,
+        credit_gl_account TEXT NOT NULL,
+        amount            NUMERIC(12,2) NOT NULL,
+        status            TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','POSTED','IGNORED')),
+        created_at        TIMESTAMPTZ DEFAULT NOW(),
+        posted_at         TIMESTAMPTZ,
+        posted_journal_id TEXT REFERENCES gl_journal_entries(id),
+        UNIQUE (origin_table, origin_id)
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_glpb_status ON gl_pending_batches(status)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_glpb_origin ON gl_pending_batches(origin_table, origin_id)`);
+
     let upserted = 0;
     for (const acc of USALI_ACCOUNTS) {
       const r = await db.query(
