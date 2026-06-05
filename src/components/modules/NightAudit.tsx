@@ -53,6 +53,10 @@ const NightAudit: React.FC = () => {
   const [showForceDialog, setShowForceDialog] = React.useState(false);
   const [forceReason, setForceReason] = React.useState('');
 
+  // Date-ahead repair state
+  const [dateIsAhead, setDateIsAhead] = React.useState(false);
+  const [repairingDate, setRepairingDate] = React.useState(false);
+
   React.useEffect(() => {
     // 1. Load whatever is already cached in localStorage immediately
     try {
@@ -126,6 +130,7 @@ const NightAudit: React.FC = () => {
     // Now we handle: (a) never initialized, (b) gap in history, (c) stuck date.
     fetch('/api/night-audit/status').then(r => r.json()).then(async status => {
       if (!status.ok) return;
+      if (status.dateIsAhead) setDateIsAhead(true);
       const today = new Date().toISOString().split('T')[0];
 
       // Determine the anchor date: last completed audit OR system business date OR yesterday
@@ -434,6 +439,46 @@ const NightAudit: React.FC = () => {
 
       {/* Audit tab — original content below, hidden when reports tab active */}
       {activeTab === 'audit' && <>
+
+      {/* ── Date-Ahead Banner: shown when business_date is stuck in the future ── */}
+      {dateIsAhead && (
+        <div className="mb-4 rounded-xl border border-red-300 bg-red-50 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 font-semibold text-red-800 mb-1">
+                <AlertTriangle className="w-4 h-4" />
+                Business Date Is Ahead of Today
+              </div>
+              <p className="text-sm text-red-700">
+                The hotel business date has drifted into the future (likely caused by a catch-up loop running too many times).
+                Click <strong>Repair Date</strong> to reset it to the correct date.
+              </p>
+            </div>
+            <button
+              className="shrink-0 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+              disabled={repairingDate}
+              onClick={async () => {
+                setRepairingDate(true);
+                try {
+                  const r = await fetch('/api/night-audit/repair-date', { method: 'POST' }).then(x => x.json());
+                  if (r.ok) {
+                    toast({ title: 'Date repaired', description: `Business date reset to ${r.businessDate}` });
+                    setDateIsAhead(false);
+                  } else {
+                    toast({ title: 'Repair failed', description: r.error, variant: 'destructive' });
+                  }
+                } catch {
+                  toast({ title: 'Repair failed', description: 'Network error', variant: 'destructive' });
+                } finally {
+                  setRepairingDate(false);
+                }
+              }}
+            >
+              {repairingDate ? 'Repairing…' : 'Repair Date'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Catch-up Banner: shown when audit dates are missing ─────────────── */}
       {catchupDates.length > 0 && (

@@ -740,13 +740,17 @@ app.post('/api/night-audit/run', async (req, res) => {
     const posRevenue = posRes.ok ? Number(posRes.rows?.[0]?.pos_rev || 0) : 0;
     const totalRevenue = roomRevenue + posRevenue;
 
-    // Advance business date
+    // Advance business date — but never past today's real calendar date.
+    // Capping prevents the catch-up loop from overshooting into the future when it
+    // processes many missing days in rapid succession.
+    const todayReal = new Date().toISOString().split('T')[0];
     const nextDate = new Date(date); nextDate.setDate(nextDate.getDate() + 1);
     const nextDateStr = nextDate.toISOString().split('T')[0];
+    const safeNextDate = nextDateStr > todayReal ? todayReal : nextDateStr;
     await db.query(
       `INSERT INTO system_configs (key,value) VALUES ('business_date',$1)
        ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
-      [JSON.stringify({ date: nextDateStr })]
+      [JSON.stringify({ date: safeNextDate })]
     );
 
     // Build reports_snapshot (same shape NightAuditReports.tsx reads from DB)
@@ -822,10 +826,40 @@ app.get('/api/night-audit/status', async (req, res) => {
       businessDate,
       lastRun: lastRunRow,
       // Signal to frontend if business_date was never initialized (new property)
-      needsInitialization: !businessDate && !lastRunRow
+      needsInitialization: !businessDate && !lastRunRow,
+      // Warn the frontend if the stored business_date is ahead of the real calendar date
+      dateIsAhead: businessDate ? businessDate > new Date().toISOString().split('T')[0] : false
     });
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
+
+// POST /api/night-audit/repair-date
+// Resets system_configs.business_date to today (or the last completed audit date + 1,
+// whichever is earlier) when the date has drifted into the future.
+app.post('/api/night-audit/repair-date', async (req, res) => {
+  try {
+    const todayReal = new Date().toISOString().split('T')[0];
+    const lastRun = await db.query(
+      `SELECT business_date::date::text as d FROM night_audit_runs WHERE status='completed' ORDER BY business_date DESC LIMIT 1`
+    );
+    let correctDate = todayReal;
+    if (lastRun.ok && lastRun.rows?.length) {
+      const lastAuditDate = lastRun.rows[0].d;
+      const dayAfterLast = new Date(lastAuditDate);
+      dayAfterLast.setDate(dayAfterLast.getDate() + 1);
+      const dayAfterLastStr = dayAfterLast.toISOString().split('T')[0];
+      // Use whichever is earlier: day-after-last-audit or today
+      correctDate = dayAfterLastStr < todayReal ? dayAfterLastStr : todayReal;
+    }
+    await db.query(
+      `INSERT INTO system_configs (key,value) VALUES ('business_date',$1)
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
+      [JSON.stringify({ date: correctDate })]
+    );
+    safeJson(res, { ok: true, repaired: true, businessDate: correctDate });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 
 app.get('/api/night-audit/reports', async (req, res) => {
   try {
