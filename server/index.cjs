@@ -1012,40 +1012,108 @@ app.get('/api/reports/pos-recon', async (req, res) => {
     }
 });
 
-// GET /api/reports/pl - Monthly P&L
-app.get('/api/reports/pl', async (req, res) => {
-    const { month } = req.query;
+// GET /api/reports/trial-balance?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Per-account debit/credit/balance for the date range from gl_journal_lines.
+// (Mirror of the Vercel api/handler.js endpoint so Render serves identical data.)
+app.get('/api/reports/trial-balance', async (req, res) => {
+    const { from, to } = req.query;
+    if (!from || !to) return res.json({ ok: false, error: 'from and to required' });
     try {
-        const [year, monthNum] = month.split('-');
-        const startDate = `${year}-${monthNum}-01`;
-        const endDate = new Date(year, parseInt(monthNum), 0).toISOString().slice(0, 10);
-        
         const result = await db.query(
-            `SELECT 
-                SUM(room_revenue) as room_revenue,
-                SUM(total_revenue) as total_revenue,
-                SUM(occupancy_percent) as occupancy,
-                AVG(adr) as adr,
-                AVG(revpar) as revpar
-            FROM night_audit_runs 
-            WHERE business_date >= $1 AND business_date <= $2`,
-            [startDate, endDate]
+            `SELECT
+               jl.gl_account_id   AS "accountId",
+               COALESCE(a.name, jl.gl_account_id) AS name,
+               COALESCE(a.category, 'Unknown')     AS category,
+               COALESCE(SUM(jl.debit_amount),  0)::numeric(14,2) AS debit,
+               COALESCE(SUM(jl.credit_amount), 0)::numeric(14,2) AS credit,
+               (COALESCE(SUM(jl.debit_amount), 0) - COALESCE(SUM(jl.credit_amount), 0))::numeric(14,2) AS balance
+             FROM gl_journal_lines jl
+             JOIN gl_journal_entries je ON je.id = jl.journal_entry_id
+             LEFT JOIN gl_accounts a   ON a.id  = jl.gl_account_id
+             WHERE je.business_date >= $1::date
+               AND je.business_date <= $2::date
+               AND je.status = 'posted'
+               AND je.is_voided = false
+             GROUP BY jl.gl_account_id, a.name, a.category
+             ORDER BY a.category NULLS LAST, a.name`,
+            [from, to]
         );
-        res.json({ ok: true, data: result.rows[0] });
+        const rows = (result.ok ? result.rows || [] : []).map(r => ({
+            accountId: r.accountId, name: r.name, category: r.category,
+            debit: Number(r.debit), credit: Number(r.credit), balance: Number(r.balance)
+        }));
+        res.json({ ok: true, rows });
     } catch (e) {
         res.json({ ok: false, error: e.message });
     }
 });
 
-// GET /api/reports/aged-ar - Aged AR report
-app.get('/api/reports/aged-ar', async (req, res) => {
-    const { date } = req.query;
+// GET /api/reports/pl?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Revenue/Expense per-account + GOP for the date range from gl_journal_lines.
+app.get('/api/reports/pl', async (req, res) => {
+    const { from, to } = req.query;
+    if (!from || !to) return res.json({ ok: false, error: 'from and to required' });
     try {
         const result = await db.query(
-            `SELECT * FROM city_ledger_transactions WHERE transaction_date <= $1`,
-            [date]
+            `SELECT
+               COALESCE(a.category, 'Unknown') AS category,
+               COALESCE(SUM(CASE WHEN a.category = 'Revenue' THEN jl.credit_amount - jl.debit_amount ELSE 0 END), 0)::numeric(14,2) AS revenue_net,
+               COALESCE(SUM(CASE WHEN a.category = 'Expense' THEN jl.debit_amount - jl.credit_amount ELSE 0 END), 0)::numeric(14,2) AS expense_net,
+               jl.gl_account_id AS "accountId",
+               COALESCE(a.name, jl.gl_account_id) AS name
+             FROM gl_journal_lines jl
+             JOIN gl_journal_entries je ON je.id = jl.journal_entry_id
+             LEFT JOIN gl_accounts a   ON a.id  = jl.gl_account_id
+             WHERE je.business_date >= $1::date
+               AND je.business_date <= $2::date
+               AND je.status = 'posted'
+               AND je.is_voided = false
+               AND a.category IN ('Revenue', 'Expense')
+             GROUP BY a.category, jl.gl_account_id, a.name
+             ORDER BY a.category, a.name`,
+            [from, to]
         );
-        res.json({ ok: true, rows: result.rows || [] });
+        const rows = result.ok ? result.rows || [] : [];
+        const revenue = rows.filter(r => r.category === 'Revenue').reduce((s, r) => s + Number(r.revenue_net), 0);
+        const expense = rows.filter(r => r.category === 'Expense').reduce((s, r) => s + Number(r.expense_net), 0);
+        const lineItems = rows.map(r => ({
+            category: r.category, accountId: r.accountId, name: r.name,
+            amount: r.category === 'Revenue' ? Number(r.revenue_net) : Number(r.expense_net)
+        }));
+        res.json({ ok: true, revenue: Number(revenue.toFixed(2)), expense: Number(expense.toFixed(2)), gop: Number((revenue - expense).toFixed(2)), rows: lineItems });
+    } catch (e) {
+        res.json({ ok: false, error: e.message });
+    }
+});
+
+// GET /api/reports/aged-ar?as_of=YYYY-MM-DD
+// City ledger aging: each outstanding transaction (debit>credit) with its age bucket.
+app.get('/api/reports/aged-ar', async (req, res) => {
+    const asOf = req.query.as_of || new Date().toISOString().split('T')[0];
+    try {
+        const result = await db.query(
+            `SELECT
+               a.account_name,
+               a.account_type,
+               t.transaction_date::text AS date,
+               (t.debit_amount - t.credit_amount)::numeric(12,2) AS net_amount,
+               ($1::date - t.transaction_date)::int AS age_days
+             FROM city_ledger_transactions t
+             JOIN city_ledger_accounts a ON a.id = t.account_id
+             WHERE t.transaction_date <= $1::date
+               AND (t.debit_amount - t.credit_amount) > 0
+             ORDER BY a.account_name, t.transaction_date`,
+            [asOf]
+        );
+        const rows = (result.ok ? result.rows || [] : []).map(r => ({
+            account: r.account_name, type: r.account_type, date: r.date,
+            amount: Number(r.net_amount),
+            bucket: Number(r.age_days) <= 30 ? '0-30'
+                  : Number(r.age_days) <= 60 ? '31-60'
+                  : Number(r.age_days) <= 90 ? '61-90'
+                  : '90+'
+        }));
+        res.json({ ok: true, rows });
     } catch (e) {
         res.json({ ok: false, error: e.message });
     }
