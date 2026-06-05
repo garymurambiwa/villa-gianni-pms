@@ -59,6 +59,7 @@ import { useToast } from '@/components/ui/use-toast';
 import AccountingDom from './modules/AccountingDom';
 import AccountingTaxConfiguration from './modules/AccountingTaxConfiguration';
 import { ChartOfAccounts } from '@/components/modules/ChartOfAccounts';
+import { PendingBatchesLedger } from '@/components/modules/PendingBatchesLedger';
 import FOSetting from './modules/FOSetting';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { logger } from '@/lib/logger';
@@ -319,6 +320,9 @@ const AppLayout: React.FC = () => {
             <ChartOfAccounts />
           </div>
         );
+      }
+      case 'pending-batches': {
+        return <div className="flex-1 overflow-y-auto"><PendingBatchesLedger /></div>;
       }
       case 'accounting-tax': {
         const role = normalizeRole(user?.role);
