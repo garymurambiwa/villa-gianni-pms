@@ -2844,4 +2844,26 @@ router.get('/balance-check/:item_id', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
+// ============================================================================
+// INVENTORY PERIODS
+// ============================================================================
+
+/**
+ * GET /api/v1/inventory/periods
+ * List all inventory periods with lock status
+ */
+router.get('/periods', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, location_id, start_date::text, end_date::text, status,
+              locked_at, locked_by
+       FROM inventory_periods
+       ORDER BY start_date DESC`
+    );
+    res.json({ ok: true, rows: r.rows || [] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 module.exports = router;
