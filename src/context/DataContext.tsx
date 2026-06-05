@@ -1284,17 +1284,19 @@ check_in_date = ?, check_out_date = ?, status = ?,
     }
   };
 
-   // Helper function to calculate account balance
-   const calculateAccountBalance = (accountId: string, transactions: any[]) => {
+   // Helper function to calculate account balance — live running total of debits minus credits.
+   // BUG FIX: previously used txn.debit_amount / txn.credit_amount (non-existent columns)
+   // causing balance to always return 0. Correct DB columns are `debit` and `credit`.
+   const calculateAccountBalance = (_accountId: string, transactions: any[]) => {
      if (!transactions || transactions.length === 0) return 0;
 
      return transactions.reduce((balance, txn) => {
-       if (txn.debit_amount) {
-         return balance + Number(txn.debit_amount);
-       } else if (txn.credit_amount) {
-         return balance - Number(txn.credit_amount);
-       }
-       return balance;
+       // Skip voided transactions — they don't affect the live balance
+       if (txn.is_voided) return balance;
+       // DB columns: debit (charge increases balance) / credit (payment decreases balance)
+       const debitVal  = Number(txn.debit  || txn.debit_amount  || 0);
+       const creditVal = Number(txn.credit || txn.credit_amount || 0);
+       return balance + debitVal - creditVal;
      }, 0);
    };
 
@@ -1471,6 +1473,10 @@ check_in_date = ?, check_out_date = ?, status = ?,
       // Ensure transaction_type column exists with default value
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS transaction_type TEXT DEFAULT 'general'; `);
+        // source column — tracks origin of transaction: 'manual' | 'pos_room_charge' | 'pos_direct' | 'folio_transfer'
+        try { await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual'; `); } catch {}
+        // is_voided column for soft-delete without removing audit trail
+        try { await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS is_voided BOOLEAN DEFAULT false; `); } catch {}
       } catch (e) {
         // Column may already exist, which is fine
       }
@@ -1763,8 +1769,8 @@ check_in_date = ?, check_out_date = ?, status = ?,
       const transactionId = `TX${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
       const sql = `INSERT INTO city_ledger_transactions(
-      id, account_id, date_field, reference, description, debit, credit, transaction_type, created_at
-    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+      id, account_id, date_field, reference, description, debit, credit, transaction_type, source, created_at
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
 
       const params = [
         transactionId,
@@ -1774,7 +1780,8 @@ check_in_date = ?, check_out_date = ?, status = ?,
         transactionData.description,
         transactionData.debit || null,
         transactionData.credit || null,
-        determineTransactionType(transactionData)  // Determine appropriate transaction type
+        determineTransactionType(transactionData),
+        transactionData.source || 'manual',  // 'manual' | 'pos_room_charge' | 'pos_direct' | 'folio_transfer'
       ];
 
       const result = await db.query(sql, params);
