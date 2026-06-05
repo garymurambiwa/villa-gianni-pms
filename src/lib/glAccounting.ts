@@ -56,9 +56,20 @@ export const REQUIRED_CODES = [
   'CONF_REVENUE',
   'TAX',
   'CASH',
-  'CARD',
+  'ECOCASH',   // EcoCash mobile money — now a first-class payment method
+  'CARD',      // Swipe / card
   'ROOM_CHARGE',
   'CITY_LEDGER'
+];
+
+// The four POS payment methods and their dedicated clearing/control accounts.
+// Used to auto-scaffold the Chart of Accounts so cash, EcoCash, swipe and room
+// charge each post to a distinct account and never get conflated.
+export const PAYMENT_METHOD_ACCOUNTS: Array<{ code: string; id: string; name: string; category: GLCategory }> = [
+  { code: 'CASH',        id: '1000', name: 'Cash on Hand',                 category: 'Asset' },
+  { code: 'CARD',        id: '1110', name: 'Card / Swipe Clearing',        category: 'Asset' },
+  { code: 'ECOCASH',     id: '1180', name: 'EcoCash Mobile Money Clearing', category: 'Asset' },
+  { code: 'ROOM_CHARGE', id: '1200', name: 'Guest Ledger (Room Charges)',  category: 'Asset' },
 ];
 
 // USALI-aligned safe defaults — prevent complete mapping failure when user hasn't configured
@@ -69,7 +80,8 @@ export const GL_USALI_DEFAULTS: Record<string, string> = {
   CONF_REVENUE:  '4200',  // Revenue: Catering/Conferences (USALI Schedule 3)
   TAX:           '2300',  // Liability: VAT/Sales Tax Payable
   CASH:          '1000',  // Asset: Cash on Hand
-  CARD:          '1100',  // Asset: Card/Bank Clearing
+  CARD:          '1110',  // Asset: Card / Swipe Clearing (was 1100 — separated from A/R)
+  ECOCASH:       '1180',  // Asset: EcoCash Mobile Money Clearing (separate from swipe)
   ROOM_CHARGE:   '1200',  // Control: In-house Guest Ledger (transient AR)
   CITY_LEDGER:   '1300',  // Control: Accounts Receivable (non-guest/corporate)
   FB_COST:       '5100',  // Expense: F&B Cost of Sales
@@ -174,22 +186,44 @@ export const suggestRequiredCodeMappings = (): Array<{ code: string; accountId: 
   add('FB_REVENUE', findByName('Revenue', ['food','beverage','f&b']) || '4100', 'Map to Food & Beverage Revenue');
   add('CONF_REVENUE', findByName('Revenue', ['conference']) || '4200', 'Map to Conference Revenue account');
   add('TAX', findByName('Liability', ['tax','vat']) || '2000', 'Taxes to liabilities (Taxes Payable)');
-  add('CASH', findByName('Asset', ['cash']) || '1000', 'Cash receipts to Cash');
-  add('CARD', findByName('Asset', ['merchant','clearing']) || '1300', 'Card receipts to merchant clearing');
+  add('CASH', findByName('Asset', ['cash']) || '1000', 'Cash receipts to Cash on Hand');
+  add('ECOCASH', findByName('Asset', ['ecocash','mobile']) || '1180', 'EcoCash receipts to EcoCash clearing');
+  add('CARD', findByName('Asset', ['swipe','card','merchant','clearing']) || '1110', 'Swipe / card receipts to Card / Swipe Clearing');
   add('CITY_LEDGER', findByName('Asset', ['receivable']) || '1100', 'City Ledger (Accounts Receivable)');
-  add('ROOM_CHARGE', findByName('Revenue', ['room']) || '4000', 'Room charges to Rooms Revenue');
+  add('ROOM_CHARGE', findByName('Asset', ['guest ledger','guest']) || '1200', 'Room charges to Guest Ledger');
   if ((REQUIRED_CODES as string[]).includes('CARD_CLEARING')) {
     add('CARD_CLEARING', findByName('Asset', ['merchant','clearing']) || '1300', 'Card settlement clearing');
   }
   return picks;
 };
 
+// Additively create any missing POS payment clearing/control accounts in the
+// Chart of Accounts. Safe to call on every startup — it never renumbers or
+// overwrites existing accounts, it only adds the ones that aren't there yet.
+export const ensurePaymentAccounts = (): GLAccount[] => {
+  const accounts = getAccounts();
+  const ids = new Set(accounts.map(a => a.id));
+  let changed = false;
+  for (const p of PAYMENT_METHOD_ACCOUNTS) {
+    if (!ids.has(p.id)) {
+      accounts.push({ id: p.id, name: p.name, category: p.category, usali: p.name });
+      changed = true;
+    }
+  }
+  if (changed) setAccounts(accounts);
+  return accounts;
+};
+
 export const ensureUSALIBaseAccounts = () => {
   const existing = getAccounts();
-  if (existing.length) return existing;
+  // Already seeded — still make sure the four payment accounts exist (additive).
+  if (existing.length) return ensurePaymentAccounts();
   const seed: GLAccount[] = [
-    { id: '1000', name: 'Cash', category: 'Asset', usali: 'Cash' },
+    { id: '1000', name: 'Cash on Hand', category: 'Asset', usali: 'Cash' },
     { id: '1100', name: 'Accounts Receivable', category: 'Asset', usali: 'A/R' },
+    { id: '1110', name: 'Card / Swipe Clearing', category: 'Asset', usali: 'Card Clearing' },
+    { id: '1180', name: 'EcoCash Mobile Money Clearing', category: 'Asset', usali: 'EcoCash Clearing' },
+    { id: '1200', name: 'Guest Ledger (Room Charges)', category: 'Asset', usali: 'Guest Ledger' },
     { id: '2000', name: 'Taxes Payable', category: 'Liability', usali: 'Taxes Payable' },
     { id: '3000', name: 'Equity', category: 'Equity', usali: 'Equity' },
     { id: '4000', name: 'Rooms Revenue', category: 'Revenue', usali: 'Rooms', department: 'Rooms' },
@@ -215,6 +249,31 @@ export const getLedger = (): GLJournalEntry[] => readJSON<GLJournalEntry[]>(K_LE
 export const appendLedger = (entry: GLJournalEntry) => {
   const ledger = getLedger();
   writeJSON(K_LEDGER, [entry, ...ledger].slice(0, 5000));
+};
+
+// postJournalEntry — public posting API used by ShiftContext.endShift() and night audit.
+// Validates the entry is balanced, persists to local ledger, and fire-and-forget posts
+// to the DB ledger endpoint so the GL survives a browser-wipe. Returns the entry or
+// throws (no silent swallowing — the caller decides what to do on failure).
+export const postJournalEntry = (entry: GLJournalEntry): GLJournalEntry => {
+  if (!Array.isArray(entry.lines) || entry.lines.length < 2) {
+    throw new Error('Journal entry needs at least 2 lines (debit + credit)');
+  }
+  if (!isBalanced(entry.lines)) {
+    const sumD = entry.lines.reduce((s, l) => s + Number(l.debit || 0), 0);
+    const sumC = entry.lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+    throw new Error(`Journal entry is not balanced — debits=${sumD.toFixed(2)} credits=${sumC.toFixed(2)}`);
+  }
+  appendLedger(entry);
+  // Fire-and-forget DB persistence
+  try {
+    fetch('/api/gl/journal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entry }),
+    }).catch(() => { /* DB write failed but local ledger has it */ });
+  } catch {}
+  return entry;
 };
 
 export const isBalanced = (lines: GLPostingLine[]): boolean => {
@@ -369,6 +428,7 @@ export default {
   getAccounts,
   setAccounts,
   ensureUSALIBaseAccounts,
+  ensurePaymentAccounts,
   getMappings,
   setMappings,
   validateMappingsComplete,

@@ -459,17 +459,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
-        // If no existing guest found, create a new one
+        // If no existing guest found, create a new one.
+        // Note: id_number was previously included here but the column doesn't exist
+        // on all live DBs (added via runtime migration that may not have run yet).
+        // The ID number is also stored in reservations.id_document_enc, so omitting
+        // it from the guest insert is safe.
         if (!guestId) {
           const newGuestId = `G${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-          const guestSql = "INSERT INTO guests (id, full_name, email, phone, id_number) VALUES (?, ?, ?, ?, ?)";
-          const guestParams = [newGuestId, guestName, guestEmail, guestPhone, resData.idNumber || resData.passportNumber || null];
+          const guestSql = "INSERT INTO guests (id, full_name, email, phone) VALUES (?, ?, ?, ?)";
+          const guestParams = [newGuestId, guestName, guestEmail, guestPhone];
           const guestResult = await db.query(guestSql, guestParams);
 
           if ('error' in guestResult) {
             const errorMsg = (guestResult as any).error || 'Failed to create guest record';
-            console.error('Guest insert failed:', errorMsg);
-            return { success: false, error: errorMsg };
+            console.error('Guest insert failed:', errorMsg, { guestSql, guestParams });
+            return { success: false, error: `Guest insert failed: ${errorMsg}` };
           }
           guestId = newGuestId;
         }
@@ -641,14 +645,14 @@ check_in_date = ?, check_out_date = ?, status = ?,
         table_number: String(orderData.table || ''),
         items: Array.isArray(orderData.items) ? orderData.items : [],
         total_amount: Number(orderData.total || 0),
-        status: 'open',
+        status: 'open',  // lowercase — must match the posOrders useEffect check in POSFrontOffice
         cost_center: orderData.cost_center,
         shift_id: orderData.shift_id
       };
-      
+
       setPosOrders((prev: any[]) => {
-        const idx = prev.findIndex((p: any) => 
-          String(p.table_number) === provisional.table_number && 
+        const idx = prev.findIndex((p: any) =>
+          String(p.table_number) === provisional.table_number &&
           String(p.status).toLowerCase() === 'open' &&
           p.cost_center === provisional.cost_center
         );
@@ -662,14 +666,15 @@ check_in_date = ?, check_out_date = ?, status = ?,
 
       // Generate unique ID for the POS order
       const orderId = `POS${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      
-      // Try to update existing order for this table AND cost center
-      const updateSql = "UPDATE pos_orders SET items = ?::jsonb, total_amount = ?, status = ?, shift_id = ? WHERE table_number = ? AND status = 'open' AND cost_center = ? RETURNING id";
+
+      // Update existing open order for this table — also match legacy NULL cost_center rows
+      // (orders created before the cost_center column was added) to avoid INSERT conflicts
+      const updateSql = "UPDATE pos_orders SET items = ?::jsonb, total_amount = ?, status = 'open', shift_id = ?, cost_center = ? WHERE table_number = ? AND status = 'open' AND (LOWER(cost_center) = LOWER(?) OR cost_center IS NULL) RETURNING id";
       const updateParams = [
-        JSON.stringify(provisional.items), 
-        provisional.total_amount, 
-        'open', 
+        JSON.stringify(provisional.items),
+        provisional.total_amount,
         provisional.shift_id,
+        provisional.cost_center,
         provisional.table_number,
         provisional.cost_center
       ];
@@ -677,11 +682,12 @@ check_in_date = ?, check_out_date = ?, status = ?,
 
       // If no rows updated, insert new order
       if (!('error' in updateResult) && 'rows' in updateResult && (updateResult as any).rows.length === 0) {
-        const insertSql = "INSERT INTO pos_orders (id, table_number, items, total_amount, status, cost_center, shift_id) VALUES (?, ?, ?::jsonb, ?, 'open', ?, ?)";
+        // ON CONFLICT handles the rare race where the stale-order cleanup hasn't finished yet
+        const insertSql = "INSERT INTO pos_orders (id, table_number, items, total_amount, status, cost_center, shift_id) VALUES (?, ?, ?::jsonb, ?, 'open', ?, ?) ON CONFLICT (table_number, cost_center) WHERE status = 'open' DO UPDATE SET items = EXCLUDED.items, total_amount = EXCLUDED.total_amount, shift_id = EXCLUDED.shift_id";
         const insertParams = [
-          orderId, 
-          provisional.table_number, 
-          JSON.stringify(provisional.items), 
+          orderId,
+          provisional.table_number,
+          JSON.stringify(provisional.items),
           provisional.total_amount,
           provisional.cost_center,
           provisional.shift_id
@@ -690,8 +696,8 @@ check_in_date = ?, check_out_date = ?, status = ?,
         if ('error' in insertResult) {
           console.error('POS order insert details:', { params: insertParams, error: (insertResult as any).error });
           const dbError = (insertResult as any).error?.message || (insertResult as any).error || 'Unknown DB Error';
-          setPosOrders((prev: any[]) => prev.filter((p: any) => 
-            !(String(p.table_number) === provisional.table_number && String(p.status) === 'OPEN' && p.cost_center === provisional.cost_center)
+          setPosOrders((prev: any[]) => prev.filter((p: any) =>
+            !(String(p.table_number) === provisional.table_number && String(p.status).toLowerCase() === 'open' && p.cost_center === provisional.cost_center)
           ));
           toast({ title: 'Database Write Failed', description: `POS order insert failed: ${dbError}`, variant: 'destructive' });
           return false;
@@ -700,17 +706,15 @@ check_in_date = ?, check_out_date = ?, status = ?,
         console.error('POS order update details:', { params: updateParams, error: (updateResult as any).error });
         const dbError = (updateResult as any).error?.message || (updateResult as any).error || 'Unknown DB Error';
         setPosOrders((prev: any[]) => prev.filter((p: any) =>
-          !(String(p.table_number) === provisional.table_number && String(p.status) === 'OPEN' && p.cost_center === provisional.cost_center)
+          !(String(p.table_number) === provisional.table_number && String(p.status).toLowerCase() === 'open' && p.cost_center === provisional.cost_center)
         ));
         toast({ title: 'Database Write Failed', description: `POS order update failed: ${dbError}`, variant: 'destructive' });
         return false;
       }
 
-      // Update table status to occupied
-      const tableSql = provisional.cost_center
-        ? "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'occupied', ?, NOW()) ON CONFLICT (table_id, cost_center) DO UPDATE SET status = 'occupied', last_update = NOW()"
-        : "INSERT INTO table_status (table_id, status, last_update) VALUES (?, 'occupied', NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'occupied', last_update = NOW()";
-      const tableParams = provisional.cost_center ? [provisional.table_number, provisional.cost_center] : [provisional.table_number];
+      // Update table status to occupied — conflict on table_id (the actual PK)
+      const tableSql = "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'occupied', ?, NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'occupied', cost_center = EXCLUDED.cost_center, last_update = NOW()";
+      const tableParams = [provisional.table_number, provisional.cost_center || 'Main Restaurant'];
       await db.query(tableSql, tableParams);
 
       return true;
@@ -721,36 +725,45 @@ check_in_date = ?, check_out_date = ?, status = ?,
     }
   };
 
-  const closePosOrder = async (tableNumber: string, costCentre?: string): Promise<boolean> => {
+  const closePosOrder = async (tableNumber: string, costCentre?: string, paymentMethod?: string): Promise<boolean> => {
+    // Optimistic update — remove from local state immediately so posOrders effect
+    // never re-occupies the table while the DB update is in-flight.
+    // Use case-insensitive comparison for cost_center — DB may store 'conference'
+    // while costCentre state holds 'Conference' (or vice versa).
+    const ccLower = costCentre ? costCentre.toLowerCase() : null;
+    const filterFn = (p: any) => {
+      const sameTable = String(p.table_number) === String(tableNumber);
+      const isOpen    = String(p.status || '').toLowerCase() === 'open';
+      // Match if: no cost_center filter, the order has no cost_center (legacy null rows),
+      // or case-insensitive match — any of these means this order should be closed.
+      const sameCc    = !ccLower || !p.cost_center || String(p.cost_center).toLowerCase() === ccLower;
+      return !(sameTable && isOpen && sameCc);
+    };
+    setPosOrders((prev: any[]) => prev.filter(filterFn));
+
     try {
-      // 1. Close the order in pos_orders
-      const query = costCentre 
-        ? "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open' AND cost_center = ?"
-        : "UPDATE pos_orders SET status = 'closed' WHERE table_number = ? AND status = 'open'";
-      const params = costCentre ? [tableNumber, costCentre] : [tableNumber];
+      // 1. Close the order in pos_orders (case-insensitive cost_center match).
+      // Also persist payment_method so the Reports → Payment Methods breakdown
+      // shows cash/ecocash/swipe/room-charge instead of "Unknown".
+      const setMethod = paymentMethod ? ", payment_method = ?" : "";
+      const baseParams: any[] = paymentMethod ? [paymentMethod] : [];
+      const query = costCentre
+        ? `UPDATE pos_orders SET status = 'closed'${setMethod}, updated_at = NOW() WHERE table_number = ? AND status = 'open' AND LOWER(cost_center) = LOWER(?)`
+        : `UPDATE pos_orders SET status = 'closed'${setMethod}, updated_at = NOW() WHERE table_number = ? AND status = 'open'`;
+      const params = costCentre
+        ? [...baseParams, tableNumber, costCentre]
+        : [...baseParams, tableNumber];
       const result = await db.query(query, params);
 
-      // 2. Update table_status to 'open' (available)
-      const tableSql = costCentre
-        ? "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'open', ?, NOW()) ON CONFLICT (table_id, cost_center) DO UPDATE SET status = 'open', last_update = NOW()"
-        : "INSERT INTO table_status (table_id, status, last_update) VALUES (?, 'open', NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'open', last_update = NOW()";
-      const tableParams = costCentre ? [tableNumber, costCentre] : [tableNumber];
+      // 2. Update table_status to 'open' (available) — conflict on table_id (the actual PK)
+      const tableSql = "INSERT INTO table_status (table_id, status, cost_center, last_update) VALUES (?, 'open', ?, NOW()) ON CONFLICT (table_id) DO UPDATE SET status = 'open', cost_center = EXCLUDED.cost_center, last_update = NOW()";
+      const tableParams = [tableNumber, costCentre || 'Main Restaurant'];
       await db.query(tableSql, tableParams);
 
       if ('error' in result) {
         console.error('Close POS order failed:', (result as any).error);
         return false;
       }
-
-      // FIX: case-insensitive status comparison — DB stores 'open' lowercase
-      // Previous bug: p.status==='OPEN' never matched 'open', so orders stayed
-      // in posOrders state and syncTablesWithOrders immediately re-occupied table.
-      setPosOrders((prev: any[]) => prev.filter((p: any) => {
-        const sameTable = String(p.table_number) === String(tableNumber);
-        const isOpen    = String(p.status || '').toLowerCase() === 'open';
-        const sameCc    = !costCentre || p.cost_center === costCentre;
-        return !(sameTable && isOpen && sameCc);
-      }));
 
       return true;
     } catch (e: any) {
@@ -781,164 +794,91 @@ check_in_date = ?, check_out_date = ?, status = ?,
   };
 
   // FRONT OFFICE - Check-in guest
-  /**
-   * checkInGuest — Phase 2 surgical fix + Phase 3 resilience engineering
-   *
-   * ROOT CAUSE (fixed): The folio INSERT used ON CONFLICT (reservation_id) which
-   * requires a UNIQUE constraint on folios.reservation_id. That constraint was
-   * missing → PostgreSQL threw "there is no unique or exclusion constraint matching
-   * the ON CONFLICT specification" → entire transaction rolled back → generic
-   * "Could not update reservation" shown to user.
-   *
-   * REMEDIATION:
-   * 1. Decomposed the single 3-op transaction into staged operations with
-   *    individual error classification so failures are isolated and diagnosable.
-   * 2. Folio creation now uses EXISTS-check + conditional INSERT/UPDATE pattern
-   *    instead of ON CONFLICT — works regardless of unique constraint presence.
-   * 3. SAVEPOINT pattern: reservation + room updates commit even if folio
-   *    creation fails (non-critical for check-in core flow).
-   * 4. Idempotent design: calling checkInGuest twice for the same reservation
-   *    converges to the same final state (no duplicate folios, no double-OC).
-   * 5. Structured error telemetry: actual DB error logged with context.
-   */
   const checkInGuest = async (reservationId: string, roomId: string, options: { rateOverride?: number; packageCode?: string; taxInclusive?: boolean } = {}): Promise<boolean> => {
-    const logCtx = { reservationId, roomId, ts: new Date().toISOString() };
-
-    // ── Pre-flight validations (fail fast before any DB writes) ──────────────
-    if (!reservationId || !roomId) {
-      console.error('[CheckIn] Missing required IDs', logCtx);
-      toast({ title: 'Check-in Failed', description: 'Reservation or room ID missing — please refresh and retry', variant: 'destructive' });
-      return false;
-    }
-
     try {
-      // Step 1: Room validation — must exist and not already be occupied
+      // Validate room exists and is available before proceeding
       const roomCheckRes = await db.query(
         `SELECT id, number, type, status FROM rooms WHERE id = $1`,
         [roomId]
       );
       if (!('rows' in roomCheckRes) || !roomCheckRes.rows?.length) {
-        console.error('[CheckIn] Room not found', logCtx);
-        toast({ title: 'Check-in Failed', description: 'Selected room not found — it may have been deleted', variant: 'destructive' });
+        toast({ title: 'Check-in Failed', description: 'Selected room not found in database', variant: 'destructive' });
         return false;
       }
       const room = roomCheckRes.rows[0];
 
-      // Step 2: Reservation validation — must exist and be in a check-in-eligible state
-      const resCheckRes = await db.query(
-        `SELECT id, status, guest_id, package_code, rate FROM reservations WHERE id = $1`,
-        [reservationId]
-      );
-      if (!('rows' in resCheckRes) || !resCheckRes.rows?.length) {
-        console.error('[CheckIn] Reservation not found', logCtx);
-        toast({ title: 'Check-in Failed', description: 'Reservation not found — it may have been cancelled', variant: 'destructive' });
-        return false;
-      }
-      const reservation = resCheckRes.rows[0];
-      if (reservation.status === 'checked-in') {
-        // Idempotent: already checked in — treat as success, just refresh
-        console.warn('[CheckIn] Already checked-in — idempotent return', logCtx);
-        await loadAllData();
-        return true;
-      }
-      if (!['confirmed', 'pending'].includes(reservation.status)) {
-        toast({ title: 'Check-in Failed', description: `Reservation status '${reservation.status}' is not eligible for check-in`, variant: 'destructive' });
-        return false;
-      }
-
-      // ── Step 3: Core transaction — reservation + room (critical path) ──────
-      // These two operations MUST succeed atomically. Folio handled separately.
-      const coreResult = await db.transaction([
+      // Atomic transaction: update reservation + room in one operation
+      const txResult = await db.transaction([
         {
+          // Update reservation: status, room_id, room_type, rate, package
+          // NOTE: reservations table has NO updated_at column — do not include it
           sql: `UPDATE reservations SET
                   status = 'checked-in',
                   room_id = $1,
                   room_type = $2,
                   rate = COALESCE($3, rate),
                   package_code = COALESCE($4, package_code)
-                WHERE id = $5 AND status != 'checked-in'`,
+                WHERE id = $5`,
           params: [
             roomId,
             room.type,
             options.rateOverride || null,
             options.packageCode || null,
-            reservationId,
+            reservationId
           ]
         },
         {
+          // Mark room as OC (Occupied Clean)
           sql: `UPDATE rooms SET status = 'OC', updated_at = NOW() WHERE id = $1`,
           params: [roomId]
+        },
+        {
+          // Update existing folio for this reservation, if any.
+          // (folios.reservation_id is NOT unique on the live DB — only indexed —
+          //  so ON CONFLICT (reservation_id) fails with "no unique constraint
+          //  matching the ON CONFLICT specification" and kills the transaction.
+          //  Splitting into UPDATE-then-conditional-INSERT avoids that.)
+          sql: `UPDATE folios
+                SET room_number = $2,
+                    status = 'open',
+                    package_code = COALESCE($3, package_code),
+                    updated_at = NOW()
+                WHERE reservation_id = $1`,
+          params: [reservationId, room.number, options.packageCode || null]
+        },
+        {
+          // Insert a folio only if none exists for this reservation.
+          sql: `INSERT INTO folios (id, guest_id, reservation_id, room_number, status, balance, package_code, created_by, inserted_at, updated_at)
+                SELECT
+                  gen_random_uuid()::text,
+                  r.guest_id,
+                  r.id,
+                  $2,
+                  'open',
+                  0,
+                  COALESCE($3, r.package_code, 'RO'),
+                  'check_in',
+                  NOW(),
+                  NOW()
+                FROM reservations r
+                WHERE r.id = $1
+                  AND NOT EXISTS (SELECT 1 FROM folios WHERE reservation_id = $1)`,
+          params: [reservationId, room.number, options.packageCode || null]
         }
       ]);
 
-      if (!(coreResult as any).ok) {
-        const dbErr = (coreResult as any).error || 'Unknown transaction error';
-        console.error('[CheckIn] Core transaction failed', { ...logCtx, dbErr });
-        toast({ title: 'Check-in Failed', description: 'Could not update reservation status. Please try again.', variant: 'destructive' });
+      if (!(txResult as any).ok) {
+        console.error('Check-in transaction failed:', (txResult as any).error);
+        toast({ title: 'Check-in Failed', description: 'Could not update reservation', variant: 'destructive' });
         return false;
       }
 
-      // ── Step 4: Folio upsert — non-critical (check-in succeeds even if folio fails) ──
-      // FIX: Use conditional INSERT instead of ON CONFLICT (reservation_id) which
-      // requires a UNIQUE constraint that may not exist on all deployments.
-      // This pattern is idempotent and works regardless of constraint state.
-      const folioResult = await db.query(
-        `WITH existing AS (
-           SELECT id FROM folios WHERE reservation_id = $1 LIMIT 1
-         ),
-         inserted AS (
-           INSERT INTO folios (id, guest_id, reservation_id, room_number, status, balance, package_code, created_by, inserted_at, updated_at)
-           SELECT
-             gen_random_uuid()::text,
-             r.guest_id,
-             r.id,
-             $2,
-             'open',
-             0,
-             COALESCE($3, r.package_code, 'RO'),
-             'check_in',
-             NOW(), NOW()
-           FROM reservations r
-           WHERE r.id = $1
-             AND NOT EXISTS (SELECT 1 FROM folios WHERE reservation_id = $1)
-           RETURNING id
-         )
-         SELECT id, 'inserted' as action FROM inserted
-         UNION ALL
-         SELECT id, 'existing' as action FROM existing
-         LIMIT 1`,
-        [reservationId, room.number, options.packageCode || null]
-      );
-
-      // If folio already existed, update it to reflect new room/status
-      if (
-        'rows' in folioResult &&
-        folioResult.rows?.length &&
-        folioResult.rows[0].action === 'existing'
-      ) {
-        await db.query(
-          `UPDATE folios SET
-             room_number = $1,
-             status = 'open',
-             package_code = COALESCE($2, package_code),
-             updated_at = NOW()
-           WHERE reservation_id = $3`,
-          [room.number, options.packageCode || null, reservationId]
-        ).catch((e: any) => {
-          console.warn('[CheckIn] Folio update failed (non-critical):', e?.message, logCtx);
-        });
-      } else if (!('rows' in folioResult) || !(folioResult as any).ok) {
-        // Folio failure is non-critical — log and continue
-        console.warn('[CheckIn] Folio creation failed (non-critical):', (folioResult as any).error, logCtx);
-      }
-
-      console.info('[CheckIn] Success', { ...logCtx, room: room.number });
+      // Refresh all data so UI reflects the new state immediately
       await loadAllData();
       return true;
-
     } catch (e: any) {
-      console.error('[CheckIn] Unexpected error', { ...logCtx, err: e?.message || e });
-      toast({ title: 'Check-in Failed', description: e?.message || 'An unexpected error occurred. Please try again.', variant: 'destructive' });
+      console.error('Check-in error:', e?.message || e);
+      toast({ title: 'Check-in Failed', description: e?.message || 'An error occurred during check-in', variant: 'destructive' });
       return false;
     }
   };
@@ -1344,17 +1284,19 @@ check_in_date = ?, check_out_date = ?, status = ?,
     }
   };
 
-   // Helper function to calculate account balance
-   const calculateAccountBalance = (accountId: string, transactions: any[]) => {
+   // Helper function to calculate account balance — live running total of debits minus credits.
+   // BUG FIX: previously used txn.debit_amount / txn.credit_amount (non-existent columns)
+   // causing balance to always return 0. Correct DB columns are `debit` and `credit`.
+   const calculateAccountBalance = (_accountId: string, transactions: any[]) => {
      if (!transactions || transactions.length === 0) return 0;
 
      return transactions.reduce((balance, txn) => {
-       if (txn.debit_amount) {
-         return balance + Number(txn.debit_amount);
-       } else if (txn.credit_amount) {
-         return balance - Number(txn.credit_amount);
-       }
-       return balance;
+       // Skip voided transactions — they don't affect the live balance
+       if (txn.is_voided) return balance;
+       // DB columns: debit (charge increases balance) / credit (payment decreases balance)
+       const debitVal  = Number(txn.debit  || txn.debit_amount  || 0);
+       const creditVal = Number(txn.credit || txn.credit_amount || 0);
+       return balance + debitVal - creditVal;
      }, 0);
    };
 
@@ -1531,6 +1473,10 @@ check_in_date = ?, check_out_date = ?, status = ?,
       // Ensure transaction_type column exists with default value
       try {
         await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS transaction_type TEXT DEFAULT 'general'; `);
+        // source column — tracks origin of transaction: 'manual' | 'pos_room_charge' | 'pos_direct' | 'folio_transfer'
+        try { await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual'; `); } catch {}
+        // is_voided column for soft-delete without removing audit trail
+        try { await db.query(`ALTER TABLE city_ledger_transactions ADD COLUMN IF NOT EXISTS is_voided BOOLEAN DEFAULT false; `); } catch {}
       } catch (e) {
         // Column may already exist, which is fine
       }
@@ -1755,12 +1701,40 @@ check_in_date = ?, check_out_date = ?, status = ?,
       const fields = [];
       const values = [];
 
+      // Map frontend camelCase field names to their snake_case DB columns.
+      // Missing mappings previously produced SQL like `SET contactName = ?`,
+      // which Postgres rejects ("column does not exist") — this is why closing
+      // an account via Edit Details (which sends contactName/billingCycle/…)
+      // failed with "City ledger account could not be updated".
+      // NOTE: column names below match the LIVE runtime table created by
+      // loadCityLedger()'s DDL — it uses `type` (not account_type) and
+      // `balance` (not current_balance), and has no last_activity_date.
+      const COLUMN_MAP: Record<string, string> = {
+        name: 'account_name',
+        accountName: 'account_name',
+        accountType: 'type',
+        type: 'type',
+        contactName: 'contact_name',
+        contactPhone: 'contact_phone',
+        contactEmail: 'contact_email',
+        billingCycle: 'billing_cycle',
+        paymentTerms: 'payment_terms',
+        creditLimit: 'credit_limit',
+        currentBalance: 'balance',
+        balance: 'balance',
+        activatedOn: 'activated_on',
+      };
+      // Only allow real columns through, so an unexpected key can never inject
+      // an invalid column name and break the whole update again.
+      const VALID_COLUMNS = new Set([
+        'account_name', 'type', 'credit_limit', 'balance',
+        'payment_terms', 'billing_cycle', 'contact_name', 'contact_phone',
+        'contact_email', 'address', 'status', 'activated_on',
+      ]);
+
       Object.keys(updateData).forEach(key => {
-        // Map the frontend field names to database column names
-        let columnName = key;
-        if (key === 'name') {
-          columnName = 'account_name';
-        }
+        const columnName = COLUMN_MAP[key] || key;
+        if (!VALID_COLUMNS.has(columnName)) return; // skip unknown / unmapped fields
         fields.push(`${columnName} = ?`);
         values.push(updateData[key]);
       });
@@ -1795,8 +1769,8 @@ check_in_date = ?, check_out_date = ?, status = ?,
       const transactionId = `TX${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
       const sql = `INSERT INTO city_ledger_transactions(
-      id, account_id, date_field, reference, description, debit, credit, transaction_type, created_at
-    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+      id, account_id, date_field, reference, description, debit, credit, transaction_type, source, created_at
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
 
       const params = [
         transactionId,
@@ -1806,7 +1780,8 @@ check_in_date = ?, check_out_date = ?, status = ?,
         transactionData.description,
         transactionData.debit || null,
         transactionData.credit || null,
-        determineTransactionType(transactionData)  // Determine appropriate transaction type
+        determineTransactionType(transactionData),
+        transactionData.source || 'manual',  // 'manual' | 'pos_room_charge' | 'pos_direct' | 'folio_transfer'
       ];
 
       const result = await db.query(sql, params);
@@ -1940,7 +1915,11 @@ check_in_date = ?, check_out_date = ?, status = ?,
       items JSONB,
       total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
       status VARCHAR(50) NOT NULL DEFAULT 'open',
-      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      cost_center VARCHAR(50),
+      shift_id VARCHAR(36),
+      payment_method VARCHAR(50),
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP
     );
 `);
 
@@ -2887,7 +2866,10 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
         // 2. Sync GL mappings from DB → localStorage so getMappings() returns DB values.
         // This fixes ISSUE 2: mappings set in browser A weren't visible server-side or in browser B.
         try {
-          const { syncMappingsFromDB, saveMappingsToDB, GL_USALI_DEFAULTS } = await import('../lib/glAccounting');
+          const { syncMappingsFromDB, saveMappingsToDB, GL_USALI_DEFAULTS, ensurePaymentAccounts } = await import('../lib/glAccounting');
+          // Make sure Cash / Swipe / EcoCash / Room-charge clearing accounts exist
+          // in the Chart of Accounts (additive — never touches existing accounts).
+          try { ensurePaymentAccounts(); } catch { /* non-fatal */ }
           const dbMappings = await syncMappingsFromDB();
           // Auto-seed USALI defaults for any codes not yet mapped (non-destructive)
           const needsSeed = Object.keys(GL_USALI_DEFAULTS).some(k => !dbMappings[k]);

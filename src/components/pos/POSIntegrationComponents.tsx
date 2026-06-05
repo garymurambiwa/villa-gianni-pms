@@ -153,13 +153,32 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [clContactNumber, setClContactNumber] = useState('');
   const [clCompanyName, setClCompanyName] = useState('');
   const selectedAccount: any = (cityLedger || []).find((a: any) => a.id === selectedAccountId);
-  const filteredAccounts: any[] = (cityLedger || []).filter((a: any) => {
+
+  // Only OPEN city-ledger accounts are chargeable from the POS. Closed/settled
+  // accounts stay in the City Ledger records screen for history, but must not
+  // clutter the payment dropdown (per operator request). An account is "open"
+  // unless its status is explicitly Closed/Settled/Inactive.
+  const isOpenAccount = (a: any) => {
+    const s = String(a?.status || 'Active').toLowerCase();
+    return s !== 'closed' && s !== 'settled' && s !== 'inactive';
+  };
+  const openAccounts: any[] = (cityLedger || []).filter(isOpenAccount);
+
+  const filteredAccounts: any[] = openAccounts.filter((a: any) => {
     const q = clSearch.trim().toLowerCase();
     if (!q) return true;
     return String(a.name || '').toLowerCase().includes(q) || String(a.id || '').toLowerCase().includes(q);
   }).slice(0, 12);
 
-  // Suggested accounts (most-used based on audit CITY_LEDGER_POST)
+  // If the currently-selected account became closed (e.g. settled in another tab),
+  // clear the selection so it can't be charged.
+  React.useEffect(() => {
+    if (selectedAccount && !isOpenAccount(selectedAccount)) {
+      setSelectedAccountId(undefined);
+    }
+  }, [selectedAccount]);
+
+  // Suggested accounts (most-used based on audit CITY_LEDGER_POST) — open only.
   const suggestedAccounts: any[] = React.useMemo(() => {
     try {
       const raw = localStorage.getItem('corepms_pos_audit');
@@ -169,7 +188,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         const accId = e.details?.cityLedgerAccountId || e.details?.meta?.cityLedgerAccountId || e.entity || '';
         if (accId) freq.set(accId, (freq.get(accId) || 0) + 1);
       });
-      const sorted = Array.from(freq.entries()).sort((a,b)=> b[1]-a[1]).map(([id]) => (cityLedger||[]).find((a:any)=>a.id===id)).filter(Boolean);
+      const sorted = Array.from(freq.entries()).sort((a,b)=> b[1]-a[1])
+        .map(([id]) => (cityLedger||[]).find((a:any)=>a.id===id))
+        .filter((a:any) => a && isOpenAccount(a));
       return sorted.slice(0, 5) as any[];
     } catch { return []; }
   }, [cityLedger]);
@@ -288,7 +309,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       effectiveSettings,
       'receipt',
       {
-        includeSignature: false,
+        // Room-charge guests must sign for the folio posting — always include
+        // signature block and a guest-name / room banner on these receipts.
+        includeSignature: paymentMethod === 'room-charge',
         showTaxBreakdown: effectiveSettings.show_tax_breakdown,
         serverName: currentUser?.name,
         taxLines,
@@ -332,6 +355,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     const isCityLedgerPosting = (paymentMethod === 'city-ledger' || (paymentMethod === 'room-charge' && roomChargeType === 'city-ledger')) && selectedAccount;
 
     const paymentData = {
+      bill,
       billId: bill.id,
       amount: discountedTotal,
       paymentMethod,
@@ -354,18 +378,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       }
     };
 
-    // Print receipt before closing modal
+    // Fire payment completion FIRST so processPayment still has paymentModal.bill in state.
+    // Previously this ran at 200ms (after onClose at 100ms cleared paymentModal.bill),
+    // so processPayment always got bill=null and returned without closing the table.
+    if (onPaymentComplete) {
+      onPaymentComplete(paymentData);
+    }
+
+    // Print receipt (fire-and-forget)
     handlePrintBill().catch(err => console.warn('Receipt printing failed:', err));
 
-    // Close modal after printing attempt
-    setTimeout(() => onClose(), 100);
-
-    // Call payment completion handler asynchronously (non-blocking)
-    setTimeout(() => {
-      if (onPaymentComplete) {
-        onPaymentComplete(paymentData);
-      }
-    }, 200);
+    // Close modal after a short delay to let the completion handler update state first
+    setTimeout(() => onClose(), 300);
   };
 
   if (!isOpen) return null;

@@ -26,6 +26,7 @@ export interface ZReadingData {
   shift: Shift;
   totals: {
     cash: number;
+    ecocash: number;
     card: number;
     roomCharge: number;
     count: number;
@@ -54,7 +55,10 @@ export interface PrinterStatus {
  */
 export const generateZReading = (data: ZReadingData, readingNumber: number = 0): ShiftReading => {
   const { shift, totals, closingCash, outlet = 'default', departmentalBreakdown = [], taxRate = 0 } = data;
-  const totalSales = totals.cash + totals.card + totals.roomCharge;
+  // Gross sales must count EVERY payment method, including EcoCash. Previously
+  // EcoCash was collected and shown in the transaction list but silently
+  // omitted from gross, so the Z-reading under-reported revenue.
+  const totalSales = totals.cash + (totals.ecocash || 0) + totals.card + totals.roomCharge;
   const expectedCash = shift.openingCash + totals.cash;
   const cashDifference = closingCash !== undefined ? closingCash - expectedCash : 0;
 
@@ -101,6 +105,7 @@ export const generateZReading = (data: ZReadingData, readingNumber: number = 0):
     bar_sales: totals.barSales || 0,
     restaurant_sales: totals.restaurantSales || 0,
     cash_payments: totals.cash,
+    ecocash_payments: totals.ecocash || 0,
     card_payments: totals.card,
     room_charge_payments: totals.roomCharge,
     created_at: new Date().toISOString(),
@@ -251,7 +256,8 @@ export const generateZReadingHTML = (
   <table>
     <tbody>
       <tr><td>Cash</td><td class="r">${formatCurrency(zReading.cash_payments)}</td></tr>
-      <tr><td>Card / EFT</td><td class="r">${formatCurrency(zReading.card_payments)}</td></tr>
+      <tr><td>EcoCash</td><td class="r">${formatCurrency(zReading.ecocash_payments || 0)}</td></tr>
+      <tr><td>Swipe</td><td class="r">${formatCurrency(zReading.card_payments)}</td></tr>
       <tr><td>Room Charge</td><td class="r">${formatCurrency(zReading.room_charge_payments)}</td></tr>
       <tr><td class="b">Total</td><td class="r b">${formatCurrency(zReading.total_sales)}</td></tr>
     </tbody>

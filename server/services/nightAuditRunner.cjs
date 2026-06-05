@@ -165,9 +165,27 @@ async function voidStaleOrders() {
   return { count: r.ok ? r.rows.length : 0 };
 }
 
+// Get the system VAT rate from system_configs.tax_config (defaults to 0.15 if not set).
+async function getSystemTaxRate() {
+  try {
+    const r = await db.query(`SELECT value FROM system_configs WHERE key='tax_config' LIMIT 1`);
+    if (r.ok && r.rows?.length) {
+      const cfg = typeof r.rows[0].value === 'string' ? JSON.parse(r.rows[0].value) : r.rows[0].value;
+      const rate = Number(cfg?.room_tax_rate ?? cfg?.default_rate ?? cfg?.pos_tax_rate ?? 0);
+      // Accept both 15 (percent) and 0.15 (fraction)
+      if (rate > 1) return rate / 100;
+      if (rate > 0) return rate;
+    }
+  } catch { /* fall through */ }
+  return 0.15; // USALI default
+}
+
 // ─── Step 3: Post room charges for all OC/OD rooms ───────────────────────────
 async function postRoomCharges(businessDate) {
   log('  Posting room charges...');
+
+  const taxRate = await getSystemTaxRate();
+  log(`  Tax rate in effect: ${(taxRate * 100).toFixed(2)}%`);
 
   // Get all occupied rooms with their current reservation/rate
   const rooms = await db.query(
@@ -192,7 +210,6 @@ async function postRoomCharges(businessDate) {
 
   for (const room of rooms.rows) {
     const rate    = Number(room.reservation_rate || 0); // already COALESCE'd with room default in query
-    const taxRate = 0.15; // 15% VAT — derive from app_settings if available
     const tax     = Number((rate * (taxRate / (1 + taxRate))).toFixed(2));
     const base    = Number((rate - tax).toFixed(2));
 

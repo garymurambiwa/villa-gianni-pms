@@ -634,6 +634,17 @@ export const buildFlashReport = async (forDate?: string) => {
   };
 };
 
+// The built-in system account (username "admin", seeded name "System
+// Administrator"/"Super User Admin") is internal plumbing, not a real cashier.
+// Show it as the software brand on POS reports instead of "admin". This is a
+// DISPLAY relabel only — it never touches the role or username that auth uses.
+const BUILTIN_ADMIN_LABELS = new Set(['admin', 'admin-hardcoded', 'system administrator', 'system admin (override)', 'super user admin']);
+const labelCashier = (raw: any): string => {
+  const v = String(raw ?? '').trim();
+  if (!v) return 'POS';
+  return BUILTIN_ADMIN_LABELS.has(v.toLowerCase()) ? 'Coredigita' : v;
+};
+
 // POS Sales/Cashier Reconciliation
 export const buildPosReconciliation = async (forDate?: string) => {
   const date = forDate || getBusinessDate();
@@ -641,12 +652,18 @@ export const buildPosReconciliation = async (forDate?: string) => {
   try {
     const { db } = await import('@/lib/db');
     // Fetch shifts for the given date
+    // Read the persistent per-shift totals (written server-side as each sale
+    // lands, so they survive a glitch). Same source as the Manager End-of-Day
+    // report, with EcoCash and Swipe now in their own columns — so the front and
+    // back end agree on every payment method.
     const shiftRes = await db.query<any>(
-      `SELECT s.*, 
-       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed') as total_sales,
-       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"cash"%') as cash_sales,
-       (SELECT SUM(total_amount) FROM pos_orders WHERE shift_id = s.id AND status = 'closed' AND items::text ILIKE '%"method":"card"%') as card_sales
-       FROM pos_shifts s 
+      `SELECT s.*,
+       u.name        AS opened_by_name,
+       u.username    AS opened_by_username,
+       c.name        AS outlet_name
+       FROM pos_shifts s
+       LEFT JOIN app_users    u ON u.id = s.opened_by
+       LEFT JOIN cost_centres c ON c.id = s.outlet
        WHERE s.opened_at::date = $1`,
       [date]
     );
@@ -654,16 +671,32 @@ export const buildPosReconciliation = async (forDate?: string) => {
     if ('rows' in shiftRes && shiftRes.rows.length > 0) {
       const rows = shiftRes.rows.map((s: any) => {
         const metadata = typeof s.metadata === 'string' ? JSON.parse(s.metadata) : (s.metadata || {});
+        const cashier = labelCashier(s.opened_by_name || s.opened_by_username || s.opened_by || s.id);
+        const outlet = s.outlet_name || metadata.department || s.outlet || 'POS';
+        const cash = Number(s.total_cash || 0);
+        const ecocash = Number(s.total_ecocash || 0);
+        const swipe = Number(s.total_card || 0);                       // swipe only
+        const roomCharge = Number(s.total_room_charge || s.total_room || 0);
+        const opening = Number(s.opening_cash || 0);
+        const overShort = s.cash_variance != null
+          ? Number(s.cash_variance)
+          : (s.closing_cash != null ? Number(s.closing_cash) - (opening + cash) : 0);
         return {
-          cashier: s.opened_by || s.id,
-          outlet: metadata.department || 'POS',
+          cashier,
+          outlet,
           sales: Number(s.total_sales || 0),
-          cash: Number(s.cash_sales || 0),
-          card: Number(s.card_sales || 0),
-          overShort: Number(s.actual_cash || 0) - (Number(s.starting_cash || 0) + Number(s.cash_sales || 0))
+          cash,
+          ecocash,
+          swipe,
+          roomCharge,
+          overShort,
         };
       });
-      return { title: `POS Sales & Cashier Reconciliation — ${date}`, columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'Card', 'Over/Short'], rows };
+      return {
+        title: `POS Sales & Cashier Reconciliation — ${date}`,
+        columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'EcoCash', 'Swipe', 'Room Charge', 'Over/Short'],
+        rows
+      };
     }
   } catch (err) {
     console.warn('[Reporting] buildPosReconciliation DB query failed:', err);
@@ -671,15 +704,21 @@ export const buildPosReconciliation = async (forDate?: string) => {
 
   // Fallback to localStorage
   const ended = readJSON<any[]>('corepms_endedShifts', []);
-  const rows = ended.map(s => ({ 
-    cashier: s.openedBy || s.id, 
-    outlet: s.department || 'POS', 
-    sales: Number(s.totals?.total || s.totalSales || 0), 
-    cash: Number(s.totals?.cash || s.cashPayments || 0), 
-    card: Number(s.totals?.card || s.cardPayments || 0), 
-    overShort: Number((s.report_data?.cashDifference || 0)) 
+  const rows = ended.map(s => ({
+    cashier: labelCashier(s.openedBy || s.id),
+    outlet: s.department || 'POS',
+    sales: Number(s.totals?.total || s.totalSales || 0),
+    cash: Number(s.totals?.cash || s.cashPayments || 0),
+    ecocash: Number(s.totals?.ecocash || s.ecocashPayments || 0),
+    swipe: Number(s.totals?.card || s.cardPayments || 0),
+    roomCharge: Number(s.totals?.roomCharge || s.roomChargePayments || 0),
+    overShort: Number((s.report_data?.cashDifference || 0))
   }));
-  return { title: `POS Sales & Cashier Reconciliation — ${date}`, columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'Card', 'Over/Short'], rows };
+  return {
+    title: `POS Sales & Cashier Reconciliation — ${date}`,
+    columns: ['Cashier', 'Outlet', 'Sales', 'Cash', 'EcoCash', 'Swipe', 'Room Charge', 'Over/Short'],
+    rows
+  };
 };
 
 // Daily Purchase & Receiving Log — DB-driven from inventory GRN transactions

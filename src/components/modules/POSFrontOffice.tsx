@@ -366,19 +366,15 @@ export const POSFrontOffice: React.FC = () => {
     setTables(prev => {
       const safePrev = Array.isArray(prev) ? prev : [];
       return safePrev.map(table => {
-        // RCA-H2 FIX: scope match to this outlet's cost_centre to prevent cross-outlet
-        // contamination. An open order for 't4' from 'Main Restaurant' must NOT mark
-        // t4 as occupied when the user is in the 'Conference' outlet.
-        const tableCostCentre = table.cost_center || costCentre || null;
-        const tableOrder = posOrders.find(order => {
-          const orderCostCentre = order.cost_center || null;
-          const costCentreMatch = !tableCostCentre || !orderCostCentre || tableCostCentre === orderCostCentre;
-          return order.table_number === table.id &&
-            String(order.status).toLowerCase() === 'open' &&
-            costCentreMatch;
-        });
+        // Find any open order for this table — skip orders from other shifts
+        // (orphans from crashed/unclosed previous sessions)
+        const tableOrder = posOrders.find(order =>
+          order.table_number === table.id &&
+          String(order.status).toLowerCase() === 'open' &&
+          (!activeShift?.id || order.shift_id === activeShift.id)
+        );
 
-        if (tableOrder) {
+        if (tableOrder && !paidTablesRef.current.has(table.id)) {
           // Convert database order format to frontend bill format
           const currentBill = {
             id: tableOrder.id,
@@ -407,11 +403,27 @@ export const POSFrontOffice: React.FC = () => {
           return { ...table, status: 'occupied', currentBill };
         }
 
-        // If no order found, ensure table is available (unless it was manually suspended)
+        // No order found — reset to available unless suspended
         return table.status === 'suspended' ? table : { ...table, status: 'available', currentBill: undefined };
       });
     });
-  }, [posOrders]);
+  }, [posOrders, activeShift]);
+
+  // Tables that had payment processed — prevent posOrders effect from re-occupying them
+  // during the race window between optimistic state clear and DB UPDATE completing.
+  const paidTablesRef = React.useRef<Set<string>>(new Set());
+
+  // One-time cleanup: on shift activation, close any open orders from previous sessions
+  // (shift_id mismatch or null = orphan from crash/unclean shutdown)
+  const staleOrderCleanupDone = React.useRef(false);
+  useEffect(() => {
+    if (!activeShift?.id || staleOrderCleanupDone.current) return;
+    staleOrderCleanupDone.current = true;
+    db.query(
+      `UPDATE pos_orders SET status='closed' WHERE status='open' AND (shift_id IS NULL OR shift_id != $1)`,
+      [activeShift.id]
+    ).catch(() => { /* non-fatal */ });
+  }, [activeShift?.id]);
 
   // Track how long since mount so GUARD 1 doesn't fire before shift is restored from storage
   const mountTimeRef = React.useRef<number>(Date.now());
@@ -503,16 +515,42 @@ export const POSFrontOffice: React.FC = () => {
     return numericPart.slice(-4).padStart(4, '0');
   };
 
-  // Determine outlet from bill items (bar vs restaurant/food)
+  // Determine outlet from bill items (bar vs restaurant/food).
+  // Falls back to the cost centre name if items lack classification fields.
   const getOutletFromBill = (bill: any): string => {
-    if (!bill || !Array.isArray(bill.items) || !bill.items.length) {
-      return 'Restaurant POS'; // Default to restaurant
+    // Cost-centre override: if the station name contains 'bar', everything sold
+    // from here counts as a bar sale regardless of item flags.
+    if (costCentre && String(costCentre).toLowerCase().includes('bar')) {
+      return 'Bar POS';
     }
-    // Count bar vs food items
-    const barCount = bill.items.filter((i: any) => i.menuItem?.category === 'bar').length;
-    const foodCount = bill.items.filter((i: any) => i.menuItem?.category === 'food').length;
-    // If majority are bar items, it's a Bar POS transaction
-    return barCount > foodCount ? 'Bar POS' : 'Restaurant POS';
+    if (!bill || !Array.isArray(bill.items) || !bill.items.length) {
+      return 'Restaurant POS';
+    }
+    const isBarItem = (i: any) => {
+      const m = i.menuItem || i;
+      const dept = String(m.department || m.type || '').toLowerCase();
+      const cat = String(m.category || '').toLowerCase();
+      const subId = String(m.sub_id || '').toLowerCase();
+      const categoryId = String(m.category_id || '').toLowerCase();
+      const invCat = String(m.inventoryCategory || '').toLowerCase();
+      const cc = String(m.costCenter || '').toLowerCase();
+      return dept.includes('bar') ||
+             m.bar_visibility === true ||
+             cat === 'bar' || cat.includes('bar') ||
+             subId.includes('bar') ||
+             categoryId.includes('bar') ||
+             invCat === 'cellar' ||
+             cc.includes('bar');
+    };
+    const barCount = bill.items.filter(isBarItem).length;
+    // Debug log so we can diagnose if classification still misses
+    console.log('[Outlet classification]', {
+      costCentre,
+      itemCount: bill.items.length,
+      barCount,
+      sampleItem: bill.items[0]?.menuItem || bill.items[0]
+    });
+    return barCount > (bill.items.length / 2) ? 'Bar POS' : 'Restaurant POS';
   };
   const posIsLoading = loading || !Array.isArray(posOrders);
   const [connError, setConnError] = useState<string | null>(null);
@@ -563,10 +601,10 @@ export const POSFrontOffice: React.FC = () => {
     }
   }, []);
 
-   useEffect(() => {
-     if (!costCentre) return;
-     fetchTablesForCostCentre(costCentre);
-   }, [activeShift, costCentre, fetchTablesForCostCentre]);
+  useEffect(() => {
+    if (!costCentre) return;
+    fetchTablesForCostCentre(costCentre);
+  }, [costCentre, fetchTablesForCostCentre]);
 
   const updateTableStatus = useCallback(async (tableId: string, status: 'available' | 'occupied' | 'suspended') => {
     const mapped = status === 'suspended' ? 'closed' : (status === 'available' ? 'open' : status);
@@ -575,7 +613,7 @@ export const POSFrontOffice: React.FC = () => {
         `
           INSERT INTO table_status (table_id, status, cost_center, last_update)
           VALUES ($1, $2, $3, NOW())
-          ON CONFLICT (table_id, cost_center) DO UPDATE SET status = EXCLUDED.status, last_update = NOW()
+          ON CONFLICT (table_id) DO UPDATE SET status = EXCLUDED.status, cost_center = EXCLUDED.cost_center, last_update = NOW()
         `,
         [tableId, mapped, costCentre || 'Main Restaurant']
       );
@@ -676,6 +714,8 @@ export const POSFrontOffice: React.FC = () => {
   }, [tables, search, statusFilter, sortKey, sortDir, page, pageSize]);
 
   const activeTableId = useMemo(() => {
+    // No shift → no active table (Current Bill panel must be empty before/after shift)
+    if (!activeShift) return undefined;
     const safeTables = Array.isArray(tables) ? tables : [];
     if (selectedIds.length) {
       const id = selectedIds.find(id => !!safeTables.find(t => t.id === id && t.currentBill));
@@ -683,13 +723,27 @@ export const POSFrontOffice: React.FC = () => {
     }
     const occupiedWithBill = safeTables.find(t => t.currentBill);
     return occupiedWithBill ? occupiedWithBill.id : undefined;
-  }, [tables, selectedIds]);
+  }, [tables, selectedIds, activeShift]);
 
   const currentBill = useMemo(() => {
+    // No shift → no current bill, regardless of stale table state
+    if (!activeShift) return null;
     const safeTables = Array.isArray(tables) ? tables : [];
     const t = safeTables.find(t => t.id === activeTableId);
     return t && t.currentBill ? t.currentBill : null;
-  }, [tables, activeTableId]);
+  }, [tables, activeTableId, activeShift]);
+
+  // When the shift ends (or no shift is active), wipe all currentBills from
+  // in-memory table state so nothing lingers into the next shift.
+  useEffect(() => {
+    if (activeShift) return;
+    setTables(prev => {
+      const safePrev = Array.isArray(prev) ? prev : [];
+      const hasAny = safePrev.some(t => t.currentBill || t.status === 'occupied');
+      if (!hasAny) return prev;
+      return safePrev.map(t => ({ ...t, status: 'available' as const, currentBill: undefined }));
+    });
+  }, [activeShift]);
 
   const actions = useMemo(() => {
     return [
@@ -817,6 +871,8 @@ export const POSFrontOffice: React.FC = () => {
 
   const saveOrder = async (bill: any) => {
     console.log('[POSFrontOffice] saveOrder called with bill:', bill);
+    // User is explicitly creating a new bill for this table — clear any paid guard
+    paidTablesRef.current.delete(bill.tableId);
     const safeTables = Array.isArray(tables) ? tables : [];
     const prev = safeTables;
     const next = safeTables.map(t =>
@@ -824,14 +880,6 @@ export const POSFrontOffice: React.FC = () => {
     );
     setTables(next);
     pendingBillRef.current = bill;
-
-    // RCA-RACE FIX: Write table_status to DB immediately (synchronously before debounce)
-    // so fetchTablesForCostCentre — which fires on activeShift changes — always finds
-    // the table marked 'occupied' and preserves currentBill. Without this, the 400ms
-    // debounce gap meant fetchTablesForCostCentre could read stale 'open' status
-    // from table_status and wipe the bill off the UI.
-    updateTableStatus(bill.tableId, 'occupied');
-
     if (debouncedTimerRef.current) clearTimeout(debouncedTimerRef.current);
     debouncedTimerRef.current = setTimeout(async () => {
       const current = pendingBillRef.current;
@@ -842,23 +890,25 @@ export const POSFrontOffice: React.FC = () => {
             items: current.items,
             total: current.total,
             cost_center: costCentre || 'Main Restaurant',
-            shift_id: shiftId
+            shift_id: activeShift?.id || shiftId
           })
         : Promise.resolve(true));
       if (!ok) {
         console.log('[POSFrontOffice] Order save failed');
         setTables(prev);
-        // Roll back the optimistic table_status write on failure
-        updateTableStatus(bill.tableId, 'available');
         alert('Database Write Failed: POS order could not be saved');
       } else {
         console.log('[POSFrontOffice] Order saved successfully');
+        updateTableStatus(current.tableId, 'occupied');
       }
     }, 400);
   };
 
   const processPayment = async (paymentData: any) => {
-    const bill = paymentModal.bill;
+    // PaymentModal calls onPaymentComplete inside a setTimeout(200ms), after onClose() already
+    // sets paymentModal.bill = null (at 100ms). Use paymentData.bill as fallback so we still
+    // have the bill reference when processPayment executes.
+    const bill = paymentModal.bill || paymentData?.bill;
     if (!bill) return;
     const total = bill.total;
 
@@ -889,7 +939,8 @@ export const POSFrontOffice: React.FC = () => {
     }
 
     try {
-      addTransaction(paymentData.paymentMethod, Number(total.toFixed(2)), bill.id);
+      const outlet = getOutletFromBill(bill) === 'Bar POS' ? 'bar' : 'restaurant';
+      addTransaction(paymentData.paymentMethod, Number(total.toFixed(2)), bill.id, outlet);
     } catch (err) {
       console.warn('Shift logging failed:', err);
       logPaymentError('shift_log', err, { method: paymentData.paymentMethod, amount: total, billId: bill.id });
@@ -907,17 +958,62 @@ export const POSFrontOffice: React.FC = () => {
         logPaymentError('inventory', err, { billId: bill.id });
       });
 
-    // Close POS order in DB (fire-and-forget)
-    if (closePosOrder) {
-      closePosOrder(bill.tableId, costCentre || undefined)
-        .then(() => console.log('POS order closed successfully'))
-        .catch(err => console.warn('POS order close failed:', err));
+    // Mark table as paid — prevents posOrders effect from re-occupying it during
+    // any race window. Stays in set until the user explicitly opens a new order
+    // for this table (cleared in saveOrder) or for 60s as a safety fallback.
+    paidTablesRef.current.add(bill.tableId);
+    setTimeout(() => paidTablesRef.current.delete(bill.tableId), 60000);
+
+    // Cancel ANY pending debounced save (regardless of tableId) — if a save fires
+    // after closePosOrder it could re-insert an open order into the DB, leaving
+    // the last paid table stuck on next re-fetch. We're processing a payment, so
+    // no pending saves should run.
+    if (debouncedTimerRef.current) {
+      clearTimeout(debouncedTimerRef.current);
+      debouncedTimerRef.current = null;
+      pendingBillRef.current = null;
     }
+
+    // Close POS order in DB. We close twice — the second close (1s later) catches
+    // any racing INSERT from a savePosOrder that managed to fire between our
+    // optimistic state clear and the first UPDATE landing in the DB. This is the
+    // root cause of the "last paid table stays occupied" symptom.
+    if (closePosOrder) {
+      // Pass paymentData.paymentMethod so the DB row records cash/ecocash/swipe/
+      // room-charge — Reports → Payment Methods reads this column directly.
+      const doClose = () => closePosOrder(bill.tableId, costCentre || undefined, paymentData?.paymentMethod);
+      doClose()
+        .then(() => {
+          console.log('POS order closed (first pass)');
+          // Second pass to catch any racing INSERT
+          setTimeout(() => {
+            doClose().catch(() => {});
+          }, 1000);
+        })
+        .catch(err => {
+          console.warn('POS order close failed:', err);
+          paidTablesRef.current.delete(bill.tableId);
+        });
+    }
+
+    // Force-resync table state from DB shortly after payment — this catches any
+    // case where the in-memory tables state got stuck on 'occupied' but the DB
+    // table_status is already 'open'. This is what makes refresh fix it; doing
+    // it explicitly here gives the same effect without needing a refresh.
+    setTimeout(() => {
+      if (costCentre) fetchTablesForCostCentre(costCentre);
+    }, 1500);
 
     // Update UI state immediately
     setTables(prev => prev.map(t =>
       t.id === bill.tableId ? { ...t, status: 'available', currentBill: undefined } : t
     ));
+
+    // Deselect the paid table so the Current Bill panel doesn't keep showing its info.
+    // Without this, the table id lingers in selectedIds and activeTableId memo keeps
+    // pointing at it (or falls through to another occupied table) — leaving the bill
+    // on screen until the user clicks elsewhere.
+    setSelectedIds(prev => prev.filter(id => id !== bill.tableId));
 
     // Update database status (legacy fallback, fire-and-forget)
     updateTableStatus(bill.tableId, 'available');
@@ -1085,9 +1181,9 @@ export const POSFrontOffice: React.FC = () => {
                     id: currentBill.id,
                     items: Array.isArray(currentBill.items)
                       ? currentBill.items.map((i: any) => ({
-                          name: i.menuItem?.name || 'Unknown Item',
+                          name: i.menuItem?.name || i.name || 'Unknown Item',
                           quantity: i.quantity,
-                          price: i.menuItem?.price || 0,
+                          price: i.menuItem?.price ?? i.price ?? 0,
                           subtotal: i.subtotal
                         }))
                       : [],
@@ -1299,9 +1395,9 @@ export const POSFrontOffice: React.FC = () => {
             id: paymentModal.bill.id,
             items: Array.isArray(paymentModal.bill.items)
               ? paymentModal.bill.items.map((i: any) => ({
-                  name: i.menuItem?.name || 'Unknown Item',
+                  name: i.menuItem?.name || i.name || 'Unknown Item',
                   quantity: i.quantity,
-                  price: i.menuItem?.price || 0
+                  price: i.menuItem?.price ?? i.price ?? 0
                 }))
               : [],
             total: paymentModal.bill.total,

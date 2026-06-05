@@ -3,6 +3,28 @@ import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import './index.css'
 
+// ── Auto-recover from stale lazy-chunk 404s after a new deploy ────────────────
+// When a tab was opened BEFORE an update, an on-demand import (e.g. the
+// Z-reading module at shift close) can 404 because its hashed filename changed
+// in the new build — surfacing as "Failed to fetch dynamically imported module".
+// Vite fires `vite:preloadError`; we suppress the throw and reload once to pick
+// up the current asset manifest. A 10s guard prevents reload loops.
+if (typeof window !== 'undefined') {
+  window.addEventListener('vite:preloadError' as any, (e: any) => {
+    try { e.preventDefault(); } catch { /* not cancelable in some browsers */ }
+    try {
+      const KEY = 'vite_preload_reload_ts';
+      const last = Number(sessionStorage.getItem(KEY) || 0);
+      if (Date.now() - last > 10000) {
+        sessionStorage.setItem(KEY, String(Date.now()));
+        window.location.reload();
+      }
+    } catch {
+      window.location.reload();
+    }
+  });
+}
+
 // ── Inject hotel theme colors as CSS custom properties ────────────────────────
 // These are set from environment variables so each hotel deployment can have
 // its own brand colors without any code changes.

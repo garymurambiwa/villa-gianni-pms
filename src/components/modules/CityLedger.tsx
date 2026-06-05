@@ -4,6 +4,8 @@ import { useData } from '../../context/DataContext';
 import { downloadBlob } from '../../lib/documentUtils';
 import { useAuth } from '../../context/AuthContext';
 import { printDocument, generateCityLedgerReceiptHTML } from '../../lib/posIntegration';
+import { usePagination } from '@/hooks/usePagination';
+import PaginationBar from '@/components/shared/PaginationBar';
 
 export const CityLedger: React.FC = () => {
   const { 
@@ -51,7 +53,11 @@ export const CityLedger: React.FC = () => {
   const [closeAccountAfterTransfer, setCloseAccountAfterTransfer] = useState(false);
   // Collapsible accounts state
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
-  
+
+  // Pagination for the main accounts list and the AR Aging Report table
+  const accountsPg = usePagination<any>(cityLedger || []);
+  const agingPg = usePagination<any>(cityLedger || []);
+
   const resetTxnForm = () => setTxnForm({ date: new Date().toISOString().slice(0, 10), reference: '', description: '', amount: '' });
   const computeAging = (account: any) => {
     if (!account) return { current: 0, d30: 0, d60: 0, d90: 0, total: 0 };
@@ -424,7 +430,7 @@ export const CityLedger: React.FC = () => {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {(cityLedger || []).map(account => {
+        {accountsPg.pageItems.map(account => {
           const isClosed = account.status === 'Closed';
           const accountStatus = account.status || 'Active';
           const statusColor = isClosed ? 'bg-gray-50 border-l-gray-400' : accountStatus === 'On Hold' ? 'bg-white border-l-yellow-500' : 'bg-white border-l-blue-500';
@@ -489,16 +495,35 @@ export const CityLedger: React.FC = () => {
             
             {expandedAccounts.has(account.id) && (
               <>
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="bg-gray-50 p-3 rounded-lg">
-                    <p className="text-xs text-gray-600 mb-1">Credit Limit</p>
-                    <p className="text-lg font-bold text-gray-800">${Number(account.creditLimit || 0).toLocaleString()}</p>
-                  </div>
-                  <div className="bg-red-50 p-3 rounded-lg">
-                    <p className="text-xs text-gray-600 mb-1">Current Balance</p>
-                    <p className="text-lg font-bold text-red-600">${Number(account.balance || 0).toLocaleString()}</p>
-                  </div>
-                </div>
+                {(() => {
+                  // Live balance: sum all non-voided debits minus credits from this account's transactions.
+                  // This is the single source of truth — never rely on the stored `balance` column in DB
+                  // which can drift out of sync. BUG FIX: was always showing $0 due to wrong column names.
+                  const liveBalance = (account.transactions || []).reduce((sum: number, txn: any) => {
+                    if (txn.is_voided) return sum;
+                    const d = Number(txn.debit  || txn.debit_amount  || 0);
+                    const c = Number(txn.credit || txn.credit_amount || 0);
+                    return sum + d - c;
+                  }, 0);
+                  const isOverdue = liveBalance > 0;
+                  return (
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div className="bg-gray-50 p-3 rounded-lg">
+                        <p className="text-xs text-gray-600 mb-1">Credit Limit</p>
+                        <p className="text-lg font-bold text-gray-800">${Number(account.creditLimit || 0).toLocaleString()}</p>
+                      </div>
+                      <div className={`p-3 rounded-lg ${isOverdue ? 'bg-red-50' : 'bg-green-50'}`}>
+                        <p className="text-xs text-gray-600 mb-1">Current Balance (live)</p>
+                        <p className={`text-lg font-bold ${isOverdue ? 'text-red-600' : 'text-green-600'}`}>
+                          ${liveBalance.toFixed(2)}
+                        </p>
+                        {liveBalance === 0 && (account.transactions || []).length === 0 && (
+                          <p className="text-[10px] text-gray-400 mt-0.5">No transactions yet</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <div className="flex gap-2 mb-3">
                   <button
@@ -635,11 +660,30 @@ export const CityLedger: React.FC = () => {
                               if (g) resolvedName = ` (${g.name || g.full_name})`;
                             }
 
+                            // Source badges — distinguish POS room charges from manual entries
+                            const source: string = t.source || 'manual';
+                            const sourceBadge: Record<string, { label: string; cls: string }> = {
+                              pos_room_charge: { label: '🏷 POS · Room Charge', cls: 'bg-orange-100 text-orange-700 border border-orange-300' },
+                              pos_direct:      { label: '🛒 POS · Direct',      cls: 'bg-blue-100   text-blue-700   border border-blue-300'   },
+                              folio_transfer:  { label: '↗ Folio Transfer',     cls: 'bg-purple-100 text-purple-700 border border-purple-300' },
+                              manual:          { label: '',                      cls: ''                                                       },
+                            };
+                            const badge = sourceBadge[source] || { label: '', cls: '' };
+
                             return (
-                              <tr key={idx} className={t.is_voided ? 'opacity-50 line-through bg-gray-50' : ''}>
-                                <td className="px-2 py-2 whitespace-nowrap text-xs">{typeof t.date === 'object' && t.date instanceof Date ? t.date.toISOString().split('T')[0] : (t.date || '').slice(-10)}</td>
+                              <tr key={idx} className={t.is_voided ? 'opacity-40 line-through bg-gray-50' : ''}>
+                                <td className="px-2 py-2 whitespace-nowrap text-xs">
+                                  {typeof t.date === 'object' && t.date instanceof Date
+                                    ? t.date.toISOString().split('T')[0]
+                                    : (String(t.date || '')).replace('T00:00:00.000Z', '').slice(0, 10) || '—'}
+                                </td>
                                 <td className="px-2 py-2 font-mono text-xs" title={rawRef}>
-                                  {displayRef}{resolvedName}
+                                  <div>{displayRef}{resolvedName}</div>
+                                  {badge.label && (
+                                    <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold ${badge.cls}`}>
+                                      {badge.label}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-2 py-2">{t.description}</td>
                                 <td className="px-2 py-2 text-right">{t.debit != null && t.debit !== '' ? `$${Number(t.debit).toFixed(2)}` : '-'}</td>
@@ -732,6 +776,7 @@ export const CityLedger: React.FC = () => {
           );
         })}
       </div>
+      <PaginationBar {...accountsPg} itemLabel="accounts" />
 
       {/* Transfer to Guest/Account Modal */}
       {transferTxn && (
@@ -873,7 +918,7 @@ export const CityLedger: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {(cityLedger || []).map(account => {
+              {agingPg.pageItems.map(account => {
                 const aging = computeAging(account);
                 return (
                   <tr key={account.id} className="hover:bg-gray-50">
@@ -889,6 +934,7 @@ export const CityLedger: React.FC = () => {
             </tbody>
           </table>
         </div>
+        <PaginationBar {...agingPg} itemLabel="accounts" />
       </div>
 
         {/* Additional Reports Section */}

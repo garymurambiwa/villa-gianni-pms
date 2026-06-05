@@ -71,7 +71,9 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
           status VARCHAR(50) NOT NULL DEFAULT 'open',
           cost_center VARCHAR(50),
           shift_id VARCHAR(36),
-          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+          payment_method VARCHAR(50),
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS pos_shifts (
@@ -198,6 +200,10 @@ export async function initializeDatabase(): Promise<{ ok: boolean; message?: str
     try { await db.exec(`ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor INTEGER NOT NULL DEFAULT 1`); } catch (e) { console.log('rooms.floor column note:', e); }
     try { await db.exec(`ALTER TABLE pos_orders ADD COLUMN IF NOT EXISTS cost_center VARCHAR(50)`); } catch (e) { }
     try { await db.exec(`ALTER TABLE pos_orders ADD COLUMN IF NOT EXISTS shift_id VARCHAR(36)`); } catch (e) { }
+    // payment_method drives the Reports → Payment Methods breakdown; without it
+    // closePosOrder's UPDATE failed and the order never closed (stale tables).
+    try { await db.exec(`ALTER TABLE pos_orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50)`); } catch (e) { }
+    try { await db.exec(`ALTER TABLE pos_orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP`); } catch (e) { }
     try { await db.exec(`ALTER TABLE table_status ADD COLUMN IF NOT EXISTS cost_center VARCHAR(50) DEFAULT 'Main Restaurant'`); } catch (e) { }
     try { await db.exec(`ALTER TABLE guests ADD COLUMN IF NOT EXISTS id_number TEXT`); } catch (e) { console.log('guests.id_number column note:', e); }
     

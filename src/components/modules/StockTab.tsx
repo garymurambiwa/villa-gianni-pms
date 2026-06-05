@@ -53,6 +53,39 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
   // Cache filtered sets in-memory for snappier transitions
   const cacheRef = React.useRef<Map<string, StockItem[]>>(new Map());
 
+  // ── Live stock balances from inventory-v11 (keyed by item name lowercased) ──
+  // Polled every 30s so users can see incoming GRNs / depletion without a page refresh.
+  const [stockMap, setStockMap] = React.useState<Record<string, number>>({});
+  React.useEffect(() => {
+    let cancelled = false;
+    const fetchBalances = async () => {
+      try {
+        const res = await fetch('/api/v1/inventory/balances').then(r => r.json());
+        if (cancelled) return;
+        if (res?.ok && Array.isArray(res.data)) {
+          const map: Record<string, number> = {};
+          for (const row of res.data) {
+            const key = String(row.name || row.item_name || '').toLowerCase().trim();
+            if (key) map[key] = Number(row.current_balance || 0);
+          }
+          setStockMap(map);
+        }
+      } catch { /* non-fatal — leave map empty, column shows — */ }
+    };
+    fetchBalances();
+    const t = setInterval(fetchBalances, 30000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  const getStockQty = (it: any): number | null => {
+    const key = String(it.name || '').toLowerCase().trim();
+    if (!key) return null;
+    if (key in stockMap) return stockMap[key];
+    // Fallback: item may carry its own qty field
+    const inline = it.current_balance ?? it.stock_qty ?? it.quantity_on_hand;
+    return inline != null ? Number(inline) : null;
+  };
+
   // Restore persisted state
   React.useEffect(() => {
     try {
@@ -312,6 +345,7 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
               <th scope="col" className="text-left">Name</th>
               <th scope="col" className="hide-on-mobile">Center</th>
               <th scope="col" className="text-right">Price</th>
+              <th scope="col" className="text-right">Stock Qty</th>
               <th scope="col" className="text-right hide-on-mobile">GP%</th>
               <th scope="col">Issues</th>
               <th scope="col" className="hide-on-mobile">Visibility</th>
@@ -319,7 +353,7 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
             </tr>
           </thead>
           <tbody>
-            {virtualize && topPad > 0 && (<tr style={{ height: topPad }} aria-hidden="true"><td colSpan={8} /></tr>)}
+            {virtualize && topPad > 0 && (<tr style={{ height: topPad }} aria-hidden="true"><td colSpan={9} /></tr>)}
             {(visibleItems).map((it: any) => {
               const issues: string[] = [];
               if (!it.category_id) issues.push('Missing category');
@@ -335,6 +369,19 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
                   <td className="text-left font-medium max-w-[120px] sm:max-w-none truncate">{it.name}</td>
                   <td className="capitalize hide-on-mobile">{it.costCenter || '—'}</td>
                   <td className="text-right font-mono">${Number(it.sellingPrice || 0).toFixed(2)}</td>
+                  <td className="text-right font-mono">
+                    {(() => {
+                      const qty = getStockQty(it);
+                      if (qty === null) return <span className="text-gray-400">—</span>;
+                      const low = qty <= 5;
+                      const out = qty <= 0;
+                      return (
+                        <span className={out ? 'text-red-700 font-bold' : low ? 'text-amber-600 font-semibold' : 'text-gray-800'}>
+                          {qty.toFixed(qty % 1 === 0 ? 0 : 2)}
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td className="text-right font-mono hide-on-mobile">{gp}%</td>
                   <td>
                     {issues.length ? (
@@ -412,9 +459,9 @@ export const StockTab: React.FC<StockTabProps> = ({ items, userRole, onEditItem,
                 </tr>
               );
             })}
-            {virtualize && bottomPad > 0 && (<tr style={{ height: bottomPad }} aria-hidden="true"><td colSpan={8} /></tr>)}
+            {virtualize && bottomPad > 0 && (<tr style={{ height: bottomPad }} aria-hidden="true"><td colSpan={9} /></tr>)}
             {!pageItems.length && (
-              <tr><td colSpan={8} className="py-2 text-gray-500 text-center">No items match current filters</td></tr>
+              <tr><td colSpan={9} className="py-2 text-gray-500 text-center">No items match current filters</td></tr>
             )}
           </tbody>
         </table>

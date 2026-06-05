@@ -4,12 +4,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { canManagePOS } from '@/lib/permissions';
-import { formatCurrency } from '@/lib/posIntegration';
+import { formatCurrency, printDocument } from '@/lib/posIntegration';
 import menuCats from '@/lib/menuCategories';
 import cocktailEng from '@/lib/cocktailEngineering';
 import { useToast } from '@/hooks/use-toast';
 import db from '@/lib/db';
 import ReconciliationService, { ReconciliationReport } from '@/lib/ReconciliationService';
+import { normalizePaymentMethod, paymentMethodLabel, CANONICAL_METHODS } from '@/lib/paymentMethods';
+import { RefreshCw, Printer } from 'lucide-react';
 
 type DateRange = { start: string; end: string };
 
@@ -19,6 +21,108 @@ const exportCSV = (filename: string, headers: string[], rows: string[][]) => {
   const url = URL.createObjectURL(blob); 
   const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); 
   URL.revokeObjectURL(url);
+};
+
+/**
+ * Thermal (80mm POS-printer) Z-Reading / End-of-Day Cash-Up slip. Vertical
+ * label:value layout so it fits a narrow receipt. The trailing
+ * <!-- ReceiptBrandingApplied --> marker tells printDocument() to treat it as a
+ * thermal receipt (no A4 wrapping).
+ */
+const cashupThermalHTML = (d: {
+  shiftRows: any[]; totals: any;
+  byMethod: Map<string, number>;
+  byCatMethod: Map<string, Map<string, number>>;
+  catTotal: Map<string, number>;
+  categoryRows: any[];
+  range: { start: string; end: string };
+  shiftLabel: string;
+}): string => {
+  const money = (n: any) => formatCurrency(Number(n) || 0);
+  let brand: any = {};
+  try { brand = JSON.parse(localStorage.getItem('corepms_receipt_branding') || '{}'); } catch { /* defaults */ }
+  const bizName = brand.restaurant_name || brand.name || 'Property Management System';
+
+  const shiftBlocks = d.shiftRows.map((r: any) => `
+    <div class="b">${r.cashier}${r.outlet && r.outlet !== '—' ? ' · ' + r.outlet : ''}</div>
+    <table>
+      <tr><td>Opening Till</td><td class="r">${money(r.opening)}</td></tr>
+      <tr><td>Cash</td><td class="r">${money(r.cash)}</td></tr>
+      <tr><td>EcoCash</td><td class="r">${money(r.ecocash)}</td></tr>
+      <tr><td>Swipe</td><td class="r">${money(r.card)}</td></tr>
+      <tr><td>Room Charge</td><td class="r">${money(r.room)}</td></tr>
+      <tr class="b"><td>Total Sales</td><td class="r">${money(r.sales)}</td></tr>
+      <tr><td>Expected Cash</td><td class="r">${money(r.expected)}</td></tr>
+      <tr><td>Counted</td><td class="r">${r.closing == null ? '—' : money(r.closing)}</td></tr>
+      <tr class="b"><td>Over/(Short)</td><td class="r">${r.variance == null ? '—' : money(r.variance)}</td></tr>
+      <tr><td>Voids</td><td class="r">${r.voidCount} (${money(r.voids)})</td></tr>
+      <tr><td>Transactions</td><td class="r">${r.txns}</td></tr>
+    </table>
+    <div class="div">--------------------------------</div>`).join('');
+
+  const methodRows = CANONICAL_METHODS.map(m => `<tr><td>${paymentMethodLabel(m)}</td><td class="r">${money(d.byMethod.get(m) || 0)}</td></tr>`).join('');
+  const methodTotal = Array.from(d.byMethod.values()).reduce((a: number, b: number) => a + b, 0);
+
+  const catMethodBlocks = ['Food', 'Bar'].map(cat => {
+    const cm = d.byCatMethod.get(cat) || new Map();
+    const rows = CANONICAL_METHODS.map(m => `<tr><td>&nbsp;&nbsp;${paymentMethodLabel(m)}</td><td class="r">${money(cm.get(m) || 0)}</td></tr>`).join('');
+    const t = CANONICAL_METHODS.reduce((a, m) => a + (cm.get(m) || 0), 0);
+    return `<tr class="b"><td>${cat === 'Food' ? 'FOOD (RESTAURANT)' : 'BAR'}</td><td class="r">${money(t)}</td></tr>${rows}`;
+  }).join('');
+
+  const itemCatRows = d.categoryRows.map((r: any) => `<tr><td>${r.name}</td><td class="r">${r.itemsSold}</td><td class="r">${money(r.grossSales)}</td><td class="r">${money(r.profit)}</td></tr>`).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Z Cash-Up</title><style>
+    @page { size: 80mm auto; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 74mm; background:#fff; color:#000; }
+    body { font-family:'Courier New', Courier, monospace; font-size:11px; padding:3mm 2mm 8mm; -webkit-print-color-adjust:exact; }
+    .c{text-align:center}.r{text-align:right}.b{font-weight:bold}
+    .div{text-align:center;margin:1.2mm 0;white-space:nowrap;overflow:hidden}
+    .biz{font-weight:bold;font-size:1.3em;text-align:center}
+    .ttl{font-weight:bold;text-align:center;text-transform:uppercase;margin:2mm 0 1mm}
+    .sec{font-weight:bold;margin-top:1.5mm}
+    table{width:100%;border-collapse:collapse}
+    td{padding:0.4mm 0;vertical-align:top}
+    .ft{text-align:center;font-size:0.85em;margin-top:3mm}
+  </style></head><body>
+    <div class="biz">${bizName}</div>
+    ${brand.address ? `<div class="c">${brand.address}</div>` : ''}
+    ${brand.phone ? `<div class="c">Tel: ${brand.phone}</div>` : ''}
+    <div class="div">================================</div>
+    <div class="ttl">Z-Reading &middot; End-of-Day Cash-Up</div>
+    <div class="div">--------------------------------</div>
+    <table>
+      <tr><td>Printed</td><td class="r">${new Date().toLocaleString()}</td></tr>
+      <tr><td>Period</td><td class="r">${d.range.start}${d.range.start !== d.range.end ? ' &rarr; ' + d.range.end : ''}</td></tr>
+      <tr><td>Shift</td><td class="r">${d.shiftLabel}</td></tr>
+    </table>
+    <div class="div">================================</div>
+    <div class="sec">CASHIER CASH-UP</div>
+    <div class="div">--------------------------------</div>
+    ${shiftBlocks || '<div class="c">No shifts in range</div>'}
+    <div class="sec">SALES BY PAYMENT METHOD</div>
+    <table>${methodRows}<tr class="b"><td>TOTAL</td><td class="r">${money(methodTotal)}</td></tr></table>
+    <div class="div">--------------------------------</div>
+    <div class="sec">SALES BY CATEGORY</div>
+    <table>
+      <tr><td>Food (Restaurant)</td><td class="r">${money(d.catTotal.get('Food') || 0)}</td></tr>
+      <tr><td>Bar</td><td class="r">${money(d.catTotal.get('Bar') || 0)}</td></tr>
+      <tr class="b"><td>TOTAL</td><td class="r">${money((d.catTotal.get('Food') || 0) + (d.catTotal.get('Bar') || 0))}</td></tr>
+    </table>
+    <div class="div">--------------------------------</div>
+    <div class="sec">SALES SPLIT &mdash; CATEGORY &times; METHOD</div>
+    <table>${catMethodBlocks}</table>
+    <div class="div">--------------------------------</div>
+    <div class="sec">ITEMS BY CATEGORY</div>
+    <table><tr class="b"><td>Category</td><td class="r">Qty</td><td class="r">Sales</td><td class="r">Profit</td></tr>${itemCatRows || '<tr><td colspan="4" class="c">No sales in range</td></tr>'}</table>
+    <div class="div">--------------------------------</div>
+    <div class="sec">VOIDS</div>
+    <table><tr><td>Count</td><td class="r">${d.totals.voidCount}</td></tr><tr><td>Amount</td><td class="r">${money(d.totals.voids)}</td></tr></table>
+    <div class="div">================================</div>
+    <div class="ft">Powered By Coredigita</div>
+    <!-- ReceiptBrandingApplied -->
+  </body></html>`;
 };
 
 const formatDetailsText = (d: any): string => {
@@ -278,6 +382,7 @@ export const PosReports: React.FC = () => {
   const [cocktailUsageData, setCocktailUsageData] = React.useState<{ usageRows: any[]; totalIngredients: number }>({ usageRows: [], totalIngredients: 0 });
 
   const [dbPosBills, setDbPosBills] = React.useState<any[]>([]);
+  const [dbShifts, setDbShifts] = React.useState<any[]>([]);
   const [dbInventoryItems, setDbInventoryItems] = React.useState<any[]>([]);
   const [dbGrns, setDbGrns] = React.useState<any[]>([]);
   const [dbMovements, setDbMovements] = React.useState<any[]>([]);
@@ -338,6 +443,20 @@ if(!('error' in ordersRes)) {
   });
 }
       setDbPosBills(processedBills);
+
+      // Fetch shift cash-up rows. These per-shift totals are written server-side
+      // as each sale lands, so they survive a power/network glitch that wipes the
+      // in-memory Z-reading — this is what stops the end-of-day report printing
+      // zero. Cashier name resolved via app_users.
+      const shiftsRes = await db.query(
+        `SELECT s.*, u.name AS cashier_name, u.username AS cashier_username
+         FROM pos_shifts s
+         LEFT JOIN app_users u ON u.id = s.opened_by
+         WHERE DATE(s.opened_at) >= $1 AND DATE(s.opened_at) <= $2
+         ORDER BY s.opened_at ASC`,
+        [range.start, range.end]
+      );
+      if (!('error' in shiftsRes)) setDbShifts(shiftsRes.rows || []);
 
       // Fetch GRNs
       const grnsRes = await db.query(
@@ -429,14 +548,103 @@ if(!('error' in ordersRes)) {
     return { rows: Array.from(map.entries()).map(([name, r]) => ({ name, ...r, percent: totalGross ? (r.grossSales / totalGross) * 100 : 0, profit: r.netSales - r.cogs })), totalGross };
   }, [nonVoidedBills, itemIndexByName, dbInventoryItems]);
 
+  // Display labels for the four POS payment methods so the report shows the
+  // same names a cashier sees on the till, not the raw column value.
+  const PAYMENT_LABELS: Record<string, string> = {
+    'cash':        'CASH',
+    'ecocash':     'ECOCASH (MOBILE MONEY)',
+    'swipe':       'SWIPE (CARD)',
+    'card':        'SWIPE (CARD)',           // legacy alias
+    'room-charge': 'ROOM CHARGE',
+    'room_charge': 'ROOM CHARGE',            // legacy alias
+    'city-ledger': 'CITY LEDGER',
+  };
+
+  // Pull the payment method from the bill column first; if that's null, peek
+  // inside items[].method (some legacy paths stored it there only).
+  const resolveMethod = (bill: any): string => {
+    const raw = bill.payment_method;
+    if (raw) return normalizePaymentMethod(raw);
+    const items = Array.isArray(bill.items) ? bill.items : [];
+    for (const it of items) {
+      const m = it?.method || it?.paymentMethod || it?.payment_method;
+      if (m) return normalizePaymentMethod(m);
+    }
+    return 'unknown';
+  };
+
   const paymentSummary = React.useMemo(() => {
     const map = new Map<string, number>();
     nonVoidedBills.forEach((bill: any) => {
-       const method = (bill.payment_method || 'Unknown').toUpperCase();
-       map.set(method, (map.get(method) || 0) + Number(bill.total_amount || 0));
+      const key = resolveMethod(bill);
+      const label = paymentMethodLabel(key);
+      map.set(label, (map.get(label) || 0) + Number(bill.total_amount || 0));
     });
-    return Array.from(map.entries()).map(([method, total]) => ({ method, total }));
+    // Sort so the canonical four methods appear first, in a predictable order.
+    const order = ['Cash', 'EcoCash', 'Swipe', 'Room Charge', 'City Ledger'];
+    return Array.from(map.entries())
+      .map(([method, total]) => ({ method, total }))
+      .sort((a, b) => {
+        const ia = order.indexOf(a.method); const ib = order.indexOf(b.method);
+        if (ia === -1 && ib === -1) return a.method.localeCompare(b.method);
+        if (ia === -1) return 1;
+        if (ib === -1) return -1;
+        return ia - ib;
+      });
   }, [nonVoidedBills]);
+
+  // ── Manager End-of-Day Cash-Up ────────────────────────────────────────────
+  // Resilient per-shift totals come from pos_shifts (written server-side as each
+  // sale lands, so they survive a power/network glitch that wipes the in-memory
+  // Z-reading). The EcoCash/Swipe split and the category cross-tab come from
+  // pos_orders, normalised so "card"==Swipe and "Ecocash"==EcoCash everywhere.
+  const cashup = React.useMemo(() => {
+    const shifts = dbShifts.filter((s: any) => selectedShift === 'all' ? true : s.id === selectedShift);
+    const cashierOf = (s: any) => {
+      const raw = String(s.cashier_name || s.cashier_username || s.opened_by || '—');
+      return /^(admin|admin-hardcoded|system administrator|super user admin)$/i.test(raw) ? 'Coredigita' : raw;
+    };
+    const shiftRows = shifts.map((s: any) => {
+      const opening = Number(s.opening_cash || 0);
+      const cash = Number(s.total_cash || 0);
+      const expected = s.expected_cash == null ? opening + cash : Number(s.expected_cash);
+      const closing = s.closing_cash == null ? null : Number(s.closing_cash);
+      return {
+        id: s.id, cashier: cashierOf(s), outlet: s.outlet || '—',
+        openedAt: s.opened_at, closedAt: s.closed_at, status: s.status,
+        opening, cash,
+        ecocash: Number(s.total_ecocash || 0),
+        card: Number(s.total_card || 0),   // swipe only
+        room: Number(s.total_room_charge || s.total_room || 0),
+        sales: Number(s.total_sales || 0),
+        voids: Number(s.total_voids || 0), voidCount: Number(s.void_count || 0),
+        txns: Number(s.transaction_count || s.tx_count || 0),
+        expected, closing,
+        variance: closing == null ? null : closing - expected,
+      };
+    });
+    const sum = (k: string) => shiftRows.reduce((a: number, r: any) => a + (Number(r[k]) || 0), 0);
+    const totals = {
+      opening: sum('opening'), cash: sum('cash'), ecocash: sum('ecocash'), card: sum('card'), room: sum('room'),
+      sales: sum('sales'), voids: sum('voids'), voidCount: sum('voidCount'), txns: sum('txns'),
+    };
+
+    // Per-method and per-category-per-method, from the order detail (normalised).
+    const byMethod = new Map<string, number>(CANONICAL_METHODS.map(m => [m, 0]));
+    const cats = ['Food', 'Bar'];
+    const byCatMethod = new Map<string, Map<string, number>>(cats.map(c => [c, new Map(CANONICAL_METHODS.map(m => [m, 0]))]));
+    const catTotal = new Map<string, number>([['Food', 0], ['Bar', 0]]);
+    nonVoidedBills.forEach((b: any) => {
+      const m = normalizePaymentMethod(b.payment_method);
+      const amt = Number(b.total_amount || 0);
+      byMethod.set(m, (byMethod.get(m) || 0) + amt);
+      const cat = /bar/i.test(String(b.outlet || '')) ? 'Bar' : 'Food';
+      catTotal.set(cat, (catTotal.get(cat) || 0) + amt);
+      const cm = byCatMethod.get(cat)!;
+      cm.set(m, (cm.get(m) || 0) + amt);
+    });
+    return { shiftRows, totals, byMethod, byCatMethod, catTotal };
+  }, [dbShifts, selectedShift, nonVoidedBills]);
 
   const itemSalesSummary = React.useMemo(() => {
     const map = new Map<string, { id: string; name: string; qty: number; revenue: number; cost: number; profit: number }>();
@@ -534,6 +742,7 @@ if(!('error' in ordersRes)) {
           <Select value={selectedReport} onValueChange={setSelectedReport}>
             <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
             <SelectContent>
+              <SelectItem value="manager-cashup">Manager End-of-Day Cash-Up</SelectItem>
               <SelectItem value="x-summary">X-Reading Summary</SelectItem>
               <SelectItem value="x-detail">X-Reading Detail</SelectItem>
               <SelectItem value="payment-methods">Payment Methods</SelectItem>
@@ -561,6 +770,17 @@ if(!('error' in ordersRes)) {
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
+          {selectedReport === 'manager-cashup' && (
+            <Button size="sm" variant="secondary" onClick={() => printDocument(cashupThermalHTML({
+              shiftRows: cashup.shiftRows, totals: cashup.totals,
+              byMethod: cashup.byMethod, byCatMethod: cashup.byCatMethod, catTotal: cashup.catTotal,
+              categoryRows: categorySummary.rows, range,
+              shiftLabel: selectedShift === 'all' ? 'All' : String(selectedShift),
+            }), 'EOD-CashUp')}>
+              <Printer className="w-4 h-4 mr-2" />
+              Print on POS Printer
+            </Button>
+          )}
           <Button size="sm" onClick={() => window.print()}>
             <Printer className="w-4 h-4 mr-2" />
             Print
@@ -580,7 +800,134 @@ if(!('error' in ordersRes)) {
         }
       `}</style>
       {loading && <div className="py-8 text-center text-gray-500">Loading Database Records...</div>}
-      
+
+      {!loading && selectedReport === 'manager-cashup' && (
+        <div className="space-y-6">
+          <div>
+            <h3 className="font-bold mb-1">Manager End-of-Day Cash-Up</h3>
+            <p className="text-xs text-gray-500">
+              Totals are read from the saved shift records on the server, so they survive a power or network glitch.
+              Range: {range.start} → {range.end}{selectedShift !== 'all' ? ` · Shift ${selectedShift}` : ''}.
+            </p>
+          </div>
+
+          {/* Cashier cash-up by shift */}
+          <div>
+            <h4 className="font-semibold text-sm mb-2">Cashier Cash-Up by Shift</h4>
+            <div className="ds-table-container">
+              <table className="ds-table">
+                <thead><tr>
+                  <th>Cashier</th><th>Outlet</th><th className="right">Opening Till</th>
+                  <th className="right">Cash</th><th className="right">EcoCash</th><th className="right">Swipe</th><th className="right">Room Chg</th>
+                  <th className="right">Total Sales</th><th className="right">Expected</th><th className="right">Counted</th>
+                  <th className="right">Over / Short</th><th className="right">Voids</th><th className="right">Txns</th>
+                </tr></thead>
+                <tbody>
+                  {cashup.shiftRows.map((r: any) => (
+                    <tr key={r.id}>
+                      <td className="font-medium">{r.cashier}</td><td>{r.outlet}</td><td className="right">{formatCurrency(r.opening)}</td>
+                      <td className="right">{formatCurrency(r.cash)}</td><td className="right">{formatCurrency(r.ecocash)}</td><td className="right">{formatCurrency(r.card)}</td><td className="right">{formatCurrency(r.room)}</td>
+                      <td className="right font-bold">{formatCurrency(r.sales)}</td><td className="right">{formatCurrency(r.expected)}</td>
+                      <td className="right">{r.closing == null ? '—' : formatCurrency(r.closing)}</td>
+                      <td className={`right ${r.variance != null && r.variance < 0 ? 'text-red-600 font-bold' : ''}`}>{r.variance == null ? '—' : formatCurrency(r.variance)}</td>
+                      <td className="right">{r.voidCount > 0 ? `${r.voidCount} (${formatCurrency(r.voids)})` : '—'}</td>
+                      <td className="right">{r.txns}</td>
+                    </tr>
+                  ))}
+                  {cashup.shiftRows.length === 0 && <tr><td colSpan={13} className="text-center p-4">No shifts found in this range</td></tr>}
+                </tbody>
+                {cashup.shiftRows.length > 0 && (
+                  <tfoot><tr className="font-bold border-t-2">
+                    <td colSpan={2}>TOTAL</td><td className="right">{formatCurrency(cashup.totals.opening)}</td>
+                    <td className="right">{formatCurrency(cashup.totals.cash)}</td><td className="right">{formatCurrency(cashup.totals.ecocash)}</td><td className="right">{formatCurrency(cashup.totals.card)}</td><td className="right">{formatCurrency(cashup.totals.room)}</td>
+                    <td className="right">{formatCurrency(cashup.totals.sales)}</td><td colSpan={3}></td>
+                    <td className="right">{cashup.totals.voidCount} ({formatCurrency(cashup.totals.voids)})</td><td className="right">{cashup.totals.txns}</td>
+                  </tr></tfoot>
+                )}
+              </table>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1">EcoCash and Swipe are tracked separately on each shift. Shifts opened before this change may still show their EcoCash inside Swipe.</p>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            {/* Sales by payment method */}
+            <div>
+              <h4 className="font-semibold text-sm mb-2">Sales by Payment Method</h4>
+              <table className="ds-table">
+                <thead><tr><th>Method</th><th className="right">Amount</th></tr></thead>
+                <tbody>
+                  {CANONICAL_METHODS.map((m) => (
+                    <tr key={m}><td>{paymentMethodLabel(m)}</td><td className="right font-bold">{formatCurrency(cashup.byMethod.get(m) || 0)}</td></tr>
+                  ))}
+                  <tr className="border-t-2 font-bold"><td>Total</td><td className="right">{formatCurrency(Array.from(cashup.byMethod.values()).reduce((a: number, b: number) => a + b, 0))}</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Sales by category */}
+            <div>
+              <h4 className="font-semibold text-sm mb-2">Sales by Category</h4>
+              <table className="ds-table">
+                <thead><tr><th>Category</th><th className="right">Sales</th></tr></thead>
+                <tbody>
+                  <tr><td>Food (Restaurant)</td><td className="right font-bold">{formatCurrency(cashup.catTotal.get('Food') || 0)}</td></tr>
+                  <tr><td>Bar</td><td className="right font-bold">{formatCurrency(cashup.catTotal.get('Bar') || 0)}</td></tr>
+                  <tr className="border-t-2 font-bold"><td>Total</td><td className="right">{formatCurrency((cashup.catTotal.get('Food') || 0) + (cashup.catTotal.get('Bar') || 0))}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Category x payment method cross-tab */}
+          <div>
+            <h4 className="font-semibold text-sm mb-2">Sales Split — Category × Payment Method</h4>
+            <div className="ds-table-container">
+              <table className="ds-table">
+                <thead><tr><th>Category</th>{CANONICAL_METHODS.map(m => <th key={m} className="right">{paymentMethodLabel(m)}</th>)}<th className="right">Total</th></tr></thead>
+                <tbody>
+                  {['Food', 'Bar'].map(cat => {
+                    const cm = cashup.byCatMethod.get(cat)!;
+                    const rowTotal = CANONICAL_METHODS.reduce((a, m) => a + (cm.get(m) || 0), 0);
+                    return (
+                      <tr key={cat}>
+                        <td className="font-medium">{cat === 'Food' ? 'Food (Restaurant)' : 'Bar'}</td>
+                        {CANONICAL_METHODS.map(m => <td key={m} className="right">{formatCurrency(cm.get(m) || 0)}</td>)}
+                        <td className="right font-bold">{formatCurrency(rowTotal)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Sales items by category */}
+          <div>
+            <h4 className="font-semibold text-sm mb-2">Sales Items by Category (COGS & Profit)</h4>
+            <div className="ds-table-container">
+              <table className="ds-table">
+                <thead><tr><th>Category</th><th className="right">Items Sold</th><th className="right">Gross Sales</th><th className="right">COGS</th><th className="right">Gross Profit</th></tr></thead>
+                <tbody>
+                  {categorySummary.rows.map((r: any) => (
+                    <tr key={r.name}><td>{r.name}</td><td className="right">{r.itemsSold}</td><td className="right">{formatCurrency(r.grossSales)}</td><td className="right text-red-600">-{formatCurrency(r.cogs)}</td><td className="right font-bold text-green-600">{formatCurrency(r.profit)}</td></tr>
+                  ))}
+                  {categorySummary.rows.length === 0 && <tr><td colSpan={5} className="text-center p-4">No sales in range</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Voids */}
+          <div>
+            <h4 className="font-semibold text-sm mb-2">Voids</h4>
+            <p className="text-sm">
+              <span className="font-bold">{cashup.totals.voidCount}</span> voided transaction{cashup.totals.voidCount === 1 ? '' : 's'} totalling{' '}
+              <span className="font-bold">{formatCurrency(cashup.totals.voids)}</span> across the selected shifts.
+            </p>
+          </div>
+        </div>
+      )}
+
       {!loading && selectedReport === 'x-summary' && (
         <div>
           <h3 className="font-bold mb-2">Category Financial Summary (COGS & Profit)</h3>

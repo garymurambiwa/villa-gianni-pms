@@ -1371,92 +1371,97 @@ INSERT INTO public.breakfast_packages (id, code, name, description, base_price, 
   ('bp_fb', 'FB', 'Full Board', 'Three meals included', 50, 35, 20, 3, NOW())
 ON CONFLICT (code) DO NOTHING;
 
-
 -- ============================================================================
--- INVENTORY RECONCILIATION (V10) — Period-based stock audit & COGS tracking
--- Surgically added to schema.sql so fresh deployments (init-db) include these
--- tables. All statements are IF NOT EXISTS — safe on existing deployments.
+-- SERVICE TOTAL transaction lifecycle (MICROS-style) — Phase A
+-- Canonical mirror of the runtime DDL in src/lib/serviceTotal.ts
+-- (ensureServiceTotalSchema). Additive: never alters existing tables.
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS public.inventory_periods (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  period_name     TEXT NOT NULL,
-  period_year     INTEGER NOT NULL,
-  period_month    INTEGER NOT NULL CHECK (period_month BETWEEN 1 AND 12),
-  start_date      DATE NOT NULL,
-  end_date        DATE NOT NULL,
-  status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('future','open','reconciling','closed','locked')),
-  opening_stock_value NUMERIC(14,2) DEFAULT 0,
-  closing_stock_value NUMERIC(14,2),
-  received_value  NUMERIC(14,2) DEFAULT 0,
-  variance_value  NUMERIC(14,2),
-  kitchen_cogs    NUMERIC(14,2) DEFAULT 0,
-  cellar_cogs     NUMERIC(14,2) DEFAULT 0,
-  cogs_value      NUMERIC(14,2),
-  closed_at       TIMESTAMPTZ,
-  closed_by       TEXT,
-  closed_reason   TEXT,
-  reopened_at     TIMESTAMPTZ,
-  reopened_by     TEXT,
-  is_locked       BOOLEAN DEFAULT false,
-  locked_at       TIMESTAMPTZ,
-  locked_by       TEXT,
-  created_by      TEXT,
-  inserted_at     TIMESTAMPTZ DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE (period_year, period_month)
+CREATE SEQUENCE IF NOT EXISTS pos_check_number_seq START 1;
+
+-- HEADER: the "check". One open check per table per outlet.
+CREATE TABLE IF NOT EXISTS pos_checks (
+  id             TEXT PRIMARY KEY,
+  client_txn_id  TEXT UNIQUE,                 -- idempotency key for retried commits
+  check_number   BIGINT,                      -- permanent, assigned at first Service Total
+  table_number   TEXT NOT NULL,
+  cost_center    TEXT NOT NULL,
+  shift_id       TEXT,
+  status         TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed','voided')),
+  opened_by      TEXT,
+  total_amount   NUMERIC(12,2) NOT NULL DEFAULT 0,
+  payment_method TEXT,                         -- set at media close
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  committed_at   TIMESTAMPTZ,                  -- first Service Total
+  closed_at      TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS one_open_check_per_table
+  ON pos_checks (table_number, cost_center) WHERE status = 'open';
+
+-- LINES: append-only. A committed line is never edited or deleted.
+CREATE TABLE IF NOT EXISTS pos_check_lines (
+  id            TEXT PRIMARY KEY,
+  check_id      TEXT NOT NULL REFERENCES pos_checks(id) ON DELETE RESTRICT,
+  seq           INTEGER NOT NULL,
+  item_id       TEXT,
+  name          TEXT NOT NULL,
+  qty           NUMERIC(10,3) NOT NULL CHECK (qty > 0),
+  unit_price    NUMERIC(12,2) NOT NULL,
+  line_total    NUMERIC(12,2) NOT NULL,
+  route_station TEXT,                          -- 'kitchen' | 'bar'
+  state         TEXT NOT NULL DEFAULT 'committed' CHECK (state IN ('committed','voided')),
+  printed_at    TIMESTAMPTZ,
+  committed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (check_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_check_lines_check ON pos_check_lines(check_id);
+
+-- VOIDS: the only sanctioned mutation path for a committed line (manager-signed).
+CREATE TABLE IF NOT EXISTS pos_voids (
+  id             TEXT PRIMARY KEY,
+  check_id       TEXT NOT NULL REFERENCES pos_checks(id) ON DELETE RESTRICT,
+  line_id        TEXT NOT NULL REFERENCES pos_check_lines(id) ON DELETE RESTRICT,
+  qty_voided     NUMERIC(10,3) NOT NULL CHECK (qty_voided > 0),
+  amount         NUMERIC(12,2) NOT NULL,
+  reason         TEXT NOT NULL,
+  authorized_by  TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS public.inventory_transactions (
-  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  transaction_type      TEXT NOT NULL CHECK (transaction_type IN ('purchase','grv','adjustment','transfer','variance_writeoff')),
-  transaction_number    TEXT NOT NULL,
-  period_id             UUID REFERENCES public.inventory_periods(id) ON DELETE RESTRICT,
-  transaction_date      DATE NOT NULL,
-  department            TEXT NOT NULL DEFAULT 'General',
-  total_quantity        NUMERIC(12,4) DEFAULT 0,
-  total_value           NUMERIC(14,2) DEFAULT 0,
-  supplier_name         TEXT,
-  created_by            TEXT,
-  is_historical_backfill BOOLEAN DEFAULT false,
-  is_deleted            BOOLEAN DEFAULT false,
-  inserted_at           TIMESTAMPTZ DEFAULT NOW()
+-- PRINT JOBS: enqueued inside the commit txn; printed by a worker, never in-txn.
+CREATE TABLE IF NOT EXISTS pos_print_jobs (
+  id          TEXT PRIMARY KEY,
+  check_id    TEXT NOT NULL REFERENCES pos_checks(id) ON DELETE RESTRICT,
+  station     TEXT NOT NULL,
+  payload     JSONB NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','printed','failed')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  printed_at  TIMESTAMPTZ
 );
+CREATE INDEX IF NOT EXISTS idx_print_pending ON pos_print_jobs(station) WHERE status = 'pending';
 
-CREATE TABLE IF NOT EXISTS public.inventory_snapshots (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  period_id         UUID NOT NULL REFERENCES public.inventory_periods(id) ON DELETE CASCADE,
-  product_id        TEXT NOT NULL,
-  physical_qty      NUMERIC(12,4) NOT NULL DEFAULT 0,
-  variance          NUMERIC(12,4) NOT NULL DEFAULT 0,
-  opening_qty       NUMERIC(12,4) DEFAULT 0,
-  received_qty      NUMERIC(12,4) DEFAULT 0,
-  system_usage_qty  NUMERIC(12,4) DEFAULT 0,
-  inserted_at       TIMESTAMPTZ DEFAULT NOW(),
-  updated_at        TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE (period_id, product_id)
-);
+-- Defence-in-depth freeze: committed lines cannot be deleted or have their
+-- content changed; the only permitted UPDATE is committed -> voided.
+CREATE OR REPLACE FUNCTION block_committed_line_mutation() RETURNS trigger AS $body$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.state = 'committed' THEN
+      RAISE EXCEPTION 'Committed line % is frozen and cannot be deleted; issue a VOID', OLD.id;
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF OLD.state = 'committed' THEN
+    IF NEW.qty <> OLD.qty OR NEW.unit_price <> OLD.unit_price
+       OR NEW.line_total <> OLD.line_total OR NEW.name <> OLD.name
+       OR NEW.item_id IS DISTINCT FROM OLD.item_id THEN
+      RAISE EXCEPTION 'Committed line % is frozen; content cannot change. Issue a VOID.', OLD.id;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$body$ LANGUAGE plpgsql;
 
-CREATE TABLE IF NOT EXISTS public.inventory_period_audit (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  period_id       UUID REFERENCES public.inventory_periods(id) ON DELETE SET NULL,
-  action          TEXT NOT NULL,
-  user_id         TEXT,
-  user_name       TEXT,
-  change_reason   TEXT,
-  is_historical_backfill BOOLEAN DEFAULT false,
-  timestamp       TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Add reconciliation columns to products if they don't exist
-ALTER TABLE public.products ADD COLUMN IF NOT EXISTS last_inventory_period_id UUID REFERENCES public.inventory_periods(id) ON DELETE SET NULL;
-ALTER TABLE public.products ADD COLUMN IF NOT EXISTS last_physical_qty NUMERIC(12,4);
-ALTER TABLE public.products ADD COLUMN IF NOT EXISTS last_physical_date DATE;
-
--- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_inv_periods_status      ON public.inventory_periods(status);
-CREATE INDEX IF NOT EXISTS idx_inv_periods_year_month  ON public.inventory_periods(period_year, period_month);
-CREATE INDEX IF NOT EXISTS idx_inv_tx_period           ON public.inventory_transactions(period_id);
-CREATE INDEX IF NOT EXISTS idx_inv_tx_type             ON public.inventory_transactions(transaction_type);
-CREATE INDEX IF NOT EXISTS idx_inv_snapshots_period    ON public.inventory_snapshots(period_id);
-CREATE INDEX IF NOT EXISTS idx_inv_audit_period        ON public.inventory_period_audit(period_id);
+DROP TRIGGER IF EXISTS freeze_committed_lines ON pos_check_lines;
+CREATE TRIGGER freeze_committed_lines
+  BEFORE UPDATE OR DELETE ON pos_check_lines
+  FOR EACH ROW EXECUTE FUNCTION block_committed_line_mutation();

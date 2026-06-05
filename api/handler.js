@@ -113,7 +113,7 @@ app.post('/api/db/test', async (req, res) => {
 //   FB_REVENUE, BANK, AP_CONTROL etc. extended as needed.
 
 const GL_REQUIRED_CODES = [
-  'ROOM_REVENUE','FB_REVENUE','CONF_REVENUE','TAX','CASH','CARD','ROOM_CHARGE','CITY_LEDGER'
+  'ROOM_REVENUE','FB_REVENUE','CONF_REVENUE','TAX','CASH','CARD','ECOCASH','ROOM_CHARGE','CITY_LEDGER'
 ];
 
 // USALI-aligned safe default account numbers (seed if no user mapping exists)
@@ -124,6 +124,7 @@ const GL_USALI_DEFAULTS = {
   TAX:           { accountId: '2300', name: 'VAT/Sales Tax Payable',  category: 'Liability', usali: 'Tax' },
   CASH:          { accountId: '1000', name: 'Cash on Hand',           category: 'Asset',     usali: 'Cash' },
   CARD:          { accountId: '1100', name: 'Card/Bank Clearing',     category: 'Asset',     usali: 'Bank' },
+  ECOCASH:       { accountId: '1180', name: 'EcoCash Mobile Money',   category: 'Asset',     usali: 'Bank' },
   ROOM_CHARGE:   { accountId: '1200', name: 'In-house Guest Ledger',  category: 'Asset',     usali: 'GuestLedger' },
   CITY_LEDGER:   { accountId: '1300', name: 'City Ledger/AR',         category: 'Asset',     usali: 'AR' },
   FB_COST:       { accountId: '5100', name: 'F&B Cost of Sales',      category: 'Expense',   usali: 'F&B Cost' },
@@ -740,17 +741,23 @@ app.post('/api/night-audit/run', async (req, res) => {
     const posRevenue = posRes.ok ? Number(posRes.rows?.[0]?.pos_rev || 0) : 0;
     const totalRevenue = roomRevenue + posRevenue;
 
-    // Advance business date — but never past today's real calendar date.
-    // Capping prevents the catch-up loop from overshooting into the future when it
-    // processes many missing days in rapid succession.
-    const todayReal = new Date().toISOString().split('T')[0];
+    // Advance business date — but CLAMP so it never runs ahead of the real
+    // server date. A manual run for a future date previously pushed
+    // business_date to e.g. 2026-06-02, silently breaking the night-audit
+    // catch-up. We cap nextDate at CURRENT_DATE.
     const nextDate = new Date(date); nextDate.setDate(nextDate.getDate() + 1);
-    const nextDateStr = nextDate.toISOString().split('T')[0];
-    const safeNextDate = nextDateStr > todayReal ? todayReal : nextDateStr;
+    let nextDateStr = nextDate.toISOString().split('T')[0];
+    try {
+      const nowRes = await db.query(`SELECT CURRENT_DATE::text AS d`);
+      const serverToday = nowRes.ok && nowRes.rows?.length ? nowRes.rows[0].d : null;
+      if (serverToday && nextDateStr > serverToday) {
+        nextDateStr = serverToday; // never advance past today
+      }
+    } catch { /* if clock check fails, fall through with computed nextDate */ }
     await db.query(
       `INSERT INTO system_configs (key,value) VALUES ('business_date',$1)
        ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
-      [JSON.stringify({ date: safeNextDate })]
+      [JSON.stringify({ date: nextDateStr })]
     );
 
     // Build reports_snapshot (same shape NightAuditReports.tsx reads from DB)
@@ -1067,26 +1074,14 @@ app.get('/api/inventory/audit', async (req, res) => {
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
-<<<<<<< HEAD
-// ─── Inventory Reconciliation — 3 routes missing from Vercel handler (PHASE-1 FIX) ──
-=======
 // ─── Inventory Reconciliation — 3 endpoints matching Villa Gianni ─────────────
 
->>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
 // POST /api/inventory/batch-reconcile
 app.post('/api/inventory/batch-reconcile', async (req, res) => {
   const { period_id, user_id, items } = req.body || {};
   if (!period_id || !Array.isArray(items) || items.length === 0)
     return safeJson(res, { ok: false, error: 'period_id and items[] required' });
   try {
-<<<<<<< HEAD
-    const periodRes = await db.query("SELECT status, is_locked FROM inventory_periods WHERE id=$1", [period_id]);
-    if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
-    const period = periodRes.rows[0];
-    if (period.is_locked) return res.status(403).json({ ok: false, error: 'Period is locked' });
-    if (period.status !== 'reconciling') return res.status(403).json({ ok: false, error: 'Period must be in reconciling state' });
-
-=======
     const periodRes = await db.query(`SELECT status, is_locked FROM inventory_periods WHERE id=$1`, [period_id]);
     if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
     const period = periodRes.rows[0];
@@ -1094,7 +1089,6 @@ app.post('/api/inventory/batch-reconcile', async (req, res) => {
     if (period.status !== 'reconciling') return res.status(403).json({ ok: false, error: `Period must be in reconciling state, current: ${period.status}` });
 
     // Pre-fetch all products (reads outside transaction)
->>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     const productIds = items.map(i => i.product_id).filter(Boolean);
     const placeholders = productIds.map((_, i) => `$${i + 1}`).join(',');
     const allProds = productIds.length > 0
@@ -1115,18 +1109,9 @@ app.post('/api/inventory/batch-reconcile', async (req, res) => {
       const totalValue = variance * newCost;
 
       ops.push({ sql: `INSERT INTO inventory_snapshots (period_id,product_id,physical_qty,variance,opening_qty,received_qty,system_usage_qty) VALUES ($1,$2,$3,$4,0,0,0) ON CONFLICT (period_id,product_id) DO UPDATE SET physical_qty=EXCLUDED.physical_qty,variance=EXCLUDED.variance,updated_at=NOW()`, params: [period_id, product_id, physQty, variance] });
-<<<<<<< HEAD
-      if (variance !== 0) ops.push({ sql: `INSERT INTO inventory_transactions (transaction_type,transaction_number,period_id,transaction_date,department,total_quantity,total_value,created_by) VALUES ('adjustment',$1,$2,$3,$4,$5,$6,$7)`, params: [`BATCH-${Date.now()}-${String(product_id).slice(0,8)}`, period_id, today, product.department || 'General', variance, totalValue, user_id || 'system'] });
-      if (cost_price != null) {
-        ops.push({ sql: 'UPDATE products SET stock_level=$1,cost_price=$2,last_inventory_period_id=$3,last_physical_qty=$4,last_physical_date=NOW(),updated_at=NOW() WHERE id=$5', params: [physQty, newCost, period_id, physQty, product_id] });
-      } else {
-        ops.push({ sql: 'UPDATE products SET stock_level=$1,last_inventory_period_id=$2,last_physical_qty=$3,last_physical_date=NOW(),updated_at=NOW() WHERE id=$4', params: [physQty, period_id, physQty, product_id] });
-      }
-=======
       if (variance !== 0) ops.push({ sql: `INSERT INTO inventory_transactions (transaction_type,transaction_number,period_id,transaction_date,department,total_quantity,total_value,created_by) VALUES ('adjustment',$1,$2,$3,$4,$5,$6,$7)`, params: [`BATCH-${Date.now()}-${String(product_id).slice(0,8)}`, period_id, today, product.department||'General', variance, totalValue, user_id||'system'] });
       if (cost_price != null) { ops.push({ sql: 'UPDATE products SET stock_level=$1,cost_price=$2,last_inventory_period_id=$3,last_physical_qty=$4,last_physical_date=NOW(),updated_at=NOW() WHERE id=$5', params: [physQty, newCost, period_id, physQty, product_id] }); }
       else { ops.push({ sql: 'UPDATE products SET stock_level=$1,last_inventory_period_id=$2,last_physical_qty=$3,last_physical_date=NOW(),updated_at=NOW() WHERE id=$4', params: [physQty, period_id, physQty, product_id] }); }
->>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     }
     if (ops.length > 0) {
       const txResult = await db.transaction(ops);
@@ -1141,38 +1126,22 @@ app.post('/api/inventory/close', async (req, res) => {
   const { period_id, closed_by, closed_reason, manager_override } = req.body || {};
   if (!period_id || !closed_by) return safeJson(res, { ok: false, error: 'period_id and closed_by required' });
   try {
-<<<<<<< HEAD
-    const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id=$1', [period_id]);
-=======
     const periodRes = await db.query(`SELECT * FROM inventory_periods WHERE id=$1`, [period_id]);
->>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
     const period = periodRes.rows[0];
     if (period.is_locked) return res.status(403).json({ ok: false, error: 'Period already locked' });
     if (period.status !== 'reconciling') return res.status(403).json({ ok: false, error: `Period must be reconciling, current: ${period.status}` });
 
-<<<<<<< HEAD
-    const txCountRes = await db.query("SELECT COUNT(*) as cnt FROM inventory_transactions WHERE period_id=$1 AND transaction_type IN ('purchase','grv')", [period_id]);
-    const txCount = Number(txCountRes.rows?.[0]?.cnt || 0);
-    if (txCount === 0 && !manager_override) return res.status(403).json({ ok: false, error: 'ZERO_CAPTURE', message: 'No receipts found. Set manager_override:true to force close.' });
-
-    const prodRes = await db.query('SELECT id,name,department,stock_level,cost_price,last_physical_qty FROM products WHERE last_inventory_period_id=$1', [period_id]);
-=======
     const txCountRes = await db.query(`SELECT COUNT(*) as cnt FROM inventory_transactions WHERE period_id=$1 AND transaction_type IN ('purchase','grv')`, [period_id]);
     const txCount = Number(txCountRes.rows?.[0]?.cnt || 0);
     if (txCount === 0 && !manager_override) return res.status(403).json({ ok: false, error: 'ZERO_CAPTURE', message: 'No receipts found. Set manager_override:true to force close.' });
 
     const prodRes = await db.query(`SELECT id,name,department,stock_level,cost_price,last_physical_qty FROM products WHERE last_inventory_period_id=$1`, [period_id]);
->>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     if (!prodRes.rows?.length) return res.status(400).json({ ok: false, error: 'No physical counts recorded. Perform a stock take first.' });
 
     let totalClosingValue = 0, totalVarianceValue = 0, kitchenVar = 0, cellarVar = 0;
     const today = new Date().toISOString().split('T')[0];
     const ops = [];
-<<<<<<< HEAD
-
-=======
->>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     for (const p of prodRes.rows) {
       const physQty = Number(p.last_physical_qty || 0);
       const variance = physQty - Number(p.stock_level || 0);
@@ -1180,18 +1149,6 @@ app.post('/api/inventory/close', async (req, res) => {
       const varianceValue = variance * costPrice;
       totalClosingValue += physQty * costPrice;
       totalVarianceValue += varianceValue;
-<<<<<<< HEAD
-      if ((p.department || '').toLowerCase() === 'kitchen') kitchenVar += varianceValue;
-      else if ((p.department || '').toLowerCase() === 'cellar') cellarVar += varianceValue;
-
-      ops.push({ sql: `INSERT INTO inventory_snapshots (period_id,product_id,physical_qty,variance,opening_qty,received_qty,system_usage_qty) VALUES ($1,$2,$3,$4,0,0,0) ON CONFLICT (period_id,product_id) DO UPDATE SET physical_qty=EXCLUDED.physical_qty,variance=EXCLUDED.variance,updated_at=NOW()`, params: [period_id, p.id, physQty, variance] });
-      if (variance !== 0) ops.push({ sql: `INSERT INTO inventory_transactions (transaction_type,transaction_number,period_id,transaction_date,department,total_quantity,total_value,created_by) VALUES ('adjustment',$1,$2,$3,$4,$5,$6,$7)`, params: [`CLS-${Date.now()}-${p.id.slice(0,8)}`, period_id, today, p.department || 'General', variance, varianceValue, closed_by] });
-      ops.push({ sql: 'UPDATE products SET stock_level=$1,updated_at=NOW() WHERE id=$2', params: [physQty, p.id] });
-    }
-
-    const cogsValue = Number(period.opening_stock_value || 0) + Number(period.received_value || 0) - totalClosingValue;
-    ops.push({ sql: `UPDATE inventory_periods SET status='closed',closing_stock_value=$1,variance_value=$2,cogs_value=$3,kitchen_cogs=$4,cellar_cogs=$5,closed_at=NOW(),closed_by=$6,closed_reason=$7,is_locked=true,locked_at=NOW() WHERE id=$8`, params: [totalClosingValue, totalVarianceValue, cogsValue, kitchenVar, cellarVar, closed_by, closed_reason || '', period_id] });
-=======
       if ((p.department||'').toLowerCase() === 'kitchen') kitchenVar += varianceValue;
       else if ((p.department||'').toLowerCase() === 'cellar') cellarVar += varianceValue;
       ops.push({ sql: `INSERT INTO inventory_snapshots (period_id,product_id,physical_qty,variance,opening_qty,received_qty,system_usage_qty) VALUES ($1,$2,$3,$4,0,0,0) ON CONFLICT (period_id,product_id) DO UPDATE SET physical_qty=EXCLUDED.physical_qty,variance=EXCLUDED.variance,updated_at=NOW()`, params: [period_id, p.id, physQty, variance] });
@@ -1200,7 +1157,6 @@ app.post('/api/inventory/close', async (req, res) => {
     }
     const cogsValue = Number(period.opening_stock_value||0) + Number(period.received_value||0) - totalClosingValue;
     ops.push({ sql: `UPDATE inventory_periods SET status='closed',closing_stock_value=$1,variance_value=$2,cogs_value=$3,kitchen_cogs=$4,cellar_cogs=$5,closed_at=NOW(),closed_by=$6,closed_reason=$7,is_locked=true,locked_at=NOW() WHERE id=$8`, params: [totalClosingValue, totalVarianceValue, cogsValue, kitchenVar, cellarVar, closed_by, closed_reason||'', period_id] });
->>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
     if (txCount === 0 && manager_override) ops.push({ sql: `INSERT INTO inventory_period_audit (period_id,action,user_id,user_name,change_reason) VALUES ($1,'ZERO_CAPTURE_OVERRIDE',$2,$3,$4)`, params: [period_id, closed_by, closed_by, 'Manager override: zero receipts'] });
 
     const txResult = await db.transaction(ops);
@@ -1214,19 +1170,6 @@ app.post('/api/inventory/reopen', async (req, res) => {
   const { period_id, reopened_by } = req.body || {};
   if (!period_id) return safeJson(res, { ok: false, error: 'period_id required' });
   try {
-<<<<<<< HEAD
-    const periodRes = await db.query('SELECT * FROM inventory_periods WHERE id=$1', [period_id]);
-    if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
-    if (!periodRes.rows[0].is_locked) return res.status(400).json({ ok: false, error: 'Period is not locked' });
-
-    const ops = [
-      { sql: `UPDATE inventory_periods SET status='open',closed_at=NULL,closed_by=NULL,closed_reason=NULL,is_locked=false,locked_at=NULL,locked_by=NULL,reopened_at=NOW(),reopened_by=$1 WHERE id=$2`, params: [reopened_by || 'system', period_id] },
-      { sql: `INSERT INTO inventory_period_audit (period_id,action,user_id,user_name,change_reason) VALUES ($1,'PERIOD_REOPENED',$2,$3,$4)`, params: [period_id, reopened_by || 'system', reopened_by || 'system', 'Period reopened for correction'] }
-    ];
-    const txResult = await db.transaction(ops);
-    if (!txResult.ok) throw new Error(txResult.error);
-    safeJson(res, { ok: true, message: 'Period reopened' });
-=======
     const periodRes = await db.query(`SELECT * FROM inventory_periods WHERE id=$1`, [period_id]);
     if (!periodRes.rows?.length) return res.status(404).json({ ok: false, error: 'Period not found' });
     if (!periodRes.rows[0].is_locked) return res.status(400).json({ ok: false, error: 'Period is not locked and cannot be reopened' });
@@ -1238,7 +1181,6 @@ app.post('/api/inventory/reopen', async (req, res) => {
     const txResult = await db.transaction(ops);
     if (!txResult.ok) throw new Error(txResult.error);
     safeJson(res, { ok: true, message: 'Period reopened successfully' });
->>>>>>> 0e4f7bcb6301c6e517a9ca5852c9c7f8196e21bb
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
@@ -1535,6 +1477,489 @@ app.put('/api/rooms/:id', async (req, res) => {
   vals.push(req.params.id);
   try { safeJson(res, await db.query(`UPDATE rooms SET ${fields.join(',')},updated_at=NOW() WHERE id=$${vals.length}`, vals)); }
   catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// ─── Cron: nightly auto-run of Night Audit ───────────────────────────────────
+// Hit by Vercel cron daily at 22:00 UTC (00:00 Africa/Harare CAT, UTC+2).
+// Schedule defined in vercel.json. Runs even when no browser is open.
+//
+// Idempotent — records last-run date in system_configs so a manual run earlier
+// in the day prevents double-execution. Best-effort: failures don't crash the
+// server, they're logged and the next morning's catch-up in the browser will
+// fill in any missed dates.
+async function ensureNightAuditLogTable() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS night_audit_log (
+      id            SERIAL PRIMARY KEY,
+      audit_date    DATE NOT NULL UNIQUE,
+      ran_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      source        TEXT NOT NULL DEFAULT 'cron',
+      ok            BOOLEAN NOT NULL DEFAULT TRUE,
+      notes         TEXT
+    )
+  `);
+}
+
+// ─── Helper: run a single night-audit pass for a given date ──────────────────
+// Idempotent (safe to call multiple times per date) — each step records what
+// it did into the night_audit_runs.notes column so a manager can audit the
+// history. Returns { ok, date, notes } never throws — errors go into notes.
+async function runNightAuditForDate(date, source = 'manual') {
+  await ensureNightAuditLogTable();
+  const notes = [];
+  let allOk = true;
+
+  // Read live tax rate from system_configs (default 15% if unset)
+  let taxRate = 0.15;
+  try {
+    const cfgRes = await db.query(`SELECT value FROM system_configs WHERE key='tax_config' LIMIT 1`);
+    if (cfgRes.ok && cfgRes.rows?.length) {
+      const cfg = typeof cfgRes.rows[0].value === 'string' ? JSON.parse(cfgRes.rows[0].value) : cfgRes.rows[0].value;
+      const r = Number(cfg?.room_tax_rate ?? cfg?.default_rate ?? cfg?.pos_tax_rate ?? 0);
+      if (r > 1) taxRate = r / 100;
+      else if (r > 0) taxRate = r;
+    }
+  } catch (e) { notes.push(`tax_config read failed: ${e.message}`); }
+
+  // Step 1: Close stuck shifts
+  try {
+    const r = await db.query(
+      `UPDATE pos_shifts SET status='closed', closed_at=COALESCE(closed_at, NOW())
+       WHERE status='open' AND opened_at::date <= $1 RETURNING id`,
+      [date]
+    );
+    notes.push(`Closed ${r.rows?.length || 0} stuck shifts`);
+  } catch (e) { allOk = false; notes.push(`shift-close error: ${e.message}`); }
+
+  // Step 2: Void stale open POS orders (>18h)
+  try {
+    const r = await db.query(
+      `UPDATE pos_orders SET status='voided', updated_at=NOW()
+       WHERE status='open' AND created_at < NOW() - INTERVAL '18 hours' RETURNING id`
+    );
+    notes.push(`Voided ${r.rows?.length || 0} stale POS orders`);
+  } catch (e) { allOk = false; notes.push(`order-void error: ${e.message}`); }
+
+  // Step 3: Post room charges for occupied rooms (with idempotency via source_reference)
+  // Capture stats that get written to night_audit_runs for report visibility.
+  let chargesPosted = 0;
+  let totalRevenue = 0;
+  let occupiedRoomsCount = 0;
+  let posRevenueForDay = 0;
+  let totalRoomsCount = 0;
+  try {
+    const occRooms = await db.query(
+      `SELECT ro.id as room_id, ro.number, ro.type, ro.rate as default_rate,
+              r.id as reservation_id, COALESCE(NULLIF(r.rate::numeric, 0), ro.rate, 0) as reservation_rate,
+              g.id as guest_id, g.full_name,
+              f.id as folio_id
+       FROM rooms ro
+       JOIN reservations r ON r.room_id = ro.id AND r.status = 'checked-in'
+       JOIN guests g ON g.id = r.guest_id
+       LEFT JOIN folios f ON f.reservation_id = r.id AND f.status = 'open'
+       WHERE ro.status IN ('OC', 'OD')`
+    );
+    if (occRooms.ok && occRooms.rows?.length) {
+      occupiedRoomsCount = occRooms.rows.length;
+    }
+    // Also capture total room inventory for occupancy % calculation
+    try {
+      const tot = await db.query(`SELECT COUNT(*) AS n FROM rooms WHERE is_active IS NOT FALSE`);
+      if (tot.ok && tot.rows?.length) totalRoomsCount = Number(tot.rows[0].n || 0);
+    } catch { totalRoomsCount = 0; }
+    if (occRooms.ok && occRooms.rows?.length) {
+      for (const room of occRooms.rows) {
+        const rate = Number(room.reservation_rate || 0);
+        if (rate <= 0) continue;
+        const tax = Number((rate * (taxRate / (1 + taxRate))).toFixed(2));
+        const base = Number((rate - tax).toFixed(2));
+        const chargeRef = `NA_${date}_RM${room.number}`;
+
+        // Auto-create folio if missing
+        let folioId = room.folio_id;
+        if (!folioId) {
+          const nf = await db.query(
+            `INSERT INTO folios (id, guest_id, reservation_id, room_number, status, balance, guest_name, arrival_date, inserted_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, 'open', 0, $4, NOW(), NOW()) RETURNING id`,
+            [room.guest_id, room.reservation_id, room.number, room.full_name]
+          );
+          folioId = nf.ok ? nf.rows[0]?.id : null;
+        }
+        if (!folioId) continue;
+
+        // Idempotency check — skip if already posted for this date
+        const exists = await db.query(
+          `SELECT 1 FROM folio_charges WHERE source_reference=$1 AND folio_id=$2 LIMIT 1`,
+          [chargeRef, folioId]
+        );
+        if (exists.ok && exists.rows?.length) continue;
+
+        await db.query(
+          `INSERT INTO folio_charges (id, folio_id, guest_id, reservation_id, room_number, charge_type, category,
+              description, amount, tax_amount, total_amount, source, source_reference, posting_date, business_date, department, service_date, inserted_at)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, 'charge', 'Room', $5, $6, $7, $8, 'night_audit', $9, $10, $11, 'Rooms', $11, NOW())`,
+          [folioId, room.guest_id, room.reservation_id, room.number,
+           `Room ${room.number} - ${room.type}`, base, tax, rate, chargeRef, date, date]
+        );
+        await db.query(`UPDATE folios SET balance = balance + $1, updated_at=NOW() WHERE id=$2`, [rate, folioId]);
+        chargesPosted += 1;
+        totalRevenue += rate;
+      }
+    }
+    notes.push(`Posted ${chargesPosted} room charges (revenue $${totalRevenue.toFixed(2)})`);
+  } catch (e) { allOk = false; notes.push(`room-charge error: ${e.message}`); }
+
+  // Capture POS revenue for the day (for the night_audit_runs report row)
+  try {
+    const posRes = await db.query(
+      `SELECT COALESCE(SUM(total_amount),0)::numeric AS total FROM pos_orders
+       WHERE status='closed' AND created_at::date = $1::date`,
+      [date]
+    );
+    if (posRes.ok && posRes.rows?.length) posRevenueForDay = Number(posRes.rows[0].total || 0);
+  } catch { /* leave at 0 */ }
+
+  // True-up stats from the DB rather than from this run's loop counters.
+  // The loop only counts charges posted THIS run; if previous backfills wrote
+  // them already, idempotency would skip and our counter would read 0 even
+  // though the charges are present. Source-of-truth: folio_charges for this date.
+  try {
+    const fc = await db.query(
+      `SELECT COUNT(*)::int AS n, COALESCE(SUM(total_amount),0)::numeric AS total
+         FROM folio_charges
+        WHERE source='night_audit'
+          AND source_reference LIKE $1
+          AND category='Room'`,
+      [`NA_${date}_RM%`]
+    );
+    if (fc.ok && fc.rows?.length) {
+      const dbCount = Number(fc.rows[0].n || 0);
+      const dbTotal = Number(fc.rows[0].total || 0);
+      if (dbCount > chargesPosted) chargesPosted = dbCount;
+      if (dbTotal > totalRevenue) totalRevenue = dbTotal;
+    }
+  } catch { /* keep loop counters */ }
+
+  // Step 4: Reset stuck table_status rows
+  try {
+    await db.query(`UPDATE table_status SET status='available', last_update=NOW() WHERE status='open'`);
+    notes.push('Reset stuck table_status rows');
+  } catch (e) { notes.push(`table-status reset error: ${e.message}`); }
+
+  // Step 5: Roll business_date forward
+  try {
+    await db.query(
+      `INSERT INTO system_configs (key, value) VALUES ('business_date', $1)
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
+      [JSON.stringify(date)]
+    );
+    notes.push(`business_date set to ${date}`);
+  } catch (e) { notes.push(`date-roll error: ${e.message}`); }
+
+  // Record the run in the lightweight log
+  try {
+    await db.query(
+      `INSERT INTO night_audit_log (audit_date, source, ok, notes) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (audit_date) DO UPDATE SET ran_at=NOW(), ok=EXCLUDED.ok, notes=EXCLUDED.notes, source=EXCLUDED.source`,
+      [date, source, allOk, notes.join('; ')]
+    );
+  } catch (e) { notes.push(`run-log error: ${e.message}`); }
+
+  // Also record in the full night_audit_runs table so the existing
+  // NightAuditReports / Reports UI surfaces the backfilled date with real stats.
+  try {
+    const d = new Date(date + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1);
+    const nextDate = d.toISOString().slice(0, 10);
+
+    const taxRevenue = Number((totalRevenue * (taxRate / (1 + taxRate))).toFixed(2));
+    const fullTotalRevenue = totalRevenue + posRevenueForDay;
+    const occupancyPct = totalRoomsCount > 0
+      ? Number(((occupiedRoomsCount / totalRoomsCount) * 100).toFixed(2))
+      : 0;
+    const adr = occupiedRoomsCount > 0
+      ? Number((totalRevenue / occupiedRoomsCount).toFixed(2))
+      : 0;
+    const revpar = totalRoomsCount > 0
+      ? Number((totalRevenue / totalRoomsCount).toFixed(2))
+      : 0;
+    const snapshot = {
+      fbRevenue: posRevenueForDay,
+      roomRevenue: totalRevenue,
+      taxRevenue,
+      occupiedRooms: occupiedRoomsCount,
+      availableRooms: totalRoomsCount,
+      source,
+      notes: notes.join('; '),
+    };
+    const statusVal = allOk ? 'completed' : 'completed_with_warnings';
+
+    // UPSERT — if row already exists for this date (e.g. earlier backfill with
+    // empty stats), enrich it with the real numbers from this run.
+    const existing = await db.query(
+      `SELECT id FROM night_audit_runs WHERE business_date::date=$1::date LIMIT 1`,
+      [date]
+    );
+    if (existing.ok && existing.rows?.length) {
+      await db.query(
+        `UPDATE night_audit_runs SET
+           rooms_posted=$2, room_revenue=$3, tax_revenue=$4, total_revenue=$5,
+           occupied_rooms=$6, available_rooms=$7, occupancy_percent=$8, adr=$9, revpar=$10,
+           status=$11, run_by=$12, completed_at=NOW(), reports_snapshot=$13::jsonb,
+           next_business_date=$14::date
+         WHERE business_date::date=$1::date`,
+        [date, chargesPosted, totalRevenue, taxRevenue, fullTotalRevenue,
+         occupiedRoomsCount, totalRoomsCount, occupancyPct, adr, revpar,
+         statusVal, `${source}_runner`, JSON.stringify(snapshot), nextDate]
+      );
+    } else {
+      await db.query(
+        `INSERT INTO night_audit_runs
+           (id, business_date, next_business_date, rooms_posted, room_revenue,
+            tax_revenue, total_revenue, city_ledger_transfers, city_ledger_amount,
+            occupied_rooms, available_rooms, occupancy_percent, adr, revpar,
+            status, run_by, started_at, completed_at, reports_snapshot, inserted_at)
+         VALUES (gen_random_uuid(), $1::date, $2::date, $3, $4, $5, $6, 0, 0,
+                 $7, $8, $9, $10, $11, $12, $13, $1::date, NOW(), $14::jsonb, NOW())
+         ON CONFLICT DO NOTHING`,
+        [date, nextDate, chargesPosted, totalRevenue, taxRevenue, fullTotalRevenue,
+         occupiedRoomsCount, totalRoomsCount, occupancyPct, adr, revpar,
+         statusVal, `${source}_runner`, JSON.stringify(snapshot)]
+      );
+    }
+  } catch (e) {
+    notes.push(`night_audit_runs upsert error: ${e.message}`);
+  }
+
+  return { ok: allOk, date, notes, stats: { chargesPosted, totalRevenue, occupiedRoomsCount, totalRoomsCount, posRevenueForDay } };
+}
+
+// POST /api/admin/night-audit/backfill — fill missing audits from a start date.
+// Body: { from: 'YYYY-MM-DD', to?: 'YYYY-MM-DD' }   (to defaults to today)
+// Use case: Baradzanwa night audit stuck since 2026-05-18 — backfill restores
+// missing room charges, closes orphaned shifts, and rolls business_date forward
+// one day at a time so accounting periods reconcile cleanly.
+app.post('/api/admin/night-audit/backfill', async (req, res) => {
+  const { from, to } = req.body || {};
+  if (!from || !/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+    return safeJson(res, { ok: false, error: 'from date required (YYYY-MM-DD)' });
+  }
+  const endDate = (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) ? to : new Date().toISOString().slice(0, 10);
+
+  const startMs = new Date(from + 'T00:00:00Z').getTime();
+  const endMs   = new Date(endDate + 'T00:00:00Z').getTime();
+  if (endMs < startMs) return safeJson(res, { ok: false, error: 'to must be >= from' });
+  const dayMs = 86400000;
+  const dates = [];
+  for (let t = startMs; t <= endMs; t += dayMs) {
+    dates.push(new Date(t).toISOString().slice(0, 10));
+  }
+  if (dates.length > 90) return safeJson(res, { ok: false, error: 'Backfill range too large (>90 days). Run in smaller batches.' });
+
+  const results = [];
+  for (const d of dates) {
+    try {
+      const r = await runNightAuditForDate(d, 'backfill');
+      results.push(r);
+    } catch (e) {
+      results.push({ ok: false, date: d, notes: [`fatal: ${e.message}`] });
+    }
+  }
+
+  safeJson(res, {
+    ok: true,
+    backfilled: dates.length,
+    from, to: endDate,
+    results,
+  });
+});
+
+// GET /api/admin/night-audit/status — quick health view: last run, missed dates
+app.get('/api/admin/night-audit/status', async (req, res) => {
+  try {
+    await ensureNightAuditLogTable();
+    const recent = await db.query(
+      `SELECT audit_date, ran_at, source, ok, notes FROM night_audit_log
+       ORDER BY audit_date DESC LIMIT 30`
+    );
+    const last = recent.rows?.[0];
+    // Compute missing dates between last run and today
+    const today = new Date().toISOString().slice(0, 10);
+    const missing = [];
+    if (last) {
+      const lastMs = new Date(last.audit_date).getTime();
+      const todayMs = new Date(today).getTime();
+      for (let t = lastMs + 86400000; t <= todayMs; t += 86400000) {
+        missing.push(new Date(t).toISOString().slice(0, 10));
+      }
+    }
+    safeJson(res, { ok: true, lastRun: last || null, missingDates: missing, recent: recent.rows || [] });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+app.get('/api/cron/night-audit', async (req, res) => {
+  try {
+    await ensureNightAuditLogTable();
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Idempotency check — don't run twice for the same date
+    const already = await db.query(`SELECT 1 FROM night_audit_log WHERE audit_date=$1 AND ok=TRUE`, [today]);
+    if (already.ok && already.rows?.length) {
+      return safeJson(res, { ok: true, skipped: true, reason: 'already ran today', date: today });
+    }
+
+    const result = await runNightAuditForDate(today, 'cron');
+    safeJson(res, result);
+  } catch (e) {
+    console.error('[cron/night-audit] Failed:', e);
+    safeJson(res, { ok: false, error: e.message });
+  }
+});
+
+// ─── GL Journal persistence ──────────────────────────────────────────────────
+// Receives journal entries posted by the client (ShiftContext.endShift) so the
+// ledger survives a browser wipe. Idempotent on entry.id.
+async function ensureGlJournalsTable() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS gl_journals (
+      id          TEXT PRIMARY KEY,
+      entry_date  DATE NOT NULL,
+      reference   TEXT,
+      lines       JSONB NOT NULL,
+      attachments JSONB,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+app.post('/api/gl/journal', async (req, res) => {
+  const { entry } = req.body || {};
+  if (!entry || !entry.id || !Array.isArray(entry.lines)) {
+    return safeJson(res, { ok: false, error: 'entry with id and lines required' });
+  }
+  try {
+    await ensureGlJournalsTable();
+    await db.query(
+      `INSERT INTO gl_journals (id, entry_date, reference, lines, attachments)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+      [entry.id, entry.date, entry.reference || null,
+       JSON.stringify(entry.lines), JSON.stringify(entry.attachments || {})]
+    );
+    safeJson(res, { ok: true });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// ─── Code Version Control (Vercel deployment snapshots) ──────────────────────
+// Lets any staff member save the current deployed code as a named snapshot and
+// restore it later — without touching the database data.
+//
+// Requires these Vercel env vars:
+//   VERCEL_TOKEN       — personal access token (Settings → Tokens)
+//   VERCEL_PROJECT_ID  — from project Settings → General → Project ID
+//   VERCEL_TEAM_ID     — optional, only for team-scoped projects
+
+// Ensure the code_versions table exists (idempotent)
+async function ensureCodeVersionsTable() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS code_versions (
+      id          SERIAL PRIMARY KEY,
+      label       TEXT NOT NULL,
+      deployment_id   TEXT,
+      deployment_url  TEXT,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_by  TEXT NOT NULL DEFAULT 'system',
+      notes       TEXT
+    )
+  `);
+}
+
+// GET /api/version/list — return all saved snapshots newest-first
+app.get('/api/version/list', async (req, res) => {
+  try {
+    await ensureCodeVersionsTable();
+    const result = await db.query(`SELECT * FROM code_versions ORDER BY created_at DESC LIMIT 50`);
+    safeJson(res, { ok: true, versions: result.rows || [] });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// POST /api/version/snapshot — save the current live deployment as a snapshot
+app.post('/api/version/snapshot', async (req, res) => {
+  const { label, notes, createdBy } = req.body || {};
+  const token = process.env.VERCEL_TOKEN;
+  const projectId = process.env.VERCEL_PROJECT_ID;
+
+  try {
+    await ensureCodeVersionsTable();
+
+    let deploymentId = null;
+    let deploymentUrl = null;
+
+    if (token && projectId) {
+      // Fetch the current production deployment from Vercel
+      const teamId = process.env.VERCEL_TEAM_ID;
+      const qs = teamId ? `?teamId=${teamId}&limit=1&target=production` : '?limit=1&target=production';
+      const vRes = await fetch(`https://api.vercel.com/v6/deployments${qs}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (vRes.ok) {
+        const vData = await vRes.json();
+        const dep = vData.deployments?.[0];
+        if (dep) { deploymentId = dep.uid; deploymentUrl = dep.url ? `https://${dep.url}` : null; }
+      }
+    }
+
+    const snapshotLabel = label || `Snapshot ${new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })}`;
+    const result = await db.query(
+      `INSERT INTO code_versions (label, deployment_id, deployment_url, created_by, notes)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [snapshotLabel, deploymentId, deploymentUrl, createdBy || 'staff', notes || null]
+    );
+    safeJson(res, { ok: true, version: result.rows[0] });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// POST /api/version/restore — promote a saved deployment back to production
+app.post('/api/version/restore', async (req, res) => {
+  const { versionId } = req.body || {};
+  const token = process.env.VERCEL_TOKEN;
+  const projectId = process.env.VERCEL_PROJECT_ID;
+
+  if (!versionId) return safeJson(res, { ok: false, error: 'versionId required' });
+  if (!token || !projectId) return safeJson(res, { ok: false, error: 'VERCEL_TOKEN and VERCEL_PROJECT_ID env vars are not set — cannot restore deployments automatically. Ask your developer to set these in Vercel project settings.' });
+
+  try {
+    await ensureCodeVersionsTable();
+    const vResult = await db.query(`SELECT * FROM code_versions WHERE id=$1`, [versionId]);
+    if (!vResult.rows?.length) return safeJson(res, { ok: false, error: 'Version not found' });
+    const version = vResult.rows[0];
+
+    if (!version.deployment_id) {
+      return safeJson(res, { ok: false, error: 'This snapshot has no Vercel deployment ID recorded. It may have been saved before Vercel integration was configured.' });
+    }
+
+    const teamId = process.env.VERCEL_TEAM_ID;
+    const qs = teamId ? `?teamId=${teamId}` : '';
+    // Promote (alias) the saved deployment to production
+    const promoteRes = await fetch(`https://api.vercel.com/v10/projects/${projectId}/promote/${version.deployment_id}${qs}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId: `restore-${versionId}-${Date.now()}` })
+    });
+    const promoteData = await promoteRes.json();
+    if (!promoteRes.ok) {
+      return safeJson(res, { ok: false, error: promoteData.error?.message || `Vercel API error ${promoteRes.status}` });
+    }
+
+    safeJson(res, { ok: true, message: `Restore initiated for "${version.label}". The site will update in ~30 seconds.`, version });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// DELETE /api/version/:id — remove a saved snapshot record
+app.delete('/api/version/:id', async (req, res) => {
+  try {
+    await db.query(`DELETE FROM code_versions WHERE id=$1`, [req.params.id]);
+    safeJson(res, { ok: true });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
 // ─── Catch-all: return JSON 404 (NOT HTML) ───────────────────────────────────

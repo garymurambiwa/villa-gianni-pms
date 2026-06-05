@@ -7,6 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
+import { TransactionFilterBar } from '@/components/shared/TransactionFilterBar';
+import { filterRows, printTransactionList, EMPTY_TRANSACTION_FILTER, type TransactionFilterValue } from '@/lib/transactionFilters';
+import { usePagination } from '@/hooks/usePagination';
+import PaginationBar from '@/components/shared/PaginationBar';
 
 const API = '/api/v1/inventory';
 const DB  = '/api/db/query';
@@ -73,20 +77,103 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const { items, locations, uoms, vendors, reload } = data;
   const { toast } = useToast();
   const { user } = useAuth();
-  const [search, setSearch] = useState('');
-  const [dateFilter, setDateFilter] = useState('');
+  const [filters, setFilters] = useState<TransactionFilterValue>({ ...EMPTY_TRANSACTION_FILTER });
   const [editItem, setEditItem] = useState<any | null>(null);
   const [form, setForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
+  const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
   const imgRef = useRef<HTMLInputElement>(null);
 
-  const filtered = items.filter(i =>
-    (!search || i.name.toLowerCase().includes(search.toLowerCase()) ||
-    (i.sku||'').toLowerCase().includes(search.toLowerCase()) ||
-    (i.short_id||'').toLowerCase().includes(search.toLowerCase()) ||
-    (i.id||'').toLowerCase().includes(search.toLowerCase())) &&
-    (!dateFilter || new Date(i.inserted_at).toDateString() === new Date(dateFilter).toDateString())
-  );
+  const deleteItem = async (item: any) => {
+    if (!window.confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
+    setDeletingItemId(item.id);
+    try {
+      const r = await fetch(`${API}/items/${item.id}`, { method: 'DELETE' }).then(x => x.json());
+      if (r.ok) {
+        toast({ title: 'Item deleted' });
+        reload();
+      } else {
+        toast({ title: 'Delete failed', description: r.error || 'Item may have GRN history — archive instead', variant: 'destructive' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Delete failed', description: e?.message, variant: 'destructive' });
+    }
+    setDeletingItemId(null);
+  };
+
+  const printItem = (item: any) => {
+    const loc = locations.find((l:any) => l.id === item.default_location_id)?.name || '—';
+    const uom = uoms.find((u:any) => u.id === item.base_uom_id)?.name || item.base_uom_id;
+    const supplier = vendors.find((v:any) => v.id === item.supplier_id)?.name || '—';
+    const fmt2 = (n: any) => Number(n || 0).toFixed(2);
+    const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Item — ${item.name}</title>
+      <style>
+        body { font-family: system-ui, -apple-system, sans-serif; padding: 28px; color: #111; max-width: 600px; margin: auto; }
+        h1 { font-size: 22px; margin: 0 0 4px; }
+        .sub { color: #666; font-size: 13px; margin-bottom: 18px; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+        td.label { color: #555; width: 40%; font-weight: 600; }
+        .barcode { margin: 20px 0; padding: 16px; border: 2px dashed #ccc; text-align: center; font-family: 'Courier New', monospace; font-size: 16px; letter-spacing: 2px; }
+        .footer { margin-top: 24px; font-size: 11px; color: #888; border-top: 1px solid #eee; padding-top: 8px; }
+      </style></head><body>
+      <h1>${item.name}</h1>
+      <div class="sub">SKU: ${item.sku || '—'} · Category: ${item.category || '—'}</div>
+      ${item.barcode ? `<div class="barcode">${item.barcode}</div>` : ''}
+      <table>
+        <tr><td class="label">Item ID</td><td>${item.id}</td></tr>
+        <tr><td class="label">Short ID</td><td>${item.short_id || String(item.id || '').slice(-4).toUpperCase()}</td></tr>
+        <tr><td class="label">Sub-Category</td><td>${item.sub_category || '—'}</td></tr>
+        <tr><td class="label">Base UOM</td><td>${uom}</td></tr>
+        <tr><td class="label">Holding Location</td><td>${loc}</td></tr>
+        <tr><td class="label">Last Cost Price</td><td>$${fmt2(item.last_cost_price)}</td></tr>
+        <tr><td class="label">Weighted Avg Cost</td><td>$${fmt2(item.weighted_avg_cost)}</td></tr>
+        <tr><td class="label">Selling Price</td><td>$${fmt2(item.selling_price)}</td></tr>
+        <tr><td class="label">Par Level (reorder)</td><td>${item.par_level || '—'}</td></tr>
+        <tr><td class="label">Default Wastage %</td><td>${item.default_wastage_pct ? item.default_wastage_pct + '%' : '—'}</td></tr>
+        <tr><td class="label">Preferred Supplier</td><td>${supplier}</td></tr>
+        <tr><td class="label">Expiry Tracking</td><td>${item.expiry_tracking ? 'Yes' : 'No'}</td></tr>
+        ${item.notes ? `<tr><td class="label">Notes</td><td>${item.notes}</td></tr>` : ''}
+        <tr><td class="label">Created</td><td>${new Date(item.inserted_at).toLocaleString()}</td></tr>
+      </table>
+      <div class="footer">Printed ${new Date().toLocaleString()} · Powered by COREPMS</div>
+      <script>window.onload = () => { setTimeout(() => window.print(), 250); };</script>
+      </body></html>`;
+    const w = window.open('about:blank', '_blank');
+    if (!w) { toast({ title: 'Pop-up blocked', description: 'Allow pop-ups to print item specs.', variant: 'destructive' }); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+  };
+
+  const filtered = filterRows(items, filters, {
+    date: (i:any) => i.inserted_at,
+    category: (i:any) => i.category,
+    search: (i:any) => [i.name, i.sku, i.short_id, i.id],
+  });
+  const itemsPg = usePagination<any>(filtered);
+
+  // Categories actually present (fall back to the master list for new setups).
+  const itemCategories = (() => {
+    const present = Array.from(new Set(items.map((i:any) => i.category).filter(Boolean))).sort();
+    return present.length ? present : CATEGORIES;
+  })();
+
+  const printItems = () => printTransactionList({
+    title: 'Inventory Items',
+    filters,
+    columns: [
+      { header: 'Short ID', value: (i:any) => '#' + (i.short_id || String(i.id || '').slice(-4)).toUpperCase() },
+      { header: 'SKU', value: (i:any) => i.sku || '—' },
+      { header: 'Name', value: (i:any) => i.name || '' },
+      { header: 'Category', value: (i:any) => i.category || '' },
+      { header: 'UOM', value: (i:any) => i.base_uom_code || i.base_uom_id || '' },
+      { header: 'Cost', value: (i:any) => fmt(i.last_cost_price), align: 'right' },
+      { header: 'Avg Cost', value: (i:any) => fmt(i.weighted_avg_cost), align: 'right' },
+      { header: 'Location', value: (i:any) => locations.find((l:any) => l.id === i.default_location_id)?.name || '—' },
+      { header: 'Date', value: (i:any) => i.inserted_at ? new Date(i.inserted_at).toLocaleDateString() : '' },
+    ],
+    rows: filtered,
+    footer: [{ label: 'Items', value: filtered.length }],
+  });
 
   const openNew = () => {
     setForm({ category: 'Food', base_uom_id: 'uom_unit', expiry_tracking: false });
@@ -148,14 +235,19 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
   return (
     <div className="h-full flex flex-col">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <Input placeholder="Search by ID, short ID, name, or SKU…" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
-        <Input type="date" placeholder="Filter by date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="max-w-xs" />
-        <span className="text-sm text-gray-500">{filtered.length} items</span>
-        <div className="ml-auto flex gap-2">
+      <TransactionFilterBar
+        value={filters}
+        onChange={setFilters}
+        show={{ department: false, status: false }}
+        categories={itemCategories}
+        searchPlaceholder="Search by ID, short ID, name, or SKU…"
+        resultCount={filtered.length}
+        onPrint={printItems}
+        rightActions={
           <Button onClick={openNew} className="bg-indigo-600 text-white hover:bg-indigo-700">＋ New Item</Button>
-        </div>
-      </div>
+        }
+        className="mb-4"
+      />
 
       {/* Table */}
       <div className="flex-1 overflow-auto rounded-lg border border-gray-200">
@@ -171,7 +263,7 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
             {filtered.length === 0 && (
               <tr><td colSpan={11} className="text-center py-12 text-gray-400">No items found</td></tr>
             )}
-            {filtered.map((item: any) => (
+            {itemsPg.pageItems.map((item: any) => (
               <tr key={item.id} className="hover:bg-gray-50">
                 <td className="px-3 py-2 font-mono text-xs text-gray-500">
                   <span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold tracking-wide">
@@ -196,13 +288,34 @@ function ItemMaster({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 </td>
                 <td className="px-3 py-2 text-gray-500 text-xs">{new Date(item.inserted_at).toLocaleDateString()}</td>
                 <td className="px-3 py-2">
-                  <Button variant="outline" size="sm" onClick={() => openEdit(item)}>Edit</Button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => openEdit(item)}
+                      title="Edit item"
+                      className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded border border-blue-200 hover:bg-blue-50 transition-colors">
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => printItem(item)}
+                      title="Print item label / spec sheet"
+                      className="text-xs text-gray-700 hover:text-gray-900 px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 transition-colors">
+                      Print
+                    </button>
+                    <button
+                      onClick={() => deleteItem(item)}
+                      disabled={deletingItemId === item.id}
+                      title="Delete item"
+                      className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40 px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">
+                      {deletingItemId === item.id ? '…' : 'Delete'}
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      <PaginationBar {...itemsPg} itemLabel="items" />
 
       {/* Item Edit/Create Modal — SINGLE SOURCE OF TRUTH */}
       {editItem !== null && (
@@ -385,7 +498,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   // FIX: never hardcode loc_main_cellar — it may be is_active=false on some properties.
   // Initialize to empty string and let useEffect below set the first active storage location.
   const [destLocation, setDestLocation] = useState('');
-  const [lines, setLines] = useState<any[]>([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, expiry_date:'' }]);
+  const [lines, setLines] = useState<any[]>([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, vat_type:'15.50', expiry_date:'' }]);
   const [saving, setSaving] = useState(false);
   const [itemSearch, setItemSearch] = useState<Record<number,string>>({});
   // Floating dropdown state
@@ -396,13 +509,46 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const [detailLines, setDetailLines] = useState<any[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingGrnId, setEditingGrnId] = useState<string | null>(null); // null = new GRN, non-null = editing draft
   // GRN header fields — these were the missing state variables causing ReferenceError
   const [grnDate, setGrnDate] = useState(new Date().toISOString().split('T')[0]);
   const [grnNotes, setGrnNotes] = useState('');
+  // Shared transaction filters (date period / status / search)
+  const [filters, setFilters] = useState<TransactionFilterValue>({ ...EMPTY_TRANSACTION_FILTER });
 
   useEffect(() => {
-    apiGet('/grn?limit=30').then(r => { if (r.ok) setGrns(r.data); });
+    apiGet('/grn?limit=500').then(r => { if (r.ok) setGrns(r.data); });
   }, []);
+
+  const locName = (id: string) => locations.find((l:any) => l.id === id)?.name || id || '';
+
+  // Apply shared filters. GRNs have no category/department, so we filter on
+  // date (receipt/created), status (posted/draft) and free-text search.
+  const filteredGrns = filterRows(grns, filters, {
+    date: (g:any) => g.receipt_date || g.inserted_at,
+    status: (g:any) => g.status,
+    search: (g:any) => [g.grn_number, g.supplier_name, g.supplier_invoice_number, locName(g.destination_location_id)],
+  });
+  const grnsPg = usePagination<any>(filteredGrns);
+
+  const printGrns = () => printTransactionList({
+    title: 'Goods Received Notes',
+    filters,
+    columns: [
+      { header: 'GRN #', value: (g:any) => g.grn_number || '' },
+      { header: 'Supplier', value: (g:any) => g.supplier_name || '' },
+      { header: 'Invoice #', value: (g:any) => g.supplier_invoice_number || '—' },
+      { header: 'Destination', value: (g:any) => locName(g.destination_location_id) },
+      { header: 'Total', value: (g:any) => fmt(g.total_value), align: 'right' },
+      { header: 'Status', value: (g:any) => g.status || '' },
+      { header: 'Date', value: (g:any) => { const d = g.receipt_date || g.inserted_at; return d ? new Date(d).toLocaleDateString() : ''; } },
+    ],
+    rows: filteredGrns,
+    footer: [
+      { label: 'GRNs', value: filteredGrns.length },
+      { label: 'Total Value', value: fmt(filteredGrns.reduce((s:number, g:any) => s + Number(g.total_value || 0), 0)) },
+    ],
+  });
 
   // Auto-initialize destLocation to first ACTIVE storage location from the API.
   // Prevents the React controlled-select mismatch where hardcoded 'loc_main_cellar'
@@ -415,7 +561,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
     }
   }, [storageLocations.length]);
 
-  const addLine = () => setLines(l => [...l, { item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, expiry_date:'' }]);
+  const addLine = () => setLines(l => [...l, { item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, vat_type:'15.50', expiry_date:'' }]);
   const removeLine = (i: number) => setLines(l => l.filter((_,idx) => idx !== i));
   const updateLine = (i: number, field: string, val: any) => setLines(l => l.map((ln,idx) => idx===i ? {...ln,[field]:val} : ln));
 
@@ -439,66 +585,6 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
     setLoadingDetail(false);
   };
 
-  const printGrn = async (g: any, e: React.MouseEvent) => {
-    e.stopPropagation();
-    let lines = detailLines;
-    if (detailGrn?.id !== g.id) {
-      try {
-        const r = await fetch(`/api/v1/inventory/grn/${g.id}`).then(x => x.json());
-        lines = r.ok ? (r.data?.lines || []) : [];
-      } catch { lines = []; }
-    }
-    const win = window.open('', '_blank');
-    if (!win) return;
-    const loc = locations.find((l: any) => l.id === g.destination_location_id)?.name || g.destination_location_id;
-    const html = `<html><head><title>GRN ${g.grn_number}</title>
-<style>
-  body { font-family: monospace; font-size: 12px; padding: 20px; }
-  h1 { font-size: 18px; margin-bottom: 4px; }
-  .meta { color: #555; margin-bottom: 16px; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
-  th { background: #eee; }
-  .right { text-align: right; }
-  .total-row td { font-weight: bold; border-top: 2px solid #333; }
-  @media print { .no-print { display: none; } }
-</style></head><body>
-  <div class="no-print" style="text-align:right;margin-bottom:12px"><button onclick="window.print()">🖨 Print</button></div>
-  <h1>Goods Received Note</h1>
-  <div class="meta">
-    <div><strong>GRN #:</strong> ${g.grn_number}</div>
-    <div><strong>Date:</strong> ${new Date(g.inserted_at).toLocaleDateString()}</div>
-    <div><strong>Supplier:</strong> ${g.supplier_name}</div>
-    <div><strong>Invoice #:</strong> ${g.supplier_invoice_number || '—'}</div>
-    <div><strong>Destination:</strong> ${loc}</div>
-    <div><strong>Status:</strong> ${g.status}</div>
-  </div>
-  <table><thead><tr><th>#</th><th>Item</th><th class="right">Qty</th><th>UOM</th><th class="right">Unit Cost</th><th class="right">Total</th></tr></thead><tbody>
-    ${lines.map((l: any, i: number) => `<tr>
-      <td>${i + 1}</td>
-      <td>${l.item_name || ''}</td>
-      <td class="right">${fmtQ(l.qty_received)}</td>
-      <td>${uoms.find((u: any) => u.id === l.uom_id || u.id === l.received_uom_id)?.name || ''}</td>
-      <td class="right">${fmt(l.unit_cost)}</td>
-      <td class="right">${fmt(Number(l.qty_received || 0) * Number(l.unit_cost || 0))}</td>
-    </tr>`).join('')}
-    <tr class="total-row"><td colspan="5" class="right">Total</td><td class="right">${fmt(g.total_value)}</td></tr>
-  </tbody></table></body></html>`;
-    win.document.write(html);
-    win.document.close();
-  };
-
-  const editGrn = (g: any, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSupplier(g.supplier_name || '');
-    setSupplierId(g.supplier_id || '');
-    setInvoiceNum(g.supplier_invoice_number || '');
-    setDestLocation(g.destination_location_id || '');
-    setGrnDate(g.receipt_date ? g.receipt_date.split('T')[0] : new Date().toISOString().split('T')[0]);
-    setGrnNotes(g.notes || '');
-    setShowForm(true);
-  };
-
   const deleteGrn = async (id: string) => {
     if (!window.confirm('Delete this GRN? This cannot be undone.')) return;
     setDeletingId(id);
@@ -517,7 +603,116 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
     setDeletingId(null);
   };
 
-  const total = lines.reduce((s, l) => s + (Number(l.qty||0) * Number(l.unit_cost||0)), 0);
+  // Edit a saved GRN: load its lines and pre-populate the form.
+  // Posted GRNs are read-only — edits would require reversing the stock ledger
+  // which we don't expose here. Draft GRNs can be edited & re-saved.
+  const editGrn = async (g: any) => {
+    if (g.status === 'posted') {
+      toast({ title: 'Cannot edit a posted GRN', description: 'Posted GRNs are locked. Delete and recreate if needed.', variant: 'destructive' });
+      return;
+    }
+    try {
+      const r = await fetch(`/api/v1/inventory/grn/${g.id}`).then(x => x.json());
+      if (!r.ok) throw new Error(r.error || 'Failed to load GRN');
+      const loadedLines = (r.data?.lines || []).map((l: any) => ({
+        item_id:     l.item_id,
+        item_name:   l.item_name || items.find((i:any) => i.id === l.item_id)?.name || '',
+        qty:         Number(l.qty_received || 0),
+        uom:         l.received_uom_id || l.uom_id || 'uom_unit',
+        unit_cost:   Number(l.unit_cost || 0),
+        vat_type:    String(Number(l.vat_rate || 0)) === '0' ? '0' : String(l.vat_rate ?? '15.50'),
+        expiry_date: l.expiry_date ? String(l.expiry_date).slice(0, 10) : '',
+      }));
+      setSupplier(g.supplier_name || '');
+      setSupplierId(g.supplier_id || '');
+      setInvoiceNum(g.supplier_invoice_number || '');
+      setDestLocation(g.destination_location_id || destLocation);
+      setGrnDate(g.receipt_date ? String(g.receipt_date).slice(0, 10) : new Date().toISOString().slice(0, 10));
+      setGrnNotes(g.notes || '');
+      setLines(loadedLines.length ? loadedLines : [{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, vat_type:'15.50', expiry_date:'' }]);
+      setEditingGrnId(g.id);
+      setShowForm(true);
+      setDetailGrn(null);
+    } catch (e: any) {
+      toast({ title: 'Edit failed', description: e.message, variant: 'destructive' });
+    }
+  };
+
+  // Print a GRN: fetch its lines, render an A4 receipt and pop a print window.
+  const printGrn = async (g: any) => {
+    try {
+      const r = await fetch(`/api/v1/inventory/grn/${g.id}`).then(x => x.json());
+      const ls = r.ok ? (r.data?.lines || []) : [];
+      const fmt2 = (n: any) => Number(n || 0).toFixed(2);
+      let sub = 0, vat = 0;
+      const rows = ls.map((l: any) => {
+        const qty = Number(l.qty_received || 0);
+        const cost = Number(l.unit_cost || 0);
+        const lt = qty * cost;
+        const rate = Number(l.vat_rate || 0);
+        const rv = lt * (rate / 100);
+        sub += lt; vat += rv;
+        const name = l.item_name || items.find((i:any) => i.id === l.item_id)?.name || l.item_id;
+        return `<tr><td>${name}</td><td class="r">${qty}</td><td class="r">${fmt2(cost)}</td><td class="r">${rate ? rate.toFixed(2) + '%' : '—'}</td><td class="r">${fmt2(rv)}</td><td class="r">${fmt2(lt)}</td></tr>`;
+      }).join('');
+      const grand = sub + vat;
+      const locName = locations.find((l:any) => l.id === g.destination_location_id)?.name || g.destination_location_id;
+      const html = `<!doctype html><html><head><meta charset="utf-8"/><title>GRN ${g.grn_number}</title>
+        <style>
+          body { font-family: system-ui, -apple-system, sans-serif; padding: 24px; color: #111; max-width: 760px; margin: auto; }
+          h1 { font-size: 20px; margin: 0 0 4px; }
+          .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; margin: 14px 0 20px; font-size: 13px; }
+          .meta div b { display: inline-block; min-width: 110px; color: #555; font-weight: 600; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          th, td { padding: 6px 8px; border-bottom: 1px solid #e5e5e5; text-align: left; }
+          th { background: #f5f5f5; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+          td.r, th.r { text-align: right; }
+          .totals { margin-top: 16px; display: flex; justify-content: flex-end; }
+          .totals table { width: 280px; }
+          .totals td { border: none; padding: 3px 8px; font-size: 13px; }
+          .totals .grand { border-top: 1px solid #111; font-weight: 700; font-size: 15px; padding-top: 8px; }
+          .footer { margin-top: 32px; font-size: 11px; color: #888; border-top: 1px solid #eee; padding-top: 8px; }
+        </style></head><body>
+        <h1>Goods Received Note — ${g.grn_number}</h1>
+        <div class="meta">
+          <div><b>Supplier:</b> ${g.supplier_name || '—'}</div>
+          <div><b>Invoice #:</b> ${g.supplier_invoice_number || '—'}</div>
+          <div><b>Destination:</b> ${locName}</div>
+          <div><b>Receipt Date:</b> ${g.receipt_date ? new Date(g.receipt_date).toLocaleDateString() : '—'}</div>
+          <div><b>Status:</b> ${g.status}</div>
+          <div><b>Created:</b> ${new Date(g.inserted_at).toLocaleString()}</div>
+          ${g.notes ? `<div style="grid-column: 1 / -1"><b>Notes:</b> ${g.notes}</div>` : ''}
+        </div>
+        <table>
+          <thead><tr>
+            <th>Item</th><th class="r">Qty</th><th class="r">Unit Cost</th>
+            <th class="r">VAT Rate</th><th class="r">Row VAT</th><th class="r">Line Total</th>
+          </tr></thead>
+          <tbody>${rows || '<tr><td colspan="6" style="text-align:center;color:#888;padding:12px">No lines</td></tr>'}</tbody>
+        </table>
+        <div class="totals"><table>
+          <tr><td>Sub Total</td><td class="r">${fmt2(sub)}</td></tr>
+          <tr><td>VAT</td><td class="r">${fmt2(vat)}</td></tr>
+          <tr class="grand"><td>GRN Total</td><td class="r">${fmt2(grand)}</td></tr>
+        </table></div>
+        <div class="footer">Printed ${new Date().toLocaleString()} · Powered by COREPMS</div>
+        <script>window.onload = () => { setTimeout(() => window.print(), 250); };</script>
+        </body></html>`;
+      const w = window.open('about:blank', '_blank');
+      if (!w) { toast({ title: 'Pop-up blocked', description: 'Allow pop-ups to print GRNs.', variant: 'destructive' }); return; }
+      w.document.open(); w.document.write(html); w.document.close();
+    } catch (e: any) {
+      toast({ title: 'Print failed', description: e.message, variant: 'destructive' });
+    }
+  };
+
+  // Per-line subtotal (qty * unit cost) and VAT (subtotal * rate%).
+  // Sub Total is sum of subtotals; VAT total is sum of per-row VAT; GRN Total = Sub + VAT.
+  const lineSubtotal = (l: any) => Number(l.qty || 0) * Number(l.unit_cost || 0);
+  const lineVat      = (l: any) => lineSubtotal(l) * (Number(l.vat_type || 0) / 100);
+  const total        = lines.reduce((s, l) => s + lineSubtotal(l), 0);
+  const totalVat     = lines.reduce((s, l) => s + lineVat(l), 0);
+  const grnGrand     = total + totalVat;
 
   const submit = async () => {
     if (!supplier) { toast({ title: 'Supplier required', variant:'destructive' }); return; }
@@ -534,24 +729,44 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
       receipt_date: grnDate || undefined,
       notes: grnNotes || undefined,
       created_by: user?.id || 'system',
-      lines: lines.filter(l => l.item_id).map(l => ({
-        item_id:         l.item_id,
-        qty_received:    Number(l.qty),
-        received_uom_id: l.uom,
-        unit_cost:       Number(l.unit_cost),
-        expiry_date:     l.expiry_date || undefined,
-      }))
+      lines: lines.filter(l => l.item_id).map(l => {
+        const sub = Number(l.qty || 0) * Number(l.unit_cost || 0);
+        const rate = Number(l.vat_type || 0);
+        const rowVat = Number((sub * (rate / 100)).toFixed(2));
+        return {
+          item_id:         l.item_id,
+          qty_received:    Number(l.qty),
+          received_uom_id: l.uom,
+          unit_cost:       Number(l.unit_cost),
+          vat_rate:        rate,
+          row_vat:         rowVat,
+          line_total:      sub,
+          expiry_date:     l.expiry_date || undefined,
+        };
+      }),
+      totals: { sub_total: total, vat_total: totalVat, grn_total: grnGrand },
     };
-    const r = await apiPost('/grn', payload);
+    // When editing an existing draft, PUT to the resource instead of creating a new one.
+    const r = editingGrnId
+      ? await fetch(`/api/v1/inventory/grn/${editingGrnId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).then(x => x.json()).catch(e => ({ ok: false, error: e?.message }))
+      : await apiPost('/grn', payload);
+
     if (r.ok) {
-      // Auto-post
-      await apiPost(`/grn/${r.data.id}/post`, { posted_by: user?.id || 'system' });
-      toast({ title: `GRN ${r.data.grn_number} posted successfully` });
+      if (!editingGrnId) {
+        // Auto-post only on initial creation; edits stay as draft until the user re-posts.
+        await apiPost(`/grn/${r.data.id}/post`, { posted_by: user?.id || 'system' });
+      }
+      toast({ title: editingGrnId ? `GRN updated` : `GRN ${r.data.grn_number} posted successfully` });
+      setEditingGrnId(null);
       setShowForm(false); setFullScreen(false);
       setLines([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, expiry_date:'' }]);
       setSupplier(''); setSupplierId(''); setInvoiceNum('');
       setGrnDate(new Date().toISOString().split('T')[0]); setGrnNotes('');
-      apiGet('/grn?limit=30').then(res => { if (res.ok) setGrns(res.data); });
+      apiGet('/grn?limit=500').then(res => { if (res.ok) setGrns(res.data); });
     } else {
       toast({ title: 'GRN failed', description: r.error, variant:'destructive' });
     }
@@ -560,9 +775,29 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-base font-bold text-gray-700">Goods Received Notes</h3>
-        <Button onClick={() => setShowForm(true)} className="bg-green-700 text-white hover:bg-green-800">＋ New GRN</Button>
+      <div className="mb-4">
+        <h3 className="text-base font-bold text-gray-700 mb-3">Goods Received Notes</h3>
+        <TransactionFilterBar
+          value={filters}
+          onChange={setFilters}
+          show={{ category: false, department: false }}
+          statuses={[{ value: 'posted', label: 'Posted' }, { value: 'draft', label: 'Draft' }]}
+          searchPlaceholder="Search GRN #, supplier, invoice…"
+          resultCount={filteredGrns.length}
+          onPrint={printGrns}
+          rightActions={
+            <Button
+              onClick={() => {
+                // Reset to a clean slate when opening as "New GRN"
+                setEditingGrnId(null);
+                setSupplier(''); setSupplierId(''); setInvoiceNum('');
+                setGrnDate(new Date().toISOString().split('T')[0]); setGrnNotes('');
+                setLines([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, vat_type:'15.50', expiry_date:'' }]);
+                setShowForm(true);
+              }}
+              className="bg-green-700 text-white hover:bg-green-800">＋ New GRN</Button>
+          }
+        />
       </div>
 
       {/* GRN history */}
@@ -576,8 +811,8 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {grns.length === 0 && <tr><td colSpan={8} className="text-center py-10 text-gray-400">No GRNs yet</td></tr>}
-            {grns.map((g:any) => (
+            {filteredGrns.length === 0 && <tr><td colSpan={8} className="text-center py-10 text-gray-400">{grns.length === 0 ? 'No GRNs yet' : 'No GRNs match the current filter'}</td></tr>}
+            {grnsPg.pageItems.map((g:any) => (
               <tr key={g.id}
                 className={`hover:bg-indigo-50 cursor-pointer transition-colors ${detailGrn?.id === g.id ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-300' : ''}`}
                 onClick={() => openDetailGrn(g)}>
@@ -595,18 +830,22 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center gap-1">
                     <button
-                      onClick={(e) => editGrn(g, e)}
-                      className="text-xs text-indigo-500 hover:text-indigo-700 px-2 py-1 rounded border border-indigo-200 hover:bg-indigo-50 transition-colors">
+                      onClick={() => editGrn(g)}
+                      title={g.status === 'posted' ? 'Posted GRNs are locked' : 'Edit this GRN'}
+                      disabled={g.status === 'posted'}
+                      className="text-xs text-blue-600 hover:text-blue-800 disabled:opacity-40 disabled:cursor-not-allowed px-2 py-1 rounded border border-blue-200 hover:bg-blue-50 transition-colors">
                       Edit
                     </button>
                     <button
-                      onClick={(e) => printGrn(g, e)}
-                      className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 transition-colors">
+                      onClick={() => printGrn(g)}
+                      title="Print GRN receipt"
+                      className="text-xs text-gray-700 hover:text-gray-900 px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 transition-colors">
                       Print
                     </button>
                     <button
                       disabled={deletingId === g.id}
                       onClick={() => deleteGrn(g.id)}
+                      title="Delete GRN"
                       className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40 px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">
                       {deletingId === g.id ? '…' : 'Delete'}
                     </button>
@@ -617,6 +856,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
           </tbody>
         </table>
       </div>
+      <PaginationBar {...grnsPg} itemLabel="GRNs" />
 
       {/* GRN Detail Panel */}
       {detailGrn && (
@@ -727,7 +967,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    {['Item (SKU or name)','Qty Received','UOM','Unit Cost','Line Total','Expiry Date',''].map(h => (
+                    {['Item (SKU or name)','Qty','UOM','Unit Cost','VAT Tax Option','Row VAT ($)','Line Total','Expiry Date',''].map(h => (
                       <th key={h} className="px-2 py-2 text-left text-xs font-semibold text-gray-600">{h}</th>
                     ))}
                   </tr>
@@ -836,8 +1076,28 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                           <Input type="number" min={0} step="0.0001" value={line.unit_cost}
                             onChange={e => updateLine(i, 'unit_cost', e.target.value)} className="text-sm text-right" />
                         </td>
+                        {/* VAT Tax Option dropdown */}
+                        <td className="px-2 py-1 w-32">
+                          <select
+                            value={line.vat_type || '15.50'}
+                            onChange={e => updateLine(i, 'vat_type', e.target.value)}
+                            className="w-full h-9 px-2 text-xs border border-gray-300 rounded-md bg-white
+                                       focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500">
+                            <option value="15.50">15.50%</option>
+                            <option value="0">No VAT</option>
+                          </select>
+                        </td>
+                        {/* Computed Row VAT — read-only */}
+                        <td className="px-2 py-1 w-24">
+                          <input
+                            readOnly
+                            tabIndex={-1}
+                            value={'$' + fmt(lineVat(line))}
+                            className="w-full h-9 px-2 text-xs text-right border border-gray-200 rounded-md bg-gray-100 text-gray-700 cursor-not-allowed"
+                          />
+                        </td>
                         <td className="px-2 py-1 w-24 text-right font-medium">
-                          {fmt(Number(line.qty||0) * Number(line.unit_cost||0))}
+                          {fmt(lineSubtotal(line))}
                         </td>
                         <td className="px-2 py-1 w-32">
                           <Input type="date" value={line.expiry_date||''}
@@ -853,11 +1113,21 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
               </table>
             </div>
 
-              <div className="flex items-center justify-between mt-4">
+              <div className="flex items-start justify-between mt-4 gap-4">
                 <Button variant="outline" onClick={addLine}>＋ Add Line</Button>
-                <div className="text-right">
-                  <div className="text-sm text-gray-500">GRN Total</div>
-                  <div className="text-2xl font-bold text-indigo-700">{fmt(total)}</div>
+                <div className="border rounded-lg bg-gray-50/50 px-4 py-3 w-72 space-y-1.5">
+                  <div className="flex justify-between text-sm text-gray-700">
+                    <span>Sub Total:</span>
+                    <span className="font-mono">{fmt(total)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-gray-700">
+                    <span>VAT:</span>
+                    <span className="font-mono">{fmt(totalVat)}</span>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t border-gray-300 font-semibold">
+                    <span>GRN Total:</span>
+                    <span className="font-mono text-base text-indigo-700">{fmt(grnGrand)}</span>
+                  </div>
                 </div>
               </div>
 
@@ -891,13 +1161,13 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   const [saving, setSaving] = useState(false);
   const [balances, setBalances] = useState<any[]>([]);
   const [itemSearch, setItemSearch] = useState<Record<number,string>>({});
-  const [dateFilter, setDateFilter] = useState('');
+  const [filters, setFilters] = useState<TransactionFilterValue>({ ...EMPTY_TRANSACTION_FILTER });
   const [fullScreen, setFullScreen] = useState(false);
   const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
-    apiGet('/transfer?limit=30').then(r => { if (r.ok) setTransfers(r.data); });
+    apiGet('/transfer?limit=500').then(r => { if (r.ok) setTransfers(r.data); });
   }, []);
 
   // Auto-initialize src/dst to first active storage/outlet locations from the API
@@ -914,7 +1184,30 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
     if (srcLoc) apiGet(`/balance/${srcLoc}`).then(r => { if (r.ok) setBalances(r.data || []); });
   }, [srcLoc]);
 
-  const filteredTransfers = transfers.filter(t => !dateFilter || new Date(t.inserted_at).toDateString() === new Date(dateFilter).toDateString());
+  const locName = (id: string) => locations.find((l:any) => l.id === id)?.name || id || '';
+
+  // Shared transaction filters (date period / status / search). No category/department for transfers.
+  const filteredTransfers = filterRows(transfers, filters, {
+    date: (t:any) => t.inserted_at,
+    status: (t:any) => t.status,
+    search: (t:any) => [t.transfer_number, t.reference_note, locName(t.source_location_id), locName(t.destination_location_id)],
+  });
+  const transfersPg = usePagination<any>(filteredTransfers);
+
+  const printTransfers = () => printTransactionList({
+    title: 'Stock Transfers / Requisitions',
+    filters,
+    columns: [
+      { header: 'Transfer #', value: (t:any) => t.transfer_number || '' },
+      { header: 'From', value: (t:any) => locName(t.source_location_id) },
+      { header: 'To', value: (t:any) => locName(t.destination_location_id) },
+      { header: 'Ref', value: (t:any) => t.reference_note || '—' },
+      { header: 'Status', value: (t:any) => t.status || '' },
+      { header: 'Date', value: (t:any) => { const d = new Date(t.inserted_at); return isNaN(d.getTime()) ? '' : d.toLocaleDateString(); } },
+    ],
+    rows: filteredTransfers,
+    footer: [{ label: 'Transfers', value: filteredTransfers.length }],
+  });
 
   const addTLine = () => setTLines(l => [...l, { item_id:'', item_name:'', qty:1, uom:'uom_unit', date:'' }]);
   const removeTLine = (i: number) => setTLines(l => l.filter((_,idx) => idx !== i));
@@ -960,7 +1253,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
       setReqRef('');
       setTransferDate('');
       setNotes('');
-      apiGet('/transfer?limit=30').then(res => { if (res.ok) setTransfers(res.data); });
+      apiGet('/transfer?limit=500').then(res => { if (res.ok) setTransfers(res.data); });
     } else {
       toast({ title: 'Transfer failed', description: r.error, variant:'destructive' });
     }
@@ -969,12 +1262,18 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <h3 className="text-base font-bold text-gray-700">Stock Transfers</h3>
-          <Input type="date" placeholder="Filter by date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="max-w-xs" />
-        </div>
-        <Button onClick={() => setShowForm(true)} className="bg-amber-600 text-white hover:bg-amber-700">＋ New Transfer</Button>
+      <div className="mb-4">
+        <h3 className="text-base font-bold text-gray-700 mb-3">Stock Transfers</h3>
+        <TransactionFilterBar
+          value={filters}
+          onChange={setFilters}
+          show={{ category: false, department: false }}
+          statuses={[{ value: 'approved', label: 'Approved' }, { value: 'pending', label: 'Pending' }, { value: 'draft', label: 'Draft' }]}
+          searchPlaceholder="Search transfer #, ref, location…"
+          resultCount={filteredTransfers.length}
+          onPrint={printTransfers}
+          rightActions={<Button onClick={() => setShowForm(true)} className="bg-amber-600 text-white hover:bg-amber-700">＋ New Transfer</Button>}
+        />
       </div>
 
       <div className="flex-1 overflow-auto rounded-lg border border-gray-200">
@@ -988,7 +1287,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
           </thead>
           <tbody className="divide-y divide-gray-100">
             {filteredTransfers.length === 0 && <tr><td colSpan={6} className="text-center py-10 text-gray-400">No transfers found</td></tr>}
-            {filteredTransfers.map((t:any) => (
+            {transfersPg.pageItems.map((t:any) => (
               <tr key={t.id} className="hover:bg-gray-50">
                 <td className="px-3 py-2 font-mono font-bold text-amber-700">{t.transfer_number}</td>
                 <td className="px-3 py-2">{locations.find((l:any) => l.id === t.source_location_id)?.name || t.source_location_id}</td>
@@ -1005,6 +1304,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
           </tbody>
         </table>
       </div>
+      <PaginationBar {...transfersPg} itemLabel="transfers" />
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto pt-8 pb-8">

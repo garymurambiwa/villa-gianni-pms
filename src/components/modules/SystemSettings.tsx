@@ -8,10 +8,122 @@ import { useToast } from '@/hooks/use-toast';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, ArrowLeft, Building2, Palette, Globe, Receipt, Database, Download } from 'lucide-react';
+import { Loader2, ArrowLeft, Building2, Palette, Globe, Receipt, Database, Download, CalendarClock, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '@/lib/db';
 import { writeReceiptBranding, invalidateReceiptBrandingCache } from '@/lib/printSettings';
+
+// ─── System Dates panel ──────────────────────────────────────────────────────
+// Read-only view of the dates the system is running on, with drift detection
+// and a one-click "sync to today" fix. Built because the POS business_date has
+// twice been corrupted to a future value (e.g. 2026-06-02) by manual audit runs,
+// silently breaking the Night Audit catch-up. This surfaces it immediately.
+const SystemDatesCard: React.FC = () => {
+    const { toast } = useToast();
+    const [loading, setLoading] = useState(true);
+    const [fixing, setFixing] = useState(false);
+    const [businessDate, setBusinessDate] = useState<string | null>(null);
+    const [lastAudit, setLastAudit] = useState<string | null>(null);
+    const [serverNow, setServerNow] = useState<string | null>(null);
+
+    const browserToday = new Date().toISOString().slice(0, 10);
+
+    const load = React.useCallback(async () => {
+        setLoading(true);
+        try {
+            const res = await fetch('/api/night-audit/status').then(r => r.json());
+            if (res?.ok) {
+                setBusinessDate(res.businessDate || null);
+                setLastAudit(res.lastRun?.business_date_str || res.lastRun?.business_date?.slice?.(0, 10) || null);
+            }
+            // Server "now" from a lightweight DB call (authoritative clock)
+            const t = await fetch('/api/db/query', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sql: 'SELECT CURRENT_DATE::text AS d' }),
+            }).then(r => r.json());
+            if (t?.ok && t.rows?.length) setServerNow(t.rows[0].d);
+        } catch { /* non-fatal */ }
+        setLoading(false);
+    }, []);
+
+    useEffect(() => { load(); }, [load]);
+
+    // Drift = business date is ahead of the server's real date (the corruption case)
+    const reference = serverNow || browserToday;
+    const drift = businessDate && businessDate > reference;
+
+    const syncToToday = async () => {
+        if (!serverNow) { toast({ title: 'Cannot determine server date', variant: 'destructive' }); return; }
+        setFixing(true);
+        try {
+            await fetch('/api/db/query', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sql: 'UPDATE system_configs SET value=$1::jsonb WHERE key=$2',
+                    params: [JSON.stringify({ date: serverNow, reset_at: new Date().toISOString(), reset_reason: 'manual sync from Settings' }), 'business_date'],
+                }),
+            }).then(r => r.json());
+            toast({ title: 'Business date synced', description: `Set to ${serverNow}.` });
+            load();
+        } catch (e: any) {
+            toast({ title: 'Sync failed', description: e?.message, variant: 'destructive' });
+        }
+        setFixing(false);
+    };
+
+    const Row = ({ label, value, mono = true }: { label: string; value: React.ReactNode; mono?: boolean }) => (
+        <div className="flex items-center justify-between py-2 border-b last:border-0">
+            <span className="text-sm text-gray-600">{label}</span>
+            <span className={`text-sm font-medium ${mono ? 'font-mono' : ''}`}>{value ?? '—'}</span>
+        </div>
+    );
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle className="flex items-center gap-2"><CalendarClock className="w-5 h-5" /> System Dates</CardTitle>
+                <CardDescription>The dates the system is operating on. The business date drives folio posting, reports, and the night audit.</CardDescription>
+            </CardHeader>
+            <CardContent>
+                {loading ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-500 py-4"><Loader2 className="w-4 h-4 animate-spin" /> Loading dates…</div>
+                ) : (
+                    <>
+                        <Row label="System Business Date" value={businessDate} />
+                        <Row label="Last Night Audit" value={lastAudit} />
+                        <Row label="Server Date (live)" value={serverNow} />
+                        <Row label="This Device's Date" value={browserToday} />
+
+                        {drift ? (
+                            <div className="mt-4 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                                <div className="flex-1">
+                                    <p className="text-sm font-medium text-amber-800">Business date is ahead of the real date</p>
+                                    <p className="text-xs text-amber-700 mt-0.5">
+                                        It's set to <span className="font-mono">{businessDate}</span> but today is <span className="font-mono">{reference}</span>.
+                                        This usually happens after a manual night-audit run and can break automatic audits. Sync it back to today.
+                                    </p>
+                                    <Button size="sm" className="mt-2 bg-amber-600 hover:bg-amber-700 text-white" disabled={fixing} onClick={syncToToday}>
+                                        {fixing ? 'Syncing…' : `Sync business date to ${reference}`}
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="mt-4 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 p-3">
+                                <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
+                                <p className="text-sm text-green-800">Dates are in sync. The night audit will roll over normally.</p>
+                            </div>
+                        )}
+
+                        <div className="mt-3 flex justify-end">
+                            <Button variant="outline" size="sm" onClick={load}>Refresh</Button>
+                        </div>
+                    </>
+                )}
+            </CardContent>
+        </Card>
+    );
+};
 
 // ─── Options ───────────────────────────────────────────────────────────────
 
@@ -199,6 +311,9 @@ const SystemSettings = () => {
                         <p className="text-sm text-gray-500">Configure your property's identity, appearance, and regional preferences.</p>
                     </div>
                 </div>
+
+                {/* ── System Dates (diagnostic) ── */}
+                <SystemDatesCard />
 
                 {/* ── 1. Hotel Identity ── */}
                 <Card>

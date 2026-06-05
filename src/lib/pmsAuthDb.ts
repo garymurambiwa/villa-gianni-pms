@@ -879,23 +879,25 @@ export const pmsAuthDb = {
   },
 
   async updateShiftTotals(shiftId: string, totals: {
-    total_sales: number; total_cash: number; total_card: number;
+    total_sales: number; total_cash: number; total_ecocash: number; total_card: number;
     total_room: number; tx_count: number;
   }): Promise<{ ok: boolean; error?: string }> {
     try {
-      // Add columns if they don't exist yet (idempotent)
-      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_sales  NUMERIC DEFAULT 0`);
-      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_cash   NUMERIC DEFAULT 0`);
-      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_card   NUMERIC DEFAULT 0`);
-      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_room   NUMERIC DEFAULT 0`);
-      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS tx_count     INTEGER DEFAULT 0`);
-      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS updated_at   TIMESTAMPTZ DEFAULT NOW()`);
+      // Add columns if they don't exist yet (idempotent). total_card is now
+      // SWIPE ONLY; EcoCash has its own column so reports can split them.
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_sales   NUMERIC DEFAULT 0`);
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_cash    NUMERIC DEFAULT 0`);
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_ecocash NUMERIC DEFAULT 0`);
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_card    NUMERIC DEFAULT 0`);
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS total_room    NUMERIC DEFAULT 0`);
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS tx_count      INTEGER DEFAULT 0`);
+      await db.query(`ALTER TABLE pos_shifts ADD COLUMN IF NOT EXISTS updated_at    TIMESTAMPTZ DEFAULT NOW()`);
       const res = await db.query(
         `UPDATE pos_shifts
-         SET total_sales = ?, total_cash = ?, total_card = ?, total_room = ?,
+         SET total_sales = ?, total_cash = ?, total_ecocash = ?, total_card = ?, total_room = ?,
              tx_count = ?, updated_at = NOW()
          WHERE id = ?`,
-        [totals.total_sales, totals.total_cash, totals.total_card,
+        [totals.total_sales, totals.total_cash, totals.total_ecocash, totals.total_card,
          totals.total_room, totals.tx_count, shiftId]
       );
       if ('error' in res) return { ok: false, error: res.error };
@@ -927,6 +929,84 @@ export const pmsAuthDb = {
       if ('error' in res || !res.rows || res.rows.length === 0) return null;
       return res.rows[0];
     } catch {
+      return null;
+    }
+  },
+
+  // Reconstruct a shift's individual payment transactions from the pos_orders
+  // table (the DB source of truth). Used to rehydrate the shift after a
+  // logout/login or device switch, so X/Z readings and shift-close have the
+  // full payment breakdown even when this browser's localStorage is empty.
+  // Each closed order = one transaction (method + amount + outlet).
+  async getShiftTransactions(shiftId: string): Promise<Array<{
+    id: string; method: string; amount: number; reference: string;
+    createdAt: string; userId?: string; outlet: 'bar' | 'restaurant';
+  }>> {
+    try {
+      const res = await db.query<any>(
+        `SELECT id, total_amount, payment_method, status,
+                cost_center AS centre,
+                COALESCE(updated_at, created_at) AS ts
+         FROM pos_orders
+         WHERE shift_id = ? AND status = 'closed'
+         ORDER BY COALESCE(updated_at, created_at) ASC`,
+        [shiftId]
+      );
+      if ('error' in res || !res.rows) return [];
+      return res.rows.map((o: any) => {
+        // Normalise legacy 'card' → 'swipe'; default missing method to 'cash'
+        let method = String(o.payment_method || 'cash').toLowerCase();
+        if (method === 'card') method = 'swipe';
+        const centre = String(o.centre || '').toLowerCase();
+        const outlet: 'bar' | 'restaurant' = centre.includes('bar') ? 'bar' : 'restaurant';
+        return {
+          id: `SFTX_${o.id}`,
+          method,
+          amount: Number(o.total_amount || 0),
+          reference: String(o.id),
+          createdAt: o.ts ? new Date(o.ts).toISOString() : new Date().toISOString(),
+          userId: o.opened_by || undefined,
+          outlet,
+        };
+      });
+    } catch {
+      return [];
+    }
+  },
+
+  // Read the running aggregate totals the POS syncs to pos_shifts on EVERY
+  // sale (via updateShiftTotals). These are written straight to the server, so
+  // they survive a desktop power-cut/crash that wipes the browser's local copy.
+  // Used as a "never under-report" floor when closing a shift whose local
+  // transaction list was lost — so the Z-reading can't show less than what the
+  // server already recorded.
+  async getShiftAggregates(shiftId: string): Promise<{
+    total_sales: number; total_cash: number; total_ecocash: number; total_card: number;
+    total_room: number; tx_count: number;
+  } | null> {
+    try {
+      const res = await db.query<any>(
+        `SELECT COALESCE(total_sales,   0) AS total_sales,
+                COALESCE(total_cash,    0) AS total_cash,
+                COALESCE(total_ecocash, 0) AS total_ecocash,
+                COALESCE(total_card,    0) AS total_card,
+                COALESCE(total_room,    0) AS total_room,
+                COALESCE(tx_count,      0) AS tx_count
+         FROM pos_shifts WHERE id = ?`,
+        [shiftId]
+      );
+      if ('error' in res || !res.rows || res.rows.length === 0) return null;
+      const r = res.rows[0];
+      return {
+        total_sales:   Number(r.total_sales   || 0),
+        total_cash:    Number(r.total_cash    || 0),
+        total_ecocash: Number(r.total_ecocash || 0),
+        total_card:    Number(r.total_card    || 0),
+        total_room:    Number(r.total_room    || 0),
+        tx_count:      Number(r.tx_count      || 0),
+      };
+    } catch {
+      // Columns may not exist yet if no sale was ever synced — treat as no data.
       return null;
     }
   },

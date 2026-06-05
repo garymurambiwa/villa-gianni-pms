@@ -2,6 +2,16 @@ import React, { createContext, useContext, useMemo, useState, useEffect } from '
 import { ShiftReading } from '../types';
 import pmsAuthDb from '../lib/pmsAuthDb';
 import { useAuth } from '@/context/AuthContext';
+// Statically imported (not lazy) so closing a shift never depends on an
+// on-demand chunk fetch that could 404 on a stale tab. `generateZReading` is
+// aliased because this context also defines a local function of that name.
+import {
+  generateZReading as svcGenerateZReading,
+  printZReading,
+  logZReadingAudit,
+  storeZReading,
+  getNextZReadingNumber,
+} from '../lib/zReadingService';
 
 export type PaymentMethod = 'cash' | 'ecocash' | 'swipe' | 'room-charge';
 
@@ -40,7 +50,9 @@ interface ShiftContextType {
   endShift: (closingCash?: number) => Promise<{ success: boolean; zReading?: ShiftReading; error?: string }>;
   addTransaction: (method: PaymentMethod, amount: number, reference?: string, outlet?: 'bar' | 'restaurant') => ShiftTransaction | null;
   voidTransaction: (transactionId: string, reason: string) => boolean;
-  getTotals: () => { cash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number };
+  getTotals: () => { cash: number; ecocash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number };
+  /** DB-reconciled totals (per-bucket max of local + pos_orders + pos_shifts) — use for shift close so a wiped desktop can't under-report. */
+  getReconciledTotals: () => Promise<{ cash: number; ecocash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number }>;
   getEndedShifts: () => Shift[];
   clearEndedShifts: () => void;
   clearActiveShift: () => void;
@@ -52,8 +64,10 @@ interface ShiftContextType {
 const ShiftContext = createContext<ShiftContextType | undefined>(undefined);
 
 export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Capture user at context level — never call hooks inside functions
-  const { user } = useAuth();
+  // Capture user + active cost centre at context level — never call hooks inside functions.
+  // costCentre drives the shift-restore effect: when a barman selects their station
+  // (Bar/Restaurant/Conference), we rehydrate that station's open shift from the DB.
+  const { user, costCentre } = useAuth();
 
   // Normalize a Shift object to ensure backward compatibility with older stored shapes
   const normalizeShift = (s: any): Shift => {
@@ -74,19 +88,83 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const [activeShift, setActiveShift] = useState<Shift | null>(() => {
-    // Optionally restore from localStorage
+    // Optionally restore from localStorage as a fast-path; the DB lookup below
+    // takes over within ~1s of mount and is authoritative if a power-cut wiped
+    // localStorage but the DB still has an open shift for this station.
     try {
       const raw = localStorage.getItem('corepms_activeShift');
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       const normalized = normalizeShift(parsed);
-      // Write back to fix legacy shapes
       localStorage.setItem('corepms_activeShift', JSON.stringify(normalized));
       return normalized;
     } catch {
       return null;
     }
   });
+
+  // Restore open shift from DB — survives logout/login, device switches, and
+  // power cuts that wipe localStorage. Critical for shared-terminal use where
+  // several barmen rotate on one POS: whoever opens the Bar cost centre sees
+  // the day's open shift WITH its full payment history, so they can always close.
+  //
+  // Re-runs whenever the selected cost centre changes (not just on mount) so a
+  // mid-day station switch or a fresh login rehydrates correctly.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // Prefer the live costCentre from AuthContext; fall back to localStorage keys.
+        const stationId = costCentre
+            || (() => {
+                 try {
+                   return localStorage.getItem('pms_selected_cost_centre')
+                       || localStorage.getItem('corepms_active_cost_centre')
+                       || '';
+                 } catch { return ''; }
+               })();
+
+        if (!stationId) return; // no station selected → nothing to restore
+
+        const dbShift = await pmsAuthDb.getActiveShift(stationId);
+        if (cancelled || !dbShift) return;
+
+        // Always rebuild transactions from pos_orders (the DB source of truth) so
+        // the day's sales survive even when this browser's localStorage is empty
+        // (different user, different device, or after a clear). Merge with any
+        // local transactions by reference id so nothing is double-counted.
+        const dbTxns = await pmsAuthDb.getShiftTransactions(dbShift.id);
+        if (cancelled) return;
+
+        const localTxns = (activeShift && activeShift.id === dbShift.id)
+          ? (activeShift.transactions || [])
+          : [];
+        // De-dupe: prefer DB rows; add any local-only txns not present in DB.
+        const seen = new Set(dbTxns.map(t => t.reference));
+        const merged = [
+          ...dbTxns,
+          ...localTxns.filter((t: any) => !seen.has(t.reference)),
+        ];
+
+        const restored: Shift = normalizeShift({
+          id: dbShift.id,
+          startedAt: dbShift.opened_at,
+          openedBy: dbShift.opened_by,
+          openingCash: Number(dbShift.opening_cash || 0),
+          status: 'open',
+          transactions: merged,
+          voidedTransactions: activeShift?.voidedTransactions || [],
+        });
+        setActiveShift(restored);
+        try { localStorage.setItem('corepms_activeShift', JSON.stringify(restored)); } catch {}
+        console.log(`[ShiftContext] Restored shift ${restored.id} from DB with ${merged.length} transactions (${dbTxns.length} from pos_orders).`);
+      } catch (e) {
+        console.warn('[ShiftContext] DB shift restore failed (non-fatal):', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [costCentre, user?.id]);
 
   const [endedShifts, setEndedShifts] = useState<Shift[]>(() => {
     try {
@@ -148,10 +226,12 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const dbRes = await pmsAuthDb.endShift(activeShift.id, closingCash || 0);
       if (!dbRes.ok) console.warn('Database endShift failed:', dbRes.error);
 
-      // Import Z reading service functions
-      const { generateZReading, printZReading, logZReadingAudit, storeZReading, getNextZReadingNumber } = await import('../lib/zReadingService');
+      // Z reading service functions are imported statically at the top of this
+      // file (eager) so shift close never waits on a lazy chunk fetch.
 
-      const totals = getTotals();
+      // Reconcile against the DB so a crash that wiped this desktop's local copy
+      // can't make the Z-reading (and the GL posting below) under-report.
+      const totals = await reconcileTotals(activeShift, getTotals());
       const ended: Shift = {
         ...activeShift,
         endedAt: new Date().toISOString(),
@@ -164,7 +244,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const nextReadingNumber = await getNextZReadingNumber();
 
       // Generate Z reading with correct reading number
-      const zReading = generateZReading(
+      const zReading = svcGenerateZReading(
         {
           shift: ended,
           totals,
@@ -177,19 +257,37 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ended.zReadingId = zReading.id;
 
       // --- GL POSTING: Post daily POS revenue to General Ledger ---
+      // Now posts 4 separate debit lines (Cash / EcoCash / Card / Room Charge)
+      // so the chart of accounts reflects each payment method distinctly.
+      // Errors are persisted to localStorage failure queue (not swallowed) so
+      // a recovery run can replay them.
       try {
         const gl = await import('../lib/glAccounting');
         const businessDate = new Date().toISOString().slice(0, 10);
         const mappings = gl.getMappings();
-        const totalSales = totals.cash + totals.card + totals.roomCharge;
+        const totalSales = totals.cash + totals.ecocash + totals.card + totals.roomCharge;
 
-        if (totalSales > 0 && (mappings.FB_REVENUE || mappings.CASH || mappings.CARD)) {
-          // Read tax rate from system config
+        if (totalSales > 0 && mappings.FB_REVENUE) {
+          // Read tax rate from DB first, falling back to localStorage
           let taxRate = 0;
           try {
-            const taxConfig = JSON.parse(localStorage.getItem('corepms_tax_config') || '{}');
-            taxRate = Number(taxConfig.pos_tax_rate || taxConfig.default_rate || 0);
-          } catch { /* use 0 */ }
+            const resp = await fetch('/api/db/query', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sql: `SELECT value FROM system_configs WHERE key='tax_config'` }),
+            });
+            const data = await resp.json();
+            if (data?.ok && data.rows?.length) {
+              const cfg = JSON.parse(data.rows[0].value || '{}');
+              taxRate = Number(cfg.pos_tax_rate || cfg.default_rate || 0);
+            }
+          } catch { /* fall through to localStorage */ }
+          if (!taxRate) {
+            try {
+              const taxConfig = JSON.parse(localStorage.getItem('corepms_tax_config') || '{}');
+              taxRate = Number(taxConfig.pos_tax_rate || taxConfig.default_rate || 0);
+            } catch { /* use 0 */ }
+          }
 
           const taxCollected = taxRate > 0
             ? parseFloat((totalSales * (taxRate / (100 + taxRate))).toFixed(2))
@@ -198,12 +296,15 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           const lines: import('../lib/glAccounting').GLPostingLine[] = [];
 
-          // Debit asset accounts (Cash, Card)
+          // Debit asset accounts — one per payment method
           if (totals.cash > 0 && mappings.CASH) {
             lines.push({ accountId: mappings.CASH, description: 'Cash POS Sales', debit: totals.cash, credit: 0 });
           }
+          if (totals.ecocash > 0 && (mappings.ECOCASH || mappings.CARD)) {
+            lines.push({ accountId: mappings.ECOCASH || mappings.CARD, description: 'EcoCash POS Sales', debit: totals.ecocash, credit: 0 });
+          }
           if (totals.card > 0 && mappings.CARD) {
-            lines.push({ accountId: mappings.CARD, description: 'Card POS Sales', debit: totals.card, credit: 0 });
+            lines.push({ accountId: mappings.CARD, description: 'Swipe / Card POS Sales', debit: totals.card, credit: 0 });
           }
           if (totals.roomCharge > 0 && mappings.ROOM_CHARGE) {
             lines.push({ accountId: mappings.ROOM_CHARGE, description: 'Room Charge POS', debit: totals.roomCharge, credit: 0 });
@@ -212,8 +313,6 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           // Credit revenue account
           if (netRevenue > 0 && mappings.FB_REVENUE) {
             lines.push({ accountId: mappings.FB_REVENUE, description: `F&B Revenue — Shift ${ended.id}`, debit: 0, credit: netRevenue });
-          } else if (totalSales > 0 && mappings.FB_REVENUE) {
-            lines.push({ accountId: mappings.FB_REVENUE, description: `F&B Revenue — Shift ${ended.id}`, debit: 0, credit: totalSales });
           }
 
           // Credit tax liability account
@@ -222,6 +321,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
 
           if (lines.length >= 2) {
+            // postJournalEntry validates balance and throws on failure (no silent swallow)
             gl.postJournalEntry({
               id: `GLJE_POS_${ended.id}_${Date.now()}`,
               date: businessDate,
@@ -232,7 +332,16 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         }
       } catch (glErr) {
-        console.warn('[ShiftContext] GL posting failed (non-fatal):', glErr);
+        console.error('[ShiftContext] GL posting failed:', glErr);
+        // Persist failure so a recovery process can replay it; do NOT block shift close
+        try {
+          const queue = JSON.parse(localStorage.getItem('corepms_gl_failures') || '[]');
+          queue.unshift({
+            shiftId: ended.id, error: String(glErr instanceof Error ? glErr.message : glErr),
+            totals, occurredAt: new Date().toISOString(),
+          });
+          localStorage.setItem('corepms_gl_failures', JSON.stringify(queue.slice(0, 200)));
+        } catch {}
       }
 
       // Attempt to print Z reading
@@ -351,11 +460,12 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
        const totalEco    = allTx.filter(t => t.method === 'ecocash').reduce((s, t) => s + t.amount, 0);
        const totalRoom   = allTx.filter(t => t.method === 'room-charge').reduce((s, t) => s + t.amount, 0);
        pmsAuthDb.updateShiftTotals(prev.id, {
-         total_sales:  totalSales,
-         total_cash:   totalCash,
-         total_card:   totalCard + totalEco,
-         total_room:   totalRoom,
-         tx_count:     allTx.length,
+         total_sales:   totalSales,
+         total_cash:    totalCash,
+         total_ecocash: totalEco,
+         total_card:    totalCard,   // swipe only — EcoCash now has its own column
+         total_room:    totalRoom,
+         tx_count:      allTx.length,
        }).catch(e => console.warn('[ShiftContext] DB total sync failed:', e));
 
        return next;
@@ -391,22 +501,25 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return true;
   };
 
-   const getTotals = (): { cash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number } => {
-     if (!activeShift) return { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0, barSales: 0, restaurantSales: 0 };
+   const getTotals = (): { cash: number; ecocash: number; card: number; roomCharge: number; count: number; voidedCount: number; voidedAmount: number; barSales: number; restaurantSales: number } => {
+     if (!activeShift) return { cash: 0, ecocash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0, barSales: 0, restaurantSales: 0 };
      const txs = Array.isArray(activeShift.transactions) ? activeShift.transactions : [];
      const voidedTxs = Array.isArray(activeShift.voidedTransactions) ? activeShift.voidedTransactions : [];
 
      const totals = txs.reduce((acc, t) => {
+       // Four separate payment methods now. EcoCash gets its own bucket so
+       // the GL and reports can debit the EcoCash clearing account distinctly.
        if (t.method === 'cash') acc.cash += t.amount;
-       else if (t.method === 'ecocash' || t.method === 'swipe') acc.card += t.amount;
+       else if (t.method === 'ecocash') acc.ecocash += t.amount;
+       else if (t.method === 'swipe') acc.card += t.amount;
        else if (t.method === 'room-charge') acc.roomCharge += t.amount;
-       
+
        if (t.outlet === 'bar') acc.barSales += t.amount;
        else acc.restaurantSales += t.amount;
-       
+
        acc.count += 1;
        return acc;
-     }, { cash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0, barSales: 0, restaurantSales: 0 });
+     }, { cash: 0, ecocash: 0, card: 0, roomCharge: 0, count: 0, voidedCount: 0, voidedAmount: 0, barSales: 0, restaurantSales: 0 });
 
      // Add voided transaction totals
      totals.voidedCount = voidedTxs.length;
@@ -414,6 +527,66 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
      return totals;
    };
+
+  type ShiftTotals = ReturnType<typeof getTotals>;
+
+  // Reconcile in-memory shift totals against the database so a wiped or partial
+  // localStorage (e.g. after a desktop power-cut) can NEVER make the Z-reading
+  // under-report. We compute three INDEPENDENT views of the shift and take the
+  // per-bucket maximum:
+  //   1. local   — the in-memory transaction list (what the screen shows)
+  //   2. recon   — rebuilt from pos_orders closed rows (survives a local wipe)
+  //   3. agg     — the running pos_shifts totals synced to the server per sale
+  // Per-bucket max means no single source can drag a total down, and because we
+  // never SUM across sources, a transaction present in two of them is not
+  // double-counted. Falls back to local totals if the DB lookups fail.
+  const reconcileTotals = async (shift: Shift, local: ShiftTotals): Promise<ShiftTotals> => {
+    try {
+      const bucket = (txs: Array<{ method: string; amount: number; outlet?: string }>) =>
+        txs.reduce((acc, t) => {
+          const m = String(t.method);
+          const amt = Number(t.amount) || 0;
+          if (m === 'cash') acc.cash += amt;
+          else if (m === 'ecocash') acc.ecocash += amt;
+          else if (m === 'swipe') acc.card += amt;
+          else if (m === 'room-charge') acc.roomCharge += amt;
+          if (t.outlet === 'bar') acc.barSales += amt; else acc.restaurantSales += amt;
+          acc.count += 1;
+          return acc;
+        }, { cash: 0, ecocash: 0, card: 0, roomCharge: 0, count: 0, barSales: 0, restaurantSales: 0 });
+
+      const [dbTxns, agg] = await Promise.all([
+        pmsAuthDb.getShiftTransactions(shift.id).catch(() => [] as any[]),
+        pmsAuthDb.getShiftAggregates(shift.id).catch(() => null),
+      ]);
+      const recon = bucket(dbTxns as any);
+
+      const max = (...n: number[]) => Math.max(...n.map(x => Number(x) || 0));
+      // The DB aggregate now tracks EcoCash and Swipe in separate columns, so
+      // each method reconciles independently (per-bucket max, no re-split).
+      return {
+        cash:            max(local.cash, recon.cash, agg?.total_cash ?? 0),
+        ecocash:         max(local.ecocash, recon.ecocash, agg?.total_ecocash ?? 0),
+        card:            max(local.card, recon.card, agg?.total_card ?? 0),
+        roomCharge:      max(local.roomCharge, recon.roomCharge, agg?.total_room ?? 0),
+        count:           max(local.count, recon.count, agg?.tx_count ?? 0),
+        // pos_orders reconstruction excludes voids; keep the local void figures.
+        voidedCount:     local.voidedCount,
+        voidedAmount:    local.voidedAmount,
+        // pos_shifts has no bar/restaurant split — reconcile against local + recon only.
+        barSales:        max(local.barSales, recon.barSales),
+        restaurantSales: max(local.restaurantSales, recon.restaurantSales),
+      };
+    } catch (e) {
+      console.warn('[ShiftContext] totals reconciliation failed, using local totals:', e);
+      return local;
+    }
+  };
+
+  const getReconciledTotals = async (): Promise<ShiftTotals> => {
+    if (!activeShift) return getTotals();
+    return reconcileTotals(activeShift, getTotals());
+  };
 
   const getEndedShifts = (): Shift[] => endedShifts;
   const clearEndedShifts = (): void => {
@@ -430,8 +603,8 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!activeShift) return null;
     
     const totals = getTotals();
-    const totalSales = totals.cash + totals.card + totals.roomCharge;
-    
+    const totalSales = totals.cash + totals.ecocash + totals.card + totals.roomCharge;
+
     return {
       id: `X_READING_${Date.now()}`,
       reading_number: Math.floor(Math.random() * 1000) + 1, // Simple counter
@@ -442,6 +615,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       bar_sales: totals.barSales,
       restaurant_sales: totals.restaurantSales,
       cash_payments: totals.cash,
+      ecocash_payments: totals.ecocash,
       card_payments: totals.card,
       room_charge_payments: totals.roomCharge,
       created_at: new Date().toISOString()
@@ -450,12 +624,12 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const generateZReading = (closingCash?: number): ShiftReading | null => {
     if (!activeShift) return null;
-    
+
     const totals = getTotals();
-    const totalSales = totals.cash + totals.card + totals.roomCharge;
+    const totalSales = totals.cash + totals.ecocash + totals.card + totals.roomCharge;
     const expectedCash = activeShift.openingCash + totals.cash;
     const cashDifference = closingCash !== undefined ? closingCash - expectedCash : 0;
-    
+
     return {
       id: `Z_READING_${Date.now()}`,
       reading_number: zReadings.length + 1,
@@ -466,6 +640,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       bar_sales: totals.barSales,
       restaurant_sales: totals.restaurantSales,
       cash_payments: totals.cash,
+      ecocash_payments: totals.ecocash,
       card_payments: totals.card,
       room_charge_payments: totals.roomCharge,
       created_at: new Date().toISOString(),
@@ -486,6 +661,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     addTransaction,
     voidTransaction,
     getTotals,
+    getReconciledTotals,
     getEndedShifts,
     clearEndedShifts,
     clearActiveShift,

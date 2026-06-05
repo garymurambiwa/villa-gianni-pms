@@ -222,8 +222,24 @@ export const AllReportsPage: React.FC = () => {
 
   const openReportNewTab = async (key: string) => {
     setError(''); setOpeningKey(key);
+
+    // CRITICAL: open the tab synchronously inside the click handler so the
+    // browser keeps the user-gesture trust. Doing window.open() after an
+    // await is treated as programmatic and blocked silently by most browsers.
+    const win = window.open('about:blank', '_blank');
+    if (win) {
+      try {
+        win.document.open();
+        win.document.write(
+          '<!doctype html><html><head><title>Loading report…</title>' +
+          '<style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#475569}</style>' +
+          '</head><body><div>⏳ Loading report…</div></body></html>'
+        );
+        win.document.close();
+      } catch { /* non-fatal */ }
+    }
+
     try {
-      // Build the report content directly to avoid SPA routing issues causing blank pages
       const businessDateStr = new Date().toISOString().slice(0,10);
       const currentMonthStr = new Date().toISOString().slice(0,7);
       let data: { title: string; columns: string[]; rows: any[] } | null = null;
@@ -260,15 +276,14 @@ export const AllReportsPage: React.FC = () => {
       }
       if (!data) throw new Error('no_data');
       const html = generateReportHTML(data.title, data.columns, data.rows);
-      // First attempt: open a blank tab and write HTML
-      try {
-        const win = window.open('', '_blank', 'noopener,noreferrer');
-        if (!win) throw new Error('popup_blocked');
+
+      if (win && !win.closed) {
+        // Tab was opened synchronously — write the report into it
         win.document.open();
         win.document.write(html);
         win.document.close();
-      } catch {
-        // Fallback: open via object URL anchor (less likely to be blocked)
+      } else {
+        // Popup blocked / closed before data arrived — fall back to same-tab via blob URL
         const blob = new Blob([html], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -276,19 +291,26 @@ export const AllReportsPage: React.FC = () => {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        // Final fallback: if still visible after a short delay, open in current tab
-        setTimeout(() => {
-          if (document.visibilityState === 'visible') {
-            window.location.href = url;
-          }
-          setTimeout(() => URL.revokeObjectURL(url), 10000);
-        }, 500);
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
       }
-      setTimeout(() => setOpeningKey(null), 500);
+      setTimeout(() => setOpeningKey(null), 300);
     } catch (e) {
       console.error('Open report failed', e);
-      setError('Failed to open the report. Please try again.');
+      setError(`Failed to open report: ${e instanceof Error ? e.message : 'Unknown error'}. Please try again.`);
       setOpeningKey(null);
+      // Show the error in the pre-opened tab too so the user isn't staring at a blank "Loading…"
+      if (win && !win.closed) {
+        try {
+          win.document.open();
+          win.document.write(
+            '<!doctype html><html><body style="font-family:system-ui;padding:2rem;color:#b91c1c">' +
+            '<h2>Report failed to load</h2><p>' + String(e instanceof Error ? e.message : e) + '</p>' +
+            '<p style="color:#475569">Close this tab and try again, or check the console for details.</p>' +
+            '</body></html>'
+          );
+          win.document.close();
+        } catch {}
+      }
     }
   };
 

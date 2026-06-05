@@ -269,14 +269,42 @@ export const getMenuItems = async (costCentre?: string): Promise<Array<any>> => 
       `);
 
       if ('rows' in res && Array.isArray(res.rows) && res.rows.length > 0) {
-        const lowerCC = String(costCentre || '').toLowerCase();
-        const isBarCC = ['bar', 'flamehouse_bar', 'conference_bar', 'beverage_cellar'].includes(lowerCC);
+        const lowerCC = String(costCentre || '').toLowerCase().trim();
+        // Detect a "bar" outlet from the actual cost-centre NAME. Real names use
+        // spaces and arbitrary casing ("FlameHouse Bar", "Conference Bar"), so a
+        // hardcoded underscore list ('flamehouse_bar') never matched them — which
+        // wrongly classified those bars as restaurants and hid every bar-only item.
+        //
+        // Match the word "bar" (and other beverage-outlet words) on a word
+        // boundary so "FlameHouse Bar" → bar, but "Baradzanwa lounge" isn't matched
+        // by the substring 'bar' inside "Baradzanwa". 'lounge' is its own keyword.
+        const barWord = /\b(bar|lounge|cellar|pub|tavern|cocktail)\b/.test(lowerCC);
+        const legacyList = ['bar', 'flamehouse_bar', 'conference_bar', 'beverage_cellar']
+          .includes(lowerCC.replace(/\s+/g, '_'));
+        const isBarCC = barWord || legacyList;
         const isRestCC = !isBarCC && lowerCC.length > 0;
+
+        // ── TEMPORARY BYPASS (requested 2026-05-27) ──────────────────────────
+        // Operator wants every sellable item to appear in EVERY outlet for now
+        // (food should show at the bar, drinks at the restaurant) rather than be
+        // filtered by bar/restaurant visibility. We still exclude raw stock /
+        // ingredients (items not flagged visible in ANY outlet — e.g. Mop, flour,
+        // $0.00 cleaning supplies) so the till isn't flooded with non-menu items.
+        //
+        // TODO(revisit): restore per-outlet filtering once each product's
+        // bar_visibility / restaurant_visibility flags are cleaned up. The
+        // isBarCC/isRestCC detection below is kept intact for that future switch.
+        const SHOW_ALL_OUTLETS = true;
+        void isBarCC; void isRestCC; // referenced again when bypass is removed
 
         return res.rows
           .filter((r: any) => {
-            // Respect per-item visibility flags when a cost centre is active
             if (!costCentre) return true;
+            if (SHOW_ALL_OUTLETS) {
+              // Sellable in at least one outlet → show everywhere. Raw stock
+              // (both flags false) stays hidden.
+              return r.bar_visibility === true || r.restaurant_visibility === true;
+            }
             if (isBarCC)  return r.bar_visibility !== false;
             if (isRestCC) return r.restaurant_visibility !== false;
             return true;
@@ -351,7 +379,7 @@ export const generateReceiptHTML = (data, settings, type = 'receipt', options: a
     '.nm { text-align: left; width: 58%; word-break: break-word; padding: 0.8mm 0; } .qt { text-align: center; width: 10%; padding: 0.8mm 1mm; } .pr { text-align: right; width: 32%; padding: 0.8mm 0; } .tot td { padding: 0.5mm 0; } .tot.grand td { font-weight: bold; font-size: 1.25em; border-top: 1px solid #000; padding-top: 1.5mm; }' +
     '</style></head><body>' + logoHTML + '<div class="center b" style="font-size:1.3em">' + settings.restaurant_name + '</div><div class="c" style="font-size:0.9em">' + (settings.address || '') + '</div>' +
     '<div class="div">================================</div><div class="c b">' + (isKOT ? 'KOT' : 'RECEIPT') + '</div><div class="div">--------------------------------</div>' +
-     '<div>Bill: ' + receiptNum + '</div><div>Time: ' + timestamp + '</div>' + (data.paymentMethod ? '<div class="b" style="margin:1mm 0;border:1px solid #000;padding:1mm 2mm;display:inline-block">Payment: ' + ({'cash':'CASH','ecocash':'ECOCASH (MOBILE)','swipe':'CARD / SWIPE','room-charge':'CHARGED TO ROOM FOLIO'}[String(data.paymentMethod)] || String(data.paymentMethod).toUpperCase().replace(/-/g,' ')) + '</div>' : '') + (data.tableId ? '<div>Table: ' + data.tableId + '</div>' : '') + (data.roomNumber ? '<div>Room: ' + data.roomNumber + '</div>' : '') +
+     '<div>Bill: ' + receiptNum + '</div><div>Time: ' + timestamp + '</div>' + (data.paymentMethod ? '<div class="b" style="margin:1mm 0;border:1px solid #000;padding:1mm 2mm;display:inline-block">Payment: ' + ({'cash':'CASH','ecocash':'ECOCASH (MOBILE)','swipe':'CARD / SWIPE','room-charge':'CHARGED TO ROOM FOLIO'}[String(data.paymentMethod)] || String(data.paymentMethod).toUpperCase().replace(/-/g,' ')) + '</div>' : '') + (data.tableId ? '<div>Table: ' + data.tableId + '</div>' : '') + (data.roomNumber ? '<div class="b">Room: ' + data.roomNumber + '</div>' : '') + (data.customerName ? '<div class="b">Guest: ' + data.customerName + '</div>' : '') +
     '<div class="div">--------------------------------</div><table>' + rowsHTML + '</table>' + totalsHTML + sigHTML +
     '<div class="div">--------------------------------</div><div class="c">' + (settings.footer_text || 'Thank you!') + '</div><div class="c" style="font-size:0.8em;margin-top:2mm">Powered By Coredigita</div><!-- ReceiptBrandingApplied --></body></html>';
 };
@@ -416,7 +444,7 @@ export const generateShiftXReadingHTML = (shiftMeta: any, transactions: any[], t
   return '<!DOCTYPE html><html><head><style>@page { size: 80mm auto; margin: 0; } body { font-family: "Courier New", monospace; font-size: 11px; width: 74mm; padding: 4mm; } .r { text-align: right; } .c { text-align: center; } .b { font-weight: bold; } table { width: 100%; border-collapse: collapse; } td, th { padding: 2px 0; }</style></head><body>' +
     '<div class="c b">' + brandSettings.restaurant_name + '</div><div class="c">SHIFT X-READING</div><div class="c" style="font-size:0.8em">' + new Date().toLocaleString() + '</div>' +
     '<hr/><div>Shift: ' + shiftMeta.id + '</div><div>Staff: ' + (shiftMeta.openedBy || 'N/A') + '</div><hr/>' +
-    '<table><tr><td>Cash</td><td class="r">' + formatCurrency(totals.cash) + '</td></tr><tr><td>Card</td><td class="r">' + formatCurrency(totals.card) + '</td></tr><tr><td>Room</td><td class="r">' + formatCurrency(totals.roomCharge) + '</td></tr><tr class="b"><td>Total</td><td class="r">' + formatCurrency(totals.cash + totals.card + totals.roomCharge) + '</td></tr></table>' +
+    '<table><tr><td>Cash</td><td class="r">' + formatCurrency(totals.cash) + '</td></tr><tr><td>EcoCash</td><td class="r">' + formatCurrency(totals.ecocash || 0) + '</td></tr><tr><td>Swipe</td><td class="r">' + formatCurrency(totals.card) + '</td></tr><tr><td>Room</td><td class="r">' + formatCurrency(totals.roomCharge) + '</td></tr><tr class="b"><td>Total</td><td class="r">' + formatCurrency(totals.cash + (totals.ecocash || 0) + totals.card + totals.roomCharge) + '</td></tr></table>' +
     '<hr/><b>Transactions</b><table>' + rows + '</table><hr/><div class="c" style="font-size:0.8em;margin-top:4mm">Powered By Coredigita</div><!-- ReceiptBrandingApplied --></body></html>';
 };
 

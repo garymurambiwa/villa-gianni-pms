@@ -14,6 +14,23 @@ import { ALL_DEPARTMENTS } from '@/lib/usaliCategories';
 import { ExpenseInvoiceView } from '@/components/modules/ExpenseInvoiceView';
 import { RecordVendorBill } from '@/components/modules/RecordVendorBill';
 import { BillDetailModal } from '@/components/modules/BillDetailModal';
+import { TransactionFilterBar } from '@/components/shared/TransactionFilterBar';
+import { filterRows, printTransactionList, isFilterActive, EMPTY_TRANSACTION_FILTER, type TransactionFilterValue } from '@/lib/transactionFilters';
+import { usePagination } from '@/hooks/usePagination';
+import PaginationBar from '@/components/shared/PaginationBar';
+
+// Canonical expense categories (mirrors the Add/Batch expense forms)
+const EXPENSE_CATEGORIES = [
+  'Cost of Goods Sold', 'Payroll', 'Supplies', 'Utilities',
+  'Repairs & Maintenance', 'Administrative', 'Marketing', 'Other',
+];
+const EXPENSE_STATUSES = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'paid', label: 'Paid' },
+  { value: 'voided', label: 'Voided' },
+  { value: 'cleared', label: 'Cleared' },
+];
 
 interface Vendor {
   id: string;
@@ -140,8 +157,8 @@ const VendorManagement: React.FC = () => {
     notes: ''
   });
 
-  // Search and filtering state
-  const [searchTerm, setSearchTerm] = useState('');
+  // Shared transaction filters (search / date period / category / department / status)
+  const [filters, setFilters] = useState<TransactionFilterValue>({ ...EMPTY_TRANSACTION_FILTER });
 
   // Effects
   useEffect(() => {
@@ -604,15 +621,44 @@ const VendorManagement: React.FC = () => {
     return grouped;
   };
 
-  // Filter expenses based on search term
-  const filteredExpenses = vendorExpenses.filter(expense => {
-    const searchTermLower = searchTerm.toLowerCase();
-    return (
-      expense.vendor_name.toLowerCase().includes(searchTermLower) ||
-      expense.description.toLowerCase().includes(searchTermLower) ||
-      expense.reference_number?.toLowerCase().includes(searchTermLower) ||
-      expense.id.toLowerCase().includes(searchTermLower)
-    );
+  // Apply the shared transaction filters (date period / category / department / status / search).
+  const filteredExpenses = filterRows(vendorExpenses, filters, {
+    date: (e: any) => e.expense_date,
+    category: (e: any) => e.category,
+    department: (e: any) => e.department,
+    status: (e: any) => e.status,
+    search: (e: any) => [e.vendor_name, e.description, e.reference_number, e.id],
+  });
+  // Pagination for the long lists in this module
+  const vendorsPg = usePagination<any>(vendors || []);
+  const vmExpensesPg = usePagination<any>(filteredExpenses);
+  const paymentsPg = usePagination<any>(vendorPayments || []);
+
+  // Departments actually present + canonical USALI list, de-duplicated.
+  const expenseDepartments = Array.from(new Set([
+    ...ALL_DEPARTMENTS,
+    ...vendorExpenses.map((e: any) => e.department).filter(Boolean),
+  ]));
+
+  // Print the currently-filtered expenses (print-all when no filter is active).
+  const printExpenses = () => printTransactionList({
+    title: 'Vendor Expenses',
+    filters,
+    columns: [
+      { header: 'Date', value: (e: any) => { const d = new Date(e.expense_date); return isNaN(d.getTime()) ? String(e.expense_date || '') : d.toLocaleDateString(); } },
+      { header: 'Vendor', value: (e: any) => e.vendor_name || '' },
+      { header: 'Description', value: (e: any) => e.description || '' },
+      { header: 'Department', value: (e: any) => e.department || '' },
+      { header: 'Category', value: (e: any) => e.category || '' },
+      { header: 'Ref #', value: (e: any) => e.reference_number || '—' },
+      { header: 'Total', value: (e: any) => `$${Number(e.total_cost || 0).toFixed(2)}`, align: 'right' },
+      { header: 'Status', value: (e: any) => e.status || '' },
+    ],
+    rows: filteredExpenses,
+    footer: [
+      { label: 'Expenses', value: filteredExpenses.length },
+      { label: 'Total', value: `$${filteredExpenses.reduce((s: number, e: any) => s + Number(e.total_cost || 0), 0).toFixed(2)}` },
+    ],
   });
 
   // Export expenses to CSV
@@ -941,7 +987,7 @@ const VendorManagement: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {vendors.map((vendor: Vendor) => (
+                  {vendorsPg.pageItems.map((vendor: Vendor) => (
                     <TableRow key={vendor.id}>
                       <TableCell>{vendor.name}</TableCell>
                       <TableCell>{vendor.contact_person}</TableCell>
@@ -978,6 +1024,7 @@ const VendorManagement: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
+              <PaginationBar {...vendorsPg} itemLabel="vendors" />
             </CardContent>
           </Card>
         </TabsContent>
@@ -1008,17 +1055,19 @@ const VendorManagement: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                <div className="mt-2">
-                  <Input
-                    placeholder="Search by vendor name, description, reference #, or ID..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="max-w-md"
-                  />
-                </div>
               </div>
+              <TransactionFilterBar
+                value={filters}
+                onChange={setFilters}
+                categories={EXPENSE_CATEGORIES}
+                departments={expenseDepartments}
+                statuses={EXPENSE_STATUSES}
+                searchPlaceholder="Search by vendor, description, reference #, or ID…"
+                resultCount={filteredExpenses.length}
+                onPrint={printExpenses}
+                printLabel="Print"
+              />
               <div className="flex gap-2">
-                <Button onClick={() => window.print()} variant="outline">Print All Expenses</Button>
                 <Button onClick={() => exportExpensesToCSV()} variant="outline">Export CSV</Button>
                 <Button onClick={() => setIsRecordingBill(true)} className="bg-blue-600 hover:bg-blue-700 text-white">Record Bill</Button>
                 <Dialog open={showBatchExpenseModal} onOpenChange={setShowBatchExpenseModal}>
@@ -1463,6 +1512,7 @@ const VendorManagement: React.FC = () => {
                     setSelectedInvoiceGroup(group);
                     setShowBillDetailModal(true);
                   }}
+                  hideFilters
                 />
               )}
 
@@ -1490,7 +1540,7 @@ const VendorManagement: React.FC = () => {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredExpenses.map((expense: VendorExpense) => {
+                        {vmExpensesPg.pageItems.map((expense: VendorExpense) => {
                           // Check if this is a batch parent expense
                           const isBatchParent = expense.is_batch_parent;
                           const batchDetails = expense.batch_details ? JSON.parse(expense.batch_details) : null;
@@ -1613,12 +1663,13 @@ const VendorManagement: React.FC = () => {
                         {filteredExpenses.length === 0 && (
                           <TableRow>
                             <TableCell colSpan={12} className="text-center text-gray-500 py-8">
-                              No expenses found. {searchTerm ? 'Try a different search term.' : 'Add an expense to get started.'}
+                              No expenses found. {isFilterActive(filters) ? 'Try different filters or clear them.' : 'Add an expense to get started.'}
                             </TableCell>
                           </TableRow>
                         )}
                       </TableBody>
                     </Table>
+                    <PaginationBar {...vmExpensesPg} itemLabel="expenses" />
 
                     {vendorExpenses.length > 0 && (
                       <div className="mt-4 border-t pt-4">
@@ -1684,7 +1735,7 @@ const VendorManagement: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {vendorPayments.map((payment: VendorPayment) => (
+                  {paymentsPg.pageItems.map((payment: VendorPayment) => (
                     <TableRow key={payment.id}>
                       <TableCell>{payment.id}</TableCell>
                       <TableCell>{payment.vendor_name}</TableCell>
@@ -1704,6 +1755,7 @@ const VendorManagement: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
+              <PaginationBar {...paymentsPg} itemLabel="payments" />
             </CardContent>
           </Card>
         </TabsContent>
