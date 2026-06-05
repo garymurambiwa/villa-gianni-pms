@@ -156,7 +156,7 @@ export const InventoryV11Transfer: React.FC = () => {
 
     setLoading(true);
     try {
-      const response = await fetch('/api/v1/inventory/transfer', {
+      const response = await fetch('/api/v1/inventory/transfer/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -164,7 +164,13 @@ export const InventoryV11Transfer: React.FC = () => {
           destination_location_id: destinationLocation,
           created_by: 'current-user',
           reference_text: referenceText,
-          lines: lines,
+          items: lines.map(l => ({
+            item_id: l.item_id,
+            qty_requested: l.qty_requested,
+            source_uom_id: l.source_uom_id,
+            breakdown_flag: l.breakdown_flag,
+            destination_uom_id: l.destination_uom_id,
+          })),
         }),
       });
 
@@ -172,20 +178,20 @@ export const InventoryV11Transfer: React.FC = () => {
 
       if (result.ok) {
         toast({
-          title: 'Success',
-          description: `Transfer created: ${result.data.transfer_number}`,
+          title: 'Transfer Complete',
+          description: `Transfer ${result.transfer_number} executed — ${result.lines_moved} item(s) moved`,
         });
-
-        // Reset form
         setReferenceText('');
         setLines([]);
+        if (sourceLocation) fetchAvailableStock();
       } else {
-        throw new Error(result.error);
+        throw new Error(result.error || 'Transfer failed');
       }
     } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
       toast({
-        title: 'Error',
-        description: error.message,
+        title: 'Transfer Failed',
+        description: msg,
         variant: 'destructive',
       });
     } finally {
@@ -416,7 +422,7 @@ export const InventoryV11Transfer: React.FC = () => {
               className="text-white hover:opacity-90"
             >
               <CheckCircle className="w-4 h-4 mr-1" />
-              {loading ? 'Creating...' : 'Create Transfer'}
+              {loading ? 'Executing...' : 'Execute Transfer'}
             </Button>
           </div>
         </CardContent>
