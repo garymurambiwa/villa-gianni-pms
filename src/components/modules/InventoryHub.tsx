@@ -2044,6 +2044,9 @@ function VarianceReports({ data }: { data: ReturnType<typeof useInventoryData> }
   const [report, setReport] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<'all'|'warning'|'critical'>('all');
+  const [closing, setClosing] = useState(false);
+  const [periodLocked, setPeriodLocked] = useState(false);
+  const [closeError, setCloseError] = useState('');
   const [stockSummary, setStockSummary] = useState<any[]>([]);
 
   const loadStock = async () => {
@@ -2069,6 +2072,38 @@ function VarianceReports({ data }: { data: ReturnType<typeof useInventoryData> }
   const lines = (report?.lines || []).filter((l:any) =>
     filter === 'all' || l.alert === filter
   );
+
+  const handleClosePeriod = async () => {
+    setClosing(true);
+    setCloseError('');
+    try {
+      const counts = (report?.lines || []).map((line: any) => ({
+        item_id: line.item_id,
+        physical_qty: line.physical,
+        unit_cost: line.unit_cost || 0,
+      }));
+      const r = await fetch('/api/v1/inventory/close-period', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location_id: location,
+          period_start: dateFrom,
+          period_end: dateTo,
+          closed_by: 'manager',
+          counts,
+        }),
+      }).then(r => r.json());
+      if (!r.ok) {
+        if (r.error?.includes('already locked')) setPeriodLocked(true);
+        throw new Error(r.error || 'Close period failed');
+      }
+      setPeriodLocked(true);
+    } catch (e) {
+      setCloseError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClosing(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -2187,6 +2222,30 @@ function VarianceReports({ data }: { data: ReturnType<typeof useInventoryData> }
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {report && (
+        <div style={{ marginTop: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
+          {periodLocked ? (
+            <span style={{ padding: '6px 16px', background: '#dcfce7', color: '#166534',
+                           border: '1px solid #86efac', borderRadius: 6, fontWeight: 600 }}>
+              🔒 Period LOCKED
+            </span>
+          ) : (
+            <button
+              onClick={handleClosePeriod}
+              disabled={closing || !report}
+              style={{ padding: '8px 20px', background: '#dc2626', color: '#fff',
+                       border: 'none', borderRadius: 6, cursor: 'pointer',
+                       opacity: closing ? 0.6 : 1, fontWeight: 600 }}
+            >
+              {closing ? 'Closing…' : 'Close Period'}
+            </button>
+          )}
+          {closeError && (
+            <span style={{ color: '#dc2626', fontSize: 13 }}>{closeError}</span>
+          )}
         </div>
       )}
     </div>
