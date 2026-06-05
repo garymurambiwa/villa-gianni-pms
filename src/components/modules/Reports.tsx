@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useData } from '../../context/DataContext';
-import { AllReportsPage } from './AllReportsPage';
 import ErrorBoundary from '../ErrorBoundary';
 const PosReportsLazy = React.lazy(() => import('./PosReports'));
 import { ReportsDropdown } from '@/components/ui/ReportsDropdown';
@@ -511,10 +510,9 @@ export const Reports: React.FC = () => {
         </div>
       )}
 
-      {/* Dedicated All Reports view with pagination & URL params */}
       {reportType === 'all' && (
         <div className="ds-card">
-          <AllReportsPage />
+          <ReportingDashboard />
         </div>
       )}
 
