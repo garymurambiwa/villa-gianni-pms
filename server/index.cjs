@@ -124,6 +124,141 @@ app.get('/api/gl/mappings/validate', async (req, res) => {
   } catch(e) { res.json({ ok:false, error:e.message }); }
 });
 
+// ─── GL Accounts (Chart of Accounts) ────────────────────────────────────────
+
+const VALID_GL_CATEGORIES = ['Asset','Liability','Equity','Revenue','Expense'];
+
+const USALI_ACCOUNTS = [
+  { id:'1000', account_number:'1000', name:'Cash on Hand',                        category:'Asset'     },
+  { id:'1050', account_number:'1050', name:'Petty Cash',                          category:'Asset'     },
+  { id:'1100', account_number:'1100', name:'Card/Bank Clearing',                  category:'Asset'     },
+  { id:'1150', account_number:'1150', name:'Bank Account',                        category:'Asset'     },
+  { id:'1180', account_number:'1180', name:'EcoCash Mobile Money',                category:'Asset'     },
+  { id:'1200', account_number:'1200', name:'In-house Guest Ledger',               category:'Asset'     },
+  { id:'1300', account_number:'1300', name:'City Ledger / Accounts Receivable',   category:'Asset'     },
+  { id:'1400', account_number:'1400', name:'Inventory — Food & Beverage',         category:'Asset'     },
+  { id:'1500', account_number:'1500', name:'Prepaid Expenses',                    category:'Asset'     },
+  { id:'1600', account_number:'1600', name:'Property, Plant & Equipment',         category:'Asset'     },
+  { id:'1610', account_number:'1610', name:'Accumulated Depreciation',            category:'Asset'     },
+  { id:'2100', account_number:'2100', name:'Accounts Payable',                    category:'Liability' },
+  { id:'2200', account_number:'2200', name:'Accrued Expenses',                    category:'Liability' },
+  { id:'2300', account_number:'2300', name:'VAT / Sales Tax Payable',             category:'Liability' },
+  { id:'2400', account_number:'2400', name:'Advance Deposits',                    category:'Liability' },
+  { id:'2500', account_number:'2500', name:'Current Portion Long-term Debt',      category:'Liability' },
+  { id:'3000', account_number:'3000', name:"Owner's Equity / Capital",            category:'Equity'    },
+  { id:'3100', account_number:'3100', name:'Retained Earnings',                   category:'Equity'    },
+  { id:'3200', account_number:'3200', name:'Current Year Earnings',               category:'Equity'    },
+  { id:'4000', account_number:'4000', name:'Rooms Revenue',                       category:'Revenue'   },
+  { id:'4100', account_number:'4100', name:'Food & Beverage Revenue',             category:'Revenue'   },
+  { id:'4200', account_number:'4200', name:'Conference / Catering Revenue',       category:'Revenue'   },
+  { id:'4300', account_number:'4300', name:'Spa & Recreation Revenue',            category:'Revenue'   },
+  { id:'4400', account_number:'4400', name:'Telephone & Internet Revenue',        category:'Revenue'   },
+  { id:'4500', account_number:'4500', name:'Other Operated Departments Revenue',  category:'Revenue'   },
+  { id:'4600', account_number:'4600', name:'Miscellaneous Income',                category:'Revenue'   },
+  { id:'5000', account_number:'5000', name:'Rooms Payroll & Related',             category:'Expense'   },
+  { id:'5100', account_number:'5100', name:'Food & Beverage Cost of Sales',       category:'Expense'   },
+  { id:'5200', account_number:'5200', name:'Food & Beverage Payroll',             category:'Expense'   },
+  { id:'5300', account_number:'5300', name:'Administrative & General',            category:'Expense'   },
+  { id:'5400', account_number:'5400', name:'Sales & Marketing',                   category:'Expense'   },
+  { id:'5500', account_number:'5500', name:'Property Operations & Maintenance',   category:'Expense'   },
+  { id:'5600', account_number:'5600', name:'Utilities',                           category:'Expense'   },
+  { id:'5700', account_number:'5700', name:'Information Technology',              category:'Expense'   },
+  { id:'5800', account_number:'5800', name:'Depreciation & Amortisation',         category:'Expense'   },
+  { id:'5900', account_number:'5900', name:'Insurance',                           category:'Expense'   },
+  { id:'6000', account_number:'6000', name:'Management Fees',                     category:'Expense'   },
+  { id:'6100', account_number:'6100', name:'Interest Expense',                    category:'Expense'   },
+  { id:'6200', account_number:'6200', name:'Income Tax Expense',                  category:'Expense'   },
+  { id:'6300', account_number:'6300', name:'Other Fixed Charges',                 category:'Expense'   },
+];
+
+// POST /api/gl/accounts/seed
+app.post('/api/gl/accounts/seed', async (req, res) => {
+  try {
+    await db.query(`ALTER TABLE gl_accounts ADD COLUMN IF NOT EXISTS account_number VARCHAR(20)`);
+    let upserted = 0;
+    for (const acc of USALI_ACCOUNTS) {
+      const r = await db.query(
+        `INSERT INTO gl_accounts (id, account_number, name, category)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (id) DO UPDATE
+           SET account_number = EXCLUDED.account_number,
+               name           = EXCLUDED.name,
+               category       = EXCLUDED.category`,
+        [acc.id, acc.account_number, acc.name, acc.category]
+      );
+      if (r.ok) upserted++;
+    }
+    res.json({ ok: true, upserted });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /api/gl/accounts
+app.get('/api/gl/accounts', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT id, account_number, name, category FROM gl_accounts ORDER BY id`
+    );
+    if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
+    res.json({ ok: true, rows: r.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /api/gl/accounts
+app.post('/api/gl/accounts', async (req, res) => {
+  const { id, account_number, name, category } = req.body;
+  if (!id || !name || !category) {
+    return res.status(400).json({ ok: false, error: 'id, name and category are required' });
+  }
+  if (!VALID_GL_CATEGORIES.includes(category)) {
+    return res.status(400).json({ ok: false, error: `category must be one of: ${VALID_GL_CATEGORIES.join(', ')}` });
+  }
+  try {
+    const r = await db.query(
+      `INSERT INTO gl_accounts (id, account_number, name, category)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, account_number || id, name, category]
+    );
+    if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// PUT /api/gl/accounts/:id
+app.put('/api/gl/accounts/:id', async (req, res) => {
+  const { id } = req.params;
+  const { account_number, name, category } = req.body;
+  if (!account_number && !name && !category) {
+    return res.status(400).json({ ok: false, error: 'Provide at least one field to update' });
+  }
+  if (category && !VALID_GL_CATEGORIES.includes(category)) {
+    return res.status(400).json({ ok: false, error: `category must be one of: ${VALID_GL_CATEGORIES.join(', ')}` });
+  }
+  const sets = [];
+  const params = [];
+  if (account_number) { params.push(account_number); sets.push(`account_number=$${params.length}`); }
+  if (name)           { params.push(name);           sets.push(`name=$${params.length}`); }
+  if (category)       { params.push(category);       sets.push(`category=$${params.length}`); }
+  params.push(id);
+  try {
+    const r = await db.query(
+      `UPDATE gl_accounts SET ${sets.join(', ')} WHERE id=$${params.length}`,
+      params
+    );
+    if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: 'Account not found' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ─── System Branding (DB-backed, per-property) ───────────────────────────────
 app.get('/api/system/branding', async (req, res) => {
   try {
