@@ -1280,7 +1280,8 @@ app.get('/api/reports/pl', async (req, res) => {
 });
 
 // GET /api/reports/aged-ar?as_of=YYYY-MM-DD
-// City ledger aging: sum outstanding charges per account bucketed by age.
+// City ledger aging: returns each outstanding transaction (debit>credit) with its
+// age bucket (0-30/31-60/61-90/90+). The frontend renders one row per transaction.
 app.get('/api/reports/aged-ar', async (req, res) => {
   const { as_of } = req.query;
   const asOf = as_of || new Date().toISOString().split('T')[0];
