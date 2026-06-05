@@ -259,6 +259,112 @@ app.put('/api/gl/accounts/:id', async (req, res) => {
   }
 });
 
+// ─── GL Pending Batches ───────────────────────────────────────────────────────
+
+// GET /api/gl/pending-batches
+app.get('/api/gl/pending-batches', async (req, res) => {
+  const { status } = req.query;
+  const st = status || 'PENDING';
+  try {
+    const r = await db.query(
+      `SELECT id, origin_table, origin_id, description, debit_gl_account, credit_gl_account,
+              amount, status, created_at
+       FROM gl_pending_batches
+       WHERE status = $1
+       ORDER BY created_at DESC`,
+      [st]
+    );
+    res.json({ ok: true, rows: r.rows || [] });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// POST /api/gl/pending-batches (create)
+app.post('/api/gl/pending-batches', async (req, res) => {
+  const { origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount } = req.body || {};
+  if (!origin_table || !origin_id || !debit_gl_account || !credit_gl_account || amount == null)
+    return res.json({ ok: false, error: 'origin_table, origin_id, debit_gl_account, credit_gl_account, amount required' });
+  try {
+    const r = await db.query(
+      `INSERT INTO gl_pending_batches (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (origin_table, origin_id) DO NOTHING
+       RETURNING id`,
+      [origin_table, origin_id, description || null, debit_gl_account, credit_gl_account, Number(amount)]
+    );
+    const id = r.rows?.[0]?.id || null;
+    res.json({ ok: true, id, created: !!id });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// POST /api/gl/pending-batches/flush (MUST be BEFORE /:id routes)
+app.post('/api/gl/pending-batches/flush', async (req, res) => {
+  try {
+    const pending = await db.query(
+      `SELECT * FROM gl_pending_batches WHERE status='PENDING' ORDER BY created_at`
+    );
+    const rows = pending.rows || [];
+    if (!rows.length) return res.json({ ok: true, flushed: 0, errors: [] });
+
+    let flushed = 0;
+    const errors = [];
+
+    for (const batch of rows) {
+      try {
+        const entryId = `GLJE_BATCH_${batch.id}`;
+        const ops = [
+          {
+            sql: `INSERT INTO gl_journal_entries
+                    (id, entry_date, business_date, description, source, status,
+                     total_debit, total_credit, is_balanced, created_by, posted_by, posted_at, inserted_at)
+                  VALUES ($1, NOW()::date, NOW()::date, $2, 'pending_batch', 'posted', $3, $3, true, 'system', 'system', NOW(), NOW())
+                  ON CONFLICT (id) DO NOTHING
+                  RETURNING id`,
+            params: [entryId, batch.description || `Batch ${batch.origin_table}/${batch.origin_id}`, Number(batch.amount)]
+          },
+          {
+            sql: `INSERT INTO gl_journal_lines (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
+                  VALUES ($1, $2, $3, $4, 0, $5, NOW())`,
+            params: [`${entryId}_DR`, entryId, batch.debit_gl_account, Number(batch.amount), batch.description || null]
+          },
+          {
+            sql: `INSERT INTO gl_journal_lines (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
+                  VALUES ($1, $2, $3, 0, $4, $5, NOW())`,
+            params: [`${entryId}_CR`, entryId, batch.credit_gl_account, Number(batch.amount), batch.description || null]
+          },
+          {
+            sql: `UPDATE gl_pending_batches SET status='POSTED', posted_at=NOW(), posted_journal_id=$1 WHERE id=$2`,
+            params: [entryId, batch.id]
+          }
+        ];
+        const txResult = await db.transaction(ops);
+        if (!txResult.ok) throw new Error(txResult.error || 'Transaction failed');
+        flushed++;
+      } catch (batchErr) {
+        errors.push({ id: batch.id, error: batchErr.message });
+      }
+    }
+
+    res.json({ ok: true, flushed, errors });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// PATCH /api/gl/pending-batches/:id (MUST be AFTER /flush)
+app.patch('/api/gl/pending-batches/:id', async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body || {};
+  if (!['POSTED','IGNORED'].includes(status))
+    return res.json({ ok: false, error: 'status must be POSTED or IGNORED' });
+  try {
+    const extra = status === 'POSTED' ? ', posted_at = NOW()' : '';
+    const r = await db.query(
+      `UPDATE gl_pending_batches SET status=$1${extra} WHERE id=$2 RETURNING id`,
+      [status, id]
+    );
+    if (!r.rows?.length) return res.json({ ok: false, error: 'Not found' });
+    res.json({ ok: true });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // ─── System Branding (DB-backed, per-property) ───────────────────────────────
 app.get('/api/system/branding', async (req, res) => {
   try {
@@ -1404,6 +1510,36 @@ const server = app.listen(PORT, '0.0.0.0', () => {
            'Current hotel business date', NOW(), 'system')
         ON CONFLICT (key) DO NOTHING
       `);
+
+      // ── GL Pending Batches tables ─────────────────────────────────────────────
+      await dbMod.query(`
+        CREATE TABLE IF NOT EXISTS gl_account_mappings (
+          id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+          source_type     TEXT NOT NULL CHECK (source_type IN ('SUPPLIER','CUSTOMER_CREDIT','STOCK_CATEGORY')),
+          source_ref_id   TEXT NOT NULL,
+          target_gl_account_id TEXT NOT NULL REFERENCES gl_accounts(id),
+          updated_at      TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE (source_type, source_ref_id)
+        )
+      `);
+      await dbMod.query(`
+        CREATE TABLE IF NOT EXISTS gl_pending_batches (
+          id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+          origin_table      TEXT NOT NULL,
+          origin_id         TEXT NOT NULL,
+          description       TEXT,
+          debit_gl_account  TEXT NOT NULL,
+          credit_gl_account TEXT NOT NULL,
+          amount            NUMERIC(12,2) NOT NULL,
+          status            TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','POSTED','IGNORED')),
+          created_at        TIMESTAMPTZ DEFAULT NOW(),
+          posted_at         TIMESTAMPTZ,
+          posted_journal_id TEXT REFERENCES gl_journal_entries(id),
+          UNIQUE (origin_table, origin_id)
+        )
+      `);
+      await dbMod.query(`CREATE INDEX IF NOT EXISTS idx_glpb_status ON gl_pending_batches(status)`);
+      await dbMod.query(`CREATE INDEX IF NOT EXISTS idx_glpb_origin ON gl_pending_batches(origin_table, origin_id)`);
 
       const schedule = await runner.getSystemConfig('night_audit_schedule',
         { enabled: true, hour: 21, minute: 0, timezone: 'Africa/Harare' });
