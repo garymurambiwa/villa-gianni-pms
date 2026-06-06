@@ -3043,4 +3043,377 @@ router.get('/periods', async (req, res) => {
   }
 });
 
+// ============================================================================
+// STOCK TAKE
+// ============================================================================
+
+/**
+ * POST /api/v1/inventory/stock-take/generate
+ * Body: { location_id, period_start, period_end, created_by? }
+ * Idempotent: returns existing draft if one exists. 409 if already locked.
+ */
+router.post('/stock-take/generate', async (req, res) => {
+  const { location_id, period_start, period_end, created_by } = req.body || {};
+  if (!location_id || !period_start || !period_end)
+    return res.status(400).json({ ok: false, error: 'location_id, period_start, period_end required' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Idempotent: return existing sheet if present
+    const existing = await client.query(
+      `SELECT id, status FROM public.inv_stock_take_sheets
+       WHERE location_id = $1 AND period_start = $2::date AND period_end = $3::date`,
+      [location_id, period_start, period_end]
+    );
+    if (existing.rows.length) {
+      if (existing.rows[0].status === 'locked') {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ ok: false, error: 'Period already locked' });
+      }
+      const existingLines = await client.query(
+        `SELECT stl.*, i.name AS item_name FROM public.inv_stock_take_lines stl
+         JOIN public.inv_items i ON i.id = stl.item_id
+         WHERE stl.sheet_id = $1 ORDER BY i.name`,
+        [existing.rows[0].id]
+      );
+      await client.query('ROLLBACK');
+      return res.json({ ok: true, sheet: existing.rows[0], lines: existingLines.rows });
+    }
+
+    // Create sheet header
+    const sheetRes = await client.query(
+      `INSERT INTO public.inv_stock_take_sheets (location_id, period_start, period_end, created_by)
+       VALUES ($1, $2::date, $3::date, $4) RETURNING *`,
+      [location_id, period_start, period_end, created_by || 'system']
+    );
+    const sheet = sheetRes.rows[0];
+
+    // Get all items that have ANY ledger activity at this location up to period_end,
+    // with in-period aggregations computed in one query.
+    const itemsRes = await client.query(`
+      SELECT
+        sl.item_id,
+        MAX(i.name) AS item_name,
+        COALESCE(SUM(CASE WHEN sl.ledger_type = 'GRN'
+          AND sl.inserted_at >= $2::date THEN sl.quantity_change END), 0) AS purchases_qty,
+        COALESCE(SUM(CASE WHEN sl.ledger_type = 'TRANSFER_IN'
+          AND sl.inserted_at >= $2::date THEN sl.quantity_change END), 0) AS transfers_in_qty,
+        COALESCE(ABS(SUM(CASE WHEN sl.ledger_type = 'TRANSFER_OUT'
+          AND sl.inserted_at >= $2::date THEN sl.quantity_change END)), 0) AS transfers_out_qty,
+        COALESCE(ABS(SUM(CASE WHEN sl.ledger_type = 'SALE_DEPLETION'
+          AND sl.inserted_at >= $2::date THEN sl.quantity_change END)), 0) AS theoretical_sales_qty,
+        (SELECT COALESCE(cost_per_unit, 0)
+         FROM public.inv_stock_ledger
+         WHERE item_id = sl.item_id AND cost_per_unit IS NOT NULL
+         ORDER BY inserted_at DESC LIMIT 1) AS unit_cost
+      FROM public.inv_stock_ledger sl
+      JOIN public.inv_items i ON i.id = sl.item_id
+      WHERE sl.location_id = $1
+        AND sl.inserted_at < $3::date + interval '1 day'
+      GROUP BY sl.item_id
+    `, [location_id, period_start, period_end]);
+
+    const lines = [];
+    for (const item of itemsRes.rows) {
+      // Opening: physical_qty from the most recent locked sheet for this location+item
+      const openingRes = await client.query(`
+        SELECT stl.physical_qty
+        FROM public.inv_stock_take_lines stl
+        JOIN public.inv_stock_take_sheets sts ON sts.id = stl.sheet_id
+        WHERE stl.item_id = $1
+          AND sts.location_id = $2
+          AND sts.status = 'locked'
+          AND sts.period_end < $3::date
+        ORDER BY sts.period_end DESC
+        LIMIT 1
+      `, [item.item_id, location_id, period_start]);
+
+      let opening_qty;
+      if (openingRes.rows.length) {
+        opening_qty = Number(openingRes.rows[0].physical_qty);
+      } else {
+        // Fallback: cumulative ledger balance before period_start
+        const cumRes = await client.query(`
+          SELECT COALESCE(SUM(quantity_change), 0) AS balance
+          FROM public.inv_stock_ledger
+          WHERE item_id = $1 AND location_id = $2 AND inserted_at < $3::date
+        `, [item.item_id, location_id, period_start]);
+        opening_qty = Number(cumRes.rows[0].balance);
+      }
+
+      const lineRes = await client.query(`
+        INSERT INTO public.inv_stock_take_lines
+          (sheet_id, item_id, item_name, opening_qty, purchases_qty, transfers_in_qty,
+           transfers_out_qty, theoretical_sales_qty, unit_cost)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING *
+      `, [
+        sheet.id, item.item_id, item.item_name, opening_qty,
+        item.purchases_qty, item.transfers_in_qty,
+        item.transfers_out_qty, item.theoretical_sales_qty,
+        item.unit_cost || 0
+      ]);
+      lines.push(lineRes.rows[0]);
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, sheet, lines });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * GET /api/v1/inventory/stock-take/:sheetId
+ * Returns sheet header + all lines with computed variance_qty.
+ */
+router.get('/stock-take/:sheetId', async (req, res) => {
+  try {
+    const sheetRes = await pool.query(
+      `SELECT * FROM public.inv_stock_take_sheets WHERE id = $1`,
+      [req.params.sheetId]
+    );
+    if (!sheetRes.rows.length)
+      return res.status(404).json({ ok: false, error: 'Sheet not found' });
+
+    const linesRes = await pool.query(`
+      SELECT stl.*,
+        COALESCE(stl.item_name, i.name) AS item_name,
+        CASE WHEN stl.physical_qty IS NOT NULL THEN
+          stl.physical_qty - (stl.opening_qty + stl.purchases_qty + stl.transfers_in_qty
+            - stl.transfers_out_qty - stl.theoretical_sales_qty - stl.adjustments_qty)
+        END AS variance_qty
+      FROM public.inv_stock_take_lines stl
+      JOIN public.inv_items i ON i.id = stl.item_id
+      WHERE stl.sheet_id = $1
+      ORDER BY COALESCE(stl.item_name, i.name)
+    `, [req.params.sheetId]);
+
+    res.json({ ok: true, sheet: sheetRes.rows[0], lines: linesRes.rows });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/v1/inventory/stock-take/lines/:lineId
+ * Body: { physical_qty }
+ * Updates physical count on a single line. Rejects if sheet is locked.
+ */
+router.patch('/stock-take/lines/:lineId', async (req, res) => {
+  const { physical_qty } = req.body || {};
+  if (physical_qty == null)
+    return res.status(400).json({ ok: false, error: 'physical_qty required' });
+  try {
+    const checkRes = await pool.query(
+      `SELECT sts.status FROM public.inv_stock_take_sheets sts
+       JOIN public.inv_stock_take_lines stl ON stl.sheet_id = sts.id
+       WHERE stl.id = $1`,
+      [req.params.lineId]
+    );
+    if (!checkRes.rows.length)
+      return res.status(404).json({ ok: false, error: 'Line not found' });
+    if (checkRes.rows[0].status === 'locked')
+      return res.status(409).json({ ok: false, error: 'Sheet is locked' });
+
+    const r = await pool.query(
+      `UPDATE public.inv_stock_take_lines SET physical_qty = $1 WHERE id = $2
+       RETURNING *,
+         physical_qty - (opening_qty + purchases_qty + transfers_in_qty
+           - transfers_out_qty - theoretical_sales_qty - adjustments_qty) AS variance_qty`,
+      [physical_qty, req.params.lineId]
+    );
+    res.json({ ok: true, line: r.rows[0] });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/inventory/stock-take/:sheetId/adjust
+ * Body: { item_id, qty, reason?, adjusted_by? }
+ * Writes a WASTE entry to inv_stock_ledger and increments adjustments_qty on the line.
+ */
+router.post('/stock-take/:sheetId/adjust', async (req, res) => {
+  const { item_id, qty, reason, adjusted_by } = req.body || {};
+  if (!item_id || qty == null)
+    return res.status(400).json({ ok: false, error: 'item_id and qty required' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const sheetRes = await client.query(
+      `SELECT * FROM public.inv_stock_take_sheets WHERE id = $1`,
+      [req.params.sheetId]
+    );
+    if (!sheetRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, error: 'Sheet not found' });
+    }
+    if (sheetRes.rows[0].status === 'locked') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, error: 'Sheet is locked' });
+    }
+    const sheet = sheetRes.rows[0];
+
+    // Write WASTE ledger entry (negative quantity_change = stock out)
+    const ledgerId = `waste-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    await client.query(
+      `INSERT INTO public.inv_stock_ledger
+         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by)
+       VALUES ($1, $2, $3, 'WASTE', $4, $5, 'uom_unit', $6)`,
+      [ledgerId, item_id, sheet.location_id,
+       `STOCKTAKE-ADJ-${req.params.sheetId}`, -Math.abs(Number(qty)),
+       adjusted_by || 'system']
+    );
+
+    // Increment adjustments_qty on the line
+    const lineRes = await client.query(
+      `UPDATE public.inv_stock_take_lines
+       SET adjustments_qty = adjustments_qty + $1
+       WHERE sheet_id = $2 AND item_id = $3
+       RETURNING *,
+         CASE WHEN physical_qty IS NOT NULL THEN
+           physical_qty - (opening_qty + purchases_qty + transfers_in_qty
+             - transfers_out_qty - theoretical_sales_qty - adjustments_qty)
+         END AS variance_qty`,
+      [Math.abs(Number(qty)), req.params.sheetId, item_id]
+    );
+    if (!lineRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, error: 'Line not found for item' });
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true, line: lineRes.rows[0], ledger_id: ledgerId });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * POST /api/v1/inventory/stock-take/:sheetId/lock
+ * Body: { locked_by? }
+ * Requires all physical_qty filled. Inserts variance report + GL pending batch. Locks sheet.
+ */
+router.post('/stock-take/:sheetId/lock', async (req, res) => {
+  const { locked_by } = req.body || {};
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const sheetRes = await client.query(
+      `SELECT * FROM public.inv_stock_take_sheets WHERE id = $1`,
+      [req.params.sheetId]
+    );
+    if (!sheetRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, error: 'Sheet not found' });
+    }
+    if (sheetRes.rows[0].status === 'locked') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, error: 'Sheet already locked' });
+    }
+    const sheet = sheetRes.rows[0];
+
+    const linesRes = await client.query(
+      `SELECT * FROM public.inv_stock_take_lines WHERE sheet_id = $1`,
+      [req.params.sheetId]
+    );
+    const lines = linesRes.rows;
+    const unfilled = lines.filter(l => l.physical_qty == null);
+    if (unfilled.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        ok: false,
+        error: `${unfilled.length} item(s) still missing physical count`,
+      });
+    }
+
+    // Generate variance report number
+    const countRes = await client.query(`SELECT COUNT(*) FROM public.inv_variance_reports`);
+    const reportNumber = `VAR-${String(Number(countRes.rows[0].count) + 1).padStart(5, '0')}`;
+
+    // Insert variance report header
+    const reportRes = await client.query(
+      `INSERT INTO public.inv_variance_reports
+         (id, report_number, location_id, period_start, period_end, generated_by)
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5) RETURNING id`,
+      [reportNumber, sheet.location_id, sheet.period_start, sheet.period_end, locked_by || 'system']
+    );
+    const reportId = reportRes.rows[0].id;
+
+    // Insert variance lines and accumulate net GL value
+    let netVarianceValue = 0;
+    for (const line of lines) {
+      const theoreticalQty = Number(line.opening_qty) + Number(line.purchases_qty)
+        + Number(line.transfers_in_qty) - Number(line.transfers_out_qty)
+        - Number(line.theoretical_sales_qty) - Number(line.adjustments_qty);
+      const varianceQty = Number(line.physical_qty) - theoreticalQty;
+      const varianceValue = varianceQty * Number(line.unit_cost);
+      netVarianceValue += varianceValue;
+
+      if (Math.abs(varianceQty) < 0.0005) continue; // skip zero-variance lines
+      await client.query(
+        `INSERT INTO public.inv_variance_lines
+           (id, report_id, item_id, physical_qty, theoretical_qty, variance_qty, unit_cost, variance_value)
+         VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7)`,
+        [reportId, line.item_id, line.physical_qty, theoreticalQty, varianceQty,
+         line.unit_cost, varianceValue]
+      );
+    }
+
+    // GL pending batch for net variance (skip if immaterial)
+    let glBatchId = null;
+    if (Math.abs(netVarianceValue) > 0.005) {
+      const isShrinkage = netVarianceValue < 0;
+      const glRes = await client.query(
+        `INSERT INTO public.gl_pending_batches
+           (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount)
+         VALUES ('inv_stock_take_sheets', $1, $2, $3, $4, $5)
+         ON CONFLICT (origin_table, origin_id) DO NOTHING
+         RETURNING id`,
+        [
+          sheet.id,
+          `Stock Take ${reportNumber} — ${isShrinkage ? 'shrinkage' : 'surplus'}`,
+          isShrinkage ? '5100' : '1400',
+          isShrinkage ? '1400' : '5100',
+          Math.abs(netVarianceValue),
+        ]
+      );
+      glBatchId = glRes.rows[0]?.id || null;
+    }
+
+    // Lock the sheet
+    await client.query(
+      `UPDATE public.inv_stock_take_sheets
+       SET status = 'locked', locked_at = now(), locked_by = $1 WHERE id = $2`,
+      [locked_by || 'system', req.params.sheetId]
+    );
+
+    await client.query('COMMIT');
+    res.json({
+      ok: true,
+      report_id: reportId,
+      report_number: reportNumber,
+      net_variance_value: netVarianceValue,
+      gl_batch_id: glBatchId,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 module.exports = router;
