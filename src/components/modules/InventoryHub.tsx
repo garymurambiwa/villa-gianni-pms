@@ -2479,8 +2479,305 @@ const TABS = [
   { id: 'reports',   label: '📊 Reports',     desc: 'Variance & stock reports'        },
   { id: 'locations', label: '🏪 Stores',      desc: 'Storage & outlet locations'      },
   { id: 'uom',       label: '⚖ UOM',          desc: 'Units of measure'                },
+  { id: 'stock-take', label: '📋 Stock Take', desc: 'Monthly physical count sheets'   },
 ] as const;
 type TabId = typeof TABS[number]['id'];
+
+// ── Adjust Modal ──────────────────────────────────────────────────────────────
+const AdjustModal: React.FC<{
+  itemName: string;
+  onSubmit: (qty: number, reason: string) => void;
+  onClose: () => void;
+}> = ({ itemName, onSubmit, onClose }) => {
+  const [qty, setQty] = React.useState('');
+  const [reason, setReason] = React.useState('');
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-96 space-y-4 shadow-xl">
+        <h3 className="font-semibold text-lg">Record Adjustment — {itemName}</h3>
+        <p className="text-sm text-gray-500">Writes a WASTE entry to the stock ledger immediately.</p>
+        <label className="block text-sm font-medium text-gray-700">
+          Qty to write off
+          <input type="number" step="0.01" min="0" value={qty} onChange={e => setQty(e.target.value)}
+            className="mt-1 block w-full border rounded px-3 py-1.5 text-sm" placeholder="e.g. 2.5" />
+        </label>
+        <label className="block text-sm font-medium text-gray-700">
+          Reason
+          <input type="text" value={reason} onChange={e => setReason(e.target.value)}
+            placeholder="e.g. breakage, spillage"
+            className="mt-1 block w-full border rounded px-3 py-1.5 text-sm" />
+        </label>
+        <div className="flex gap-3 justify-end pt-2">
+          <button onClick={onClose}
+            className="text-sm px-4 py-1.5 border rounded hover:bg-gray-50">
+            Cancel
+          </button>
+          <button
+            onClick={() => { const n = parseFloat(qty); if (!isNaN(n) && n > 0) onSubmit(n, reason); }}
+            disabled={!qty || parseFloat(qty) <= 0}
+            className="text-sm px-4 py-1.5 bg-amber-600 text-white rounded disabled:opacity-50">
+            Record Adjustment
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── Stock Take ────────────────────────────────────────────────────────────────
+const StockTake: React.FC = () => {
+  const [locations, setLocations] = React.useState<{ id: string; name: string }[]>([]);
+  const [locationId, setLocationId] = React.useState('');
+  const [period, setPeriod] = React.useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [sheet, setSheet] = React.useState<any>(null);
+  const [lines, setLines] = React.useState<any[]>([]);
+  const [generating, setGenerating] = React.useState(false);
+  const [locking, setLocking] = React.useState(false);
+  const [adjustModal, setAdjustModal] = React.useState<any>(null);
+  const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    fetch('/api/v1/inventory/locations')
+      .then(r => r.json())
+      .then(d => { if (d.ok) setLocations(d.data || []); })
+      .catch(() => {});
+  }, []);
+
+  const periodStart = `${period}-01`;
+  const periodEnd = (() => {
+    const [y, m] = period.split('-').map(Number);
+    return `${y}-${String(m).padStart(2, '0')}-${new Date(y, m, 0).getDate()}`;
+  })();
+
+  const attachVariance = (ls: any[]) =>
+    ls.map(l => ({
+      ...l,
+      variance_qty:
+        l.physical_qty != null
+          ? Number(l.physical_qty) -
+            (Number(l.opening_qty) + Number(l.purchases_qty) + Number(l.transfers_in_qty) -
+              Number(l.transfers_out_qty) - Number(l.theoretical_sales_qty) - Number(l.adjustments_qty))
+          : null,
+    }));
+
+  const handleGenerate = async () => {
+    if (!locationId) return setError('Select a location first');
+    setGenerating(true);
+    setError('');
+    try {
+      const r = await fetch('/api/v1/inventory/stock-take/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location_id: locationId, period_start: periodStart, period_end: periodEnd }),
+      }).then(r => r.json());
+      if (!r.ok) return setError(r.error || 'Generate failed');
+      setSheet(r.sheet);
+      setLines(attachVariance(r.lines));
+    } catch (_e) {
+      setError('Network error');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handlePhysicalQty = async (lineId: string, value: string) => {
+    const qty = parseFloat(value);
+    if (isNaN(qty)) return;
+    try {
+      const r = await fetch(`/api/v1/inventory/stock-take/lines/${lineId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ physical_qty: qty }),
+      }).then(r => r.json());
+      if (r.ok) setLines(prev => prev.map(l => l.id === lineId ? { ...l, ...r.line } : l));
+      else setError(r.error || 'Save failed');
+    } catch (_e) {
+      setError('Network error');
+    }
+  };
+
+  const handleLock = async () => {
+    if (!window.confirm('Lock this period? Physical counts will be frozen and a GL batch created. This cannot be undone.')) return;
+    setLocking(true);
+    setError('');
+    try {
+      const r = await fetch(`/api/v1/inventory/stock-take/${sheet.id}/lock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ locked_by: 'staff' }),
+      }).then(r => r.json());
+      if (!r.ok) return setError(r.error || 'Lock failed');
+      setSheet((s: any) => ({ ...s, status: 'locked' }));
+    } catch (_e) {
+      setError('Network error');
+    } finally {
+      setLocking(false);
+    }
+  };
+
+  const handleAdjust = async (qty: number, reason: string) => {
+    if (!adjustModal || !sheet) return;
+    try {
+      const r = await fetch(`/api/v1/inventory/stock-take/${sheet.id}/adjust`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: adjustModal.item_id, qty, reason }),
+      }).then(r => r.json());
+      if (r.ok) {
+        setLines(prev => prev.map(l => l.id === r.line.id ? { ...l, ...r.line } : l));
+        setAdjustModal(null);
+      } else {
+        setError(r.error || 'Adjust failed');
+      }
+    } catch (_e) {
+      setError('Network error');
+    }
+  };
+
+  const locked = sheet?.status === 'locked';
+  const unfilledCount = lines.filter(l => l.physical_qty == null).length;
+
+  return (
+    <div className="space-y-4">
+      {/* Controls row */}
+      <div className="flex flex-wrap gap-3 items-center">
+        <select value={locationId} onChange={e => setLocationId(e.target.value)}
+          className="border rounded px-3 py-1.5 text-sm">
+          <option value="">Select location…</option>
+          {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
+        <input type="month" value={period} onChange={e => setPeriod(e.target.value)}
+          className="border rounded px-3 py-1.5 text-sm" />
+        <button onClick={handleGenerate} disabled={generating || !locationId}
+          className="bg-indigo-600 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50">
+          {generating ? 'Generating…' : 'Generate Sheet'}
+        </button>
+        {sheet && (
+          <div className="ml-auto flex items-center gap-3">
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+              locked ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+            }`}>
+              {locked ? '🔒 LOCKED' : 'DRAFT'}
+            </span>
+            {!locked && (
+              <button
+                onClick={handleLock}
+                disabled={locking || unfilledCount > 0}
+                title={unfilledCount > 0 ? `${unfilledCount} item(s) still need a count` : 'Lock this period'}
+                className="bg-green-700 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50">
+                {locking ? 'Locking…' : `Lock Period${unfilledCount > 0 ? ` (${unfilledCount} remaining)` : ''}`}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {error && <p className="text-red-600 text-sm bg-red-50 px-3 py-2 rounded">{error}</p>}
+
+      {lines.length === 0 && !sheet && (
+        <p className="text-gray-400 text-sm">Select a location and period, then click Generate Sheet.</p>
+      )}
+      {lines.length === 0 && sheet && (
+        <p className="text-gray-400 text-sm">No inventory movements found for this location and period.</p>
+      )}
+
+      {/* Count grid */}
+      {lines.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b text-gray-500 text-xs uppercase tracking-wide">
+              <tr>
+                <th className="text-left px-3 py-2.5 font-medium">Item</th>
+                <th className="text-right px-3 py-2.5 font-medium">Opening</th>
+                <th className="text-right px-3 py-2.5 font-medium">Purchases</th>
+                <th className="text-right px-3 py-2.5 font-medium">Trans. In</th>
+                <th className="text-right px-3 py-2.5 font-medium">Trans. Out</th>
+                <th className="text-right px-3 py-2.5 font-medium">Theo. Sales</th>
+                <th className="text-right px-3 py-2.5 font-medium">Adjustments</th>
+                <th className="text-right px-3 py-2.5 font-medium text-indigo-600">Physical Count</th>
+                <th className="text-right px-3 py-2.5 font-medium">Variance</th>
+                <th className="px-3 py-2.5"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {lines.map(line => {
+                const v = line.variance_qty as number | null;
+                const rowBg = v != null && v < 0 ? 'bg-red-50' : '';
+                const varColor =
+                  v == null ? 'text-gray-300' :
+                  v < 0 ? 'text-red-600 font-semibold' :
+                  v > 0 ? 'text-amber-600' :
+                  'text-green-600';
+                const inputBorder = v != null && v !== 0 ? 'border-red-400 focus:border-red-500' : 'border-indigo-300 focus:border-indigo-500';
+                return (
+                  <tr key={line.id} className={rowBg}>
+                    <td className="px-3 py-2 font-medium text-gray-800">{line.item_name}</td>
+                    <td className="text-right px-3 py-2 text-gray-500">{Number(line.opening_qty).toFixed(2)}</td>
+                    <td className="text-right px-3 py-2 text-gray-500">{Number(line.purchases_qty).toFixed(2)}</td>
+                    <td className="text-right px-3 py-2 text-gray-500">{Number(line.transfers_in_qty).toFixed(2)}</td>
+                    <td className="text-right px-3 py-2 text-gray-500">{Number(line.transfers_out_qty).toFixed(2)}</td>
+                    <td className="text-right px-3 py-2 text-gray-500">{Number(line.theoretical_sales_qty).toFixed(2)}</td>
+                    <td className="text-right px-3 py-2 text-gray-500">{Number(line.adjustments_qty).toFixed(2)}</td>
+                    <td className="text-right px-3 py-2">
+                      {locked ? (
+                        <span className="text-gray-700">{line.physical_qty != null ? Number(line.physical_qty).toFixed(2) : '—'}</span>
+                      ) : (
+                        <input
+                          type="number" step="0.01"
+                          defaultValue={line.physical_qty != null ? String(line.physical_qty) : ''}
+                          placeholder="—"
+                          onBlur={e => { if (e.target.value !== '') handlePhysicalQty(line.id, e.target.value); }}
+                          className={`w-20 text-right border rounded px-2 py-1 text-sm outline-none ${inputBorder}`}
+                        />
+                      )}
+                    </td>
+                    <td className={`text-right px-3 py-2 ${varColor}`}>
+                      {v != null ? v.toFixed(2) : '—'}
+                    </td>
+                    <td className="px-3 py-2">
+                      {!locked && line.physical_qty != null && (
+                        <button
+                          onClick={() => setAdjustModal(line)}
+                          className="text-xs text-gray-500 border border-gray-200 rounded px-2 py-0.5 hover:bg-gray-100">
+                          Adjust
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {/* Footer summary */}
+          <div className="flex gap-4 px-3 py-2 border-t bg-gray-50 text-xs text-gray-500">
+            <span>{lines.length} items</span>
+            {unfilledCount > 0 && <span className="text-amber-600">{unfilledCount} not yet counted</span>}
+            {lines.some(l => l.variance_qty != null && l.variance_qty < 0) && (
+              <span className="ml-auto text-red-600 font-medium">
+                Total shrinkage: {lines
+                  .filter(l => l.variance_qty != null && l.variance_qty < 0)
+                  .reduce((s, l) => s + Math.abs(l.variance_qty) * Number(l.unit_cost), 0)
+                  .toFixed(2)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {adjustModal && (
+        <AdjustModal
+          itemName={adjustModal.item_name}
+          onSubmit={handleAdjust}
+          onClose={() => setAdjustModal(null)}
+        />
+      )}
+    </div>
+  );
+};
 
 export const InventoryHub: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('items');
@@ -2508,6 +2805,7 @@ export const InventoryHub: React.FC = () => {
       case 'reports':   return <StockReports      data={data} />;
       case 'locations': return <LocationsManager data={data} />;
       case 'uom':       return <UOMManager      data={data} />;
+      case 'stock-take': return <StockTake />;
     }
   };
 
