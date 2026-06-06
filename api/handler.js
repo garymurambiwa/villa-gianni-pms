@@ -408,6 +408,37 @@ app.post('/api/gl/accounts/seed', async (req, res) => {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_glpb_status ON gl_pending_batches(status)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_glpb_origin ON gl_pending_batches(origin_table, origin_id)`);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS inv_stock_take_sheets (
+        id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        location_id   TEXT NOT NULL,
+        period_start  DATE NOT NULL,
+        period_end    DATE NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','locked')),
+        created_by    TEXT,
+        created_at    TIMESTAMPTZ DEFAULT now(),
+        locked_at     TIMESTAMPTZ,
+        locked_by     TEXT,
+        UNIQUE (location_id, period_start, period_end)
+      )
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS inv_stock_take_lines (
+        id                    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        sheet_id              TEXT NOT NULL REFERENCES inv_stock_take_sheets(id) ON DELETE CASCADE,
+        item_id               TEXT NOT NULL,
+        opening_qty           NUMERIC(12,4) NOT NULL DEFAULT 0,
+        purchases_qty         NUMERIC(12,4) NOT NULL DEFAULT 0,
+        transfers_in_qty      NUMERIC(12,4) NOT NULL DEFAULT 0,
+        transfers_out_qty     NUMERIC(12,4) NOT NULL DEFAULT 0,
+        theoretical_sales_qty NUMERIC(12,4) NOT NULL DEFAULT 0,
+        adjustments_qty       NUMERIC(12,4) NOT NULL DEFAULT 0,
+        physical_qty          NUMERIC(12,4),
+        unit_cost             NUMERIC(12,4) NOT NULL DEFAULT 0,
+        item_name             TEXT,
+        UNIQUE (sheet_id, item_id)
+      )
+    `);
 
     let upserted = 0;
     for (const acc of USALI_ACCOUNTS) {
