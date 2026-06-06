@@ -392,6 +392,37 @@ async function ensureInventoryTables() {
       await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_item_loc ON public.inv_stock_ledger(item_id, location_id)`).catch(()=>{});
       await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_type ON public.inv_stock_ledger(ledger_type)`).catch(()=>{});
 
+      // Stock Take tables
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_stock_take_sheets (
+          id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+          location_id   TEXT NOT NULL REFERENCES public.inv_locations(id),
+          period_start  DATE NOT NULL,
+          period_end    DATE NOT NULL,
+          status        TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','locked')),
+          created_by    TEXT,
+          created_at    TIMESTAMPTZ DEFAULT now(),
+          locked_at     TIMESTAMPTZ,
+          locked_by     TEXT,
+          UNIQUE (location_id, period_start, period_end)
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inv_stock_take_lines (
+          id                    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+          sheet_id              TEXT NOT NULL REFERENCES public.inv_stock_take_sheets(id) ON DELETE CASCADE,
+          item_id               TEXT NOT NULL REFERENCES public.inv_items(id),
+          opening_qty           NUMERIC(12,4) NOT NULL DEFAULT 0,
+          purchases_qty         NUMERIC(12,4) NOT NULL DEFAULT 0,
+          transfers_in_qty      NUMERIC(12,4) NOT NULL DEFAULT 0,
+          transfers_out_qty     NUMERIC(12,4) NOT NULL DEFAULT 0,
+          theoretical_sales_qty NUMERIC(12,4) NOT NULL DEFAULT 0,
+          adjustments_qty       NUMERIC(12,4) NOT NULL DEFAULT 0,
+          physical_qty          NUMERIC(12,4),
+          unit_cost             NUMERIC(12,4) NOT NULL DEFAULT 0,
+          item_name             TEXT,
+          UNIQUE (sheet_id, item_id)
+        )`);
+
       // ALWAYS re-seed UOMs and default storage locations
       await seedUomDefinitions(client);
       await seedDefaultLocations(client);
@@ -631,6 +662,36 @@ async function ensureInventoryTables() {
         item_cost NUMERIC(10,4),
         variance_value NUMERIC(12,2),
         inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_stock_take_sheets (
+        id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        location_id   TEXT NOT NULL REFERENCES public.inv_locations(id),
+        period_start  DATE NOT NULL,
+        period_end    DATE NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','locked')),
+        created_by    TEXT,
+        created_at    TIMESTAMPTZ DEFAULT now(),
+        locked_at     TIMESTAMPTZ,
+        locked_by     TEXT,
+        UNIQUE (location_id, period_start, period_end)
+      )`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inv_stock_take_lines (
+        id                    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        sheet_id              TEXT NOT NULL REFERENCES public.inv_stock_take_sheets(id) ON DELETE CASCADE,
+        item_id               TEXT NOT NULL REFERENCES public.inv_items(id),
+        opening_qty           NUMERIC(12,4) NOT NULL DEFAULT 0,
+        purchases_qty         NUMERIC(12,4) NOT NULL DEFAULT 0,
+        transfers_in_qty      NUMERIC(12,4) NOT NULL DEFAULT 0,
+        transfers_out_qty     NUMERIC(12,4) NOT NULL DEFAULT 0,
+        theoretical_sales_qty NUMERIC(12,4) NOT NULL DEFAULT 0,
+        adjustments_qty       NUMERIC(12,4) NOT NULL DEFAULT 0,
+        physical_qty          NUMERIC(12,4),
+        unit_cost             NUMERIC(12,4) NOT NULL DEFAULT 0,
+        item_name             TEXT,
+        UNIQUE (sheet_id, item_id)
       )`);
 
     // ── Performance Indexes ────────────────────────────────────────────────
