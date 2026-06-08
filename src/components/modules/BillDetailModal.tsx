@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { HOTEL_NAME } from '../../lib/brand';
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -246,7 +247,7 @@ export const BillDetailModal: React.FC<Props> = ({ group, open, onClose, onVoidE
     <div class="totals-row net"><span>Net Total</span><span>${fmtAmt(group.netAmount)}</span></div>
   </div>
 
-  <div class="footer">Printed ${new Date().toLocaleString('en-US')} &nbsp;|&nbsp; Villa Gianni PMS</div>
+  <div class="footer">Printed ${new Date().toLocaleString('en-US')} &nbsp;|&nbsp; ${HOTEL_NAME} PMS</div>
 </body>
 </html>`;
 

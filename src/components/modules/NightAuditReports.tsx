@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { HOTEL_NAME } from '../../lib/brand';
 import { Button } from '@/components/ui/button';
 import {
   FileText, Printer, RefreshCw, ChevronDown, ChevronRight,
@@ -23,7 +24,7 @@ const NightAuditReports: React.FC = () => {
   const [selected, setSelected]     = useState<{ date: string; file: string } | null>(null);
   const [content, setContent]       = useState<string>('');
   const [contentLoading, setContentLoading] = useState(false);
-  const [hotelName, setHotelName]   = useState('Villa Gianni');
+  const [hotelName, setHotelName]   = useState(HOTEL_NAME);
   const printRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

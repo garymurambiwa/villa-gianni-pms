@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Delete, Eraser, LogIn, User, ShieldCheck, Clock } from 'lucide-react';
 import { hasPosPin, verifyPosPin, startPosSession, PosOperatorSession } from '@/lib/posPinService';
+import { HOTEL_NAME } from '@/lib/brand';
 
 interface StaffUser {
   id: string;
@@ -284,7 +285,7 @@ export const POSPinGate: React.FC<POSPinGateProps> = ({ users, onAuthenticated, 
 
         {/* Footer */}
         <p className="text-slate-600 text-xs text-center mt-6">
-          Villa Gianni PMS • POS Terminal • Access is logged
+          {HOTEL_NAME} PMS • POS Terminal • Access is logged
         </p>
       </div>
 
