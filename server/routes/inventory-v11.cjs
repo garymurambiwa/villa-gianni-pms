@@ -2276,6 +2276,9 @@ router.post('/items', async (req, res) => {
      // Auto-generate SKU if not provided
      const skuVal = sku || null;
 
+     // itemId: use provided id for updates, generate a new UUID for creates
+     const itemId = id || randomUUID();
+
      const r = await pool.query(`
        INSERT INTO public.inv_items
          (id, short_id, name, category, sub_category, base_uom_id, sku, barcode,
