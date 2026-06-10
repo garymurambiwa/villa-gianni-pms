@@ -2228,10 +2228,46 @@ function VarianceReports({ data }: { data: ReturnType<typeof useInventoryData> }
       {report && (
         <div style={{ marginTop: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
           {periodLocked ? (
+            <>
             <span style={{ padding: '6px 16px', background: '#dcfce7', color: '#166534',
                            border: '1px solid #86efac', borderRadius: 6, fontWeight: 600 }}>
               🔒 Period LOCKED
             </span>
+            {user?.role === 'admin' && (
+              <button
+                onClick={async () => {
+                  const reason = window.prompt('Reason for reopening this period (required):');
+                  if (!reason || !reason.trim()) return;
+                  setClosing(true);
+                  setCloseError('');
+                  try {
+                    const pr = await fetch('/api/v1/inventory/periods').then(r => r.json());
+                    const match = (pr.data || pr.periods || []).find((p: any) =>
+                      p.location_id === location && p.start_date === dateFrom &&
+                      p.end_date === dateTo && p.status === 'locked');
+                    if (!match) throw new Error('No locked period found for this location/date range');
+                    const r = await fetch('/api/v1/inventory/reopen-period', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', 'x-user-role': user?.role || '' },
+                      body: JSON.stringify({ period_id: match.id, reopened_by: user?.username || user?.id || 'admin', reason }),
+                    }).then(r => r.json());
+                    if (!r.ok) throw new Error(r.error || 'Reopen failed');
+                    setPeriodLocked(false);
+                  } catch (e) {
+                    setCloseError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setClosing(false);
+                  }
+                }}
+                disabled={closing}
+                style={{ padding: '8px 20px', background: '#b91c1c', color: '#fff',
+                         border: 'none', borderRadius: 6, cursor: 'pointer',
+                         opacity: closing ? 0.6 : 1, fontWeight: 600 }}
+              >
+                {closing ? 'Reopening…' : 'Reopen Period'}
+              </button>
+            )}
+            </>
           ) : (
             <button
               onClick={handleClosePeriod}
@@ -2526,6 +2562,8 @@ const AdjustModal: React.FC<{
 
 // ── Stock Take ────────────────────────────────────────────────────────────────
 const StockTake: React.FC = () => {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [locations, setLocations] = React.useState<{ id: string; name: string }[]>([]);
   const [locationId, setLocationId] = React.useState('');
   const [period, setPeriod] = React.useState(() => {
@@ -2618,6 +2656,27 @@ const StockTake: React.FC = () => {
     }
   };
 
+  const handleReopen = async () => {
+    if (!sheet) return;
+    const reason = window.prompt('Reason for reopening this sheet (required):');
+    if (!reason || !reason.trim()) return;
+    setLocking(true);
+    setError('');
+    try {
+      const r = await fetch(`/api/v1/inventory/stock-take/${sheet.id}/reopen`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-role': user?.role || '' },
+        body: JSON.stringify({ reopened_by: user?.username || user?.id || 'admin', reason }),
+      }).then(r => r.json());
+      if (!r.ok) return setError(r.error || 'Reopen failed');
+      setSheet((s: any) => ({ ...s, status: 'draft' }));
+    } catch (_e) {
+      setError('Network error');
+    } finally {
+      setLocking(false);
+    }
+  };
+
   const handleAdjust = async (qty: number, reason: string) => {
     if (!adjustModal || !sheet) return;
     try {
@@ -2669,6 +2728,15 @@ const StockTake: React.FC = () => {
                 title={unfilledCount > 0 ? `${unfilledCount} item(s) still need a count` : 'Lock this period'}
                 className="bg-green-700 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50">
                 {locking ? 'Locking…' : `Lock Period${unfilledCount > 0 ? ` (${unfilledCount} remaining)` : ''}`}
+              </button>
+            )}
+            {locked && isAdmin && (
+              <button
+                onClick={handleReopen}
+                disabled={locking}
+                title="Reopen this sheet for corrections (admin only — audited)"
+                className="bg-red-600 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50">
+                {locking ? 'Reopening…' : 'Reopen Sheet'}
               </button>
             )}
           </div>

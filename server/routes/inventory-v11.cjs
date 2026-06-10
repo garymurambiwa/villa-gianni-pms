@@ -221,6 +221,19 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inventory_periods ADD COLUMN IF NOT EXISTS locked_at TIMESTAMPTZ`).catch(() => {});
       await client.query(`ALTER TABLE public.inventory_periods ADD COLUMN IF NOT EXISTS locked_by TEXT`).catch(() => {});
 
+      // Append-only audit trail for period/sheet reopen actions
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.inventory_period_audit (
+          id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+          period_id     TEXT,
+          action        TEXT NOT NULL,
+          user_id       TEXT,
+          user_name     TEXT,
+          change_reason TEXT,
+          created_at    TIMESTAMPTZ DEFAULT now()
+        )
+      `).catch(() => {});
+
       // ── ISSUE 1 FIX: inv_grn_lines column alignment ───────────────────────
       // Older deployments created inv_grn_lines with `uom_id` (wrong name).
       // The backend INSERT and frontend payload both use `received_uom_id`.
@@ -692,6 +705,18 @@ async function ensureInventoryTables() {
         unit_cost             NUMERIC(12,4) NOT NULL DEFAULT 0,
         item_name             TEXT,
         UNIQUE (sheet_id, item_id)
+      )`);
+
+    // Append-only audit trail for period/sheet reopen actions
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.inventory_period_audit (
+        id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        period_id     TEXT,
+        action        TEXT NOT NULL,
+        user_id       TEXT,
+        user_name     TEXT,
+        change_reason TEXT,
+        created_at    TIMESTAMPTZ DEFAULT now()
       )`);
 
     // ── Performance Indexes ────────────────────────────────────────────────
@@ -3411,6 +3436,140 @@ router.post('/stock-take/:sheetId/lock', async (req, res) => {
       net_variance_value: netVarianceValue,
       gl_batch_id: glBatchId,
     });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * POST /api/v1/inventory/stock-take/:sheetId/reopen
+ * Body: { reopened_by, reason }  — admin only (x-user-role header).
+ * Reverses the lock: deletes the PENDING GL batch + variance report created at
+ * lock, sets the sheet back to draft, and writes an audit row.
+ * Refuses if the GL batch has already been POSTED.
+ */
+router.post('/stock-take/:sheetId/reopen', async (req, res) => {
+  if ((req.headers['x-user-role'] || '') !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Admin role required to reopen a sheet' });
+  }
+  const { reopened_by, reason } = req.body || {};
+  if (!reason || !String(reason).trim()) {
+    return res.status(400).json({ ok: false, error: 'A reason is required to reopen' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const sheetRes = await client.query(
+      `SELECT * FROM public.inv_stock_take_sheets WHERE id = $1`,
+      [req.params.sheetId]
+    );
+    if (!sheetRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, error: 'Sheet not found' });
+    }
+    const sheet = sheetRes.rows[0];
+    if (sheet.status !== 'locked') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, error: 'Sheet is not locked' });
+    }
+
+    // GL batch created at lock — refuse if already posted to the GL
+    const batchRes = await client.query(
+      `SELECT id, status FROM public.gl_pending_batches
+       WHERE origin_table = 'inv_stock_take_sheets' AND origin_id = $1`,
+      [sheet.id]
+    );
+    if (batchRes.rows.length && batchRes.rows[0].status === 'POSTED') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        ok: false,
+        error: 'GL batch already posted — reverse the journal first, then reopen',
+      });
+    }
+    if (batchRes.rows.length) {
+      await client.query(`DELETE FROM public.gl_pending_batches WHERE id = $1`, [batchRes.rows[0].id]);
+    }
+
+    // Variance report + lines created at lock (matched by location + period)
+    const repRes = await client.query(
+      `SELECT id FROM public.inv_variance_reports
+       WHERE location_id = $1 AND period_start = $2 AND period_end = $3`,
+      [sheet.location_id, sheet.period_start, sheet.period_end]
+    );
+    for (const rep of repRes.rows) {
+      await client.query(`DELETE FROM public.inv_variance_lines WHERE report_id = $1`, [rep.id]);
+      await client.query(`DELETE FROM public.inv_variance_reports WHERE id = $1`, [rep.id]);
+    }
+
+    await client.query(
+      `UPDATE public.inv_stock_take_sheets
+       SET status = 'draft', locked_at = NULL, locked_by = NULL WHERE id = $1`,
+      [sheet.id]
+    );
+
+    await client.query(
+      `INSERT INTO public.inventory_period_audit (period_id, action, user_id, user_name, change_reason)
+       VALUES ($1, 'SHEET_REOPENED', $2, $2, $3)`,
+      [sheet.id, reopened_by || 'system', String(reason).trim()]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, message: 'Sheet reopened', deleted_reports: repRes.rows.length });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * POST /api/v1/inventory/reopen-period
+ * Body: { period_id, reopened_by, reason }  — admin only (x-user-role header).
+ * Sets a locked inventory period back to open and writes an audit row.
+ */
+router.post('/reopen-period', async (req, res) => {
+  if ((req.headers['x-user-role'] || '') !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Admin role required to reopen a period' });
+  }
+  const { period_id, reopened_by, reason } = req.body || {};
+  if (!period_id) return res.status(400).json({ ok: false, error: 'period_id is required' });
+  if (!reason || !String(reason).trim()) {
+    return res.status(400).json({ ok: false, error: 'A reason is required to reopen' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const perRes = await client.query(
+      `SELECT id, status FROM public.inventory_periods WHERE id = $1`, [period_id]
+    );
+    if (!perRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, error: 'Period not found' });
+    }
+    if (perRes.rows[0].status !== 'locked') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, error: 'Period is not locked' });
+    }
+
+    await client.query(
+      `UPDATE public.inventory_periods
+       SET status = 'open', locked_at = NULL, locked_by = NULL WHERE id = $1`,
+      [period_id]
+    );
+    await client.query(
+      `INSERT INTO public.inventory_period_audit (period_id, action, user_id, user_name, change_reason)
+       VALUES ($1, 'PERIOD_REOPENED', $2, $2, $3)`,
+      [period_id, reopened_by || 'system', String(reason).trim()]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, message: 'Period reopened' });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ ok: false, error: err.message });
