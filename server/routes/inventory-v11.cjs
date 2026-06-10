@@ -2278,10 +2278,12 @@ router.post('/items', async (req, res) => {
   } = req.body;
   if (!name) return res.status(400).json({ ok: false, error: 'name is required' });
 
+   // Declared outside try so the catch block can reference them
+   let generatedShortId;
+   let client;
    try {
      // Generate a compliant short ID using our utility function
      // Fallback to the original method if needed, but ensure it's compliant
-     let generatedShortId;
      if (!id) {
        // For new items, generate a compliant short ID
        generatedShortId = generateSecureShortId(10);
@@ -2309,7 +2311,12 @@ router.post('/items', async (req, res) => {
      // itemId: use provided id for updates, generate a new UUID for creates
      const itemId = id || randomUUID();
 
-     const r = await pool.query(`
+     // Atomic: item upsert + POS products sync commit or roll back together,
+     // so an item can never exist in inventory but be missing from the POS.
+     client = await pool.connect();
+     await client.query('BEGIN');
+
+     const r = await client.query(`
        INSERT INTO public.inv_items
          (id, short_id, name, category, sub_category, base_uom_id, sku, barcode,
           last_cost_price, weighted_avg_cost, average_cost,
@@ -2350,10 +2357,10 @@ router.post('/items', async (req, res) => {
                     || String(category || '').toLowerCase().includes('bar')
                     || String(category || '').toLowerCase().includes('cellar');
     const dept       = isBeverage ? 'Bar' : 'Restaurant';
-    const uomRes     = await pool.query(`SELECT code FROM public.inv_uom_definitions WHERE id=$1`, [base_uom_id||'uom_unit']);
+    const uomRes     = await client.query(`SELECT code FROM public.inv_uom_definitions WHERE id=$1`, [base_uom_id||'uom_unit']);
     const uomCode    = uomRes.rows[0]?.code || 'units';
 
-    await pool.query(`
+    await client.query(`
       INSERT INTO public.products
         (id, name, category, department, price, cost_price, stock_level, unit,
          active, visibility, bar_visibility, restaurant_visibility,
@@ -2373,8 +2380,10 @@ router.post('/items', async (req, res) => {
         Number(selling_price || 0), Number(last_cost_price || 0), uomCode,
         sub_category || null, notes || null, media_url || null]);
 
+    await client.query('COMMIT');
     res.json({ ok: true, data: item });
    } catch (err) {
+     if (client) await client.query('ROLLBACK').catch(() => {});
      // Handle specific constraint violations with our error handler
      const constraintError = handleShortIdConstraintViolation(err, {
        short_id: generatedShortId,
@@ -2431,6 +2440,8 @@ router.post('/items', async (req, res) => {
        // Fallback to generic error if handler fails
        res.status(500).json({ ok: false, error: err.message });
      }
+   } finally {
+     if (client) client.release();
    }
 });
 
