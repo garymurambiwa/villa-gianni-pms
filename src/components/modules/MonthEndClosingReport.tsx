@@ -45,7 +45,7 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
     setLoading(true);
     try {
       // Fetch inventory data and generate month-end closing report
-      const response = await fetch('/api/v1/inventory/items?limit=100');
+      const response = await fetch('/api/v1/inventory/items?limit=10000');
       const data = await response.json();
 
       if (data.ok && data.data) {

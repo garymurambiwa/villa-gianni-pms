@@ -57,7 +57,7 @@ function useInventoryData() {
   const reload = useCallback(async () => {
     setLoading(true);
     const [iR, lR, uR] = await Promise.all([
-      apiGet('/items?limit=500'),
+      apiGet('/items?limit=10000'),
       apiGet('/locations'),
       apiGet('/uom'),
     ]);

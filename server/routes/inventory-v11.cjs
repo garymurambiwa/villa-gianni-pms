@@ -2203,7 +2203,7 @@ router.get('/variance/:report_id', async (req, res) => {
 router.get('/items', async (req, res) => {
   console.log('📦 Inventory items API called');
   try {
-    const { category, search, limit = 50 } = req.query;
+    const { category, search, limit = 1000 } = req.query;
 
     let query = `
       SELECT

@@ -46,7 +46,7 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
     setLoading(true);
     try {
       // Fetch inventory items and simulate pilferage analysis
-      const response = await fetch('/api/v1/inventory/items?limit=50');
+      const response = await fetch('/api/v1/inventory/items?limit=10000');
       const data = await response.json();
 
       if (data.ok && data.data) {
