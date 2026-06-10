@@ -68,6 +68,20 @@ export const GLAccounting: React.FC = () => {
   }, []);
 
   const tb = useMemo(() => gl.getTrialBalance(range.from, range.to), [range]);
+  // Drill-down: account selected from the Trial Balance → its journal lines
+  const [drillAccount, setDrillAccount] = useState<{ id: string; name: string } | null>(null);
+  const drillLines = useMemo(() => {
+    if (!drillAccount) return [];
+    const rows: Array<{ date: string; reference: string; description: string; debit: number; credit: number; entryId: string }> = [];
+    for (const entry of gl.getLedger()) {
+      if (entry.date < range.from || entry.date > range.to) continue;
+      for (const l of entry.lines) {
+        if (l.accountId !== drillAccount.id) continue;
+        rows.push({ date: entry.date, reference: entry.reference || entry.id, description: l.description || '', debit: l.debit, credit: l.credit, entryId: entry.id });
+      }
+    }
+    return rows.sort((a, b) => a.date.localeCompare(b.date));
+  }, [drillAccount, range]);
   const pl = useMemo(() => gl.getPLStatement(range.from, range.to), [range]);
   const bs = useMemo(() => gl.getBalanceSheet ? gl.getBalanceSheet(range.from, range.to) : { assets: 0, liabilities: 0, equity: 0 }, [range]);
   const mappingStatus = gl.validateMappingsComplete();
@@ -757,9 +771,45 @@ export const GLAccounting: React.FC = () => {
             <div className="overflow-x-auto">
               <table className="text-sm w-full">
                 <thead><tr><th className="p-2 text-left">Account</th><th className="p-2 text-right">Debit</th><th className="p-2 text-right">Credit</th><th className="p-2 text-right">Balance</th></tr></thead>
-                <tbody>{tb.map(r => (<tr key={r.accountId}><td className="p-2">{r.accountId} - {r.name}</td><td className="p-2 text-right">$ {Number(r.debit || 0).toFixed(2)}</td><td className="p-2 text-right">$ {Number(r.credit || 0).toFixed(2)}</td><td className="p-2 text-right">$ {Number(r.balance || 0).toFixed(2)}</td></tr>))}</tbody>
+                <tbody>{tb.map(r => (<tr key={r.accountId} onClick={()=>setDrillAccount({ id: r.accountId, name: r.name })} title="Click to view the transactions behind this balance" className="cursor-pointer hover:bg-indigo-50"><td className="p-2">{r.accountId} - {r.name}</td><td className="p-2 text-right">$ {Number(r.debit || 0).toFixed(2)}</td><td className="p-2 text-right">$ {Number(r.credit || 0).toFixed(2)}</td><td className="p-2 text-right">$ {Number(r.balance || 0).toFixed(2)}</td></tr>))}</tbody>
               </table>
             </div>
+            {drillAccount && (
+              <div className="mt-3 border rounded p-3 bg-indigo-50/40">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-semibold text-sm">
+                    Transactions — {drillAccount.id} {drillAccount.name}
+                    <span className="ml-2 font-normal text-xs text-gray-500">({range.from} → {range.to})</span>
+                  </div>
+                  <button onClick={()=>setDrillAccount(null)} className="text-gray-400 hover:text-gray-600 font-bold">✕</button>
+                </div>
+                {drillLines.length === 0 ? (
+                  <div className="text-xs text-gray-500">No journal lines hit this account in the selected range.</div>
+                ) : (
+                  <div className="overflow-x-auto max-h-72 overflow-y-auto">
+                    <table className="text-xs w-full">
+                      <thead><tr className="text-gray-500"><th className="p-1.5 text-left">Date</th><th className="p-1.5 text-left">Reference</th><th className="p-1.5 text-left">Description</th><th className="p-1.5 text-right">Debit</th><th className="p-1.5 text-right">Credit</th></tr></thead>
+                      <tbody>
+                        {drillLines.map((l, i) => (
+                          <tr key={`${l.entryId}-${i}`} className="border-t border-indigo-100">
+                            <td className="p-1.5">{l.date}</td>
+                            <td className="p-1.5 text-gray-600">{l.reference}</td>
+                            <td className="p-1.5 text-gray-600">{l.description || '—'}</td>
+                            <td className="p-1.5 text-right font-mono">{l.debit ? `$ ${l.debit.toFixed(2)}` : ''}</td>
+                            <td className="p-1.5 text-right font-mono">{l.credit ? `$ ${l.credit.toFixed(2)}` : ''}</td>
+                          </tr>
+                        ))}
+                        <tr className="border-t-2 border-indigo-200 font-semibold">
+                          <td className="p-1.5" colSpan={3}>Total ({drillLines.length} lines)</td>
+                          <td className="p-1.5 text-right font-mono">$ {drillLines.reduce((s,l)=>s+l.debit,0).toFixed(2)}</td>
+                          <td className="p-1.5 text-right font-mono">$ {drillLines.reduce((s,l)=>s+l.credit,0).toFixed(2)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className="border rounded p-3">
             <div className="font-semibold mb-1">Profit & Loss (USALI)</div>

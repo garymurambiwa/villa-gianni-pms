@@ -2319,6 +2319,31 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const [mvTo, setMvTo] = React.useState(new Date().toISOString().split('T')[0]);
   const [mvRows, setMvRows] = React.useState<any[]>([]);
   const [mvLoading, setMvLoading] = React.useState(false);
+  const [mvItemFilter, setMvItemFilter] = React.useState('');
+
+  // Drill-down: clicking a stock-on-hand row opens the item's stock card
+  // (movement report scoped to that item at the same location).
+  const drillToMovement = async (row: any) => {
+    const from = new Date(new Date(ohAsOf).getTime() - 30 * 86400000).toISOString().split('T')[0];
+    setMvLocation(ohLocation);
+    setMvFrom(from);
+    setMvTo(ohAsOf);
+    setMvItemFilter(row.name);
+    setSubTab('movement');
+    setMvLoading(true);
+    try {
+      const r = await fetch(`/api/v1/inventory/report/movement?location_id=${ohLocation}&from=${from}&to=${ohAsOf}`);
+      const d = await r.json();
+      if (d.ok) setMvRows(d.rows);
+      else toast({ title: 'Error', description: d.error, variant: 'destructive' });
+    } catch (e: any) {
+      toast({ title: 'Network error', description: e.message, variant: 'destructive' });
+    } finally { setMvLoading(false); }
+  };
+
+  const visibleMvRows = mvItemFilter
+    ? mvRows.filter(r => r.item_name === mvItemFilter)
+    : mvRows;
 
   const runStockOnHand = async () => {
     if (!ohLocation) { toast({ title: 'Select a location', variant: 'destructive' }); return; }
@@ -2412,7 +2437,9 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 </thead>
                 <tbody>
                   {ohRows.map((row, i) => (
-                    <tr key={row.id} className={`border-b ${Number(row.balance) === 0 ? 'text-gray-400' : ''} ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
+                    <tr key={row.id} onClick={() => drillToMovement(row)}
+                      title="Click to view this item's stock card (movement history)"
+                      className={`border-b cursor-pointer hover:bg-indigo-50 ${Number(row.balance) === 0 ? 'text-gray-400' : ''} ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
                       <td className="px-4 py-2">{row.name}</td>
                       <td className="px-4 py-2 text-gray-500">{row.category}</td>
                       <td className="px-4 py-2 text-right font-mono">{fmtQ(Number(row.balance))}</td>
@@ -2457,6 +2484,12 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
               className="px-4 py-1.5 bg-indigo-600 text-white rounded text-sm font-medium disabled:opacity-50">
               {mvLoading ? 'Running…' : 'Run Report'}
             </button>
+            {mvItemFilter && (
+              <span className="flex items-center gap-1.5 bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-full text-xs font-medium">
+                Item: {mvItemFilter}
+                <button onClick={() => setMvItemFilter('')} className="hover:text-indigo-900 font-bold">✕</button>
+              </span>
+            )}
             {mvRows.length > 0 && (
               <button onClick={() => downloadCSV(
                 `movement-${mvLocation}-${mvFrom}-${mvTo}.csv`,
@@ -2482,7 +2515,7 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {mvRows.map((row, i) => (
+                  {visibleMvRows.map((row, i) => (
                     <tr key={i} className={`border-b ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
                       <td className="px-4 py-2 text-gray-500">{row.date}</td>
                       <td className="px-4 py-2">{row.item_name}</td>
