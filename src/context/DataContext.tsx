@@ -2056,6 +2056,9 @@ check_in_date = ?, check_out_date = ?, status = ?,
   FOREIGN KEY(vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
 )`);
 
+      // GL mapping: every expense line carries its GL account explicitly
+      await db.query(`ALTER TABLE vendor_expenses ADD COLUMN IF NOT EXISTS gl_account_id TEXT`);
+
       // Create vendor payments table
       await db.query(`CREATE TABLE IF NOT EXISTS vendor_payments(
   id TEXT PRIMARY KEY,
@@ -2499,8 +2502,8 @@ name = ?, contact_person = ?, phone = ?, email = ?, address = ?, tax_id = ?,
       const expenseId = `EXP${Date.now()}_${Math.random().toString(36).substring(2, 9)} `;
 
       const sql = `INSERT INTO vendor_expenses(
-    id, vendor_id, description, quantity, unit_cost, tax_amount, tax_rate, tax_inclusive, expense_date, reference_number, category, department, status, created_at, updated_at
-  ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
+    id, vendor_id, description, quantity, unit_cost, tax_amount, tax_rate, tax_inclusive, expense_date, reference_number, category, department, status, gl_account_id, created_at, updated_at
+  ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`;
 
       const quantity = parseInt(expenseData.quantity) || 1;
       const unitCost = parseFloat(expenseData.unit_cost) || 0;
@@ -2519,7 +2522,8 @@ name = ?, contact_person = ?, phone = ?, email = ?, address = ?, tax_id = ?,
         expenseData.reference_number || null,
         expenseData.category || null,
         expenseData.department || null,
-        expenseData.status || 'pending'
+        expenseData.status || 'pending',
+        expenseData.gl_account_id || null
       ];
 
       const result = await db.query(sql, params);
@@ -2532,9 +2536,11 @@ name = ?, contact_person = ?, phone = ?, email = ?, address = ?, tax_id = ?,
       // POST TO GL LEDGER — bridge vendor expenses into the reporting/P&L engine
       try {
         const accs = gl.getAccounts();
-        // Find an expense account (USALI: departmental expense or fallback 5000-series)
+        // Prefer the explicitly mapped GL account from the expense form;
+        // fall back to the legacy department-name heuristic for old callers.
         const dept = String(expenseData.department || '').toLowerCase();
-        const expAccId = accs.find(a => a.category === 'Expense' && a.name.toLowerCase().includes(dept))?.id
+        const expAccId = expenseData.gl_account_id
+          || accs.find(a => a.category === 'Expense' && a.name.toLowerCase().includes(dept))?.id
           || accs.find(a => a.category === 'Expense')?.id
           || '5000';
         // AP (Accounts Payable) as credit side — liability

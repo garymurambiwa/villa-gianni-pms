@@ -96,11 +96,23 @@ export const RecordVendorBill: React.FC<{ onCancel: () => void; onSuccess?: () =
   }, [dynamicAccounts]);
 
   // Get categories for a department
-  const getCategoriesForDept = (dept: string) => {
+  // Categories are GL-mapped: each option carries the GL account id so the
+  // expense posts to exactly the account the user picked (no name guessing).
+  const getCategoriesForDept = (dept: string): { value: string; label: string; glAccountId?: string }[] => {
     if (!dept) return [];
-    const staticCat = getLineItemsForDepartment(dept).map(c => c.label);
-    const dynCat = dynamicAccounts.filter(a => a.category === 'Expense' && a.department === dept).map(a => a.name);
-    return Array.from(new Set([...staticCat, ...dynCat]));
+    const glForDept = dynamicAccounts.filter(a => a.category === 'Expense' && a.department === dept);
+    const glOptions = glForDept.map(a => ({ value: a.name, label: `${a.id} — ${a.name}`, glAccountId: a.id }));
+    const glNames = new Set(glForDept.map(a => a.name));
+    const staticOptions = getLineItemsForDepartment(dept)
+      .map(c => c.label)
+      .filter(lbl => !glNames.has(lbl))
+      .map(lbl => {
+        // Match static labels against any expense account by name for a GL id
+        const acc = dynamicAccounts.find(a => a.category === 'Expense' && a.name === lbl);
+        return { value: lbl, label: acc ? `${acc.id} — ${lbl}` : lbl, glAccountId: acc?.id };
+      });
+    const seen = new Set<string>();
+    return [...glOptions, ...staticOptions].filter(o => seen.has(o.value) ? false : (seen.add(o.value), true));
   };
 
   const handleQuickAdd = () => {
@@ -159,6 +171,10 @@ export const RecordVendorBill: React.FC<{ onCancel: () => void; onSuccess?: () =
         lineTax = totalLineCost * vatRate;
       }
 
+      // Resolve the GL account the chosen category maps to
+      const glAccountId = getCategoriesForDept(line.department)
+        .find(c => c.value === line.category)?.glAccountId || null;
+
       const payload = {
         vendor_id: vendorId,
         reference_number: referenceNumber,
@@ -167,10 +183,11 @@ export const RecordVendorBill: React.FC<{ onCancel: () => void; onSuccess?: () =
         quantity: line.quantity,
         unit_cost: line.unit_cost,
         tax_inclusive: true, // UI logic sits on top
-        tax_rate: applyVat ? vatRate * 100 : 0, 
+        tax_rate: applyVat ? vatRate * 100 : 0,
         tax_amount: lineTax,
         department: line.department,
         category: line.category,
+        gl_account_id: glAccountId,
         status: 'pending'
       };
 
@@ -328,7 +345,7 @@ export const RecordVendorBill: React.FC<{ onCancel: () => void; onSuccess?: () =
                       <SelectTrigger><SelectValue placeholder={line.department ? "Select Category" : "Select Dept First"} /></SelectTrigger>
                       <SelectContent>
                         {getCategoriesForDept(line.department).map(c => (
-                          <SelectItem key={c} value={c}>{c}</SelectItem>
+                          <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
