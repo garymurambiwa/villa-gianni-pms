@@ -1174,6 +1174,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   const [fullScreen, setFullScreen] = useState(false);
   const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   useEffect(() => {
     apiGet('/transfer?limit=500').then(r => { if (r.ok) setTransfers(r.data); });
@@ -1277,7 +1278,7 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
           value={filters}
           onChange={setFilters}
           show={{ category: false, department: false }}
-          statuses={[{ value: 'approved', label: 'Approved' }, { value: 'pending', label: 'Pending' }, { value: 'draft', label: 'Draft' }]}
+          statuses={[{ value: 'approved', label: 'Approved' }, { value: 'pending', label: 'Pending' }, { value: 'draft', label: 'Draft' }, { value: 'reversed', label: 'Reversed' }]}
           searchPlaceholder="Search transfer #, ref, location…"
           resultCount={filteredTransfers.length}
           onPrint={printTransfers}
@@ -1297,13 +1298,14 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
           <tbody className="divide-y divide-gray-100">
             {filteredTransfers.length === 0 && <tr><td colSpan={6} className="text-center py-10 text-gray-400">No transfers found</td></tr>}
             {transfersPg.pageItems.map((t:any) => (
-              <tr key={t.id} className="hover:bg-gray-50">
+              <tr key={t.id} className="hover:bg-amber-50 cursor-pointer" onClick={() => setDetailId(t.id)}
+                  title="Click to view transfer details">
                 <td className="px-3 py-2 font-mono font-bold text-amber-700">{t.transfer_number}</td>
                 <td className="px-3 py-2">{locations.find((l:any) => l.id === t.source_location_id)?.name || t.source_location_id}</td>
                 <td className="px-3 py-2">{locations.find((l:any) => l.id === t.destination_location_id)?.name || t.destination_location_id}</td>
                 <td className="px-3 py-2 text-gray-500">{t.reference_note || '—'}</td>
                 <td className="px-3 py-2">
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${t.status==='approved'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${t.status==='approved'?'bg-green-100 text-green-700':t.status==='reversed'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>
                     {t.status}
                   </span>
                 </td>
@@ -1314,6 +1316,18 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
         </table>
       </div>
       <PaginationBar {...transfersPg} itemLabel="transfers" />
+
+      {detailId && (
+        <TransferDetailModal
+          id={detailId}
+          user={user}
+          locName={locName}
+          onClose={() => setDetailId(null)}
+          onChanged={() => {
+            apiGet('/transfer?limit=500').then(r => { if (r.ok) setTransfers(r.data); });
+          }}
+        />
+      )}
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto pt-8 pb-8">
@@ -2555,6 +2569,183 @@ const AdjustModal: React.FC<{
             Record Adjustment
           </button>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// ── Transfer Detail (master-detail drill-down) ────────────────────────────────
+const TransferDetailModal: React.FC<{
+  id: string;
+  user: any;
+  locName: (id: string) => string;
+  onClose: () => void;
+  onChanged: () => void;
+}> = ({ id, user, locName, onClose, onChanged }) => {
+  const [transfer, setTransfer] = React.useState<any>(null);
+  const [lines, setLines] = React.useState<any[]>([]);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const isAdmin = user?.role === 'admin';
+
+  const load = React.useCallback(() => {
+    fetch(`/api/v1/inventory/transfer/${id}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) { setTransfer(d.transfer); setLines(d.lines); }
+        else setError(d.error || 'Failed to load transfer');
+      })
+      .catch(() => setError('Network error'));
+  }, [id]);
+  React.useEffect(() => { load(); }, [load]);
+
+  const hotelName = (import.meta as any).env?.VITE_HOTEL_NAME || 'Villa Gianni';
+
+  const printGTN = () => {
+    if (!transfer) return;
+    const rows = lines.map((l, i) => `
+      <tr>
+        <td>${i + 1}</td><td>${l.item_name}</td><td>${l.sku || '—'}</td>
+        <td style="text-align:right">${Number(l.qty_requested).toFixed(2)}</td>
+        <td>${l.source_uom_code || ''}</td>
+      </tr>`).join('');
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(`<!DOCTYPE html><html><head><title>${hotelName} — Goods Transfer Note ${transfer.transfer_number}</title>
+      <style>
+        body{font-family:Arial,sans-serif;margin:32px;color:#111}
+        h1{font-size:20px;margin:0} .muted{color:#666;font-size:12px}
+        table{width:100%;border-collapse:collapse;margin-top:16px;font-size:13px}
+        th,td{border:1px solid #ccc;padding:6px 8px;text-align:left}
+        th{background:#f3f4f6}
+        .grid{display:flex;gap:32px;margin-top:16px;font-size:13px}
+        .sig{margin-top:48px;display:flex;gap:48px;font-size:13px}
+        .sig div{flex:1;border-top:1px solid #555;padding-top:6px}
+      </style></head><body>
+      <h1>${hotelName}</h1>
+      <div class="muted">Goods Transfer Note — Internal Document</div>
+      <div class="grid">
+        <div><strong>GTN #:</strong> ${transfer.transfer_number}</div>
+        <div><strong>Date:</strong> ${new Date(transfer.inserted_at).toLocaleDateString()}</div>
+        <div><strong>Status:</strong> ${String(transfer.status).toUpperCase()}</div>
+      </div>
+      <div class="grid">
+        <div><strong>From:</strong> ${transfer.source_location_name || locName(transfer.source_location_id)}</div>
+        <div><strong>To:</strong> ${transfer.destination_location_name || locName(transfer.destination_location_id)}</div>
+        <div><strong>Ref:</strong> ${transfer.reference_text || '—'}</div>
+      </div>
+      <table><thead><tr><th>#</th><th>Item</th><th>SKU</th><th style="text-align:right">Qty</th><th>UOM</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <div class="sig"><div>Issued by</div><div>Received by</div><div>Authorised by</div></div>
+      <div class="muted" style="margin-top:24px">${hotelName} | Printed ${new Date().toLocaleString()}</div>
+      <script>window.print()</script></body></html>`);
+    w.document.close();
+  };
+
+  const handleReverse = async () => {
+    const reason = window.prompt('Reason for reversing this transfer (required):');
+    if (!reason || !reason.trim()) return;
+    setBusy(true); setError('');
+    try {
+      const r = await fetch(`/api/v1/inventory/transfer/${id}/reverse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-role': user?.role || '' },
+        body: JSON.stringify({ reversed_by: user?.username || user?.id || 'admin', reason }),
+      }).then(r => r.json());
+      if (!r.ok) return setError(r.error || 'Reverse failed');
+      load(); onChanged();
+    } catch (_e) { setError('Network error'); }
+    finally { setBusy(false); }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm('Delete this transfer? Only unposted transfers can be deleted.')) return;
+    setBusy(true); setError('');
+    try {
+      const r = await fetch(`/api/v1/inventory/transfer/${id}`, { method: 'DELETE' }).then(r => r.json());
+      if (!r.ok) return setError(r.error || 'Delete failed');
+      onChanged(); onClose();
+    } catch (_e) { setError('Network error'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto pt-8 pb-8" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-2xl mx-4" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold">
+            Transfer {transfer?.transfer_number || '…'}
+            {transfer && (
+              <span className={`ml-3 px-2 py-0.5 rounded-full text-xs font-semibold align-middle ${
+                transfer.status === 'approved' ? 'bg-green-100 text-green-700'
+                : transfer.status === 'reversed' ? 'bg-red-100 text-red-700'
+                : 'bg-yellow-100 text-yellow-700'}`}>
+                {String(transfer.status).toUpperCase()}
+              </span>
+            )}
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+        </div>
+
+        {error && <p className="text-red-600 text-sm bg-red-50 px-3 py-2 rounded mb-3">{error}</p>}
+
+        {transfer && (
+          <>
+            <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-sm mb-4">
+              <div><span className="text-gray-500">From:</span> <strong>{transfer.source_location_name || locName(transfer.source_location_id)}</strong></div>
+              <div><span className="text-gray-500">To:</span> <strong>{transfer.destination_location_name || locName(transfer.destination_location_id)}</strong></div>
+              <div><span className="text-gray-500">Date:</span> {new Date(transfer.inserted_at).toLocaleString()}</div>
+              <div><span className="text-gray-500">Ref:</span> {transfer.reference_text || '—'}</div>
+              <div><span className="text-gray-500">Created by:</span> {transfer.created_by || '—'}</div>
+              {transfer.status === 'reversed' && (
+                <div><span className="text-gray-500">Reversed:</span> {transfer.reversed_by} on {new Date(transfer.reversed_at).toLocaleDateString()}</div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-gray-200 overflow-hidden mb-4">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {['#','Item','SKU','Qty','UOM'].map(h => (
+                      <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {lines.map((l, i) => (
+                    <tr key={l.id}>
+                      <td className="px-3 py-2 text-gray-400">{i + 1}</td>
+                      <td className="px-3 py-2 font-medium">{l.item_name}</td>
+                      <td className="px-3 py-2 text-gray-500">{l.sku || '—'}</td>
+                      <td className="px-3 py-2 text-right">{Number(l.qty_requested).toFixed(2)}</td>
+                      <td className="px-3 py-2 text-gray-500">{l.source_uom_code || ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex gap-2 justify-end">
+              <button onClick={printGTN}
+                className="border border-gray-300 px-4 py-1.5 rounded text-sm font-medium hover:bg-gray-50">
+                🖨 Print GTN
+              </button>
+              {['pending','draft','rejected','cancelled'].includes(transfer.status) && (
+                <button onClick={handleDelete} disabled={busy}
+                  className="border border-red-300 text-red-600 px-4 py-1.5 rounded text-sm font-medium hover:bg-red-50 disabled:opacity-50">
+                  Delete
+                </button>
+              )}
+              {transfer.status === 'approved' && isAdmin && (
+                <button onClick={handleReverse} disabled={busy}
+                  title="Creates offsetting ledger entries — audited"
+                  className="bg-red-600 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50">
+                  {busy ? 'Reversing…' : 'Reverse Transfer'}
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

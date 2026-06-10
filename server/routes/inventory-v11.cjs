@@ -285,6 +285,11 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS destination_location_id TEXT REFERENCES public.inv_locations(id)`);
       await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS created_by TEXT`);
       await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS reference_text TEXT`);
+      // Reversal support: extend status CHECK and add linkage columns
+      await client.query(`ALTER TABLE public.inv_transfer_headers DROP CONSTRAINT IF EXISTS inv_transfer_headers_status_check`).catch(()=>{});
+      await client.query(`ALTER TABLE public.inv_transfer_headers ADD CONSTRAINT inv_transfer_headers_status_check CHECK (status IN ('pending','approved','rejected','cancelled','reversed'))`).catch(()=>{});
+      await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS reversed_by TEXT`).catch(()=>{});
+      await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS reversed_at TIMESTAMPTZ`).catch(()=>{});
       // Back-fill new columns from old column names (idempotent)
       await client.query(`UPDATE public.inv_transfer_headers SET source_location_id=from_location_id WHERE source_location_id IS NULL AND from_location_id IS NOT NULL`).catch(()=>{});
       await client.query(`UPDATE public.inv_transfer_headers SET destination_location_id=to_location_id WHERE destination_location_id IS NULL AND to_location_id IS NOT NULL`).catch(()=>{});
@@ -3441,6 +3446,136 @@ router.post('/stock-take/:sheetId/lock', async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   } finally {
     client.release();
+  }
+});
+
+/**
+ * GET /api/v1/inventory/transfer/:id
+ * Master-detail: header + lines with item names and UOM codes.
+ */
+router.get('/transfer/:id', async (req, res) => {
+  try {
+    const hRes = await pool.query(
+      `SELECT h.*, sl.name AS source_location_name, dl.name AS destination_location_name
+       FROM public.inv_transfer_headers h
+       LEFT JOIN public.inv_locations sl ON sl.id = COALESCE(h.source_location_id, h.from_location_id)
+       LEFT JOIN public.inv_locations dl ON dl.id = COALESCE(h.destination_location_id, h.to_location_id)
+       WHERE h.id = $1`,
+      [req.params.id]
+    );
+    if (!hRes.rows.length) return res.status(404).json({ ok: false, error: 'Transfer not found' });
+
+    const lRes = await pool.query(
+      `SELECT l.*, i.name AS item_name, i.sku,
+              su.code AS source_uom_code, du.code AS destination_uom_code
+       FROM public.inv_transfer_lines l
+       JOIN public.inv_items i ON i.id = l.item_id
+       LEFT JOIN public.inv_uom_definitions su ON su.id = l.source_uom_id
+       LEFT JOIN public.inv_uom_definitions du ON du.id = l.destination_uom_id
+       WHERE l.transfer_header_id = $1
+       ORDER BY l.line_number`,
+      [req.params.id]
+    );
+    res.json({ ok: true, transfer: hRes.rows[0], lines: lRes.rows });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/inventory/transfer/:id/reverse
+ * Admin only. Inserts offsetting ledger entries (exact negation of the original
+ * TRANSFER_OUT/TRANSFER_IN rows), marks the header reversed, writes an audit row.
+ */
+router.post('/transfer/:id/reverse', async (req, res) => {
+  if ((req.headers['x-user-role'] || '') !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Admin role required to reverse a transfer' });
+  }
+  const { reversed_by, reason } = req.body || {};
+  if (!reason || !String(reason).trim()) {
+    return res.status(400).json({ ok: false, error: 'A reason is required to reverse' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const hRes = await client.query(
+      `SELECT * FROM public.inv_transfer_headers WHERE id = $1 FOR UPDATE`, [req.params.id]
+    );
+    if (!hRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, error: 'Transfer not found' });
+    }
+    const header = hRes.rows[0];
+    if (header.status !== 'approved') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, error: `Only approved transfers can be reversed (status: ${header.status})` });
+    }
+
+    // Negate every ledger row written under this transfer number — exact mirror,
+    // so UOM-converted destination quantities reverse correctly.
+    const ledRes = await client.query(
+      `SELECT * FROM public.inv_stock_ledger
+       WHERE reference_number = $1 AND ledger_type IN ('TRANSFER_OUT','TRANSFER_IN')`,
+      [header.transfer_number]
+    );
+    if (!ledRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ ok: false, error: 'No ledger entries found for this transfer' });
+    }
+    const revRef = `REV-${header.transfer_number}`;
+    for (const row of ledRes.rows) {
+      await client.query(
+        `INSERT INTO public.inv_stock_ledger
+         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())`,
+        [randomUUID(), row.item_id, row.location_id,
+         row.ledger_type === 'TRANSFER_OUT' ? 'TRANSFER_IN' : 'TRANSFER_OUT',
+         revRef, -Number(row.quantity_change), row.base_uom_id, reversed_by || 'admin']
+      );
+    }
+
+    await client.query(
+      `UPDATE public.inv_transfer_headers
+       SET status = 'reversed', reversed_by = $1, reversed_at = NOW(), updated_at = NOW()
+       WHERE id = $2`,
+      [reversed_by || 'admin', header.id]
+    );
+
+    await client.query(
+      `INSERT INTO public.inventory_period_audit (period_id, action, user_id, user_name, change_reason)
+       VALUES ($1, 'TRANSFER_REVERSED', $2, $2, $3)`,
+      [header.id, reversed_by || 'admin', `${header.transfer_number}: ${String(reason).trim()}`]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, message: `Transfer ${header.transfer_number} reversed`, reversal_reference: revRef, ledger_rows_reversed: ledRes.rows.length });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * DELETE /api/v1/inventory/transfer/:id
+ * Only drafts/pending (no ledger impact). Approved transfers must be reversed.
+ */
+router.delete('/transfer/:id', async (req, res) => {
+  try {
+    const hRes = await pool.query(
+      `SELECT id, status, transfer_number FROM public.inv_transfer_headers WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!hRes.rows.length) return res.status(404).json({ ok: false, error: 'Transfer not found' });
+    if (!['pending', 'draft', 'rejected', 'cancelled'].includes(hRes.rows[0].status)) {
+      return res.status(409).json({ ok: false, error: 'Posted transfers cannot be deleted — use Reverse instead' });
+    }
+    await pool.query(`DELETE FROM public.inv_transfer_headers WHERE id = $1`, [req.params.id]);
+    res.json({ ok: true, message: `Transfer ${hRes.rows[0].transfer_number} deleted` });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
