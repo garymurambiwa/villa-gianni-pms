@@ -56,6 +56,9 @@ export const POSFrontOffice: React.FC = () => {
   const [tables, setTables] = useState<Array<{ id: string; number: number; status: 'available' | 'occupied' | 'suspended'; currentBill?: any; cost_center?: string }>>(
     Array.from({ length: 12 }).map((_, idx) => ({ id: `t${idx + 1}`, number: idx + 1, status: 'available' }))
   );
+  // Bumped after loadTablesFromDB replaces table rows so the posOrders→tables
+  // sync effect re-attaches open bills to the freshly loaded tables.
+  const [tablesLoadedTick, setTablesLoadedTick] = useState(0);
   const [orderModal, setOrderModal] = useState<{ tableId: string; open: boolean } | null>(null);
   const [paymentModal, setPaymentModal] = useState<{ bill: any | null; open: boolean }>({ bill: null, open: false });
   const [voidOpen, setVoidOpen] = useState(false);
@@ -324,12 +327,26 @@ export const POSFrontOffice: React.FC = () => {
           return; // table state will be picked up by localStorage restore below
         }
 
-        setTables(res.rows.map((r: any) => ({
-          id:          String(r.table_id),
-          number:      parseInt(String(r.table_id).replace(/\D/g, ''), 10) || 0,
-          status:      r.status === 'occupied' ? 'occupied' : 'available',
-          cost_center: r.cost_center || undefined,
-        })));
+        // Preserve currentBill from the previous state — this async load resolves
+        // AFTER the posOrders→tables sync effect has already attached open bills,
+        // and rebuilding rows without carrying bills over wipes them while the
+        // table stays 'occupied' (the "occupied table with no bill" bug).
+        setTables(prev => {
+          const prevById = new Map((Array.isArray(prev) ? prev : []).map(t => [t.id, t]));
+          return res.rows.map((r: any) => {
+            const existing = prevById.get(String(r.table_id));
+            return {
+              id:          String(r.table_id),
+              number:      parseInt(String(r.table_id).replace(/\D/g, ''), 10) || 0,
+              status:      r.status === 'occupied' ? 'occupied' : 'available',
+              cost_center: r.cost_center || undefined,
+              currentBill: existing?.currentBill,
+            };
+          });
+        });
+        // Re-run the posOrders→tables sync against the freshly loaded rows even
+        // though posOrders state itself hasn't changed.
+        setTablesLoadedTick(t => t + 1);
       } catch (err) {
         console.warn('[POS] Could not load tables from DB, using defaults:', err);
       }
@@ -407,7 +424,7 @@ export const POSFrontOffice: React.FC = () => {
         return table.status === 'suspended' ? table : { ...table, status: 'available', currentBill: undefined };
       });
     });
-  }, [posOrders, activeShift]);
+  }, [posOrders, activeShift, tablesLoadedTick]);
 
   // Tables that had payment processed — prevent posOrders effect from re-occupying them
   // during the race window between optimistic state clear and DB UPDATE completing.
