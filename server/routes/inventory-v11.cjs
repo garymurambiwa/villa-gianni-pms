@@ -323,6 +323,7 @@ async function ensureInventoryTables() {
           transaction_date TIMESTAMPTZ DEFAULT NOW(),
           inserted_at TIMESTAMPTZ DEFAULT NOW()
         )`);
+      await client.query(`ALTER TABLE public.inv_stock_ledger ADD CONSTRAINT uq_ledger_transfer_line UNIQUE (reference_number, ledger_type, location_id, item_id)`).catch(()=>{});
       await client.query(`ALTER TABLE public.inv_stock_ledger ADD COLUMN IF NOT EXISTS inserted_at TIMESTAMPTZ DEFAULT NOW()`);
       // Enforce 10-char max on short_id
       await client.query(`ALTER TABLE public.inv_items DROP CONSTRAINT IF EXISTS inv_items_short_len`).catch(() => {});
@@ -599,6 +600,7 @@ async function ensureInventoryTables() {
         transaction_date TIMESTAMPTZ DEFAULT NOW(),
         inserted_at TIMESTAMPTZ DEFAULT NOW()
       )`);
+    await client.query(`ALTER TABLE public.inv_stock_ledger ADD CONSTRAINT uq_ledger_transfer_line UNIQUE (reference_number, ledger_type, location_id, item_id)`).catch(()=>{});
 
     // ── Recipes ────────────────────────────────────────────────────────────
     await client.query(`
@@ -1079,6 +1081,11 @@ router.post('/grn/:id/post', async (req, res) => {
     if (!grnRes.rows.length) throw new Error('GRN not found');
 
     const grn = grnRes.rows[0];
+    if (grn.status === 'posted') {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.json({ ok: true, message: 'GRN already posted — no-op' });
+    }
 
     // Get lines
     const linesRes = await client.query(`SELECT * FROM public.inv_grn_lines WHERE grn_header_id = $1`, [id]);
@@ -1109,8 +1116,9 @@ router.post('/grn/:id/post', async (req, res) => {
       await client.query(
         `INSERT INTO public.inv_stock_ledger
          (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, cost_per_unit, total_cost, posted_by, gl_account_code, inserted_at)
-         VALUES ($1,$2,$3,'GRN',$4,$5,$6,$7,$8,$9,'INVENTORY_ASSET',NOW())`,
-        [randomUUID(), line.item_id, grn.destination_location_id, grn.grn_number,
+         VALUES ($1,$2,$3,'GRN',$4,$5,$6,$7,$8,$9,'INVENTORY_ASSET',NOW())
+         ON CONFLICT ON CONSTRAINT uq_ledger_transfer_line DO NOTHING`,
+        [randomUUID(), line.item_id, grn.destination_location_id, grn.grn_number + '-L' + line.line_number,
          newQty, baseUomId, newUnitCost, line.line_total || line.total_cost || (newQty * newUnitCost), posted_by]
       );
 
@@ -1509,7 +1517,9 @@ router.post('/transfer', async (req, res) => {
  * Caller is responsible for BEGIN/COMMIT/ROLLBACK and releasing the client.
  */
 async function executeTransferLines(client, lines, sourceLocId, destLocId, transferNumber, actorId) {
+  let idx = 1;
   for (const line of lines) {
+    const lnum = line.line_number || idx++;
     await client.query(
       `SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`,
       [line.item_id, sourceLocId]
@@ -1532,8 +1542,9 @@ async function executeTransferLines(client, lines, sourceLocId, destLocId, trans
     await client.query(
       `INSERT INTO public.inv_stock_ledger
        (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
-       VALUES ($1,$2,$3,'TRANSFER_OUT',$4,$5,$6,$7,NOW())`,
-      [randomUUID(), line.item_id, sourceLocId, transferNumber, -requested, line.source_uom_id, actorId]
+       VALUES ($1,$2,$3,'TRANSFER_OUT',$4,$5,$6,$7,NOW())
+       ON CONFLICT ON CONSTRAINT uq_ledger_transfer_line DO NOTHING`,
+      [randomUUID(), line.item_id, sourceLocId, transferNumber + '-L' + lnum, -requested, line.source_uom_id, actorId]
     );
 
     let destQty = requested;
@@ -1561,8 +1572,9 @@ async function executeTransferLines(client, lines, sourceLocId, destLocId, trans
     await client.query(
       `INSERT INTO public.inv_stock_ledger
        (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
-       VALUES ($1,$2,$3,'TRANSFER_IN',$4,$5,$6,$7,NOW())`,
-      [randomUUID(), line.item_id, destLocId, transferNumber, destQty, destUomId, actorId]
+       VALUES ($1,$2,$3,'TRANSFER_IN',$4,$5,$6,$7,NOW())
+       ON CONFLICT ON CONSTRAINT uq_ledger_transfer_line DO NOTHING`,
+      [randomUUID(), line.item_id, destLocId, transferNumber + '-L' + lnum, destQty, destUomId, actorId]
     );
   }
 }
@@ -1693,6 +1705,11 @@ router.post('/transfer/:id/approve', async (req, res) => {
     if (!transRes.rows.length) throw new Error('Transfer not found');
 
     const transfer = transRes.rows[0];
+    if (transfer.status === 'approved') {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.json({ ok: true, message: `Transfer ${transfer.transfer_number} already approved — no-op` });
+    }
 
     // Get lines
     const linesRes = await client.query(`SELECT * FROM public.inv_transfer_lines WHERE transfer_header_id = $1`, [id]);
