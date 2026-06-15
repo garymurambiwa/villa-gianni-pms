@@ -280,7 +280,11 @@ async function ensureInventoryTables() {
           inserted_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
         )`);
-      // Align column names: old schema uses from/to, new uses source/destination — add both
+      // Align column names: old schema uses from/to, new uses source/destination — add both.
+      // Some DBs were created without the from/to pair; the transfer INSERT still
+      // writes them for backward compatibility, so they must exist.
+      await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS from_location_id TEXT REFERENCES public.inv_locations(id)`).catch(()=>{});
+      await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS to_location_id TEXT REFERENCES public.inv_locations(id)`).catch(()=>{});
       await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS source_location_id TEXT REFERENCES public.inv_locations(id)`);
       await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS destination_location_id TEXT REFERENCES public.inv_locations(id)`);
       await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS created_by TEXT`);
