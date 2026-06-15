@@ -52,6 +52,59 @@ export class TransactionSequencer {
   }
 
   /**
+   * Generate the next GLOBAL sequential bill number — one continuous counter for
+   * the whole property, shared across all outlets and shifts. It never resets:
+   * if a shift closes at 134, the next bill (in any shift) is 135.
+   * Returns the raw integer; callers format/pad as needed.
+   */
+  async nextGlobalBillNumber(): Promise<number> {
+    await this.ensureGlobalSeeded();
+    return this.getNextCounter('GLOBAL_bill');
+  }
+
+  /**
+   * One-time seed of the global bill counter from the highest existing bill
+   * number, so an existing deployment continues the sequence (e.g. resumes at
+   * 135 after 134) instead of restarting at 1. Idempotent and cheap after the
+   * first successful run.
+   */
+  private globalSeeded = false;
+  private async ensureGlobalSeeded(): Promise<void> {
+    if (this.globalSeeded) return;
+    try {
+      const isConfigured = await db.isConfigured();
+      if (!isConfigured) { this.globalSeeded = true; return; }
+
+      const stored = await this.getCounter('GLOBAL_bill', false);
+
+      // Highest numeric bill_number already issued
+      const res = await db.query(
+        `SELECT COALESCE(MAX(NULLIF(regexp_replace(bill_number, '\\D', '', 'g'), '')::bigint), 0) AS max_no
+         FROM pos_bills`
+      );
+      const maxExisting = ('rows' in res && res.rows.length) ? Number(res.rows[0].max_no || 0) : 0;
+
+      if (maxExisting > stored) {
+        this.cachedCounters.set('GLOBAL_bill', maxExisting);
+        this.saveToLocalStorage();
+        await this.syncToDatabase('GLOBAL_bill', maxExisting);
+      }
+      this.globalSeeded = true;
+    } catch (err) {
+      // Non-fatal: fall back to whatever the counter already holds
+      console.warn('[Sequencer] Global seed skipped:', err);
+      this.globalSeeded = true;
+    }
+  }
+
+  /**
+   * Current global bill counter without incrementing (for display/status).
+   */
+  async getCurrentGlobalBillNumber(): Promise<number> {
+    return this.getCounter('GLOBAL_bill', false);
+  }
+
+  /**
    * Generate next sequential transaction ID
    * Format: TX-YYYYMMDD-NNNNNN
    */
@@ -278,6 +331,11 @@ export function nextBillNumber(outlet?: 'Restaurant' | 'Bar' | 'Conference'): Pr
 
 export function nextTransactionId(): Promise<string> {
   return transactionSequencer.nextTransactionId();
+}
+
+/** Next global, continuous, shift-independent bill number (raw integer). */
+export function nextGlobalBillNumber(): Promise<number> {
+  return transactionSequencer.nextGlobalBillNumber();
 }
 
 export async function initializeSequencer(): Promise<void> {

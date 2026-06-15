@@ -13,6 +13,7 @@ import { getMenuItems } from '@/lib/posIntegration';
 import { useInactivityTimeout } from '@/hooks/useInactivityTimeout';
 import { PINModal } from '@/components/pos/PINModal';
 import { generateReceiptHTML } from '@/lib/posIntegration';
+import { nextGlobalBillNumber } from '@/lib/transactionSequencer';
 import AuthPortal from '@/components/modules/AuthPortal';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -929,6 +930,16 @@ export const POSFrontOffice: React.FC = () => {
     if (!bill) return;
     const total = bill.total;
 
+    // Continuous, shift-independent sequential bill number (assigned once).
+    if (!bill.bill_number) {
+      try {
+        bill.bill_number = String(await nextGlobalBillNumber()).padStart(4, '0');
+      } catch {
+        bill.bill_number = formatBillNumber(bill.id);
+      }
+    }
+    const billNumber = bill.bill_number;
+
     // Folio charge recording (fire-and-forget)
     if (paymentData.paymentMethod === 'room-charge') {
       const guest = guests.find(g => g.roomNumber === paymentData.roomNumber);
@@ -940,7 +951,7 @@ export const POSFrontOffice: React.FC = () => {
           recordFolioCharge({
             guestId: guest.id,
             amount: Number(total.toFixed(2)),
-            description: `${getOutletFromBill(bill)} - bill-${formatBillNumber(bill.id)}`,
+            description: `${getOutletFromBill(bill)} - bill-${billNumber}`,
             date: new Date().toISOString().split('T')[0]
           }).then((chargeId) => {
             if (chargeId) {
