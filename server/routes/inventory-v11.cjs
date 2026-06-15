@@ -1460,18 +1460,19 @@ router.post('/transfer', async (req, res) => {
     let transRes;
     await client.query('SAVEPOINT th_insert');
     try {
-      // Full insert: works after migration adds source/destination + created_by + reference_text
+      // Primary: canonical source/destination columns only (no dependency on the
+      // legacy from/to pair, which some production DBs were created without).
       transRes = await client.query(
         `INSERT INTO public.inv_transfer_headers
          (id, transfer_number, source_location_id, destination_location_id,
-          from_location_id, to_location_id, created_by, reference_text, status, inserted_at)
-         VALUES ($1,$2,$3,$4,$3,$4,$5,$6,'pending',$7) RETURNING *`,
+          created_by, reference_text, status, inserted_at)
+         VALUES ($1,$2,$3,$4,$5,$6,'pending',$7) RETURNING *`,
         [randomUUID(), transferNumber, source_location_id, destination_location_id, created_by, reference_text, new Date()]
       );
       await client.query('RELEASE SAVEPOINT th_insert');
     } catch {
       await client.query('ROLLBACK TO SAVEPOINT th_insert');
-      // Fallback: minimal set of columns for old schema (no source/destination, no created_by/reference_text)
+      // Fallback for ancient schemas that have only the from/to pair.
       transRes = await client.query(
         `INSERT INTO public.inv_transfer_headers
          (id, transfer_number, from_location_id, to_location_id, status, inserted_at)
@@ -1625,9 +1626,9 @@ router.post('/transfer/execute', async (req, res) => {
       const hRes = await client.query(
         `INSERT INTO public.inv_transfer_headers
          (id, transfer_number, source_location_id, destination_location_id,
-          from_location_id, to_location_id, created_by, reference_text,
+          created_by, reference_text,
           status, approved_by, approved_at, inserted_at)
-         VALUES ($1,$2,$3,$4,$3,$4,$5,$6,'approved',$5,NOW(),NOW()) RETURNING id`,
+         VALUES ($1,$2,$3,$4,$5,$6,'approved',$5,NOW(),NOW()) RETURNING id`,
         [randomUUID(), transferNumber, source_location_id, destination_location_id, created_by, reference_text]
       );
       await client.query('RELEASE SAVEPOINT th_exec');
