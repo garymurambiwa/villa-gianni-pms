@@ -1797,6 +1797,75 @@ router.get('/balance/:location_id', async (req, res) => {
 });
 
 /**
+ * POST /api/v1/inventory/adjust
+ * Manual stock adjustment — writes a single ADJUSTMENT row to the ledger.
+ * Body: { item_id, location_id, delta, reason?, adjusted_by? }
+ * delta may be positive (stock in) or negative (stock out). Refuses to drive
+ * the on-hand balance below zero.
+ */
+router.post('/adjust', async (req, res) => {
+  const { item_id, location_id, delta, reason, adjusted_by } = req.body || {};
+  const d = Number(delta);
+  if (!item_id || !location_id) {
+    return res.status(400).json({ ok: false, error: 'item_id and location_id are required' });
+  }
+  if (!Number.isFinite(d) || d === 0) {
+    return res.status(400).json({ ok: false, error: 'delta must be a non-zero number' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Serialize concurrent adjustments to the same item+location
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`, [item_id, location_id]);
+
+    const balRes = await client.query(
+      `SELECT COALESCE(SUM(quantity_change), 0) AS balance
+       FROM public.inv_stock_ledger WHERE item_id = $1 AND location_id = $2`,
+      [item_id, location_id]
+    );
+    const balance = Number(balRes.rows[0]?.balance || 0);
+    if (balance + d < 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        ok: false,
+        error: `Adjustment would set stock below zero (current ${balance}, delta ${d})`,
+      });
+    }
+
+    // Most-recent UOM for this item, fallback to the item master base UOM
+    const uomRes = await client.query(
+      `SELECT base_uom_id FROM public.inv_items WHERE id = $1`, [item_id]
+    );
+    const uomId = uomRes.rows[0]?.base_uom_id || 'uom_unit';
+
+    const ledgerId = randomUUID();
+    await client.query(
+      `INSERT INTO public.inv_stock_ledger
+         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
+       VALUES ($1, $2, $3, 'ADJUSTMENT', $4, $5, $6, $7, NOW())`,
+      [ledgerId, item_id, location_id, `ADJ-${Date.now()}`, d, uomId, adjusted_by || 'system']
+    );
+
+    // Audit the manual adjustment (append-only trail shared with reopen/reverse)
+    await client.query(
+      `INSERT INTO public.inventory_period_audit (period_id, action, user_id, user_name, change_reason)
+       VALUES ($1, 'STOCK_ADJUSTMENT', $2, $2, $3)`,
+      [item_id, adjusted_by || 'system',
+       `${location_id}: delta ${d}${reason ? ` — ${String(reason).trim()}` : ''}`]
+    ).catch(() => {});
+
+    await client.query('COMMIT');
+    res.json({ ok: true, ledger_id: ledgerId, new_balance: balance + d });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
  * GET /api/v1/inventory/report/stock-on-hand
  * Stock balance per item for a location as of a point in time.
  * Query: location_id (required), as_of (optional ISO timestamp, defaults to NOW)
