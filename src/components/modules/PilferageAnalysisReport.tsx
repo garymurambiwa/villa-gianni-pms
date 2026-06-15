@@ -45,48 +45,11 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
   const fetchPilferageData = async () => {
     setLoading(true);
     try {
-      // Fetch inventory items and simulate pilferage analysis
-      const response = await fetch('/api/v1/inventory/items?limit=10000');
-      const data = await response.json();
-
-      if (data.ok && data.data) {
-        // Generate mock pilferage analysis data
-        const mockData: PilferageData[] = data.data.slice(0, 20).map((item: any, idx: number) => {
-          const expectedQty = Math.floor(Math.random() * 100) + 50;
-          const actualQty = expectedQty - Math.floor(Math.random() * 15); // Random shrinkage
-          const varianceQty = expectedQty - actualQty;
-          const variancePercentage = (varianceQty / expectedQty) * 100;
-          const unitCost = parseFloat(item.weighted_avg_cost || 10);
-          const varianceValue = varianceQty * unitCost;
-
-          let riskLevel: 'Low' | 'Medium' | 'High' | 'Critical' = 'Low';
-          if (variancePercentage > 10) riskLevel = 'Critical';
-          else if (variancePercentage > 7) riskLevel = 'High';
-          else if (variancePercentage > 4) riskLevel = 'Medium';
-
-          return {
-            item_id: item.id,
-            item_name: item.name,
-            category: item.category,
-            sku: item.sku,
-            expected_qty: expectedQty,
-            actual_qty: actualQty,
-            variance_qty: varianceQty,
-            variance_percentage: variancePercentage,
-            variance_value: varianceValue,
-            risk_level: riskLevel,
-            last_count_date: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-          };
-        });
-
-        // Sort by risk level (Critical first)
-        const sortedData = mockData.sort((a, b) => {
-          const riskOrder = { Critical: 4, High: 3, Medium: 2, Low: 1 };
-          return riskOrder[b.risk_level] - riskOrder[a.risk_level];
-        });
-
-        setPilferageData(sortedData);
-      }
+      // Pilferage = real expected (theoretical) vs counted (physical) variance.
+      // That data is produced by Inventory → Stock Take / Variance Report, which
+      // posts genuine variance per item+location. We do NOT fabricate shrinkage
+      // figures — surfacing random "theft" numbers in production is dangerous.
+      setPilferageData([]);
     } catch (error) {
       console.error('Failed to fetch pilferage data:', error);
       setPilferageData([]);
@@ -251,7 +214,10 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
           {loading ? (
             <p className="text-center text-muted-foreground">Loading pilferage analysis...</p>
           ) : pilferageData.length === 0 ? (
-            <p className="text-center text-muted-foreground">No pilferage data available.</p>
+            <div className="text-center py-8 space-y-1">
+              <p className="font-medium text-muted-foreground">Not connected to live variance data</p>
+              <p className="text-xs text-muted-foreground">Run Inventory → Stock Take to produce real expected-vs-counted variance. This analysis will be enabled once wired to that source — no estimated shrinkage figures are shown.</p>
+            </div>
           ) : (
             <div className="rounded-md border">
               <Table>

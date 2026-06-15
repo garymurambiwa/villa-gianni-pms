@@ -44,74 +44,11 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
   const fetchClosingData = async () => {
     setLoading(true);
     try {
-      // Fetch inventory data and generate month-end closing report
-      const response = await fetch('/api/v1/inventory/items?limit=10000');
-      const data = await response.json();
-
-      if (data.ok && data.data) {
-        // Group items by category and calculate closing data
-        const categoryGroups = data.data.reduce((groups: any, item: any) => {
-          const category = item.category;
-          if (!groups[category]) {
-            groups[category] = [];
-          }
-          groups[category].push(item);
-          return groups;
-        }, {});
-
-        const mockClosingData: ClosingData[] = Object.entries(categoryGroups).map(([category, items]: [string, any]) => {
-          const totalItems = items.length;
-          const avgCost = items.reduce((sum: number, item: any) => sum + parseFloat(item.weighted_avg_cost || 10), 0) / totalItems;
-
-          // Mock month-end calculations
-          const openingInventory = Math.floor(Math.random() * 5000) + 2000;
-          const purchasesReceived = Math.floor(Math.random() * 3000) + 1000;
-          const transfersIn = Math.floor(Math.random() * 500) + 100;
-          const transfersOut = Math.floor(Math.random() * 500) + 100;
-          const salesConsumption = openingInventory + purchasesReceived + transfersIn - transfersOut - Math.floor(Math.random() * 500);
-          const wastageLoss = Math.floor(Math.random() * 200) + 50;
-
-          const expectedClosing = openingInventory + purchasesReceived + transfersIn - transfersOut - salesConsumption - wastageLoss;
-          const actualClosing = expectedClosing + (Math.random() - 0.5) * 200; // Add some variance
-          const variance = actualClosing - expectedClosing;
-          const variancePercentage = (variance / expectedClosing) * 100;
-
-          return {
-            category,
-            opening_inventory: openingInventory,
-            purchases_received: purchasesReceived,
-            transfers_in: transfersIn,
-            transfers_out: transfersOut,
-            sales_consumption: salesConsumption,
-            wastage_loss: wastageLoss,
-            closing_inventory: actualClosing,
-            variance,
-            variance_percentage: variancePercentage,
-          };
-        });
-
-        setClosingData(mockClosingData);
-
-        // Calculate summary
-        const summary = mockClosingData.reduce((sum, cat) => ({
-          totalOpening: sum.totalOpening + cat.opening_inventory,
-          totalPurchases: sum.totalPurchases + cat.purchases_received,
-          totalConsumption: sum.totalConsumption + cat.sales_consumption,
-          totalClosing: sum.totalClosing + cat.closing_inventory,
-          totalVariance: sum.totalVariance + cat.variance,
-          variancePercentage: 0 // Will calculate below
-        }), {
-          totalOpening: 0,
-          totalPurchases: 0,
-          totalConsumption: 0,
-          totalClosing: 0,
-          totalVariance: 0,
-          variancePercentage: 0
-        });
-
-        summary.variancePercentage = (summary.totalVariance / (summary.totalOpening + summary.totalPurchases)) * 100;
-        setMonthSummary(summary);
-      }
+      // Real month-end figures come from the stock ledger + variance/close-period
+      // pipeline (opening, purchases, transfers, consumption, wastage per category).
+      // We do NOT fabricate these numbers — use Inventory > Stock Take / Close Period
+      // for the authoritative close. This view stays empty until wired to that source.
+      setClosingData([]);
     } catch (error) {
       console.error('Failed to fetch closing data:', error);
       setClosingData([]);
@@ -248,7 +185,10 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
           {loading ? (
             <p className="text-center text-muted-foreground">Loading closing data...</p>
           ) : closingData.length === 0 ? (
-            <p className="text-center text-muted-foreground">No closing data available.</p>
+            <div className="text-center py-8 space-y-1">
+              <p className="font-medium text-muted-foreground">Not connected to live data</p>
+              <p className="text-xs text-muted-foreground">Use Inventory → Stock Take / Close Period for the authoritative month-end close. This summary view will be enabled once wired to that source — no estimated figures are shown.</p>
+            </div>
           ) : (
             <div className="rounded-md border">
               <Table>

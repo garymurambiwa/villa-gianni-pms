@@ -30,42 +30,10 @@ export const CostMarginReport: React.FC<CostMarginReportProps> = () => {
   const fetchMarginData = async () => {
     setLoading(true);
     try {
-      // Fetch inventory items and calculate margins based on weighted average costs
-      const response = await fetch('/api/v1/inventory/items?limit=10000');
-      const data = await response.json();
-
-      if (data.ok && data.data) {
-        // Calculate mock margin data based on inventory items
-        const mockMargins = data.data.slice(0, 15).map((item: any, idx: number) => {
-          const costPrice = parseFloat(item.weighted_avg_cost || 10);
-          const sellingPrice = costPrice * (1.3 + Math.random() * 0.6); // 30-90% markup
-          const marginAmount = sellingPrice - costPrice;
-          const marginPercentage = (marginAmount / costPrice) * 100;
-
-          // Mock sales data
-          const totalSold = Math.floor(Math.random() * 200) + 20;
-          const totalRevenue = totalSold * sellingPrice;
-          const totalCost = totalSold * costPrice;
-          const totalProfit = totalRevenue - totalCost;
-
-          return {
-            item_id: item.id,
-            item_name: item.name,
-            category: item.category,
-            sku: item.sku,
-            cost_price: costPrice,
-            selling_price: sellingPrice,
-            margin_amount: marginAmount,
-            margin_percentage: marginPercentage,
-            total_sold: totalSold,
-            total_revenue: totalRevenue,
-            total_cost: totalCost,
-            total_profit: totalProfit,
-          };
-        });
-
-        setMarginData(mockMargins);
-      }
+      // Real margin = real selling price (products.price) vs real cost
+      // (weighted average), with units sold from actual POS sales. Until that
+      // sales-aggregation endpoint exists we do NOT fabricate figures.
+      setMarginData([]);
     } catch (error) {
       console.error('Failed to fetch margin data:', error);
       setMarginData([]);
@@ -228,7 +196,10 @@ export const CostMarginReport: React.FC<CostMarginReportProps> = () => {
           {loading ? (
             <p className="text-center text-muted-foreground">Loading margin data...</p>
           ) : marginData.length === 0 ? (
-            <p className="text-center text-muted-foreground">No margin data available.</p>
+            <div className="text-center py-8 space-y-1">
+              <p className="font-medium text-muted-foreground">Not connected to live sales data</p>
+              <p className="text-xs text-muted-foreground">This report needs real selling prices and POS sales volume. It will be enabled once the sales-aggregation source is wired in — no estimated figures are shown.</p>
+            </div>
           ) : (
             <div className="rounded-md border">
               <Table>
