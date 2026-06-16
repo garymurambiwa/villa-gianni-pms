@@ -37,6 +37,29 @@ const todayDB = () => {
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 };
 
+// Add N calendar days to a YYYY-MM-DD string via pure UTC-anchored arithmetic
+// (no wall-clock/timezone mixing — input and output are both pure dates).
+const addDays = (dateStr, n) => {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
+};
+
+// Today's calendar date in the HOTEL timezone (Africa/Harare, CAT/UTC+2).
+// Derived in SQL so it is independent of the server OS/clock timezone — the new
+// VPS runs in US-East (UTC-4); trusting the OS clock here was a source of drift.
+// CAT has no DST, so this is stable year-round. Falls back to the OS date only
+// if the DB query fails.
+async function catToday() {
+  try {
+    const r = await db.query(
+      `SELECT to_char((NOW() AT TIME ZONE 'Africa/Harare')::date, 'YYYY-MM-DD') AS d`
+    );
+    if (r.ok && r.rows.length && r.rows[0].d) return r.rows[0].d;
+  } catch { /* fall through to OS date */ }
+  return todayDB();
+}
+
 async function getSystemConfig(key, fallback = null) {
   const r = await db.query(`SELECT value FROM system_configs WHERE key = $1`, [key]);
   if (r.ok && r.rows.length) return r.rows[0].value;
@@ -414,9 +437,20 @@ async function recordAuditRun(data) {
 
 // ─── Step 8: Roll over business date ─────────────────────────────────────────
 async function rolloverDate(currentDate) {
-  const d    = new Date(currentDate + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() + 1);
-  const next = `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
+  let next = addDays(currentDate, 1);
+
+  // CLAMP — the business date must never run more than ONE day ahead of the
+  // hotel's real calendar date. A pre-midnight audit (scheduled 21:00 CAT)
+  // legitimately rolls into tomorrow, so the cap is (hotel-today + 1); anything
+  // beyond that is overshoot. This is what stops the date drifting permanently
+  // ahead when multiple paths roll the same night, or when the stored date was
+  // already ahead. It still allows correct day-by-day catch-up of missed nights.
+  const cap = addDays(await catToday(), 1);
+  if (next > cap) {
+    log(`  ⚠ Rollover clamp: ${currentDate} → ${next} exceeds cap ${cap}; clamping to ${cap}`);
+    next = cap;
+  }
+
   await setSystemConfig('business_date', { date: next, rolled_at: nowISO() },
                         'Current hotel business date');
   log(`  Business date rolled: ${currentDate} → ${next}`);
@@ -696,7 +730,11 @@ function startScheduler(auditHour = 0, auditMinute = 0, timezone = 'Africa/Harar
       // This handles the case where the server was down or the audit was skipped.
       const dbDate = await getSystemConfig('business_date', null);
       const businessDate = dbDate?.date || todayDB();
-      const localToday = zw.toLocaleDateString('en-CA', { timeZone: timezone }); // YYYY-MM-DD
+      // Hotel-local (CAT) calendar date, derived in SQL so it is correct
+      // regardless of the VPS OS timezone (US-East). The previous
+      // zw.toLocaleDateString(...) double-applied the timezone and could be a
+      // day off near midnight, mis-firing catch-up and pushing the date ahead.
+      const localToday = await catToday(); // YYYY-MM-DD in Africa/Harare
       if (businessDate < localToday) {
         const lock = await getSystemConfig('night_audit_lock', {});
         if (!lock || !lock.locked) {
@@ -726,4 +764,4 @@ function stopScheduler() {
   if (_schedulerInterval) { clearInterval(_schedulerInterval); _schedulerInterval = null; }
 }
 
-module.exports = { runNightAudit, startScheduler, stopScheduler, setBroadcast, isLocked, getSystemConfig };
+module.exports = { runNightAudit, startScheduler, stopScheduler, setBroadcast, isLocked, getSystemConfig, setSystemConfig, catToday, addDays };
