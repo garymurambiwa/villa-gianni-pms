@@ -21,6 +21,7 @@ export interface ReconciliationRow {
   expected_qty: number;
   physical_qty: number | null;
   variance: number;
+  cost_price?: number; // unit cost — drives Total Cost & Variance Value on the count sheet
 }
 
 export class InventoryService {
@@ -102,7 +103,7 @@ export class InventoryService {
   static async getReconciliationWorksheet(periodId: string): Promise<ReconciliationRow[]> {
     const sql = `
       WITH product_base AS (
-        SELECT id, name, unit FROM products WHERE is_stock_item = true
+        SELECT id, name, unit, COALESCE(cost_price, 0) AS cost_price FROM products WHERE is_stock_item = true
       ),
       transactions AS (
         SELECT 
@@ -128,7 +129,8 @@ export class InventoryService {
         COALESCE(t.adjustment, 0) as adjustment_qty,
         (COALESCE(t.opening, 0) + COALESCE(t.received, 0) + COALESCE(t.adjustment, 0) - COALESCE(t.usage, 0)) as expected_qty,
         s.physical_qty,
-        s.variance
+        s.variance,
+        p.cost_price
       FROM product_base p
       LEFT JOIN transactions t ON p.id = t.product_id
       LEFT JOIN current_snapshot s ON p.id = s.product_id
@@ -252,6 +254,7 @@ export interface ReconciliationRow {
   expected_qty: number;
   physical_qty: number | null;
   variance: number;
+  cost_price?: number; // unit cost — drives Total Cost & Variance Value on the count sheet
 }
 
 export class InventoryService {
@@ -314,7 +317,7 @@ export class InventoryService {
   static async getReconciliationWorksheet(periodId: string): Promise<ReconciliationRow[]> {
     const sql = `
       WITH product_base AS (
-        SELECT id, name, unit FROM products WHERE is_stock_item = true
+        SELECT id, name, unit, COALESCE(cost_price, 0) AS cost_price FROM products WHERE is_stock_item = true
       ),
       transactions AS (
         SELECT 
@@ -340,7 +343,8 @@ export class InventoryService {
         COALESCE(t.adjustment, 0) as adjustment_qty,
         (COALESCE(t.opening, 0) + COALESCE(t.received, 0) + COALESCE(t.adjustment, 0) - COALESCE(t.usage, 0)) as expected_qty,
         s.physical_qty,
-        s.variance
+        s.variance,
+        p.cost_price
       FROM product_base p
       LEFT JOIN transactions t ON p.id = t.product_id
       LEFT JOIN current_snapshot s ON p.id = s.product_id

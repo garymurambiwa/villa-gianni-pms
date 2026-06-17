@@ -2,12 +2,16 @@ import React, { useEffect, useState } from 'react';
 import { InventoryService, ReconciliationRow } from '@/lib/InventoryService';
 import { db } from '@/lib/db';
 import { toast } from 'sonner';
-import { Loader2, Save, XCircle, ArrowLeft, Info, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react';
+import { Loader2, Save, XCircle, ArrowLeft, Info, AlertTriangle, TrendingDown, TrendingUp, Printer, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHeader, TableHead, TableRow } from '@/components/ui/table';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/context/AuthContext';
+import { printReportHtml } from '@/lib/reportPrint';
+import { downloadBlob } from '@/lib/documentUtils';
+
+const money = (n: number) => `$${Number(n || 0).toFixed(2)}`;
 
 interface Props {
   periodId: string;
@@ -78,6 +82,50 @@ export const ReconciliationWorksheet: React.FC<Props> = ({ periodId }) => {
     setSaving(false);
   };
 
+  // Row cost helpers — Total Cost values the counted (or expected) qty; Variance
+  // Value is the dollar impact of the count discrepancy (variance × unit cost).
+  const rowCost = (r: ReconciliationRow) => Number(r.cost_price || 0);
+  const rowTotalCost = (r: ReconciliationRow) =>
+    (r.physical_qty != null ? Number(r.physical_qty) : Number(r.expected_qty)) * rowCost(r);
+  const rowVarianceValue = (r: ReconciliationRow) => Number(r.variance || 0) * rowCost(r);
+  const totalVarianceValue = data.reduce((s, r) => s + rowVarianceValue(r), 0);
+  const totalStockValue = data.reduce((s, r) => s + rowTotalCost(r), 0);
+
+  const exportCsv = () => {
+    const headers = ['Stock Item','Unit','Opening','Received','Usage','Expected','Physical','Variance','Cost Price','Total Cost','Variance Value'];
+    const lines = [headers.join(',')];
+    for (const r of data) {
+      lines.push([
+        `"${String(r.product_name).replace(/"/g,'""')}"`, r.unit || '', r.opening_qty, r.received_qty,
+        r.system_usage_qty, r.expected_qty, r.physical_qty ?? '', r.variance ?? '',
+        rowCost(r).toFixed(2), rowTotalCost(r).toFixed(2), rowVarianceValue(r).toFixed(2),
+      ].join(','));
+    }
+    downloadBlob(new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' }),
+      `stock-count-${period?.name || periodId}-${new Date().toISOString().slice(0,10)}.csv`);
+  };
+
+  const printSheet = () => printReportHtml({
+    title: 'Stock Count Sheet',
+    subtitle: 'Physical inventory reconciliation worksheet',
+    meta: `Period: ${period?.name || periodId}${period?.status ? `  ·  Status: ${period.status}` : ''}`,
+    columns: [
+      { header: 'Stock Item', key: 'product_name' },
+      { header: 'Unit', key: (r) => r.unit || '', align: 'center' },
+      { header: 'Expected', key: 'expected_qty', align: 'right' },
+      { header: 'Physical', key: (r) => (r.physical_qty ?? ''), align: 'right' },
+      { header: 'Variance', key: (r) => r.variance ?? '', align: 'right' },
+      { header: 'Cost Price', key: (r) => money(rowCost(r)), align: 'right' },
+      { header: 'Total Cost', key: (r) => money(rowTotalCost(r)), align: 'right' },
+      { header: 'Variance Value', key: (r) => money(rowVarianceValue(r)), align: 'right' },
+    ],
+    rows: data,
+    summary: [
+      `Total Stock Value (at count): ${money(totalStockValue)}`,
+      `Total Variance Value: ${money(totalVarianceValue)}`,
+    ],
+  });
+
   if (loading) return <div className="flex justify-center py-20"><Loader2 className="h-12 w-12 animate-spin text-blue-500" /></div>;
 
   const isClosed = period?.status === 'closed';
@@ -98,12 +146,20 @@ export const ReconciliationWorksheet: React.FC<Props> = ({ periodId }) => {
           </div>
         </div>
         
-        {!isClosed && (
-          <Button onClick={handleClosePeriod} disabled={saving} className="bg-green-600 hover:bg-green-700 h-14 px-8 shadow-xl font-black uppercase tracking-wider transition-all duration-300 transform hover:scale-105 rounded-2xl">
-            {saving ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Save className="mr-2 h-5 w-5" />}
-            Finalize & Close Period
+        <div className="flex items-center gap-3">
+          <Button onClick={printSheet} variant="outline" className="h-12 rounded-2xl gap-2" disabled={data.length === 0}>
+            <Printer className="h-4 w-4" /> Print
           </Button>
-        )}
+          <Button onClick={exportCsv} variant="outline" className="h-12 rounded-2xl gap-2" disabled={data.length === 0}>
+            <Download className="h-4 w-4" /> Export
+          </Button>
+          {!isClosed && (
+            <Button onClick={handleClosePeriod} disabled={saving} className="bg-green-600 hover:bg-green-700 h-14 px-8 shadow-xl font-black uppercase tracking-wider transition-all duration-300 transform hover:scale-105 rounded-2xl">
+              {saving ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Save className="mr-2 h-5 w-5" />}
+              Finalize & Close Period
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -140,6 +196,9 @@ export const ReconciliationWorksheet: React.FC<Props> = ({ periodId }) => {
               <TableHead className="font-black text-slate-800 text-center font-bold">Expected</TableHead>
               <TableHead className="font-black text-blue-600 text-center min-w-[200px]">Actual Physical</TableHead>
               <TableHead className="font-black text-slate-800 text-center">Variance</TableHead>
+              <TableHead className="font-black text-slate-800 text-center bg-emerald-50/30">Cost Price</TableHead>
+              <TableHead className="font-black text-slate-800 text-center bg-emerald-50/30">Total Cost</TableHead>
+              <TableHead className="font-black text-slate-800 text-center bg-amber-50/40">Variance Value</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -171,6 +230,14 @@ export const ReconciliationWorksheet: React.FC<Props> = ({ periodId }) => {
                         {row.variance > 0 ? '+' : ''}{row.variance}
                     </div>
                   ) : <span className="text-slate-300 font-bold text-xs uppercase tracking-widest">Awaiting Count</span>}
+                </TableCell>
+                {/* Cost columns — auto-calculated from the product's unit cost */}
+                <TableCell className="text-center font-semibold text-slate-600 bg-emerald-50/10">{money(rowCost(row))}</TableCell>
+                <TableCell className="text-center font-bold text-slate-700 bg-emerald-50/10">{money(rowTotalCost(row))}</TableCell>
+                <TableCell className="text-center bg-amber-50/20">
+                  <span className={`font-black ${rowVarianceValue(row) < 0 ? 'text-red-600' : rowVarianceValue(row) > 0 ? 'text-green-600' : 'text-slate-400'}`}>
+                    {rowVarianceValue(row) > 0 ? '+' : ''}{money(rowVarianceValue(row))}
+                  </span>
                 </TableCell>
               </TableRow>
             ))}
