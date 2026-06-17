@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Calendar, DollarSign, TrendingUp, FileText, Download, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Calendar, DollarSign, TrendingUp, FileText, Download, CheckCircle, AlertTriangle, Printer } from 'lucide-react';
 import { formatCurrency } from '@/lib/posIntegration';
+import { printReportHtml } from '@/lib/reportPrint';
 
 interface MonthEndClosingReportProps {}
 
@@ -44,74 +45,107 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
   const fetchClosingData = async () => {
     setLoading(true);
     try {
-      // Fetch inventory data and generate month-end closing report
-      const response = await fetch('/api/v1/inventory/items?limit=10000');
-      const data = await response.json();
-
-      if (data.ok && data.data) {
-        // Group items by category and calculate closing data
-        const categoryGroups = data.data.reduce((groups: any, item: any) => {
-          const category = item.category;
-          if (!groups[category]) {
-            groups[category] = [];
-          }
-          groups[category].push(item);
-          return groups;
-        }, {});
-
-        const mockClosingData: ClosingData[] = Object.entries(categoryGroups).map(([category, items]: [string, any]) => {
-          const totalItems = items.length;
-          const avgCost = items.reduce((sum: number, item: any) => sum + parseFloat(item.weighted_avg_cost || 10), 0) / totalItems;
-
-          // Mock month-end calculations
-          const openingInventory = Math.floor(Math.random() * 5000) + 2000;
-          const purchasesReceived = Math.floor(Math.random() * 3000) + 1000;
-          const transfersIn = Math.floor(Math.random() * 500) + 100;
-          const transfersOut = Math.floor(Math.random() * 500) + 100;
-          const salesConsumption = openingInventory + purchasesReceived + transfersIn - transfersOut - Math.floor(Math.random() * 500);
-          const wastageLoss = Math.floor(Math.random() * 200) + 50;
-
-          const expectedClosing = openingInventory + purchasesReceived + transfersIn - transfersOut - salesConsumption - wastageLoss;
-          const actualClosing = expectedClosing + (Math.random() - 0.5) * 200; // Add some variance
-          const variance = actualClosing - expectedClosing;
-          const variancePercentage = (variance / expectedClosing) * 100;
-
-          return {
-            category,
-            opening_inventory: openingInventory,
-            purchases_received: purchasesReceived,
-            transfers_in: transfersIn,
-            transfers_out: transfersOut,
-            sales_consumption: salesConsumption,
-            wastage_loss: wastageLoss,
-            closing_inventory: actualClosing,
-            variance,
-            variance_percentage: variancePercentage,
-          };
-        });
-
-        setClosingData(mockClosingData);
-
-        // Calculate summary
-        const summary = mockClosingData.reduce((sum, cat) => ({
-          totalOpening: sum.totalOpening + cat.opening_inventory,
-          totalPurchases: sum.totalPurchases + cat.purchases_received,
-          totalConsumption: sum.totalConsumption + cat.sales_consumption,
-          totalClosing: sum.totalClosing + cat.closing_inventory,
-          totalVariance: sum.totalVariance + cat.variance,
-          variancePercentage: 0 // Will calculate below
-        }), {
-          totalOpening: 0,
-          totalPurchases: 0,
-          totalConsumption: 0,
-          totalClosing: 0,
-          totalVariance: 0,
-          variancePercentage: 0
-        });
-
-        summary.variancePercentage = (summary.totalVariance / (summary.totalOpening + summary.totalPurchases)) * 100;
-        setMonthSummary(summary);
+      // Resolve the real period window.
+      const now = new Date();
+      let start: Date, end: Date;
+      if (period === 'last_month') {
+        start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        end = new Date(now.getFullYear(), now.getMonth(), 1);
+      } else if (period === 'last_3_months') {
+        start = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+        end = now;
+      } else { // current_month
+        start = new Date(now.getFullYear(), now.getMonth(), 1);
+        end = now;
       }
+
+      // REAL value-based reconciliation from the stock ledger (total_cost by
+      // ledger_type), grouped by item category. opening = book value before the
+      // window; closing = book value at window end; variance = the real ADJUSTMENT
+      // (physical-count correction) value that doesn't reconcile to the movements.
+      const res = await fetch('/api/db/query', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sql: `
+            WITH opening AS (
+              SELECT i.category, COALESCE(SUM(sl.total_cost),0)::float AS val
+              FROM inv_stock_ledger sl JOIN inv_items i ON i.id = sl.item_id
+              WHERE COALESCE(sl.transaction_date, sl.inserted_at) < $1::timestamptz
+              GROUP BY i.category
+            ),
+            moves AS (
+              SELECT i.category,
+                SUM(CASE WHEN sl.ledger_type='GRN'            THEN sl.total_cost      ELSE 0 END)::float AS purchases,
+                SUM(CASE WHEN sl.ledger_type='TRANSFER_IN'    THEN sl.total_cost      ELSE 0 END)::float AS transfers_in,
+                SUM(CASE WHEN sl.ledger_type='TRANSFER_OUT'   THEN ABS(sl.total_cost) ELSE 0 END)::float AS transfers_out,
+                SUM(CASE WHEN sl.ledger_type='SALE_DEPLETION' THEN ABS(sl.total_cost) ELSE 0 END)::float AS consumption,
+                SUM(CASE WHEN sl.ledger_type='WASTE'          THEN ABS(sl.total_cost) ELSE 0 END)::float AS wastage,
+                SUM(CASE WHEN sl.ledger_type='ADJUSTMENT'     THEN sl.total_cost      ELSE 0 END)::float AS adjustment
+              FROM inv_stock_ledger sl JOIN inv_items i ON i.id = sl.item_id
+              WHERE COALESCE(sl.transaction_date, sl.inserted_at) >= $1::timestamptz
+                AND COALESCE(sl.transaction_date, sl.inserted_at) <  $2::timestamptz
+              GROUP BY i.category
+            ),
+            closing AS (
+              SELECT i.category, COALESCE(SUM(sl.total_cost),0)::float AS val
+              FROM inv_stock_ledger sl JOIN inv_items i ON i.id = sl.item_id
+              WHERE COALESCE(sl.transaction_date, sl.inserted_at) < $2::timestamptz
+              GROUP BY i.category
+            )
+            SELECT COALESCE(m.category, o.category, c.category) AS category,
+                   COALESCE(o.val,0)           AS opening,
+                   COALESCE(m.purchases,0)     AS purchases,
+                   COALESCE(m.transfers_in,0)  AS transfers_in,
+                   COALESCE(m.transfers_out,0) AS transfers_out,
+                   COALESCE(m.consumption,0)   AS consumption,
+                   COALESCE(m.wastage,0)       AS wastage,
+                   COALESCE(c.val,0)           AS closing
+            FROM moves m
+            FULL OUTER JOIN opening o ON o.category = m.category
+            FULL OUTER JOIN closing c ON c.category = COALESCE(m.category, o.category)
+            ORDER BY 1`,
+          params: [start.toISOString(), end.toISOString()],
+        }),
+      }).then(r => r.json());
+
+      const rows = (res.ok && res.rows) ? res.rows : [];
+      const real: ClosingData[] = rows.map((r: any) => {
+        const opening = Number(r.opening) || 0;
+        const purchases = Number(r.purchases) || 0;
+        const tin = Number(r.transfers_in) || 0;
+        const tout = Number(r.transfers_out) || 0;
+        const consumption = Number(r.consumption) || 0;
+        const wastage = Number(r.wastage) || 0;
+        const closing = Number(r.closing) || 0;
+        const expectedClosing = opening + purchases + tin - tout - consumption - wastage;
+        const variance = closing - expectedClosing; // real unreconciled adjustment value
+        const base = opening + purchases;
+        return {
+          category: r.category || 'Uncategorised',
+          opening_inventory: opening,
+          purchases_received: purchases,
+          transfers_in: tin,
+          transfers_out: tout,
+          sales_consumption: consumption,
+          wastage_loss: wastage,
+          closing_inventory: closing,
+          variance,
+          variance_percentage: base > 0 ? (variance / base) * 100 : 0,
+        };
+      });
+      setClosingData(real);
+
+      const summary = real.reduce((s, c) => ({
+        totalOpening: s.totalOpening + c.opening_inventory,
+        totalPurchases: s.totalPurchases + c.purchases_received,
+        totalConsumption: s.totalConsumption + c.sales_consumption,
+        totalClosing: s.totalClosing + c.closing_inventory,
+        totalVariance: s.totalVariance + c.variance,
+        variancePercentage: 0,
+      }), { totalOpening: 0, totalPurchases: 0, totalConsumption: 0, totalClosing: 0, totalVariance: 0, variancePercentage: 0 });
+      const base = summary.totalOpening + summary.totalPurchases;
+      summary.variancePercentage = base > 0 ? (summary.totalVariance / base) * 100 : 0;
+      setMonthSummary(summary);
     } catch (error) {
       console.error('Failed to fetch closing data:', error);
       setClosingData([]);
@@ -172,9 +206,36 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
               ))}
             </SelectContent>
           </Select>
-          <Button onClick={exportToCSV} variant="outline" className="gap-2">
+          <Button onClick={exportToCSV} variant="outline" className="gap-2" disabled={closingData.length === 0}>
             <Download className="h-4 w-4" />
             Export CSV
+          </Button>
+          <Button
+            onClick={() => printReportHtml({
+              title: 'Month-End Closing',
+              subtitle: 'Period-end inventory reconciliation (at cost value)',
+              meta: `Period: ${periods.find(p => p.id === period)?.name || period}`,
+              columns: [
+                { header: 'Category', key: 'category' },
+                { header: 'Opening', key: (r) => formatCurrency(r.opening_inventory), align: 'right' },
+                { header: 'Purchases', key: (r) => formatCurrency(r.purchases_received), align: 'right' },
+                { header: 'Transfers In', key: (r) => formatCurrency(r.transfers_in), align: 'right' },
+                { header: 'Transfers Out', key: (r) => formatCurrency(r.transfers_out), align: 'right' },
+                { header: 'Consumption', key: (r) => formatCurrency(r.sales_consumption), align: 'right' },
+                { header: 'Wastage', key: (r) => formatCurrency(r.wastage_loss), align: 'right' },
+                { header: 'Closing', key: (r) => formatCurrency(r.closing_inventory), align: 'right' },
+                { header: 'Variance', key: (r) => formatCurrency(r.variance), align: 'right' },
+              ],
+              rows: closingData,
+              summary: [
+                `Total Opening: ${formatCurrency(monthSummary.totalOpening)}`,
+                `Total Purchases: ${formatCurrency(monthSummary.totalPurchases)}`,
+                `Total Closing: ${formatCurrency(monthSummary.totalClosing)}`,
+                `Total Variance: ${formatCurrency(monthSummary.totalVariance)} (${monthSummary.variancePercentage.toFixed(1)}%)`,
+              ],
+            })}
+            variant="outline" className="gap-2" disabled={closingData.length === 0}>
+            <Printer className="h-4 w-4" /> Print
           </Button>
         </div>
       </div>

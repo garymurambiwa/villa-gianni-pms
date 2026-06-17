@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertTriangle, Shield, TrendingDown, Calendar, Download, Eye } from 'lucide-react';
+import { AlertTriangle, Shield, TrendingDown, Calendar, Download, Eye, Printer } from 'lucide-react';
 import { formatCurrency } from '@/lib/posIntegration';
 import { useInventoryLocations } from '@/hooks/useInventoryLocations';
+import { printReportHtml } from '@/lib/reportPrint';
 
 interface PilferageAnalysisReportProps {}
 
@@ -43,48 +44,57 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
   const fetchPilferageData = async () => {
     setLoading(true);
     try {
-      // Fetch inventory items and simulate pilferage analysis
-      const response = await fetch('/api/v1/inventory/items?limit=10000');
-      const data = await response.json();
+      const days = parseInt(period) || 30;
+      // REAL shrinkage from posted variance reports (theoretical vs physical count).
+      // Negative variance_qty = stock missing = potential pilferage. Optional
+      // location filter; window bounded by the selected period.
+      const locFilter = location !== 'all' ? ` AND vr.location_id = $2` : '';
+      const params: any[] = [String(days)];
+      if (location !== 'all') params.push(location);
 
-      if (data.ok && data.data) {
-        // Generate mock pilferage analysis data
-        const mockData: PilferageData[] = data.data.slice(0, 20).map((item: any, idx: number) => {
-          const expectedQty = Math.floor(Math.random() * 100) + 50;
-          const actualQty = expectedQty - Math.floor(Math.random() * 15); // Random shrinkage
-          const varianceQty = expectedQty - actualQty;
-          const variancePercentage = (varianceQty / expectedQty) * 100;
-          const unitCost = parseFloat(item.weighted_avg_cost || 10);
-          const varianceValue = varianceQty * unitCost;
+      const res = await fetch('/api/db/query', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sql: `SELECT vl.item_id,
+                       i.name AS item_name, i.category,
+                       COALESCE(i.short_id, '') AS sku,
+                       vl.theoretical_qty::float  AS expected_qty,
+                       vl.physical_qty::float     AS actual_qty,
+                       vl.variance_qty::float     AS variance_qty,
+                       vl.variance_percentage::float AS variance_percentage,
+                       vl.variance_value::float   AS variance_value,
+                       vl.alert_level,
+                       COALESCE(vr.period_end::text, vr.inserted_at::date::text) AS last_count_date
+                FROM inv_variance_lines vl
+                JOIN inv_variance_reports vr ON vr.id = vl.variance_report_id
+                LEFT JOIN inv_items i ON i.id = vl.item_id
+                WHERE vr.inserted_at >= NOW() - ($1 || ' days')::interval
+                  AND vl.variance_qty < 0${locFilter}
+                ORDER BY vl.variance_value ASC`,
+          params,
+        }),
+      }).then(r => r.json());
 
-          let riskLevel: 'Low' | 'Medium' | 'High' | 'Critical' = 'Low';
-          if (variancePercentage > 10) riskLevel = 'Critical';
-          else if (variancePercentage > 7) riskLevel = 'High';
-          else if (variancePercentage > 4) riskLevel = 'Medium';
-
-          return {
-            item_id: item.id,
-            item_name: item.name,
-            category: item.category,
-            sku: item.sku,
-            expected_qty: expectedQty,
-            actual_qty: actualQty,
-            variance_qty: varianceQty,
-            variance_percentage: variancePercentage,
-            variance_value: varianceValue,
-            risk_level: riskLevel,
-            last_count_date: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-          };
-        });
-
-        // Sort by risk level (Critical first)
-        const sortedData = mockData.sort((a, b) => {
-          const riskOrder = { Critical: 4, High: 3, Medium: 2, Low: 1 };
-          return riskOrder[b.risk_level] - riskOrder[a.risk_level];
-        });
-
-        setPilferageData(sortedData);
-      }
+      const rows = (res.ok && res.rows) ? res.rows : [];
+      const mapRisk = (alert: string, pct: number): 'Low' | 'Medium' | 'High' | 'Critical' => {
+        if (alert === 'CRITICAL') return 'Critical';
+        if (alert === 'WARNING') return Math.abs(pct) > 7 ? 'High' : 'Medium';
+        return 'Low';
+      };
+      const data: PilferageData[] = rows.map((r: any) => ({
+        item_id: r.item_id,
+        item_name: r.item_name || r.item_id,
+        category: r.category || '',
+        sku: r.sku || '',
+        expected_qty: Number(r.expected_qty) || 0,
+        actual_qty: Number(r.actual_qty) || 0,
+        variance_qty: Math.abs(Number(r.variance_qty) || 0),
+        variance_percentage: Math.abs(Number(r.variance_percentage) || 0),
+        variance_value: Math.abs(Number(r.variance_value) || 0),
+        risk_level: mapRisk(r.alert_level, Number(r.variance_percentage) || 0),
+        last_count_date: String(r.last_count_date || '').slice(0, 10),
+      }));
+      setPilferageData(data);
     } catch (error) {
       console.error('Failed to fetch pilferage data:', error);
       setPilferageData([]);
@@ -175,9 +185,33 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
               ))}
             </SelectContent>
           </Select>
-          <Button onClick={exportToCSV} variant="outline" className="gap-2">
+          <Button onClick={exportToCSV} variant="outline" className="gap-2" disabled={pilferageData.length === 0}>
             <Download className="h-4 w-4" />
             Export CSV
+          </Button>
+          <Button
+            onClick={() => printReportHtml({
+              title: 'Pilferage Analysis',
+              subtitle: 'Shrinkage & potential theft detection (from variance counts)',
+              meta: `Period: last ${period} days  ·  Location: ${locations.find(l => l.id === location)?.name || 'All'}`,
+              columns: [
+                { header: 'Item', key: 'item_name' },
+                { header: 'Category', key: 'category' },
+                { header: 'Expected', key: 'expected_qty', align: 'right' },
+                { header: 'Actual', key: 'actual_qty', align: 'right' },
+                { header: 'Variance', key: 'variance_qty', align: 'right' },
+                { header: 'Variance %', key: (r) => `${r.variance_percentage.toFixed(1)}%`, align: 'right' },
+                { header: 'Variance Value', key: (r) => formatCurrency(r.variance_value), align: 'right' },
+                { header: 'Risk', key: 'risk_level' },
+              ],
+              rows: pilferageData,
+              summary: [
+                `Total Variance Value: ${formatCurrency(getTotalVarianceValue())}`,
+                `High/Critical Items: ${getHighRiskItems()}`,
+              ],
+            })}
+            variant="outline" className="gap-2" disabled={pilferageData.length === 0}>
+            <Printer className="h-4 w-4" /> Print
           </Button>
         </div>
       </div>

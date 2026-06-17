@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { CalendarDays, DollarSign, TrendingUp, TrendingDown, AlertTriangle, Download } from 'lucide-react';
+import { CalendarDays, DollarSign, TrendingUp, TrendingDown, AlertTriangle, Download, Printer } from 'lucide-react';
 import { formatCurrency } from '@/lib/posIntegration';
+import { printReportHtml } from '@/lib/reportPrint';
 
 interface CostMarginReportProps {}
 
@@ -30,42 +31,70 @@ export const CostMarginReport: React.FC<CostMarginReportProps> = () => {
   const fetchMarginData = async () => {
     setLoading(true);
     try {
-      // Fetch inventory items and calculate margins based on weighted average costs
-      const response = await fetch('/api/v1/inventory/items?limit=10000');
-      const data = await response.json();
+      const days = parseInt(dateRange) || 30;
+      const dbQuery = (sql: string, params: any[] = []) =>
+        fetch('/api/db/query', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sql, params }),
+        }).then(r => r.json());
 
-      if (data.ok && data.data) {
-        // Calculate mock margin data based on inventory items
-        const mockMargins = data.data.slice(0, 15).map((item: any, idx: number) => {
-          const costPrice = parseFloat(item.weighted_avg_cost || 10);
-          const sellingPrice = costPrice * (1.3 + Math.random() * 0.6); // 30-90% markup
-          const marginAmount = sellingPrice - costPrice;
-          const marginPercentage = (marginAmount / costPrice) * 100;
+      // 1. REAL per-item margins from the products table (selling price + cost price).
+      const catFilter = category !== 'all' ? ` AND category = $1` : '';
+      const prodRes = await dbQuery(
+        `SELECT id, name, category, department,
+                COALESCE(price,0)::float       AS selling_price,
+                COALESCE(cost_price,0)::float  AS cost_price
+         FROM products
+         WHERE COALESCE(price,0) > 0${catFilter}
+         ORDER BY (COALESCE(price,0) - COALESCE(cost_price,0)) DESC`,
+        category !== 'all' ? [category] : []
+      );
+      const products = (prodRes.ok && prodRes.rows) ? prodRes.rows : [];
 
-          // Mock sales data
-          const totalSold = Math.floor(Math.random() * 200) + 20;
-          const totalRevenue = totalSold * sellingPrice;
-          const totalCost = totalSold * costPrice;
-          const totalProfit = totalRevenue - totalCost;
+      // 2. REAL units sold per product from closed POS orders within the window.
+      //    Handles both item shapes: { menuItem:{id}, quantity } and { id, quantity }.
+      let soldMap: Record<string, number> = {};
+      try {
+        const soldRes = await dbQuery(
+          `SELECT COALESCE(item->'menuItem'->>'id', item->>'id') AS pid,
+                  SUM(COALESCE((item->>'quantity')::numeric, 0))::float AS qty
+           FROM pos_orders, jsonb_array_elements(
+                  CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END
+                ) AS item
+           WHERE created_at >= NOW() - ($1 || ' days')::interval
+           GROUP BY 1`,
+          [String(days)]
+        );
+        if (soldRes.ok && soldRes.rows) {
+          soldMap = Object.fromEntries(soldRes.rows.filter((r: any) => r.pid).map((r: any) => [String(r.pid), Number(r.qty) || 0]));
+        }
+      } catch { /* sales aggregation optional — margins still real without it */ }
 
-          return {
-            item_id: item.id,
-            item_name: item.name,
-            category: item.category,
-            sku: item.sku,
-            cost_price: costPrice,
-            selling_price: sellingPrice,
-            margin_amount: marginAmount,
-            margin_percentage: marginPercentage,
-            total_sold: totalSold,
-            total_revenue: totalRevenue,
-            total_cost: totalCost,
-            total_profit: totalProfit,
-          };
-        });
-
-        setMarginData(mockMargins);
-      }
+      // 3. Merge — every figure below is real; items never sold show qty 0.
+      const rows = products.map((p: any) => {
+        const sellingPrice = Number(p.selling_price) || 0;
+        const costPrice = Number(p.cost_price) || 0;
+        const marginAmount = sellingPrice - costPrice;
+        const marginPercentage = costPrice > 0 ? (marginAmount / costPrice) * 100 : (sellingPrice > 0 ? 100 : 0);
+        const totalSold = soldMap[String(p.id)] || 0;
+        const totalRevenue = totalSold * sellingPrice;
+        const totalCost = totalSold * costPrice;
+        return {
+          item_id: p.id,
+          item_name: p.name,
+          category: p.category,
+          sku: p.department || '',
+          cost_price: costPrice,
+          selling_price: sellingPrice,
+          margin_amount: marginAmount,
+          margin_percentage: marginPercentage,
+          total_sold: totalSold,
+          total_revenue: totalRevenue,
+          total_cost: totalCost,
+          total_profit: totalRevenue - totalCost,
+        };
+      });
+      setMarginData(rows);
     } catch (error) {
       console.error('Failed to fetch margin data:', error);
       setMarginData([]);
@@ -154,9 +183,34 @@ export const CostMarginReport: React.FC<CostMarginReportProps> = () => {
               ))}
             </SelectContent>
           </Select>
-          <Button onClick={exportToCSV} variant="outline" className="gap-2">
+          <Button onClick={exportToCSV} variant="outline" className="gap-2" disabled={marginData.length === 0}>
             <Download className="h-4 w-4" />
             Export CSV
+          </Button>
+          <Button
+            onClick={() => printReportHtml({
+              title: 'Cost Margin Analysis',
+              subtitle: 'Profit margins by item and category',
+              meta: `Period: last ${dateRange} days  ·  Category: ${category}`,
+              columns: [
+                { header: 'Item', key: 'item_name' },
+                { header: 'Category', key: 'category' },
+                { header: 'Cost', key: (r) => formatCurrency(r.cost_price), align: 'right' },
+                { header: 'Selling', key: (r) => formatCurrency(r.selling_price), align: 'right' },
+                { header: 'Margin %', key: (r) => `${r.margin_percentage.toFixed(1)}%`, align: 'right' },
+                { header: 'Sold', key: 'total_sold', align: 'right' },
+                { header: 'Revenue', key: (r) => formatCurrency(r.total_revenue), align: 'right' },
+                { header: 'Profit', key: (r) => formatCurrency(r.total_profit), align: 'right' },
+              ],
+              rows: marginData,
+              summary: [
+                `Total Revenue: ${formatCurrency(getTotalRevenue())}`,
+                `Total Profit: ${formatCurrency(getTotalProfit())}`,
+                `Average Margin: ${getAverageMargin().toFixed(1)}%`,
+              ],
+            })}
+            variant="outline" className="gap-2" disabled={marginData.length === 0}>
+            <Printer className="h-4 w-4" /> Print
           </Button>
         </div>
       </div>
