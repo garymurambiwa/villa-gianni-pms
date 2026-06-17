@@ -1538,6 +1538,31 @@ const server = app.listen(PORT, '0.0.0.0', () => {
           FOR EACH ROW EXECUTE FUNCTION clamp_business_date()
       `);
 
+      // ── Guard: night_audit_runs can never be dated more than one day ahead of ──
+      // the hotel's real date. Audits only close past/current days, so a future
+      // business_date is always drift (e.g. a stale-cached operator browser
+      // running a client-side audit). The system_configs clamp above does not
+      // cover this table, so guard it too — this blocks the phantom future audit
+      // rows at the DB regardless of which client/path inserts them.
+      await dbMod.query(`
+        CREATE OR REPLACE FUNCTION guard_audit_run_date() RETURNS trigger AS $$
+        DECLARE cap date;
+        BEGIN
+          cap := (NOW() AT TIME ZONE 'Africa/Harare')::date + 1;
+          IF NEW.business_date::date > cap THEN
+            RAISE EXCEPTION 'night_audit_runs.business_date % is ahead of cap % (drift blocked)', NEW.business_date, cap;
+          END IF;
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+      `).catch((e) => console.warn('[bootstrap] guard_audit_run_date fn:', e.message));
+      await dbMod.query(`DROP TRIGGER IF EXISTS trg_guard_audit_run_date ON night_audit_runs`).catch(() => {});
+      await dbMod.query(`
+        CREATE TRIGGER trg_guard_audit_run_date
+          BEFORE INSERT OR UPDATE ON night_audit_runs
+          FOR EACH ROW EXECUTE FUNCTION guard_audit_run_date()
+      `).catch((e) => console.warn('[bootstrap] guard_audit_run_date trigger:', e.message));
+
       // ── GL Pending Batches tables ─────────────────────────────────────────────
       await dbMod.query(`
         CREATE TABLE IF NOT EXISTS gl_account_mappings (
