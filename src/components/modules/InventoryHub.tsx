@@ -1527,7 +1527,8 @@ function RecipeBuilder({ data }: { data: ReturnType<typeof useInventoryData> }) 
     // Load POS menu items
     fetch('/api/db/query', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql: `SELECT id, name, price, department FROM products WHERE active=true ORDER BY department, name LIMIT 300` })
+      // Load the ENTIRE active POS menu (no 300-cap) so every dish/cocktail is recipe-able
+      body: JSON.stringify({ sql: `SELECT id, name, price, department FROM products WHERE active=true ORDER BY department, name LIMIT 5000` })
     }).then(r => r.json()).then(d => { if (d.ok) setMenuItems(d.rows); });
   }, []);
 
@@ -1640,10 +1641,10 @@ function RecipeBuilder({ data }: { data: ReturnType<typeof useInventoryData> }) 
                       <div className="absolute z-30 top-full left-2 bg-white border rounded-lg shadow-lg w-72 max-h-40 overflow-y-auto">
                         {suggestions.map((it:any) => (
                           <div key={it.id} onClick={() => selectIngredientItem(i, it)}
-                            className="px-3 py-1.5 hover:bg-indigo-50 cursor-pointer text-xs flex justify-between">
-                            <span>{it.name}</span>
-                            <span className="text-gray-500 text-xs">{it.id}</span>
-                            <span className="text-indigo-600">{fmt(it.weighted_avg_cost)}/{it.base_uom_code}</span>
+                            className="px-3 py-1.5 hover:bg-indigo-50 cursor-pointer text-xs flex justify-between items-center gap-2">
+                            {/* Item name only — never expose the raw item id (per cost-controller UX) */}
+                            <span className="truncate">{it.name}</span>
+                            <span className="text-indigo-600 whitespace-nowrap">{fmt(it.weighted_avg_cost)}/{it.base_uom_code || ''}</span>
                           </div>
                         ))}
                       </div>
