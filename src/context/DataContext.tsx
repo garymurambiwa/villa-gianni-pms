@@ -2548,15 +2548,21 @@ name = ?, contact_person = ?, phone = ?, email = ?, address = ?, tax_id = ?,
           || accs.find(a => a.category === 'Liability')?.id
           || '2000';
 
-        gl.appendLedger({
-          id: `GL_${expenseId} `,
+        const expenseEntry = {
+          id: `GL_${expenseId}`.trim(),
           date: expenseData.expense_date || new Date().toISOString().split('T')[0],
-          reference: `Vendor Expense: ${expenseData.description || ''} `.slice(0, 100),
+          reference: `Vendor Expense: ${expenseData.description || ''}`.slice(0, 100),
           lines: [
+            // Double-entry (USALI): Dr Expense account  /  Cr Accounts Payable
             { accountId: expAccId, description: expenseData.description || 'Vendor expense', debit: totalCost, credit: 0 },
-            { accountId: apAccId, description: `AP - ${expenseData.vendor_id || 'Vendor'} `, debit: 0, credit: totalCost }
+            { accountId: apAccId, description: `AP - ${expenseData.vendor_id || 'Vendor'}`, debit: 0, credit: totalCost }
           ]
-        });
+        };
+        gl.appendLedger(expenseEntry);
+        // Persist to the DB gl_journal_* tables so the expense shows in the
+        // authoritative P&L / Trial Balance, not just the local cache.
+        gl.persistJournalEntryToDB(expenseEntry, 'expense').catch((e: any) =>
+          console.warn('[DataContext] expense GL DB persist failed (non-fatal):', e?.message));
       } catch (glErr) {
         console.warn('[DataContext] GL posting failed (non-blocking):', glErr);
       }

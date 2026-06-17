@@ -11,6 +11,7 @@ import { useData } from '@/context/DataContext';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateForCSV, toDisplayId, escapeCSV } from '@/lib/csvUtils';
 import { ALL_DEPARTMENTS } from '@/lib/usaliCategories';
+import gl from '@/lib/glAccounting';
 import { ExpenseInvoiceView } from '@/components/modules/ExpenseInvoiceView';
 import { RecordVendorBill } from '@/components/modules/RecordVendorBill';
 import { BillDetailModal } from '@/components/modules/BillDetailModal';
@@ -87,6 +88,26 @@ interface VendorPayment {
 const VendorManagement: React.FC = () => {
   const { vendors, vendorExpenses, vendorPayments, addVendor, updateVendor, deleteVendor, addVendorExpense, updateVendorExpense, deleteVendorExpense, voidVendorExpense, payVendor, loadVendorPayments } = useData();
   const { toast } = useToast();
+
+  // Expense categories now come from the (DB-unified) Chart of Accounts — every
+  // Expense GL account is selectable so an expense posts straight to the account
+  // it belongs to. Falls back to the legacy fixed list until the COA syncs.
+  const [glExpenseAccounts, setGlExpenseAccounts] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        await gl.syncAccountsFromDB(); // ensure cache reflects DB even on direct nav
+        const accs = gl.getAccounts().filter((a: any) => a.category === 'Expense');
+        setGlExpenseAccounts(accs.map((a: any) => ({ id: a.id, name: a.name })));
+      } catch { /* fall back to EXPENSE_CATEGORIES */ }
+    })();
+  }, []);
+  // Unified option list: GL expense accounts ("code — name") or the legacy fallback.
+  const categoryOptions = glExpenseAccounts.length > 0
+    ? glExpenseAccounts.map(a => ({ value: a.name, label: `${a.id} — ${a.name}`, glId: a.id }))
+    : EXPENSE_CATEGORIES.map(c => ({ value: c, label: c, glId: '' }));
+  const resolveGlId = (categoryName: string) =>
+    glExpenseAccounts.find(a => a.name === categoryName)?.id || '';
 
   const [activeTab, setActiveTab] = useState('vendors');
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
@@ -1174,20 +1195,15 @@ const VendorManagement: React.FC = () => {
                                   <td className="px-4 py-2">
                                     <Select
                                       value={expense.category}
-                                      onValueChange={(value) => updateBatchExpense(index, 'category', value)}
+                                      onValueChange={(value) => { updateBatchExpense(index, 'category', value); updateBatchExpense(index, 'gl_account_id', resolveGlId(value)); }}
                                     >
                                       <SelectTrigger className={batchErrors[index]?.category ? 'border-red-500' : ''}>
-                                        <SelectValue placeholder="Select category" />
+                                        <SelectValue placeholder="Select account" />
                                       </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="Cost of Goods Sold">Cost of Goods Sold</SelectItem>
-                                        <SelectItem value="Payroll">Payroll</SelectItem>
-                                        <SelectItem value="Supplies">Supplies</SelectItem>
-                                        <SelectItem value="Utilities">Utilities</SelectItem>
-                                        <SelectItem value="Repairs & Maintenance">Repairs & Maintenance</SelectItem>
-                                        <SelectItem value="Administrative">Administrative</SelectItem>
-                                        <SelectItem value="Marketing">Marketing</SelectItem>
-                                        <SelectItem value="Other">Other</SelectItem>
+                                      <SelectContent className="max-h-72">
+                                        {categoryOptions.map(opt => (
+                                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                                        ))}
                                       </SelectContent>
                                     </Select>
                                     {batchErrors[index]?.category && (
@@ -1400,23 +1416,18 @@ const VendorManagement: React.FC = () => {
                         </Select>
                       </div>
                       <div>
-                        <Label htmlFor="category">Expense Category *</Label>
+                        <Label htmlFor="category">Expense Account (GL) *</Label>
                         <Select
                           value={expenseForm.category}
-                          onValueChange={(value) => setExpenseForm({ ...expenseForm, category: value })}
+                          onValueChange={(value) => setExpenseForm({ ...expenseForm, category: value, gl_account_id: resolveGlId(value) })}
                         >
                           <SelectTrigger>
-                            <SelectValue placeholder="Select category" />
+                            <SelectValue placeholder="Select expense account" />
                           </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Cost of Goods Sold">Cost of Goods Sold</SelectItem>
-                            <SelectItem value="Payroll">Payroll</SelectItem>
-                            <SelectItem value="Supplies">Supplies</SelectItem>
-                            <SelectItem value="Utilities">Utilities</SelectItem>
-                            <SelectItem value="Repairs & Maintenance">Repairs & Maintenance</SelectItem>
-                            <SelectItem value="Administrative">Administrative</SelectItem>
-                            <SelectItem value="Marketing">Marketing</SelectItem>
-                            <SelectItem value="Other">Other</SelectItem>
+                          <SelectContent className="max-h-72">
+                            {categoryOptions.map(opt => (
+                              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>

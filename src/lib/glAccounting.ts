@@ -559,6 +559,8 @@ export default {
   getBalanceSheet,
   isBalanced,
   appendLedger,
+  postJournalEntry,
+  persistJournalEntryToDB,
   suggestRequiredCodeMappings,
   // DB unification
   migrateLocalAccountsToDB,
