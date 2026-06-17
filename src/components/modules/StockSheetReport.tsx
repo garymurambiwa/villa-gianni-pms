@@ -4,22 +4,24 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertTriangle, Package, TrendingUp, DollarSign, Calendar, Download } from 'lucide-react';
+import { AlertTriangle, Package, TrendingUp, DollarSign, Calendar, Download, Printer } from 'lucide-react';
 import { formatCurrency } from '@/lib/posIntegration';
+import { useInventoryLocations } from '@/hooks/useInventoryLocations';
+import { printReportHtml } from '@/lib/reportPrint';
 
 interface StockSheetReportProps {}
 
 export const StockSheetReport: React.FC<StockSheetReportProps> = () => {
-  const [location, setLocation] = useState('loc_main_cellar');
+  // Locations now come live from the DB (no more hardcoded ids that don't exist)
+  const { locations } = useInventoryLocations(true);
+  const [location, setLocation] = useState('');
   const [stockData, setStockData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const locations = [
-    { id: 'loc_main_cellar', name: 'Main Cellar' },
-    { id: 'loc_bar1', name: 'Bar 1' },
-    { id: 'loc_restaurant', name: 'Restaurant' },
-    { id: 'loc_dry_goods', name: 'Dry Goods' },
-  ];
+  // Auto-select the first real location once they load
+  useEffect(() => {
+    if (!location && locations.length > 0) setLocation(locations[0].id);
+  }, [locations, location]);
 
   const fetchStockSheet = async () => {
     setLoading(true);
@@ -95,9 +97,30 @@ export const StockSheetReport: React.FC<StockSheetReportProps> = () => {
               ))}
             </SelectContent>
           </Select>
-          <Button onClick={exportToCSV} variant="outline" className="gap-2">
+          <Button onClick={exportToCSV} variant="outline" className="gap-2" disabled={stockData.length === 0}>
             <Download className="h-4 w-4" />
             Export CSV
+          </Button>
+          <Button
+            onClick={() => printReportHtml({
+              title: 'Stock Sheet Report',
+              subtitle: 'Physical inventory count sheet by location',
+              meta: `Location: ${locations.find(l => l.id === location)?.name || location}`,
+              columns: [
+                { header: 'Item Name', key: 'item_name' },
+                { header: 'SKU', key: 'sku' },
+                { header: 'Category', key: 'category' },
+                { header: 'Balance', key: (r) => parseFloat(r.balance).toFixed(2), align: 'right' },
+                { header: 'UOM', key: 'uom_symbol' },
+                { header: 'Unit Cost', key: (r) => formatCurrency(parseFloat(r.weighted_avg_cost || 0)), align: 'right' },
+                { header: 'Total Value', key: (r) => formatCurrency(parseFloat(r.balance) * parseFloat(r.weighted_avg_cost || 0)), align: 'right' },
+              ],
+              rows: stockData,
+              summary: [`Total Items: ${stockData.length}`, `Total Value: ${formatCurrency(getTotalValue())}`],
+            })}
+            variant="outline" className="gap-2" disabled={stockData.length === 0}>
+            <Printer className="h-4 w-4" />
+            Print
           </Button>
         </div>
       </div>

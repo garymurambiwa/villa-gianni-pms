@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AlertTriangle, Shield, TrendingDown, Calendar, Download, Eye } from 'lucide-react';
 import { formatCurrency } from '@/lib/posIntegration';
+import { useInventoryLocations } from '@/hooks/useInventoryLocations';
 
 interface PilferageAnalysisReportProps {}
 
@@ -35,12 +36,9 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
     { id: '90', name: 'Last 90 days' },
   ];
 
-  const locations = [
-    { id: 'all', name: 'All Locations' },
-    { id: 'loc_bar1', name: 'Bar 1' },
-    { id: 'loc_restaurant', name: 'Restaurant' },
-    { id: 'loc_main_cellar', name: 'Main Cellar' },
-  ];
+  // Live locations from DB + an "All Locations" sentinel at the top
+  const { locations: dbLocations } = useInventoryLocations(true);
+  const locations = [{ id: 'all', name: 'All Locations' }, ...dbLocations];
 
   const fetchPilferageData = async () => {
     setLoading(true);
