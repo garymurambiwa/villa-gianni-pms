@@ -30,7 +30,18 @@ const readJSON = <T>(key: string, fallback: T): T => {
 };
 const writeJSON = (key: string, value: any) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
 
-const todayISO = () => new Date().toISOString().slice(0,10);
+// Today's date in the HOTEL timezone (Africa/Harare / CAT), formatted YYYY-MM-DD.
+// Using toISOString() here returned the UTC date, which is a day off from the
+// hotel's calendar for several hours each night and was a source of date drift
+// (worse now the server is in US-East). en-CA formats as YYYY-MM-DD.
+const todayISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Harare' }).format(new Date());
+
+// Add N calendar days to a YYYY-MM-DD string via pure UTC-anchored arithmetic.
+const addDaysISO = (dateStr: string, n: number): string => {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
 
 // ============================================================================
 // VALIDATION SETTINGS
@@ -268,14 +279,17 @@ export const transferCityLedger = (ctx: NightAuditContext) => {
 
 export const rolloverBusinessDate = async () => {
   const prevDate = readJSON<string>('corepms_business_date', todayISO());
-  const next = new Date(prevDate);
-  // If prev is invalid, use today
-  if (isNaN(next.getTime())) {
+  // Guard invalid stored value
+  if (isNaN(new Date(prevDate + 'T00:00:00Z').getTime())) {
     writeJSON('corepms_business_date', todayISO());
     return { previous: prevDate, next: todayISO() };
   }
-  next.setDate(next.getDate() + 1);
-  const nextISO = next.toISOString().slice(0,10);
+  // Pure date arithmetic (no local/UTC mixing) then CLAMP to hotel-today + 1
+  // (CAT). The business date may legitimately lead the calendar by one day after
+  // the 21:00 audit, but never more — this prevents the permanent forward drift.
+  let nextISO = addDaysISO(prevDate, 1);
+  const cap = addDaysISO(todayISO(), 1);
+  if (nextISO > cap) nextISO = cap;
   writeJSON('corepms_business_date', nextISO);
 
   // Sync new business date to backend so the scheduler stays in sync
@@ -760,7 +774,11 @@ export const runNightAudit = async (ctx: NightAuditContext, options: ValidationO
      console.log('[nightAudit] Auto-reconciliation complete:', autoReconcileResult);
    }
    
-   rolloverBusinessDate().catch(() => {}); // fire and forget
+   // Await + capture: this result is referenced below (rollover.next / rollover).
+   // It was previously fire-and-forget, leaving `rollover` undefined → a
+   // ReferenceError that aborted the run AFTER the date had already advanced
+   // (date moved with no matching audit record).
+   const rollover = await rolloverBusinessDate();
    const backup = backupSnapshot(ctx);
    // Pass businessDateBefore (the AUDIT night) not rolled-forward date
    const reports = generateReportsBundle(ctx, businessDateBefore);
@@ -821,7 +839,7 @@ export const runNightAudit = async (ctx: NightAuditContext, options: ValidationO
  * Synchronous version of runNightAudit for backward compatibility.
  * Does not perform auto-reconciliation (use runNightAudit with options.autoReconcile for that).
  */
-export const runNightAuditSync = (ctx: NightAuditContext) => {
+export const runNightAuditSync = async (ctx: NightAuditContext) => {
   const validation = prepareAndValidate(ctx);
   if (!validation.ok) {
     return { ok: false, step: 'prepare', issues: validation.issues };
@@ -831,7 +849,7 @@ export const runNightAuditSync = (ctx: NightAuditContext) => {
     const postings = postRoomAndTax(ctx);
     const transfers = transferCityLedger(ctx);
     const reconciliation = reconcileTotals(ctx);
-    rolloverBusinessDate().catch(() => {}); // fire and forget
+    const rollover = await rolloverBusinessDate(); // await + capture (see runNightAudit note)
     const backup = backupSnapshot(ctx);
     // Pass businessDateBefore so reports reflect the AUDIT night (not rolled-forward next day)
     const reports = generateReportsBundle(ctx, businessDateBefore);

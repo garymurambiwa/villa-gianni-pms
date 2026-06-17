@@ -1048,13 +1048,18 @@ app.post('/api/night-audit/run', async (req, res) => {
     // server date. A manual run for a future date previously pushed
     // business_date to e.g. 2026-06-02, silently breaking the night-audit
     // catch-up. We cap nextDate at CURRENT_DATE.
-    const nextDate = new Date(date); nextDate.setDate(nextDate.getDate() + 1);
+    const nextDate = new Date(date + 'T00:00:00Z'); nextDate.setUTCDate(nextDate.getUTCDate() + 1);
     let nextDateStr = nextDate.toISOString().split('T')[0];
     try {
-      const nowRes = await db.query(`SELECT CURRENT_DATE::text AS d`);
-      const serverToday = nowRes.ok && nowRes.rows?.length ? nowRes.rows[0].d : null;
-      if (serverToday && nextDateStr > serverToday) {
-        nextDateStr = serverToday; // never advance past today
+      // Cap at hotel-today + 1 (CAT) — a pre-midnight audit may roll into
+      // tomorrow, but never further. Use the hotel timezone, not the DB/OS
+      // clock (the VPS is US-East), so the cap matches the real calendar.
+      const nowRes = await db.query(
+        `SELECT to_char((NOW() AT TIME ZONE 'Africa/Harare')::date + 1, 'YYYY-MM-DD') AS cap`
+      );
+      const cap = nowRes.ok && nowRes.rows?.length ? nowRes.rows[0].cap : null;
+      if (cap && nextDateStr > cap) {
+        nextDateStr = cap; // never advance more than one day ahead of today
       }
     } catch { /* if clock check fails, fall through with computed nextDate */ }
     await db.query(
@@ -1131,14 +1136,23 @@ app.get('/api/night-audit/status', async (req, res) => {
       lastRunRow.business_date = lastRunRow.business_date_str || String(lastRunRow.business_date || '').slice(0, 10);
     }
 
+    // hotel-today + 1 (CAT) — the highest date business_date may legitimately hold
+    let aheadCap = null;
+    try {
+      const capRes = await db.query(`SELECT to_char((NOW() AT TIME ZONE 'Africa/Harare')::date + 1, 'YYYY-MM-DD') AS cap`);
+      aheadCap = capRes.ok && capRes.rows?.length ? capRes.rows[0].cap : null;
+    } catch { /* non-fatal */ }
+
     safeJson(res, {
       ok: true, locked: false, step: null, progress: 0,
       businessDate,
       lastRun: lastRunRow,
       // Signal to frontend if business_date was never initialized (new property)
       needsInitialization: !businessDate && !lastRunRow,
-      // Warn the frontend if the stored business_date is ahead of the real calendar date
-      dateIsAhead: businessDate ? businessDate > new Date().toISOString().split('T')[0] : false
+      // Warn the frontend if the stored business_date is ahead of the real
+      // calendar date. One day ahead is normal after the 21:00 audit, so the
+      // threshold is hotel-today + 1 (CAT), computed below.
+      dateIsAhead: businessDate ? businessDate > aheadCap : false
     });
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
@@ -1148,15 +1162,17 @@ app.get('/api/night-audit/status', async (req, res) => {
 // whichever is earlier) when the date has drifted into the future.
 app.post('/api/night-audit/repair-date', async (req, res) => {
   try {
-    const todayReal = new Date().toISOString().split('T')[0];
+    // hotel-today in CAT, not UTC/OS clock (VPS is US-East)
+    const todayRes = await db.query(`SELECT to_char((NOW() AT TIME ZONE 'Africa/Harare')::date, 'YYYY-MM-DD') AS d`);
+    const todayReal = todayRes.ok && todayRes.rows?.length ? todayRes.rows[0].d : new Date().toISOString().split('T')[0];
     const lastRun = await db.query(
       `SELECT business_date::date::text as d FROM night_audit_runs WHERE status='completed' ORDER BY business_date DESC LIMIT 1`
     );
     let correctDate = todayReal;
     if (lastRun.ok && lastRun.rows?.length) {
       const lastAuditDate = lastRun.rows[0].d;
-      const dayAfterLast = new Date(lastAuditDate);
-      dayAfterLast.setDate(dayAfterLast.getDate() + 1);
+      const dayAfterLast = new Date(lastAuditDate + 'T00:00:00Z');
+      dayAfterLast.setUTCDate(dayAfterLast.getUTCDate() + 1);
       const dayAfterLastStr = dayAfterLast.toISOString().split('T')[0];
       // Use whichever is earlier: day-after-last-audit or today
       correctDate = dayAfterLastStr < todayReal ? dayAfterLastStr : todayReal;

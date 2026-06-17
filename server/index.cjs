@@ -1506,9 +1506,36 @@ const server = app.listen(PORT, '0.0.0.0', () => {
            '{"locked":false}'::jsonb,
            'Night audit system lock', NOW(), 'system'),
           ('business_date',
-           json_build_object('date', to_char(CURRENT_DATE,'YYYY-MM-DD'), 'rolled_at', NOW()::text)::jsonb,
+           json_build_object('date', to_char((NOW() AT TIME ZONE 'Africa/Harare')::date,'YYYY-MM-DD'), 'rolled_at', NOW()::text)::jsonb,
            'Current hotel business date', NOW(), 'system')
         ON CONFLICT (key) DO NOTHING
+      `);
+
+      // ── Guard: business_date can never be stored more than one day ahead of ──
+      // the hotel's real calendar date (Africa/Harare). Enforced at the DB so it
+      // is unbypassable by ANY writer (server roller, frontend rollover, or a raw
+      // /api/db/query). This is the backstop that prevents the date ever drifting
+      // ahead again, independent of which frontend bundle a client is running.
+      await dbMod.query(`
+        CREATE OR REPLACE FUNCTION clamp_business_date() RETURNS trigger AS $$
+        DECLARE cap date;
+        BEGIN
+          IF NEW.key = 'business_date' AND NEW.value ? 'date' THEN
+            cap := (NOW() AT TIME ZONE 'Africa/Harare')::date + 1;
+            IF (NEW.value->>'date')::date > cap THEN
+              NEW.value := jsonb_set(NEW.value, '{date}', to_jsonb(cap::text));
+              NEW.value := jsonb_set(NEW.value, '{clamped}', 'true'::jsonb);
+            END IF;
+          END IF;
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+      `);
+      await dbMod.query(`DROP TRIGGER IF EXISTS trg_clamp_business_date ON system_configs`);
+      await dbMod.query(`
+        CREATE TRIGGER trg_clamp_business_date
+          BEFORE INSERT OR UPDATE ON system_configs
+          FOR EACH ROW EXECUTE FUNCTION clamp_business_date()
       `);
 
       // ── GL Pending Batches tables ─────────────────────────────────────────────

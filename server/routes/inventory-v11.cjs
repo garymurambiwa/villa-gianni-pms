@@ -280,7 +280,11 @@ async function ensureInventoryTables() {
           inserted_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
         )`);
-      // Align column names: old schema uses from/to, new uses source/destination — add both
+      // Align column names: old schema uses from/to, new uses source/destination — add both.
+      // Some DBs were created without the from/to pair; the transfer INSERT still
+      // writes them for backward compatibility, so they must exist.
+      await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS from_location_id TEXT REFERENCES public.inv_locations(id)`).catch(()=>{});
+      await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS to_location_id TEXT REFERENCES public.inv_locations(id)`).catch(()=>{});
       await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS source_location_id TEXT REFERENCES public.inv_locations(id)`);
       await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS destination_location_id TEXT REFERENCES public.inv_locations(id)`);
       await client.query(`ALTER TABLE public.inv_transfer_headers ADD COLUMN IF NOT EXISTS created_by TEXT`);
@@ -1456,18 +1460,19 @@ router.post('/transfer', async (req, res) => {
     let transRes;
     await client.query('SAVEPOINT th_insert');
     try {
-      // Full insert: works after migration adds source/destination + created_by + reference_text
+      // Primary: canonical source/destination columns only (no dependency on the
+      // legacy from/to pair, which some production DBs were created without).
       transRes = await client.query(
         `INSERT INTO public.inv_transfer_headers
          (id, transfer_number, source_location_id, destination_location_id,
-          from_location_id, to_location_id, created_by, reference_text, status, inserted_at)
-         VALUES ($1,$2,$3,$4,$3,$4,$5,$6,'pending',$7) RETURNING *`,
+          created_by, reference_text, status, inserted_at)
+         VALUES ($1,$2,$3,$4,$5,$6,'pending',$7) RETURNING *`,
         [randomUUID(), transferNumber, source_location_id, destination_location_id, created_by, reference_text, new Date()]
       );
       await client.query('RELEASE SAVEPOINT th_insert');
     } catch {
       await client.query('ROLLBACK TO SAVEPOINT th_insert');
-      // Fallback: minimal set of columns for old schema (no source/destination, no created_by/reference_text)
+      // Fallback for ancient schemas that have only the from/to pair.
       transRes = await client.query(
         `INSERT INTO public.inv_transfer_headers
          (id, transfer_number, from_location_id, to_location_id, status, inserted_at)
@@ -1621,9 +1626,9 @@ router.post('/transfer/execute', async (req, res) => {
       const hRes = await client.query(
         `INSERT INTO public.inv_transfer_headers
          (id, transfer_number, source_location_id, destination_location_id,
-          from_location_id, to_location_id, created_by, reference_text,
+          created_by, reference_text,
           status, approved_by, approved_at, inserted_at)
-         VALUES ($1,$2,$3,$4,$3,$4,$5,$6,'approved',$5,NOW(),NOW()) RETURNING id`,
+         VALUES ($1,$2,$3,$4,$5,$6,'approved',$5,NOW(),NOW()) RETURNING id`,
         [randomUUID(), transferNumber, source_location_id, destination_location_id, created_by, reference_text]
       );
       await client.query('RELEASE SAVEPOINT th_exec');
@@ -1793,6 +1798,75 @@ router.get('/balance/:location_id', async (req, res) => {
     res.json({ ok: true, data: result.rows });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/v1/inventory/adjust
+ * Manual stock adjustment — writes a single ADJUSTMENT row to the ledger.
+ * Body: { item_id, location_id, delta, reason?, adjusted_by? }
+ * delta may be positive (stock in) or negative (stock out). Refuses to drive
+ * the on-hand balance below zero.
+ */
+router.post('/adjust', async (req, res) => {
+  const { item_id, location_id, delta, reason, adjusted_by } = req.body || {};
+  const d = Number(delta);
+  if (!item_id || !location_id) {
+    return res.status(400).json({ ok: false, error: 'item_id and location_id are required' });
+  }
+  if (!Number.isFinite(d) || d === 0) {
+    return res.status(400).json({ ok: false, error: 'delta must be a non-zero number' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Serialize concurrent adjustments to the same item+location
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))`, [item_id, location_id]);
+
+    const balRes = await client.query(
+      `SELECT COALESCE(SUM(quantity_change), 0) AS balance
+       FROM public.inv_stock_ledger WHERE item_id = $1 AND location_id = $2`,
+      [item_id, location_id]
+    );
+    const balance = Number(balRes.rows[0]?.balance || 0);
+    if (balance + d < 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        ok: false,
+        error: `Adjustment would set stock below zero (current ${balance}, delta ${d})`,
+      });
+    }
+
+    // Most-recent UOM for this item, fallback to the item master base UOM
+    const uomRes = await client.query(
+      `SELECT base_uom_id FROM public.inv_items WHERE id = $1`, [item_id]
+    );
+    const uomId = uomRes.rows[0]?.base_uom_id || 'uom_unit';
+
+    const ledgerId = randomUUID();
+    await client.query(
+      `INSERT INTO public.inv_stock_ledger
+         (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
+       VALUES ($1, $2, $3, 'ADJUSTMENT', $4, $5, $6, $7, NOW())`,
+      [ledgerId, item_id, location_id, `ADJ-${Date.now()}`, d, uomId, adjusted_by || 'system']
+    );
+
+    // Audit the manual adjustment (append-only trail shared with reopen/reverse)
+    await client.query(
+      `INSERT INTO public.inventory_period_audit (period_id, action, user_id, user_name, change_reason)
+       VALUES ($1, 'STOCK_ADJUSTMENT', $2, $2, $3)`,
+      [item_id, adjusted_by || 'system',
+       `${location_id}: delta ${d}${reason ? ` — ${String(reason).trim()}` : ''}`]
+    ).catch(() => {});
+
+    await client.query('COMMIT');
+    res.json({ ok: true, ledger_id: ledgerId, new_balance: balance + d });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
   }
 });
 

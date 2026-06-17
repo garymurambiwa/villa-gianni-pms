@@ -146,6 +146,7 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
       const base = summary.totalOpening + summary.totalPurchases;
       summary.variancePercentage = base > 0 ? (summary.totalVariance / base) * 100 : 0;
       setMonthSummary(summary);
+
     } catch (error) {
       console.error('Failed to fetch closing data:', error);
       setClosingData([]);
@@ -309,7 +310,10 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
           {loading ? (
             <p className="text-center text-muted-foreground">Loading closing data...</p>
           ) : closingData.length === 0 ? (
-            <p className="text-center text-muted-foreground">No closing data available.</p>
+            <div className="text-center py-8 space-y-1">
+              <p className="font-medium text-muted-foreground">Not connected to live data</p>
+              <p className="text-xs text-muted-foreground">Use Inventory → Stock Take / Close Period for the authoritative month-end close. This summary view will be enabled once wired to that source — no estimated figures are shown.</p>
+            </div>
           ) : (
             <div className="rounded-md border">
               <Table>

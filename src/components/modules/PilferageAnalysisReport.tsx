@@ -95,6 +95,7 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
         last_count_date: String(r.last_count_date || '').slice(0, 10),
       }));
       setPilferageData(data);
+
     } catch (error) {
       console.error('Failed to fetch pilferage data:', error);
       setPilferageData([]);
@@ -283,7 +284,10 @@ export const PilferageAnalysisReport: React.FC<PilferageAnalysisReportProps> = (
           {loading ? (
             <p className="text-center text-muted-foreground">Loading pilferage analysis...</p>
           ) : pilferageData.length === 0 ? (
-            <p className="text-center text-muted-foreground">No pilferage data available.</p>
+            <div className="text-center py-8 space-y-1">
+              <p className="font-medium text-muted-foreground">Not connected to live variance data</p>
+              <p className="text-xs text-muted-foreground">Run Inventory → Stock Take to produce real expected-vs-counted variance. This analysis will be enabled once wired to that source — no estimated shrinkage figures are shown.</p>
+            </div>
           ) : (
             <div className="rounded-md border">
               <Table>

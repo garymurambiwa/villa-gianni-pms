@@ -177,6 +177,7 @@ export const InventoryV11Transfer: React.FC = () => {
       const result = await response.json();
 
       if (result.ok) {
+        toast({
           title: 'Transfer Complete',
           description: `Transfer ${result.transfer_number} executed — ${result.lines_moved} item(s) moved`,
         });

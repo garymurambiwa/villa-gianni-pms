@@ -3,6 +3,7 @@ import { useData } from '@/context/DataContext';
 import { PaymentModal, BillSummary, QuickActions } from '../pos/POSIntegrationComponents';
 import { formatCurrency, generateShiftXReadingHTML, printDocument } from '@/lib/posIntegration';
 import { deductInventoryStock, syncPosBillToDb } from '@/lib/dbSync';
+import { nextGlobalBillNumber } from '@/lib/transactionSequencer';
 import { useShift } from '@/contexts/ShiftContext';
 import { getOutletReceiptSettings } from '@/components/modules/ReceiptSettingsModal';
 import { useAuth } from '@/context/AuthContext';
@@ -255,6 +256,19 @@ export const POS: React.FC = () => {
   };
 
   const handlePaymentComplete = async (paymentData: any) => {
+    // Assign a continuous, shift-independent sequential bill number once per bill.
+    // Reuse any number already assigned to this bill (guards against retries).
+    if (!bill.bill_number) {
+      try {
+        const seq = await nextGlobalBillNumber();
+        bill.bill_number = String(seq).padStart(4, '0');
+      } catch (e) {
+        // Fallback to id-derived number only if the sequencer is unreachable
+        bill.bill_number = formatBillNumber(bill.id);
+      }
+    }
+    const billNumber = bill.bill_number;
+
     // If room charge, post to folio — fire-and-forget, non-blocking
     let folioChargeId: string | null = null;
     if (paymentData.paymentMethod === 'room-charge') {
@@ -268,7 +282,7 @@ export const POS: React.FC = () => {
           recordFolioCharge({
             guestId: guest.id,
             amount: Number(total.toFixed(2)),
-            description: `${getOutletDisplayName()} - bill-${formatBillNumber(bill.id)}`,
+            description: `${getOutletDisplayName()} - bill-${billNumber}`,
             date: new Date().toISOString().split('T')[0]
           }).then((chargeId) => {
             if (chargeId) {
@@ -314,7 +328,7 @@ export const POS: React.FC = () => {
     // Sync POS Bill to DB — fire-and-forget, non-blocking
     const dbBill = {
       id: bill.id,
-      bill_number: formatBillNumber(bill.id),
+      bill_number: billNumber,
       outlet: activeCategory === 'bar' ? 'Bar' : 'Restaurant',
       table_number: null,
       guest_id: paymentData.paymentMethod === 'room-charge' ? (guests.find((g: any) => g.roomNumber === paymentData.roomNumber)?.id || null) : null,

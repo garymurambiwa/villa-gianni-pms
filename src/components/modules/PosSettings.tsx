@@ -1272,6 +1272,71 @@ export const PosSettings: React.FC = () => {
   const [adjustItemId, setAdjustItemId] = React.useState<string>('');
   const [adjustDelta, setAdjustDelta] = React.useState<number>(0);
   const [showAdjustInline, setShowAdjustInline] = React.useState<boolean>(false);
+  // Stock adjustment now posts to the real inventory ledger (per location).
+  const [adjustLocationId, setAdjustLocationId] = React.useState<string>('');
+  const [adjustLocations, setAdjustLocations] = React.useState<any[]>([]);
+  const [adjustCurrentQty, setAdjustCurrentQty] = React.useState<number | null>(null);
+  const [adjustSaving, setAdjustSaving] = React.useState<boolean>(false);
+
+  // Load inventory locations once for the adjustment widgets
+  React.useEffect(() => {
+    fetch('/api/v1/inventory/locations')
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok && Array.isArray(d.data)) {
+          setAdjustLocations(d.data);
+          if (!adjustLocationId && d.data.length) {
+            const storage = d.data.find((l: any) => l.location_type === 'Storage') || d.data[0];
+            setAdjustLocationId(storage.id);
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Fetch the true ledger balance for the selected item + location
+  React.useEffect(() => {
+    if (!adjustItemId || !adjustLocationId) { setAdjustCurrentQty(null); return; }
+    let cancelled = false;
+    fetch(`/api/v1/inventory/balance/${adjustLocationId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return;
+        const row = (d.data || []).find((x: any) => x.item_id === adjustItemId);
+        setAdjustCurrentQty(Number(row?.current_balance ?? 0));
+      })
+      .catch(() => { if (!cancelled) setAdjustCurrentQty(null); });
+    return () => { cancelled = true; };
+  }, [adjustItemId, adjustLocationId]);
+
+  // Shared save handler — posts an ADJUSTMENT to the inventory ledger
+  const saveStockAdjustment = async (onDone?: () => void) => {
+    const cur = items.find((x: any) => x.id === adjustItemId);
+    if (!cur) { toast({ title: 'No item selected', description: 'Select an item to adjust.', duration: 1500 }); return; }
+    if (!adjustLocationId) { toast({ title: 'No location selected', description: 'Choose the location to adjust.', duration: 1800 }); return; }
+    const delta = Number(adjustDelta || 0);
+    if (!delta) { toast({ title: 'Enter an adjustment', description: 'Adjustment must be a non-zero number.', duration: 1800 }); return; }
+    setAdjustSaving(true);
+    try {
+      const r = await fetch('/api/v1/inventory/adjust', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: adjustItemId, location_id: adjustLocationId, delta, adjusted_by: 'pos-settings' }),
+      }).then(res => res.json());
+      if (!r.ok) { toast({ title: 'Adjustment failed', description: r.error || 'Could not post adjustment', variant: 'destructive', duration: 3000 }); return; }
+      toast({ title: 'Stock updated', description: `${cur.name}: new balance ${r.new_balance}`, duration: 2000 });
+      try { log('INVENTORY_ADJUST', { id: adjustItemId, name: cur.name, delta, newQty: r.new_balance, location: adjustLocationId }); } catch {}
+      setAdjustItemId('');
+      setAdjustDelta(0);
+      setAdjustCurrentQty(null);
+      refreshData?.();
+      onDone?.();
+    } catch (err: any) {
+      toast({ title: 'Network error', description: err?.message || 'Failed to reach server', variant: 'destructive', duration: 3000 });
+    } finally {
+      setAdjustSaving(false);
+    }
+  };
   const [strictImportMode, setStrictImportMode] = React.useState<boolean>(false);
 
   React.useEffect(() => {
@@ -2818,8 +2883,21 @@ export const PosSettings: React.FC = () => {
                     </Select>
                   </div>
                   <div>
+                    <label className="text-xs font-medium">Location</label>
+                    <Select value={adjustLocationId || undefined} onValueChange={(v) => setAdjustLocationId(v)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select location" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {adjustLocations.map((l: any) => (
+                          <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
                     <label className="text-xs font-medium">Current</label>
-                    <Input value={String(items.find((x: any) => x.id === adjustItemId)?.qtyInStock ?? 0)} readOnly />
+                    <Input value={adjustCurrentQty == null ? '—' : String(adjustCurrentQty)} readOnly />
                   </div>
                   <div>
                     <label className="text-xs font-medium">Adjustment (±)</label>
@@ -2827,29 +2905,10 @@ export const PosSettings: React.FC = () => {
                   </div>
                   <div>
                     <label className="text-xs font-medium">New</label>
-                    <Input value={(() => { const cur = items.find((x: any) => x.id === adjustItemId); const curQty = Number(cur?.qtyInStock || 0); const nextQty = curQty + Number(adjustDelta || 0); return nextQty < 0 ? 'Invalid' : String(nextQty); })()} readOnly />
+                    <Input value={(() => { if (adjustCurrentQty == null) return '—'; const nextQty = adjustCurrentQty + Number(adjustDelta || 0); return nextQty < 0 ? 'Invalid' : String(nextQty); })()} readOnly />
                   </div>
                   <div className="md:col-span-4 flex gap-2">
-                    <Button className="bg-indigo-600 text-white hover:bg-indigo-700" onClick={() => {
-                      const cur = items.find((x: any) => x.id === adjustItemId);
-                      if (!cur) { toast({ title: 'No item selected', description: 'Select an item to adjust.', duration: 1500 }); return; }
-                      const curQty = Number(cur.qtyInStock || 0);
-                      const delta = Number(adjustDelta || 0);
-                      const nextQty = curQty + delta;
-                      if (nextQty < 0) { toast({ title: 'Invalid adjustment', description: 'Adjustment would set stock below zero.', duration: 2000 }); return; }
-                      try {
-                        const updated = items.map((it: any) => it.id === adjustItemId ? { ...it, qtyInStock: nextQty } : it);
-                        localStorage.setItem('corepms_pos_items', JSON.stringify(updated));
-                        setItems(updated);
-                        toast({ title: 'Stock updated', description: `${cur.name}: ${curQty} → ${nextQty}`, duration: 1800 });
-                        log('INVENTORY_ADJUST', { id: adjustItemId, name: cur.name, delta, newQty: nextQty });
-                        setAdjustItemId('');
-                        setAdjustDelta(0);
-                        setShowAdjustInline(false);
-                      } catch (err) {
-                        alert('Failed to update stock');
-                      }
-                    }}>Save</Button>
+                    <Button className="bg-indigo-600 text-white hover:bg-indigo-700" disabled={adjustSaving} onClick={() => saveStockAdjustment(() => setShowAdjustInline(false))}>{adjustSaving ? 'Saving…' : 'Save'}</Button>
                     <Button variant="outline" onClick={() => { setAdjustItemId(''); setAdjustDelta(0); setShowAdjustInline(false); }}>Cancel</Button>
                   </div>
                 </div>
@@ -2858,7 +2917,7 @@ export const PosSettings: React.FC = () => {
             {/* Adjust Stock Quantities */}
             <div className="bg-white rounded-lg p-4 mb-3">
               <div className="text-sm font-semibold mb-2">Adjust Stock Quantities</div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
                 <div>
                   <label className="text-xs font-medium">Item</label>
                   <Select value={adjustItemId || undefined} onValueChange={(v) => setAdjustItemId(v)}>
@@ -2873,8 +2932,21 @@ export const PosSettings: React.FC = () => {
                   </Select>
                 </div>
                 <div>
+                  <label className="text-xs font-medium">Location</label>
+                  <Select value={adjustLocationId || undefined} onValueChange={(v) => setAdjustLocationId(v)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select location" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {adjustLocations.map((l: any) => (
+                        <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
                   <label className="text-xs font-medium">Current stock</label>
-                  <Input value={String(items.find((x: any) => x.id === adjustItemId)?.qtyInStock ?? 0)} readOnly />
+                  <Input value={adjustCurrentQty == null ? '—' : String(adjustCurrentQty)} readOnly />
                 </div>
                 <div>
                   <label className="text-xs font-medium">Adjustment (±)</label>
@@ -2883,32 +2955,13 @@ export const PosSettings: React.FC = () => {
               </div>
               <div className="mt-2 text-xs text-gray-600">
                 New stock: {(() => {
-                  const cur = items.find((x: any) => x.id === adjustItemId);
-                  const curQty = Number(cur?.qtyInStock || 0);
-                  const nextQty = curQty + Number(adjustDelta || 0);
+                  if (adjustCurrentQty == null) return '—';
+                  const nextQty = adjustCurrentQty + Number(adjustDelta || 0);
                   return nextQty < 0 ? 'Invalid (below zero)' : nextQty;
                 })()}
               </div>
               <div className="mt-3 flex gap-2">
-                <Button className="bg-indigo-600 text-white hover:bg-indigo-700" onClick={() => {
-                  const cur = items.find((x: any) => x.id === adjustItemId);
-                  if (!cur) { toast({ title: 'No item selected', description: 'Select an item to adjust.', duration: 1500 }); return; }
-                  const curQty = Number(cur.qtyInStock || 0);
-                  const delta = Number(adjustDelta || 0);
-                  const nextQty = curQty + delta;
-                  if (nextQty < 0) { toast({ title: 'Invalid adjustment', description: 'Adjustment would set stock below zero.', duration: 2000 }); return; }
-                  try {
-                    const updated = items.map((it: any) => it.id === adjustItemId ? { ...it, qtyInStock: nextQty } : it);
-                    localStorage.setItem('corepms_pos_items', JSON.stringify(updated));
-                    setItems(updated);
-                    toast({ title: 'Stock updated', description: `${cur.name}: ${curQty} → ${nextQty}`, duration: 1800 });
-                    log('INVENTORY_ADJUST', { id: adjustItemId, name: cur.name, delta, newQty: nextQty });
-                    setAdjustItemId('');
-                    setAdjustDelta(0);
-                  } catch (err) {
-                    alert('Failed to update stock');
-                  }
-                }}>Save</Button>
+                <Button className="bg-indigo-600 text-white hover:bg-indigo-700" disabled={adjustSaving} onClick={() => saveStockAdjustment()}>{adjustSaving ? 'Saving…' : 'Save'}</Button>
                 <Button variant="outline" onClick={() => { setAdjustItemId(''); setAdjustDelta(0); }}>Cancel</Button>
               </div>
             </div>

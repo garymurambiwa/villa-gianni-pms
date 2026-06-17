@@ -95,6 +95,7 @@ export const CostMarginReport: React.FC<CostMarginReportProps> = () => {
         };
       });
       setMarginData(rows);
+
     } catch (error) {
       console.error('Failed to fetch margin data:', error);
       setMarginData([]);
@@ -282,7 +283,10 @@ export const CostMarginReport: React.FC<CostMarginReportProps> = () => {
           {loading ? (
             <p className="text-center text-muted-foreground">Loading margin data...</p>
           ) : marginData.length === 0 ? (
-            <p className="text-center text-muted-foreground">No margin data available.</p>
+            <div className="text-center py-8 space-y-1">
+              <p className="font-medium text-muted-foreground">Not connected to live sales data</p>
+              <p className="text-xs text-muted-foreground">This report needs real selling prices and POS sales volume. It will be enabled once the sales-aggregation source is wired in — no estimated figures are shown.</p>
+            </div>
           ) : (
             <div className="rounded-md border">
               <Table>

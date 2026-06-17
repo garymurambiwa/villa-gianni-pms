@@ -57,12 +57,22 @@ router.get('/status', async (req, res) => {
       `SELECT business_date, total_revenue, rooms_posted, status, completed_at
        FROM night_audit_runs ORDER BY inserted_at DESC LIMIT 1`
     );
+    const businessDate = bizDate?.date || null;
+    // "Ahead" = stored business date is more than one day past the hotel's real
+    // calendar date (CAT). One day ahead is normal after the 21:00 audit, so the
+    // threshold is hotel-today + 1.
+    let dateIsAhead = false;
+    try {
+      const cap = runner.addDays(await runner.catToday(), 1);
+      dateIsAhead = businessDate ? businessDate > cap : false;
+    } catch { /* non-fatal */ }
     res.json({
       ok: true,
       locked:        lock.locked || false,
       step:          lock.step   || null,
       progress:      lock.progress || 0,
-      businessDate:  bizDate?.date  || null,
+      businessDate,
+      dateIsAhead,
       schedule,
       lastRun:       lastRun.ok ? lastRun.rows[0] : null
     });
@@ -80,6 +90,35 @@ router.post('/run', async (req, res) => {
   // Run async — return immediately with acknowledgement
   res.json({ ok: true, message: 'Night audit triggered', startedAt: new Date().toISOString() });
   runner.runNightAudit('manual_trigger').catch(console.error);
+});
+
+// ─── POST /api/night-audit/repair-date ───────────────────────────────────────
+// One-shot correction when business_date has drifted ahead of the real calendar.
+// Sets business_date to min(last completed audit + 1, hotel-today CAT) — i.e.
+// never ahead of today, never re-opening a day already audited. Idempotent.
+router.post('/repair-date', async (req, res) => {
+  try {
+    const today = await runner.catToday(); // CAT
+    const lastRun = await db.query(
+      `SELECT business_date::date::text AS d FROM night_audit_runs
+       WHERE status = 'completed' ORDER BY business_date DESC LIMIT 1`
+    );
+    let correctDate = today;
+    if (lastRun.ok && lastRun.rows.length && lastRun.rows[0].d) {
+      const dayAfterLast = runner.addDays(lastRun.rows[0].d, 1);
+      // earlier of (day-after-last-audit, today) — but never past today
+      correctDate = dayAfterLast < today ? dayAfterLast : today;
+    }
+    const before = await runner.getSystemConfig('business_date', null);
+    await runner.setSystemConfig(
+      'business_date',
+      { date: correctDate, rolled_at: new Date().toISOString(), repaired: true },
+      'Current hotel business date (repaired)'
+    );
+    res.json({ ok: true, repaired: true, previous: before?.date || null, businessDate: correctDate });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
 });
 
 // ─── GET /api/night-audit/schedule ───────────────────────────────────────────
