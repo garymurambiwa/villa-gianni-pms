@@ -70,19 +70,54 @@ export const GLAccounting: React.FC = () => {
   const tb = useMemo(() => gl.getTrialBalance(range.from, range.to), [range]);
   // Drill-down: account selected from the Trial Balance → its journal lines
   const [drillAccount, setDrillAccount] = useState<{ id: string; name: string } | null>(null);
+  // Classify a journal entry's originating sub-ledger from its id/reference so the
+  // drill panel can offer an "open source document" link.
+  const classifySource = (entryId: string, reference: string): { source: string; module: string | null } => {
+    const id = String(entryId || '');
+    const ref = String(reference || '');
+    if (id.startsWith('GLJE_') || /night ?audit/i.test(ref)) return { source: 'Night Audit', module: 'reports' };
+    if (id.startsWith('GL_') || /vendor expense|expense/i.test(ref)) return { source: 'Expense', module: 'vendors' };
+    if (/grn|goods received/i.test(ref)) return { source: 'GRN', module: 'inventory' };
+    if (/folio|guest/i.test(ref)) return { source: 'Folio', module: 'front-office' };
+    if (/city ?ledger/i.test(ref)) return { source: 'City Ledger', module: 'city-ledger' };
+    return { source: 'Manual', module: null };
+  };
   const drillLines = useMemo(() => {
     if (!drillAccount) return [];
-    const rows: Array<{ date: string; reference: string; description: string; debit: number; credit: number; entryId: string }> = [];
+    const rows: Array<{ date: string; reference: string; description: string; debit: number; credit: number; entryId: string; source: string; module: string | null }> = [];
     for (const entry of gl.getLedger()) {
       if (entry.date < range.from || entry.date > range.to) continue;
       for (const l of entry.lines) {
         if (l.accountId !== drillAccount.id) continue;
-        rows.push({ date: entry.date, reference: entry.reference || entry.id, description: l.description || '', debit: l.debit, credit: l.credit, entryId: entry.id });
+        const cls = classifySource(entry.id, entry.reference || '');
+        rows.push({ date: entry.date, reference: entry.reference || entry.id, description: l.description || '', debit: l.debit, credit: l.credit, entryId: entry.id, source: cls.source, module: cls.module });
       }
     }
     return rows.sort((a, b) => a.date.localeCompare(b.date));
   }, [drillAccount, range]);
+  const openSourceModule = (module: string | null) => {
+    if (!module) return;
+    try { window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } })); } catch { /* noop */ }
+  };
   const pl = useMemo(() => gl.getPLStatement(range.from, range.to), [range]);
+  // Expandable P&L — break revenue & expense down to the account level so each
+  // line can be drilled to the journal entries (and from there to source docs).
+  const plDetail = useMemo(() => {
+    const accs = gl.getAccounts();
+    const catOf = (id: string) => accs.find(a => a.id === id)?.category;
+    const nameOf = (id: string) => accs.find(a => a.id === id)?.name || id;
+    const revenue = tb
+      .filter(r => catOf(r.accountId) === 'Revenue')
+      .map(r => ({ id: r.accountId, name: nameOf(r.accountId), amount: -r.balance }))
+      .filter(r => Math.abs(r.amount) > 0.005)
+      .sort((a, b) => b.amount - a.amount);
+    const expense = tb
+      .filter(r => catOf(r.accountId) === 'Expense')
+      .map(r => ({ id: r.accountId, name: nameOf(r.accountId), amount: r.balance }))
+      .filter(r => Math.abs(r.amount) > 0.005)
+      .sort((a, b) => b.amount - a.amount);
+    return { revenue, expense };
+  }, [tb]);
   const bs = useMemo(() => gl.getBalanceSheet ? gl.getBalanceSheet(range.from, range.to) : { assets: 0, liabilities: 0, equity: 0 }, [range]);
   const mappingStatus = gl.validateMappingsComplete();
   const [aiSuggestions, setAiSuggestions] = useState<Array<{ code: string; accountId: string; reason: string }>>([]);
@@ -799,21 +834,29 @@ export const GLAccounting: React.FC = () => {
                 ) : (
                   <div className="overflow-x-auto max-h-72 overflow-y-auto">
                     <table className="text-xs w-full">
-                      <thead><tr className="text-gray-500"><th className="p-1.5 text-left">Date</th><th className="p-1.5 text-left">Reference</th><th className="p-1.5 text-left">Description</th><th className="p-1.5 text-right">Debit</th><th className="p-1.5 text-right">Credit</th></tr></thead>
+                      <thead><tr className="text-gray-500"><th className="p-1.5 text-left">Date</th><th className="p-1.5 text-left">Source</th><th className="p-1.5 text-left">Reference</th><th className="p-1.5 text-left">Description</th><th className="p-1.5 text-right">Debit</th><th className="p-1.5 text-right">Credit</th><th className="p-1.5 text-center">Open</th></tr></thead>
                       <tbody>
                         {drillLines.map((l, i) => (
                           <tr key={`${l.entryId}-${i}`} className="border-t border-indigo-100">
                             <td className="p-1.5">{l.date}</td>
+                            <td className="p-1.5"><span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-700">{l.source}</span></td>
                             <td className="p-1.5 text-gray-600">{l.reference}</td>
                             <td className="p-1.5 text-gray-600">{l.description || '—'}</td>
                             <td className="p-1.5 text-right font-mono">{l.debit ? `$ ${l.debit.toFixed(2)}` : ''}</td>
                             <td className="p-1.5 text-right font-mono">{l.credit ? `$ ${l.credit.toFixed(2)}` : ''}</td>
+                            <td className="p-1.5 text-center">
+                              {l.module ? (
+                                <button onClick={() => openSourceModule(l.module)} title={`Open ${l.source} source document`}
+                                  className="text-indigo-600 hover:text-indigo-800 font-semibold">↗ Open</button>
+                              ) : <span className="text-gray-300">—</span>}
+                            </td>
                           </tr>
                         ))}
                         <tr className="border-t-2 border-indigo-200 font-semibold">
-                          <td className="p-1.5" colSpan={3}>Total ({drillLines.length} lines)</td>
+                          <td className="p-1.5" colSpan={4}>Total ({drillLines.length} lines)</td>
                           <td className="p-1.5 text-right font-mono">$ {drillLines.reduce((s,l)=>s+l.debit,0).toFixed(2)}</td>
                           <td className="p-1.5 text-right font-mono">$ {drillLines.reduce((s,l)=>s+l.credit,0).toFixed(2)}</td>
+                          <td className="p-1.5"></td>
                         </tr>
                       </tbody>
                     </table>
@@ -823,10 +866,41 @@ export const GLAccounting: React.FC = () => {
             )}
           </div>
           <div className="border rounded p-3">
-            <div className="font-semibold mb-1">Profit & Loss (USALI)</div>
-            <div className="text-sm">Revenue: <span className="font-semibold">$ {Number(pl.revenue || 0).toFixed(2)}</span></div>
-            <div className="text-sm">Expenses: <span className="font-semibold">$ {pl.expense.toFixed(2)}</span></div>
-            <div className="text-sm">Net Income: <span className="font-semibold">$ {pl.netIncome.toFixed(2)}</span></div>
+            <div className="font-semibold mb-2">Profit &amp; Loss (USALI) — click any line to drill to its journal entries</div>
+            {/* Revenue */}
+            <div className="text-xs font-bold uppercase tracking-wide text-gray-500 mt-1 mb-0.5">Revenue</div>
+            {plDetail.revenue.length === 0 ? (
+              <div className="text-xs text-gray-400 pl-2">No revenue posted in range.</div>
+            ) : plDetail.revenue.map(r => (
+              <button key={r.id}
+                onClick={() => setDrillAccount({ id: r.id, name: r.name })}
+                className={`w-full flex justify-between items-center text-sm px-2 py-1 rounded hover:bg-indigo-50 ${drillAccount?.id === r.id ? 'bg-indigo-100' : ''}`}>
+                <span className="text-left"><span className="font-mono text-xs text-gray-400 mr-1">{r.id}</span>{r.name}</span>
+                <span className="font-mono font-medium">$ {r.amount.toFixed(2)}</span>
+              </button>
+            ))}
+            <div className="flex justify-between text-sm font-semibold border-t mt-1 pt-1 px-2">
+              <span>Total Revenue</span><span className="font-mono">$ {Number(pl.revenue || 0).toFixed(2)}</span>
+            </div>
+            {/* Expenses */}
+            <div className="text-xs font-bold uppercase tracking-wide text-gray-500 mt-3 mb-0.5">Expenses</div>
+            {plDetail.expense.length === 0 ? (
+              <div className="text-xs text-gray-400 pl-2">No expenses posted in range.</div>
+            ) : plDetail.expense.map(r => (
+              <button key={r.id}
+                onClick={() => setDrillAccount({ id: r.id, name: r.name })}
+                className={`w-full flex justify-between items-center text-sm px-2 py-1 rounded hover:bg-rose-50 ${drillAccount?.id === r.id ? 'bg-rose-100' : ''}`}>
+                <span className="text-left"><span className="font-mono text-xs text-gray-400 mr-1">{r.id}</span>{r.name}</span>
+                <span className="font-mono font-medium">$ {r.amount.toFixed(2)}</span>
+              </button>
+            ))}
+            <div className="flex justify-between text-sm font-semibold border-t mt-1 pt-1 px-2">
+              <span>Total Expenses</span><span className="font-mono">$ {pl.expense.toFixed(2)}</span>
+            </div>
+            {/* Net */}
+            <div className={`flex justify-between text-sm font-bold border-t-2 mt-2 pt-1 px-2 ${pl.netIncome >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+              <span>Net Income</span><span className="font-mono">$ {pl.netIncome.toFixed(2)}</span>
+            </div>
           </div>
           <div className="border rounded p-3">
             <div className="font-semibold mb-1">Balance Sheet</div>
@@ -863,7 +937,13 @@ const ManualJECreator: React.FC = () => {
     try {
       const glLines = lines.map(l => ({ accountId: l.accountId, description: reference, debit: Number(l.debit || 0), credit: Number(l.credit || 0) }));
       if (!gl.isBalanced(glLines)) { setMessage('Entry not balanced.'); return; }
-      gl.appendLedger({ id: `GLJE_${date}_${Date.now()}`, date, lines: glLines, reference });
+      // 'GLMAN_' prefix so the drill panel classifies it as a Manual entry (not Night Audit).
+      const entry = { id: `GLMAN_${date}_${Date.now()}`, date, lines: glLines, reference };
+      gl.appendLedger(entry);
+      // Persist to the DB gl_journal_* tables so the manual entry appears in the
+      // authoritative P&L / Trial Balance and survives a browser wipe.
+      gl.persistJournalEntryToDB(entry, 'manual').catch((e: any) =>
+        console.warn('[GLAccounting] manual JE DB persist failed (non-fatal):', e?.message));
       setMessage('Journal posted.');
     } catch (err) { setMessage('Failed to post.'); console.error(err); }
   };
