@@ -171,7 +171,18 @@ export const GLAccounting: React.FC = () => {
             </select>
           )}
         </div>
-        <Button variant="outline" className="ds-button-compact" onClick={()=>{ if (!newAcc.id || !newAcc.name) return; const next = [...coa, { ...newAcc }]; gl.setAccounts(next); setCoa(next); setNewAcc({ id:'', name:'', category:'Asset' as any, department:'' }); }}>Add Account</Button>
+        <Button variant="outline" className="ds-button-compact" onClick={()=>{
+          if (!newAcc.id || !newAcc.name) return;
+          const next = [...coa, { ...newAcc }];
+          gl.setAccounts(next); setCoa(next);
+          // Write-through to the DB so the account is authoritative immediately
+          // (not just at next startup migration). ON CONFLICT DO NOTHING server-side.
+          fetch('/api/gl/accounts', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: newAcc.id, account_number: newAcc.id, name: newAcc.name, category: newAcc.category }),
+          }).catch(() => { /* offline — startup migration will push it up later */ });
+          setNewAcc({ id:'', name:'', category:'Asset' as any, department:'' });
+        }}>Add Account</Button>
         <div className="ds-muted mt-2">Predefined USALI base accounts are seeded automatically.</div>
         
         <div className="ds-table-container mt-4">

@@ -390,6 +390,124 @@ export const persistJournalEntryToDB = async (
   }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// DB UNIFICATION — single source of truth = PostgreSQL gl_accounts / gl_journal_*
+//
+// Historically this service kept the Chart of Accounts and the ledger in
+// localStorage only, while ChartOfAccounts.tsx wrote the SAME accounts to the
+// DB gl_accounts table. The two never reconciled → reports built here couldn't
+// see DB accounts and vice-versa ("split-brain").
+//
+// The functions below reconcile the two stores WITHOUT destroying anything:
+//   1. migrateLocalAccountsToDB() pushes any localStorage-only account UP to the
+//      DB (ON CONFLICT DO NOTHING — never overwrites a DB account).
+//   2. syncAccountsFromDB() pulls the DB accounts DOWN into the localStorage
+//      cache, DB winning on conflicts but local-only accounts preserved.
+//   3. syncLedgerFromDB() pulls DB journal entries into the localStorage ledger
+//      cache so getTrialBalance / getPLStatement / getBalanceSheet reflect the
+//      authoritative DB ledger.
+//   4. initGLFromDB() runs migrate-then-sync; safe + idempotent on every startup.
+//
+// After init, localStorage is just a fast read-cache + offline write-buffer; the
+// DB is authoritative. The synchronous getAccounts()/getLedger() API is unchanged
+// so no consuming component needs to be touched.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Push localStorage-only accounts into the DB so nothing is lost on first sync. */
+export const migrateLocalAccountsToDB = async (): Promise<{ migrated: number }> => {
+  const local = getAccounts();
+  if (!local.length) return { migrated: 0 };
+  let migrated = 0;
+  for (const a of local) {
+    try {
+      const res = await fetch('/api/gl/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: a.id, account_number: a.id, name: a.name, category: a.category }),
+      });
+      const data = await res.json();
+      if (data?.ok) migrated++;
+    } catch { /* offline — keep local copy, retry next startup */ }
+  }
+  return { migrated };
+};
+
+/** Pull DB accounts into the localStorage cache. DB wins; local-only kept. */
+export const syncAccountsFromDB = async (): Promise<GLAccount[]> => {
+  try {
+    const res = await fetch('/api/gl/accounts');
+    const data = await res.json();
+    const rows = data?.ok ? (data.rows || data.data || []) : [];
+    if (!Array.isArray(rows) || rows.length === 0) return getAccounts();
+    const dbAccounts: GLAccount[] = rows.map((r: any) => ({
+      id: String(r.id),
+      name: r.name,
+      category: r.category as GLCategory,
+      usali: r.usali_name || r.usali || undefined,
+      department: r.department || undefined,
+      active: r.is_active !== false,
+    }));
+    // Merge: DB authoritative, but keep any local-only account not yet in DB.
+    const dbIds = new Set(dbAccounts.map(a => a.id));
+    const localOnly = getAccounts().filter(a => !dbIds.has(a.id));
+    const merged = [...dbAccounts, ...localOnly];
+    setAccounts(merged);
+    return merged;
+  } catch {
+    return getAccounts(); // offline — keep cache
+  }
+};
+
+/** Pull DB journal entries into the localStorage ledger cache (DB wins by id). */
+export const syncLedgerFromDB = async (from?: string, to?: string): Promise<GLJournalEntry[]> => {
+  try {
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    qs.set('limit', '5000');
+    const res = await fetch(`/api/gl/journal-entries?${qs.toString()}`);
+    const data = await res.json();
+    const rows = data?.ok ? (data.rows || []) : [];
+    if (!Array.isArray(rows)) return getLedger();
+    const dbEntries: GLJournalEntry[] = rows.map((je: any) => ({
+      id: String(je.id),
+      date: String(je.business_date || je.entry_date || '').slice(0, 10),
+      reference: je.reference || je.description || undefined,
+      lines: (Array.isArray(je.lines) ? je.lines : []).map((l: any) => ({
+        accountId: String(l.gl_account_id || l.accountId || ''),
+        debit: Number(l.debit_amount ?? l.debit ?? 0),
+        credit: Number(l.credit_amount ?? l.credit ?? 0),
+        description: l.description || undefined,
+      })),
+    }));
+    // Merge by id: DB authoritative, keep local-only entries not yet persisted.
+    const dbIds = new Set(dbEntries.map(e => e.id));
+    const localOnly = getLedger().filter(e => !dbIds.has(e.id));
+    const merged = [...dbEntries, ...localOnly]
+      .sort((a, b) => (a.date < b.date ? 1 : -1))
+      .slice(0, 5000);
+    writeJSON(K_LEDGER, merged);
+    return merged;
+  } catch {
+    return getLedger(); // offline — keep cache
+  }
+};
+
+/**
+ * One-shot reconciliation on app startup. Preserves all data:
+ * pushes local-only accounts UP, then hydrates accounts + ledger DOWN from DB.
+ */
+export const initGLFromDB = async (): Promise<void> => {
+  try {
+    await migrateLocalAccountsToDB(); // preserve local-only accounts first
+    await syncAccountsFromDB();        // DB → cache (accounts)
+    await syncMappingsFromDB();        // DB → cache (mappings)
+    await syncLedgerFromDB();          // DB → cache (ledger)
+  } catch (e) {
+    console.warn('[glAccounting] initGLFromDB non-fatal:', (e as any)?.message);
+  }
+};
+
 // Reporting utilities
 export const getTrialBalance = (from: string, to: string): Array<{ accountId: string; name: string; debit: number; credit: number; balance: number }> => {
   const accs = getAccounts();
@@ -442,4 +560,9 @@ export default {
   isBalanced,
   appendLedger,
   suggestRequiredCodeMappings,
+  // DB unification
+  migrateLocalAccountsToDB,
+  syncAccountsFromDB,
+  syncLedgerFromDB,
+  initGLFromDB,
 };

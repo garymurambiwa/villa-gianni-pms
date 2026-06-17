@@ -2869,22 +2869,39 @@ vendor_id = ?, description = ?, quantity = ?, unit_cost = ?, tax_amount = ?, tax
           console.warn('[DataContext] Room reconcile skipped:', reconcileErr);
         }
 
-        // 2. Sync GL mappings from DB → localStorage so getMappings() returns DB values.
-        // This fixes ISSUE 2: mappings set in browser A weren't visible server-side or in browser B.
+        // 2. Reconcile GL Chart of Accounts, mappings AND ledger between the DB and
+        // localStorage so the DB is the single source of truth (fixes the COA
+        // "split-brain" where ChartOfAccounts wrote to gl_accounts but the GL
+        // reports only read localStorage). Non-destructive: local-only accounts
+        // are pushed UP to the DB before the cache is hydrated DOWN from the DB.
         try {
-          const { syncMappingsFromDB, saveMappingsToDB, GL_USALI_DEFAULTS, ensurePaymentAccounts } = await import('../lib/glAccounting');
+          const {
+            syncMappingsFromDB, GL_USALI_DEFAULTS, ensurePaymentAccounts,
+            migrateLocalAccountsToDB, syncAccountsFromDB, syncLedgerFromDB,
+          } = await import('../lib/glAccounting');
+
           // Make sure Cash / Swipe / EcoCash / Room-charge clearing accounts exist
           // in the Chart of Accounts (additive — never touches existing accounts).
           try { ensurePaymentAccounts(); } catch { /* non-fatal */ }
+
+          // a) Preserve any localStorage-only accounts by pushing them into the DB,
+          //    then b) hydrate the local cache from the now-authoritative DB.
+          await migrateLocalAccountsToDB();
+          await syncAccountsFromDB();
+
+          // Mappings sync (DB → cache) + auto-seed USALI defaults for unmapped codes.
           const dbMappings = await syncMappingsFromDB();
-          // Auto-seed USALI defaults for any codes not yet mapped (non-destructive)
           const needsSeed = Object.keys(GL_USALI_DEFAULTS).some(k => !dbMappings[k]);
           if (needsSeed) {
             await fetch('/api/gl/mappings/seed', { method: 'POST' });
             await syncMappingsFromDB(); // re-sync after seeding
           }
+
+          // c) Hydrate the ledger cache from the DB so Trial Balance / P&L /
+          //    Balance Sheet reflect the authoritative DB journal entries.
+          await syncLedgerFromDB();
         } catch (glErr) {
-          console.warn('[DataContext] GL mapping sync skipped:', glErr);
+          console.warn('[DataContext] GL reconciliation skipped:', glErr);
         }
 
         // 3. First load fresh data from DB to clean up localStorage
