@@ -70,7 +70,7 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
             WITH opening AS (
               SELECT i.category, COALESCE(SUM(sl.total_cost),0)::float AS val
               FROM inv_stock_ledger sl JOIN inv_items i ON i.id = sl.item_id
-              WHERE COALESCE(sl.transaction_date, sl.inserted_at) < $1::timestamptz
+              WHERE COALESCE(sl.posted_at, sl.inserted_at) < $1::timestamptz
               GROUP BY i.category
             ),
             moves AS (
@@ -82,14 +82,14 @@ export const MonthEndClosingReport: React.FC<MonthEndClosingReportProps> = () =>
                 SUM(CASE WHEN sl.ledger_type='WASTE'          THEN ABS(sl.total_cost) ELSE 0 END)::float AS wastage,
                 SUM(CASE WHEN sl.ledger_type='ADJUSTMENT'     THEN sl.total_cost      ELSE 0 END)::float AS adjustment
               FROM inv_stock_ledger sl JOIN inv_items i ON i.id = sl.item_id
-              WHERE COALESCE(sl.transaction_date, sl.inserted_at) >= $1::timestamptz
-                AND COALESCE(sl.transaction_date, sl.inserted_at) <  $2::timestamptz
+              WHERE COALESCE(sl.posted_at, sl.inserted_at) >= $1::timestamptz
+                AND COALESCE(sl.posted_at, sl.inserted_at) <  $2::timestamptz
               GROUP BY i.category
             ),
             closing AS (
               SELECT i.category, COALESCE(SUM(sl.total_cost),0)::float AS val
               FROM inv_stock_ledger sl JOIN inv_items i ON i.id = sl.item_id
-              WHERE COALESCE(sl.transaction_date, sl.inserted_at) < $2::timestamptz
+              WHERE COALESCE(sl.posted_at, sl.inserted_at) < $2::timestamptz
               GROUP BY i.category
             )
             SELECT COALESCE(m.category, o.category, c.category) AS category,
