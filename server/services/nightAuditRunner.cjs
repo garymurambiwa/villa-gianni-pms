@@ -612,12 +612,20 @@ async function runNightAudit(triggeredBy = 'scheduler') {
     const taxRevenue      = roomResult.charges.reduce((s, c) => s + (c.tax || 0), 0);
     const totalRevenue    = roomResult.totalRevenue + posRevenue.total;
 
-    // ── Step 7: Rollover date (MOVED BEFORE record so nextDate is valid) ───────
-    // FIX: nextDate MUST be computed before recordAuditRun because
-    // next_business_date is NOT NULL in night_audit_runs. Passing '' caused
-    // silent INSERT failures — room charges were posted but no audit record stored.
+    // ── Step 7: COMPUTE the next business date (clamped) — but DO NOT write it
+    // to system_configs yet. The actual roll happens AFTER the audit row is
+    // recorded (below), so the stored business_date only ever advances once an
+    // audit has genuinely completed for the day being closed. This is what stops
+    // a stray client (or restart) from pushing business_date a day ahead without
+    // a real audit behind it. nextDate is still computed here because it is a
+    // NOT NULL column on night_audit_runs.
     await updateStep('Rolling over business date', 80);
-    const nextDate = await rolloverDate(businessDate);
+    const rollCap  = addDays(await catToday(), 1);
+    let   nextDate = addDays(businessDate, 1);
+    if (nextDate > rollCap) {
+      log(`  ⚠ Rollover clamp: ${businessDate} → ${nextDate} exceeds cap ${rollCap}; clamping to ${rollCap}`);
+      nextDate = rollCap;
+    }
 
     // ── Step 8: Record audit run ─────────────────────────────────────────────
     await updateStep('Recording audit run to database', 88);
@@ -651,6 +659,13 @@ async function runNightAudit(triggeredBy = 'scheduler') {
         [nextDate, runId]
       );
     }
+
+    // ── Step 8b: NOW roll the stored business date (after the audit is on record).
+    // The DB trigger additionally caps this at min(today+1, last completed audit+1),
+    // so the date can never lead the calendar without a completed audit behind it.
+    await setSystemConfig('business_date', { date: nextDate, rolled_at: nowISO() },
+                          'Current hotel business date');
+    log(`  Business date rolled: ${businessDate} → ${nextDate}`);
 
     // ── Step 9: Write reports ───────────────────────────────────────────────
     await updateStep('Writing report files', 94);
