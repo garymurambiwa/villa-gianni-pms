@@ -8,7 +8,6 @@ import { createAuditEntry } from '@/lib/posIntegration';
 import { useAuth } from '@/context/AuthContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import nightAuditService, { runNightAudit as executeNightAudit } from '@/lib/nightAuditService';
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import JournalPostingModal from '@/components/modules/JournalPostingModal';
 import ReportingDashboard from '@/components/modules/ReportingDashboard';
 import BackToAccountingButton from '@/components/modules/common/BackToAccountingButton';
@@ -16,6 +15,7 @@ import { StockSheetReport } from '@/components/modules/StockSheetReport';
 import { CostMarginReport } from '@/components/modules/CostMarginReport';
 import { PilferageAnalysisReport } from '@/components/modules/PilferageAnalysisReport';
 import { MonthEndClosingReport } from '@/components/modules/MonthEndClosingReport';
+import RevenueAnalysis from '@/components/modules/RevenueAnalysis';
 // Map named export GLAccounting to default for React.lazy to avoid default import collisions
 const GLAccountingLazy = React.lazy(() =>
   import('./GLAccounting').then((m) => ({ default: m.GLAccounting }))
@@ -55,7 +55,6 @@ export const Reports: React.FC = () => {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [serverStatus, setServerStatus] = useState<'idle'|'pending'|'ok'|'error'>('idle');
   const [validationMessages, setValidationMessages] = useState<string[]>([]);
-  const [revSelected, setRevSelected] = useState<string>('');
   // Dev-only auto-run guard to avoid repeated executions
   const autoRunAuditRef = React.useRef(false);
   const auditScrollRef = React.useRef<HTMLDivElement>(null);
@@ -814,50 +813,9 @@ export const Reports: React.FC = () => {
       </Dialog>
 
       {reportType === 'revenue' && (
-        <div className="bg-white rounded-xl shadow-lg p-6">
-          <h3 className="text-xl font-bold text-gray-800 mb-4">Revenue Analysis</h3>
-          <div className="mb-3">
-            <label className="text-xs font-medium">Select Report</label>
-            <Select value={revSelected} onValueChange={(v)=> setRevSelected(v)}>
-              <SelectTrigger className="w-72"><SelectValue placeholder="Select a Report" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="overview">Revenue Overview</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {revSelected === '' && (
-            <div className="text-sm text-gray-600">Select a report from the dropdown to view.</div>
-          )}
-          {revSelected === 'overview' && (
-          <div className="ds-table-container">
-            <table className="ds-table">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th scope="col" className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Category</th>
-                  <th scope="col" className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Amount</th>
-                  <th scope="col" className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Percentage</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                <tr className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm text-gray-800">Room Revenue</td>
-                  <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">${roomRevenue.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-sm text-right text-gray-600">
-                    {((roomRevenue / totalRevenue) * 100).toFixed(1)}%
-                  </td>
-                </tr>
-                <tr className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm text-gray-800">F&B Revenue</td>
-                  <td className="px-4 py-3 text-sm text-right font-semibold text-gray-800">${fbRevenue.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-sm text-right text-gray-600">
-                    {((fbRevenue / totalRevenue) * 100).toFixed(1)}%
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          )}
-        </div>
+        <ErrorBoundary fallbackTitle="Revenue Analysis Error" fallbackMessage="Unable to load revenue analysis. Please reload or contact support.">
+          <RevenueAnalysis />
+        </ErrorBoundary>
       )}
 
       {reportType === 'inventory' && (
