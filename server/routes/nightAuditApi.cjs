@@ -51,19 +51,19 @@ router.get('/status', async (req, res) => {
   try {
     const lock     = await runner.getSystemConfig('night_audit_lock', { locked: false });
     const schedule = await runner.getSystemConfig('night_audit_schedule',
-      { enabled: true, hour: 21, minute: 0, timezone: 'Africa/Harare' });
+      { enabled: true, hour: 0, minute: 0, timezone: 'Africa/Harare' });
     const bizDate  = await runner.getSystemConfig('business_date', null);
     const lastRun  = await db.query(
       `SELECT business_date, total_revenue, rooms_posted, status, completed_at
        FROM night_audit_runs ORDER BY inserted_at DESC LIMIT 1`
     );
     const businessDate = bizDate?.date || null;
-    // "Ahead" = stored business date is more than one day past the hotel's real
-    // calendar date (CAT). One day ahead is normal after the 21:00 audit, so the
-    // threshold is hotel-today + 1.
+    // "Ahead" = stored business date leads the hotel's real calendar date (CAT).
+    // The audit runs at 00:00 CAT, so the business date should equal today and
+    // never lead it — any value greater than today indicates drift.
     let dateIsAhead = false;
     try {
-      const cap = runner.addDays(await runner.catToday(), 1);
+      const cap = await runner.catToday();
       dateIsAhead = businessDate ? businessDate > cap : false;
     } catch { /* non-fatal */ }
     res.json({
@@ -124,7 +124,7 @@ router.post('/repair-date', async (req, res) => {
 // ─── GET /api/night-audit/schedule ───────────────────────────────────────────
 router.get('/schedule', async (req, res) => {
   const s = await runner.getSystemConfig('night_audit_schedule',
-    { enabled: true, hour: 21, minute: 0, timezone: 'Africa/Harare' });
+    { enabled: true, hour: 0, minute: 0, timezone: 'Africa/Harare' });
   res.json({ ok: true, schedule: s });
 });
 
@@ -132,7 +132,7 @@ router.get('/schedule', async (req, res) => {
 router.put('/schedule', async (req, res) => {
   const { hour, minute, enabled, timezone } = req.body;
   const current = await runner.getSystemConfig('night_audit_schedule',
-    { enabled: true, hour: 21, minute: 0, timezone: 'Africa/Harare' });
+    { enabled: true, hour: 0, minute: 0, timezone: 'Africa/Harare' });
   const updated = {
     ...current,
     ...(hour     !== undefined ? { hour: Number(hour) }     : {}),

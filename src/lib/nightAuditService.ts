@@ -43,6 +43,27 @@ const addDaysISO = (dateStr: string, n: number): string => {
   return d.toISOString().slice(0, 10);
 };
 
+// Returns true if a COMPLETED night audit already exists in the DB for the given
+// business date. Used as an idempotency guard so the browser-side scheduler never
+// double-runs a date that the backend cron already closed (which would advance
+// the business date a second time and drift it ahead). Best-effort: on any error
+// it returns false so a genuine audit is never silently blocked.
+const auditAlreadyCompleted = async (businessDate: string): Promise<boolean> => {
+  try {
+    const res: any = await fetchApi('/api/db/query', {
+      method: 'POST',
+      body: JSON.stringify({
+        sql: `SELECT 1 FROM night_audit_runs WHERE business_date = $1 AND status = 'completed' LIMIT 1`,
+        params: [businessDate]
+      })
+    });
+    const rows = res?.rows ?? res?.data?.rows ?? [];
+    return Array.isArray(rows) && rows.length > 0;
+  } catch {
+    return false;
+  }
+};
+
 // ============================================================================
 // VALIDATION SETTINGS
 // ============================================================================
@@ -284,11 +305,14 @@ export const rolloverBusinessDate = async () => {
     writeJSON('corepms_business_date', todayISO());
     return { previous: prevDate, next: todayISO() };
   }
-  // Pure date arithmetic (no local/UTC mixing) then CLAMP to hotel-today + 1
-  // (CAT). The business date may legitimately lead the calendar by one day after
-  // the 21:00 audit, but never more — this prevents the permanent forward drift.
+  // Pure date arithmetic (no local/UTC mixing) then CLAMP to hotel-today (CAT).
+  // The audit runs at 00:00 CAT, so the open business date should never lead the
+  // real calendar date — cap at today, not today+1. This is the hard stop that
+  // prevents the forward drift caused by multiple rollover paths advancing the
+  // same date on one night. Day-by-day catch-up still works (advances by one,
+  // stops at today).
   let nextISO = addDaysISO(prevDate, 1);
-  const cap = addDaysISO(todayISO(), 1);
+  const cap = todayISO();
   if (nextISO > cap) nextISO = cap;
   writeJSON('corepms_business_date', nextISO);
 
@@ -751,10 +775,20 @@ export const runNightAudit = async (ctx: NightAuditContext, options: ValidationO
   }
   
   const businessDateBefore = readJSON<string>('corepms_business_date', todayISO());
+
+  // Idempotency: if the backend already recorded a completed audit for this
+  // business date, do NOT post/roll again. This stops the browser-side scheduler
+  // from racing the always-on backend cron and double-advancing the date (the
+  // root cause of the business date drifting weeks ahead into the future).
+  if (await auditAlreadyCompleted(businessDateBefore)) {
+    console.log('[nightAudit] Already completed for', businessDateBefore, '— skipping (idempotent).');
+    return { ok: true, step: 'skipped', skipped: true, businessDate: businessDateBefore };
+  }
+
   const postings = postRoomAndTax(ctx);
   const transfers = transferCityLedger(ctx);
   const reconciliation = reconcileTotals(ctx);
-  
+
   // If there are variances and auto-reconcile is enabled, perform automatic reconciliation
   let autoReconcileResult: AutoReconcileResult | null = null;
   if (reconciliation.hasVariance && options.autoReconcile) {
@@ -846,6 +880,14 @@ export const runNightAuditSync = async (ctx: NightAuditContext) => {
   }
   
     const businessDateBefore = readJSON<string>('corepms_business_date', todayISO());
+
+    // Idempotency: skip if the backend already recorded a completed audit for
+    // this business date (prevents double-run / date drift — see runNightAudit).
+    if (await auditAlreadyCompleted(businessDateBefore)) {
+      console.log('[nightAudit] Already completed for', businessDateBefore, '— skipping (idempotent).');
+      return { ok: true, step: 'skipped', skipped: true, businessDate: businessDateBefore };
+    }
+
     const postings = postRoomAndTax(ctx);
     const transfers = transferCityLedger(ctx);
     const reconciliation = reconcileTotals(ctx);

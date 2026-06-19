@@ -439,13 +439,15 @@ async function recordAuditRun(data) {
 async function rolloverDate(currentDate) {
   let next = addDays(currentDate, 1);
 
-  // CLAMP — the business date must never run more than ONE day ahead of the
-  // hotel's real calendar date. A pre-midnight audit (scheduled 21:00 CAT)
-  // legitimately rolls into tomorrow, so the cap is (hotel-today + 1); anything
-  // beyond that is overshoot. This is what stops the date drifting permanently
-  // ahead when multiple paths roll the same night, or when the stored date was
-  // already ahead. It still allows correct day-by-day catch-up of missed nights.
-  const cap = addDays(await catToday(), 1);
+  // CLAMP — the business date must NEVER lead the hotel's real calendar date.
+  // The audit is scheduled at 00:00 CAT (start of the new day), so after closing
+  // the previous day the open business date should equal hotel-today — never
+  // beyond it. The cap is therefore hotel-today (CAT), not today+1. This is the
+  // hard stop that prevents the forward drift seen when multiple rollover paths
+  // (backend cron, browser scheduler, manual/catch-up) advanced the same date on
+  // one night. Day-by-day catch-up of missed nights still works because each run
+  // only advances by one and stops once it reaches today.
+  const cap = await catToday();
   if (next > cap) {
     log(`  ⚠ Rollover clamp: ${currentDate} → ${next} exceeds cap ${cap}; clamping to ${cap}`);
     next = cap;
@@ -569,6 +571,30 @@ async function runNightAudit(triggeredBy = 'scheduler') {
   const dbDate = await getSystemConfig('business_date', null);
   const businessDate = (dbDate && dbDate.date) ? dbDate.date : todayDB();
   log('  Business date: ' + businessDate);
+
+  // ── Idempotency guard ────────────────────────────────────────────────────
+  // Never audit the same business date twice. Several rollover paths (this cron,
+  // the browser-side scheduler, manual + catch-up) once raced and each advanced
+  // business_date, drifting it weeks ahead and stamping future dates. If a
+  // completed run already exists for this date, do NOT re-post: only advance the
+  // pointer (clamped to today) when we are behind, so legitimate catch-up of
+  // missed nights still works. A manual trigger may intentionally re-run.
+  if (triggeredBy !== 'manual_trigger') {
+    const already = await db.query(
+      `SELECT 1 FROM night_audit_runs WHERE business_date = $1 AND status = 'completed' LIMIT 1`,
+      [businessDate]
+    );
+    if (already.ok && already.rows.length) {
+      const today = await catToday();
+      if (businessDate < today) {
+        const next = await rolloverDate(businessDate);
+        log(`  ⏭ Audit already completed for ${businessDate}; advanced pointer to ${next} (catch-up, no re-post).`);
+        return { ok: true, skipped: true, businessDate, nextDate: next };
+      }
+      log(`  ⏭ Audit already completed for ${businessDate}; skipping (idempotent).`);
+      return { ok: true, skipped: true, businessDate };
+    }
+  }
 
   await acquireLock(businessDate);
 
