@@ -1,3 +1,9 @@
+# Single source of deployment for BOTH apps on the Hetzner VPS.
+# Replaced the old duplicate `deploy.yml` and the obsolete `vercel-deploy.yml`
+# after Baradzanwa moved off Vercel onto the VPS — two VPS workflows firing on
+# the same push raced two git pull / build / restart sessions on the same boxes.
+# NOTE: requires the GitHub account's Actions billing to be active; a billing
+# lock blocks the runner before this script can run.
 name: VPS Deploy
 
 on:
