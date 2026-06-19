@@ -1,0 +1,43 @@
+name: VPS Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H 178.104.176.191 >> ~/.ssh/known_hosts
+
+      - name: Deploy Baradzanwa
+        run: |
+          ssh root@178.104.176.191 "
+            cd /var/www/baradzanwa &&
+            git pull &&
+            npm ci --prefer-offline &&
+            npm run build &&
+            pm2 restart baradzanwa-api &&
+            echo 'Baradzanwa deployed successfully'
+          "
+
+      - name: Deploy Villa Gianni
+        run: |
+          ssh root@178.104.176.191 "
+            cd /var/www/villa-gianni &&
+            git pull &&
+            npm ci --prefer-offline &&
+            npm run build &&
+            pm2 restart villa-gianni-api &&
+            echo 'Villa Gianni deployed successfully'
+          "
