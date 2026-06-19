@@ -1548,9 +1548,12 @@ const server = app.listen(PORT, '0.0.0.0', () => {
         CREATE OR REPLACE FUNCTION guard_audit_run_date() RETURNS trigger AS $$
         DECLARE cap date;
         BEGIN
-          cap := (NOW() AT TIME ZONE 'Africa/Harare')::date + 1;
+          -- An audit can only close today or a PAST day — never a future day.
+          -- So the cap is hotel-today (CAT), not today+1. (next_business_date may
+          -- legitimately be today+1; that is a different column.)
+          cap := (NOW() AT TIME ZONE 'Africa/Harare')::date;
           IF NEW.business_date::date > cap THEN
-            RAISE EXCEPTION 'night_audit_runs.business_date % is ahead of cap % (drift blocked)', NEW.business_date, cap;
+            RAISE EXCEPTION 'night_audit_runs.business_date % is in the future (cap %, drift blocked)', NEW.business_date, cap;
           END IF;
           RETURN NEW;
         END;

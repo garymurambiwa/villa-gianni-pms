@@ -29,7 +29,7 @@ import { toast, useToast } from '@/hooks/use-toast';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
 export const POSFrontOffice: React.FC = () => {
-  const { guests, recordFolioCharge, removeFolioCharge, loading, posOrders, savePosOrder, closePosOrder } = useData();
+  const { guests, recordFolioCharge, removeFolioCharge, loading, posOrders, savePosOrder, closePosOrder, addCityLedgerTransaction } = useData();
   const { activeShift, startShift, endShift, getTotals, addTransaction } = useShift();
   const { user, costCentre, shiftId, isLocked, setIsLocked, verifyPosPin } = useAuth();
 
@@ -964,6 +964,19 @@ export const POSFrontOffice: React.FC = () => {
           });
         }
       }
+    }
+
+    // City ledger posting — fires whenever the payment was charged to a city ledger account
+    if (paymentData.cityLedgerAccountId) {
+      addCityLedgerTransaction(paymentData.cityLedgerAccountId, {
+        debit: Number(total.toFixed(2)),
+        reference: `POS-${billNumber}`,
+        description: `${getOutletFromBill(bill)} - bill-${billNumber}`,
+        date: activeShift?.date || new Date().toISOString().split('T')[0],
+        source: 'pos_direct',
+      }).catch((err: any) => {
+        console.error('[POSFrontOffice] City ledger post failed:', err);
+      });
     }
 
     try {

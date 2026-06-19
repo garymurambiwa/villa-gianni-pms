@@ -41,7 +41,7 @@ interface InventoryItem {
 
 export const POS: React.FC = () => {
   const { user } = useAuth();
-  const { guests, recordFolioCharge, removeFolioCharge, inventory } = useData();
+  const { guests, recordFolioCharge, removeFolioCharge, inventory, addCityLedgerTransaction } = useData();
   const { activeShift, startShift, endShift, getTotals, addTransaction, generateXReading } = useShift();
 
   // Allow showing out-of-stock items (hidden by default but togglable)
@@ -296,6 +296,19 @@ export const POS: React.FC = () => {
           });
         }
       }
+    }
+
+    // City ledger posting — fires whenever the payment was charged to a city ledger account
+    if (paymentData.cityLedgerAccountId) {
+      addCityLedgerTransaction(paymentData.cityLedgerAccountId, {
+        debit: Number(total.toFixed(2)),
+        reference: `POS-${billNumber}`,
+        description: `${getOutletDisplayName()} - bill-${billNumber}`,
+        date: activeShift?.date || new Date().toISOString().split('T')[0],
+        source: 'pos_direct',
+      }).catch((err: any) => {
+        console.error('[POS] City ledger post failed:', err);
+      });
     }
 
     // Log transaction to Shift totals

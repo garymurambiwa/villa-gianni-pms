@@ -1,0 +1,40 @@
+name: VPS Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Hetzner VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy both apps
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 178.104.176.191
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "=== Deploying Baradzanwa ==="
+            cd /var/www/baradzanwa
+            git pull origin main
+            npm ci --omit=dev
+            npm run build
+            pm2 restart baradzanwa-api
+            echo "Baradzanwa: OK"
+
+            echo "=== Deploying Villa Gianni ==="
+            cd /var/www/villa-gianni
+            git pull origin main
+            npm ci --omit=dev
+            npm run build
+            pm2 restart villa-gianni-api
+            echo "Villa Gianni: OK"
+
+            echo "=== Both apps live ==="
+            pm2 list
