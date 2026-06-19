@@ -1098,6 +1098,88 @@ export const buildMonthlyPL = async (monthISO: string) => {
   return { title: `Profit & Loss — ${monthISO}`, columns: ['Category', 'Account', 'Amount'], rows };
 };
 
+// Detailed, DYNAMIC Profit & Loss for an arbitrary date range, grouped by the
+// chart-of-accounts structure: Category (Revenue/Expense) → Department → Account,
+// with per-department subtotals, category totals, and GOP. Unlike buildMonthlyPL
+// this honours the exact start/end the user picks (not just the current month)
+// and surfaces the COA department grouping rather than a flat Revenue/Expense pair.
+export const buildPL = async (from: string, to: string) => {
+  try {
+    const res = await fetch(`/api/reports/pl?from=${from}&to=${to}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    // Guard on data.ok alone — a zero-activity range is a valid (all-zero) P&L.
+    if (data.ok) {
+      const rows: any[] = [];
+      for (const cat of ['Revenue', 'Expense']) {
+        const catRows = (data.rows || []).filter((r: any) => r.category === cat);
+        if (!catRows.length) continue;
+        rows.push({ Category: cat.toUpperCase(), Department: '', Account: '', Amount: '' });
+        const byDept = new Map<string, any[]>();
+        catRows.forEach((r: any) => {
+          const d = r.department || 'Undistributed';
+          if (!byDept.has(d)) byDept.set(d, []);
+          byDept.get(d)!.push(r);
+        });
+        let catTotal = 0;
+        Array.from(byDept.entries()).forEach(([dept, drows]) => {
+          let deptTotal = 0;
+          drows.forEach((r: any) => {
+            rows.push({ Category: '', Department: dept, Account: r.name, Amount: Number(r.amount).toFixed(2) });
+            deptTotal += Number(r.amount);
+          });
+          rows.push({ Category: '', Department: dept, Account: `Subtotal — ${dept}`, Amount: deptTotal.toFixed(2) });
+          catTotal += deptTotal;
+        });
+        rows.push({ Category: `TOTAL ${cat.toUpperCase()}`, Department: '', Account: '', Amount: catTotal.toFixed(2) });
+      }
+      rows.push({ Category: 'GROSS OPERATING PROFIT', Department: '', Account: '', Amount: Number(data.gop).toFixed(2) });
+      return { title: `Profit & Loss — ${from} to ${to}`, columns: ['Category', 'Department', 'Account', 'Amount'], rows };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildPL DB fetch failed, using localStorage:', err);
+  }
+  // Offline fallback: localStorage GL (no department detail available)
+  const pl = gl.getPLStatement(from, to);
+  const rows = [
+    { Category: 'Revenue', Department: '', Account: '—', Amount: Number(pl.revenue || 0).toFixed(2) },
+    { Category: 'Expense', Department: '', Account: '—', Amount: Number(pl.expense || 0).toFixed(2) },
+    { Category: 'Gross Operating Profit', Department: '', Account: '—', Amount: Number((pl.revenue - pl.expense).toFixed(2)) },
+  ];
+  return { title: `Profit & Loss — ${from} to ${to}`, columns: ['Category', 'Department', 'Account', 'Amount'], rows };
+};
+
+// Journal Postings (GL) — one row per posted journal line in the date range.
+// Surfaces every GL posting (incl. the revenue journals the Baradzanwa controller
+// posts) with full audit context and a balancing Debit/Credit total footer.
+export const buildJournalPostings = async (from: string, to: string, source?: string) => {
+  const columns = ['Date', 'Reference', 'Source', 'Account', 'Category', 'Description', 'Debit', 'Credit'];
+  try {
+    const qs = `from=${from}&to=${to}${source && source !== 'all' ? `&source=${encodeURIComponent(source)}` : ''}`;
+    const res = await fetch(`/api/reports/journals?${qs}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.ok) {
+      const rows = (data.rows || []).map((r: any) => ({
+        Date: r.business_date,
+        Reference: r.reference || r.entry_id,
+        Source: r.source || '—',
+        Account: r.account_name,
+        Category: r.account_category,
+        Description: r.line_description || '',
+        Debit: r.debit ? Number(r.debit).toFixed(2) : '',
+        Credit: r.credit ? Number(r.credit).toFixed(2) : ''
+      }));
+      rows.push({ Date: '', Reference: '', Source: '', Account: '', Category: '', Description: 'TOTAL',
+        Debit: Number(data.totalDebit || 0).toFixed(2), Credit: Number(data.totalCredit || 0).toFixed(2) });
+      return { title: `Journal Postings (GL) — ${from} to ${to}`, columns, rows };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildJournalPostings DB fetch failed:', err);
+  }
+  return { title: `Journal Postings (GL) — ${from} to ${to}`, columns, rows: [] };
+};
+
 // Aged Accounts Receivable (City Ledger Aging)
 export const buildAgedAR = async (asOf?: string) => {
   const date = asOf || getBusinessDate();

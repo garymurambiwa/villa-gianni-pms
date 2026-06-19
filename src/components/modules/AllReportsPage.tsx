@@ -3,11 +3,12 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { printDocument } from '@/lib/posIntegration';
 import { 
-  buildFlashReport, 
-  buildPosReconciliation, 
-  buildMonthlyPL, 
-  buildAgedAR, 
-  buildInventoryCOGS, 
+  buildFlashReport,
+  buildPosReconciliation,
+  buildPL,
+  buildJournalPostings,
+  buildAgedAR,
+  buildInventoryCOGS,
   buildPurchaseReceivingLog,
   buildTrialBalance,
   buildDepartmentalSummary,
@@ -115,7 +116,7 @@ const REPORTS = [
   { key: 'recon-summary', name: 'Daily Reconciliation (Summary)', description: 'Key reconciliation metrics', type: 'summary' as const },
   { key: 'stock-adjust', name: 'Stock Adjustments', description: 'Before/after quantities and reasons', type: 'detailed' as const },
   { key: 'purchases', name: 'Purchases', description: 'Procurement activities with vendor analysis', type: 'detailed' as const },
-  { key: 'journals', name: 'Journal', description: 'Accounting entries with audit trail', type: 'detailed' as const },
+  { key: 'journals', name: 'Journal Postings (GL)', description: 'Every GL journal posting in range — revenue, expense & all sources', type: 'detailed' as const },
   { key: 'trial-balance', name: 'Trial Balance', description: 'Monthly trial balance with debits and credits', type: 'summary' as const },
   { key: 'aged-ar', name: 'Aged Accounts Receivable', description: 'City ledger aging analysis', type: 'detailed' as const },
   { key: 'arrivals', name: 'Arrivals & Departures', description: 'Daily guest movement report', type: 'detailed' as const },
@@ -125,18 +126,18 @@ const REPORTS = [
 const businessDate = new Date().toISOString().slice(0,10);
 const currentMonth = new Date().toISOString().slice(0,7);
 
-const quickPrint = async (key: string) => {
+const quickPrint = async (key: string, start: string, end: string) => {
   try {
     let data: { title: string; columns: string[]; rows: any[] } | null = null;
     switch (key) {
       case 'pnl':
-        data = await buildMonthlyPL(currentMonth);
+        data = await buildPL(start, end);
         break;
       case 'daily-collection':
         data = await buildFlashReport(businessDate);
         break;
       case 'journals':
-        data = await buildPosReconciliation(businessDate);
+        data = await buildJournalPostings(start, end);
         break;
       case 'purchases':
         data = await buildPurchaseReceivingLog(businessDate);
@@ -245,13 +246,13 @@ export const AllReportsPage: React.FC = () => {
       let data: { title: string; columns: string[]; rows: any[] } | null = null;
       switch (key) {
         case 'pnl':
-          data = await buildMonthlyPL(currentMonthStr);
+          data = await buildPL(start, end);
           break;
         case 'daily-collection':
           data = await buildFlashReport(businessDateStr);
           break;
         case 'journals':
-          data = await buildPosReconciliation(businessDateStr);
+          data = await buildJournalPostings(start, end);
           break;
         case 'purchases':
           data = await buildPurchaseReceivingLog(businessDateStr);
@@ -363,7 +364,7 @@ export const AllReportsPage: React.FC = () => {
                   </td>
                   <td className="p-2">
                     <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => quickPrint(r.key)} className="hover:bg-gray-100 active:scale-[0.99] whitespace-nowrap">Quick Print</Button>
+                      <Button variant="outline" size="sm" onClick={() => quickPrint(r.key, start, end)} className="hover:bg-gray-100 active:scale-[0.99] whitespace-nowrap">Quick Print</Button>
                       <Button
                         variant="outline"
                         size="sm"

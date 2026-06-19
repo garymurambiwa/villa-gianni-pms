@@ -315,9 +315,9 @@ const GoodsReceivedReportView: React.FC<{ rangeText: string; grnRows: any[] }> =
   );
 };
 
-const ItemSalesReportView: React.FC<{ itemsRows: any[] }> = ({ itemsRows }) => {
+const ItemSalesReportView: React.FC<{ itemsRows: any[]; rangeText?: string }> = ({ itemsRows, rangeText }) => {
   const [itemSort, setItemSort] = React.useState<'qty' | 'revenue' | 'profit'>('revenue');
-  
+
   const sorted = React.useMemo(() => {
     return [...itemsRows].sort((a, b) => {
       if (itemSort === 'qty') return b.qty - a.qty;
@@ -327,9 +327,36 @@ const ItemSalesReportView: React.FC<{ itemsRows: any[] }> = ({ itemsRows }) => {
     });
   }, [itemsRows, itemSort]);
 
+  // Totals across the currently filtered (date range + shift) item set.
+  const totals = React.useMemo(() => {
+    const t = sorted.reduce((acc, r) => {
+      acc.qty += Number(r.qty || 0);
+      acc.revenue += Number(r.revenue || 0);
+      acc.cost += Number(r.cost || 0);
+      acc.profit += Number(r.profit || 0);
+      return acc;
+    }, { qty: 0, revenue: 0, cost: 0, profit: 0 });
+    return { ...t, margin: t.revenue ? (t.profit / t.revenue) * 100 : 0 };
+  }, [sorted]);
+
+  const exportItemSales = () => {
+    const headers = ['Item Name', 'Qty Sold', 'Revenue', 'Cost (COGS)', 'Profit', 'Margin %'];
+    const rows = sorted.map(r => [
+      String(r.name), String(r.qty),
+      Number(r.revenue || 0).toFixed(2), Number(r.cost || 0).toFixed(2), Number(r.profit || 0).toFixed(2),
+      (r.revenue ? (r.profit / r.revenue) * 100 : 0).toFixed(1)
+    ]);
+    // Trailing TOTAL row so the export carries the same range totals shown on screen.
+    rows.push(['TOTAL', String(totals.qty), totals.revenue.toFixed(2), totals.cost.toFixed(2), totals.profit.toFixed(2), totals.margin.toFixed(1)]);
+    exportCSV(`item_sales_${rangeText || 'report'}.csv`, headers, rows);
+  };
+
   return (
     <div className="mb-6">
-      <h3 className="text-lg font-semibold mb-2">Item-wise Sales Performance</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <h3 className="text-lg font-semibold">Item-wise Sales Performance</h3>
+        <Button variant="outline" size="sm" className="no-print" onClick={exportItemSales} disabled={!sorted.length}>Export CSV</Button>
+      </div>
       <div className="flex gap-2 mb-3">
         <Button variant={itemSort==='qty'?'secondary':'outline'} onClick={()=>setItemSort('qty')}>Sort by Qty</Button>
         <Button variant={itemSort==='revenue'?'secondary':'outline'} onClick={()=>setItemSort('revenue')}>Sort by Revenue</Button>
@@ -360,6 +387,18 @@ const ItemSalesReportView: React.FC<{ itemsRows: any[] }> = ({ itemsRows }) => {
             ))}
             {!sorted.length && (<tr><td className="p-2 text-center" colSpan={6}>No item sales found.</td></tr>)}
           </tbody>
+          {sorted.length > 0 && (
+            <tfoot>
+              <tr className="font-bold border-t-2">
+                <td className="p-2">TOTAL{rangeText ? ` (${rangeText})` : ''}</td>
+                <td className="p-2 text-right">{totals.qty}</td>
+                <td className="p-2 text-right font-mono">{formatCurrency(totals.revenue)}</td>
+                <td className="p-2 text-right text-red-600 font-mono hide-on-mobile">{formatCurrency(totals.cost)}</td>
+                <td className="p-2 text-right text-green-600 font-mono">{formatCurrency(totals.profit)}</td>
+                <td className="p-2 text-right hide-on-mobile">{totals.margin.toFixed(1)}%</td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </div>
@@ -961,7 +1000,7 @@ if(!('error' in ordersRes)) {
       )}
 
       {!loading && selectedReport === 'item-sales' && (
-        <ItemSalesReportView itemsRows={itemSalesSummary} />
+        <ItemSalesReportView itemsRows={itemSalesSummary} rangeText={range.start === range.end ? range.start : `${range.start} to ${range.end}`} />
       )}
 
       {!loading && selectedReport === 'staff-performance' && (

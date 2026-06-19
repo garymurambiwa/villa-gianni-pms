@@ -1569,6 +1569,7 @@ app.get('/api/reports/pl', async (req, res) => {
     const result = await db.query(
       `SELECT
          COALESCE(a.category, 'Unknown') AS category,
+         COALESCE(NULLIF(a.department, ''), 'Undistributed') AS department,
          COALESCE(SUM(CASE WHEN a.category = 'Revenue' THEN jl.credit_amount - jl.debit_amount ELSE 0 END), 0)::numeric(14,2) AS revenue_net,
          COALESCE(SUM(CASE WHEN a.category = 'Expense' THEN jl.debit_amount - jl.credit_amount ELSE 0 END), 0)::numeric(14,2) AS expense_net,
          jl.gl_account_id AS "accountId",
@@ -1581,8 +1582,8 @@ app.get('/api/reports/pl', async (req, res) => {
          AND je.status = 'posted'
          AND je.is_voided = false
          AND a.category IN ('Revenue', 'Expense')
-       GROUP BY a.category, jl.gl_account_id, a.name
-       ORDER BY a.category, a.name`,
+       GROUP BY a.category, a.department, jl.gl_account_id, a.name
+       ORDER BY a.category, COALESCE(NULLIF(a.department, ''), 'Undistributed'), a.name`,
       [from, to]
     );
     const rows = result.ok ? result.rows || [] : [];
@@ -1590,11 +1591,58 @@ app.get('/api/reports/pl', async (req, res) => {
     const expense = rows.filter(r => r.category === 'Expense').reduce((s, r) => s + Number(r.expense_net), 0);
     const lineItems = rows.map(r => ({
       category: r.category,
+      department: r.department,
       accountId: r.accountId,
       name: r.name,
       amount: r.category === 'Revenue' ? Number(r.revenue_net) : Number(r.expense_net)
     }));
     safeJson(res, { ok: true, revenue: Number(revenue.toFixed(2)), expense: Number(expense.toFixed(2)), gop: Number((revenue - expense).toFixed(2)), rows: lineItems });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
+// GET /api/reports/journals?from=YYYY-MM-DD&to=YYYY-MM-DD[&source=...]
+// Every GL posting (one row per journal LINE) in the date range — including the
+// revenue journals the Baradzanwa controller posts. Posted, non-voided only.
+app.get('/api/reports/journals', async (req, res) => {
+  const { from, to, source } = req.query;
+  if (!from || !to) return safeJson(res, { ok: false, error: 'from and to required' });
+  try {
+    const params = [from, to];
+    let sourceClause = '';
+    if (source && source !== 'all') { params.push(source); sourceClause = ` AND je.source = $${params.length}`; }
+    const result = await db.query(
+      `SELECT
+         je.business_date::text AS business_date,
+         je.id            AS entry_id,
+         je.reference     AS reference,
+         je.source        AS source,
+         je.description   AS entry_description,
+         jl.line_number   AS line_number,
+         jl.gl_account_id AS account_id,
+         COALESCE(a.name, jl.gl_account_id) AS account_name,
+         COALESCE(a.category, 'Unknown')    AS account_category,
+         COALESCE(jl.description, je.description) AS line_description,
+         COALESCE(jl.debit_amount, 0)::numeric(14,2)  AS debit,
+         COALESCE(jl.credit_amount, 0)::numeric(14,2) AS credit
+       FROM gl_journal_lines jl
+       JOIN gl_journal_entries je ON je.id = jl.journal_entry_id
+       LEFT JOIN gl_accounts a    ON a.id = jl.gl_account_id
+       WHERE je.business_date >= $1::date
+         AND je.business_date <= $2::date
+         AND je.status = 'posted'
+         AND je.is_voided = false${sourceClause}
+       ORDER BY je.business_date, je.id, jl.line_number`,
+      params
+    );
+    const rows = (result.ok ? result.rows || [] : []).map(r => ({
+      business_date: r.business_date, entry_id: r.entry_id, reference: r.reference,
+      source: r.source, entry_description: r.entry_description, line_number: r.line_number,
+      account_id: r.account_id, account_name: r.account_name, account_category: r.account_category,
+      line_description: r.line_description, debit: Number(r.debit), credit: Number(r.credit)
+    }));
+    const totalDebit = rows.reduce((s, r) => s + r.debit, 0);
+    const totalCredit = rows.reduce((s, r) => s + r.credit, 0);
+    safeJson(res, { ok: true, rows, totalDebit: Number(totalDebit.toFixed(2)), totalCredit: Number(totalCredit.toFixed(2)) });
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
