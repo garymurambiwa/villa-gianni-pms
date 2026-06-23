@@ -31,7 +31,13 @@ const REPORTS = [
   { key: 'by-outlet', name: 'Revenue by Outlet / Cost Centre' },
   { key: 'daily-trend', name: 'Daily Revenue Trend' },
   { key: 'rooms-kpi', name: 'Rooms KPIs (ADR / RevPAR / Occupancy)' },
+  { key: 'journal-summary', name: 'Journal Postings — Summary (by Category / Dept)' },
+  { key: 'journal-detailed', name: 'Journal Postings — Detailed (per transaction)' },
 ];
+
+// Reports that support the Category filter (the GL journal-posting reports).
+const JOURNAL_REPORTS = new Set(['journal-summary', 'journal-detailed']);
+const CATEGORIES = ['all', 'Revenue', 'Expense', 'Asset', 'Liability', 'Equity'];
 
 const last30 = (): Range => {
   const end = new Date();
@@ -51,6 +57,7 @@ const exportCSV = (filename: string, headers: string[], rows: string[][]) => {
 export const RevenueAnalysis: React.FC = () => {
   const [range, setRange] = React.useState<Range>(() => last30());
   const [selected, setSelected] = React.useState<string>('overview');
+  const [catFilter, setCatFilter] = React.useState<string>('all');
   const [loading, setLoading] = React.useState<boolean>(false);
   const [error, setError] = React.useState<string>('');
   const [data, setData] = React.useState<ReportData>(null);
@@ -238,13 +245,91 @@ export const RevenueAnalysis: React.FC = () => {
         });
         return;
       }
+
+      if (selected === 'journal-summary' || selected === 'journal-detailed') {
+        // All posted journal lines in range, optionally filtered by category.
+        const res = await fetch(`/api/reports/journals?from=${start}&to=${end}`);
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.error || 'Journals fetch failed');
+        let lines = (d.rows || []) as any[];
+        if (catFilter !== 'all') lines = lines.filter((l: any) => l.account_category === catFilter);
+
+        const grandDr = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
+        const grandCr = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+
+        if (selected === 'journal-summary') {
+          // Group by Category → Department → Account; per-category subtotals + grand total.
+          const key = (l: any) => `${l.account_category}|${l.department || 'Undistributed'}|${l.account_id}`;
+          const agg = new Map<string, any>();
+          lines.forEach((l: any) => {
+            const k = key(l);
+            const cur = agg.get(k) || { category: l.account_category, department: l.department || 'Undistributed', account: `${l.account_id} · ${l.account_name}`, debit: 0, credit: 0 };
+            cur.debit += Number(l.debit || 0); cur.credit += Number(l.credit || 0);
+            agg.set(k, cur);
+          });
+          const sorted = Array.from(agg.values())
+            .map(r => ({ ...r, net: r.debit - r.credit }))
+            .sort((a, b) => (a.category + a.department + a.account).localeCompare(b.category + b.department + b.account));
+          // inject per-category subtotal rows
+          const rows: any[] = [];
+          let curCat = ''; let catDr = 0, catCr = 0;
+          const flushCat = () => { if (curCat) rows.push({ __subtotal: true, category: `Subtotal — ${curCat}`, department: '', account: '', debit: catDr, credit: catCr, net: catDr - catCr }); };
+          sorted.forEach(r => {
+            if (r.category !== curCat) { flushCat(); curCat = r.category; catDr = 0; catCr = 0; }
+            rows.push(r); catDr += r.debit; catCr += r.credit;
+          });
+          flushCat();
+          setData({
+            columns: [
+              { key: 'category', label: 'Category', align: 'left' },
+              { key: 'department', label: 'Department', align: 'left' },
+              { key: 'account', label: 'Account', align: 'left' },
+              { key: 'debit', label: 'Debit', align: 'right', money: true },
+              { key: 'credit', label: 'Credit', align: 'right', money: true },
+              { key: 'net', label: 'Net (Dr−Cr)', align: 'right', money: true },
+            ],
+            rows, total: { debit: grandDr, credit: grandCr, net: grandDr - grandCr }
+          });
+        } else {
+          // Detailed: every transaction, grouped by category with per-category subtotals.
+          const sorted = [...lines].sort((a, b) =>
+            (a.account_category + (a.department || '') + a.business_date).localeCompare(b.account_category + (b.department || '') + b.business_date));
+          const rows: any[] = [];
+          let curCat = ''; let catDr = 0, catCr = 0;
+          const flushCat = () => { if (curCat) rows.push({ __subtotal: true, date: `Subtotal — ${curCat}`, debit: catDr, credit: catCr }); };
+          sorted.forEach((l: any) => {
+            if (l.account_category !== curCat) { flushCat(); curCat = l.account_category; catDr = 0; catCr = 0; }
+            rows.push({
+              date: l.business_date, account: `${l.account_id} · ${l.account_name}`, category: l.account_category,
+              department: l.department || 'Undistributed', reference: l.reference || l.entry_id, source: l.source || '—',
+              description: l.line_description || '', debit: Number(l.debit || 0), credit: Number(l.credit || 0),
+            });
+            catDr += Number(l.debit || 0); catCr += Number(l.credit || 0);
+          });
+          flushCat();
+          setData({
+            columns: [
+              { key: 'date', label: 'Date', align: 'left' },
+              { key: 'account', label: 'Account', align: 'left' },
+              { key: 'department', label: 'Department', align: 'left' },
+              { key: 'reference', label: 'Reference', align: 'left' },
+              { key: 'source', label: 'Source', align: 'left' },
+              { key: 'description', label: 'Description', align: 'left' },
+              { key: 'debit', label: 'Debit', align: 'right', money: true },
+              { key: 'credit', label: 'Credit', align: 'right', money: true },
+            ],
+            rows, total: { debit: grandDr, credit: grandCr }
+          });
+        }
+        return;
+      }
     } catch (err: any) {
       console.error('[RevenueAnalysis] load failed', err);
       setError(err?.message || 'Failed to load report');
     } finally {
       setLoading(false);
     }
-  }, [range, selected]);
+  }, [range, selected, catFilter]);
 
   React.useEffect(() => { load(); }, [load]);
 
@@ -309,6 +394,17 @@ export const RevenueAnalysis: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
+        {JOURNAL_REPORTS.has(selected) && (
+          <div>
+            <label className="text-xs font-medium block">Category</label>
+            <Select value={catFilter} onValueChange={setCatFilter}>
+              <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {CATEGORIES.map(c => (<SelectItem key={c} value={c}>{c === 'all' ? 'All Categories' : c}</SelectItem>))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <div className="flex gap-2 no-print">
           <Button variant="outline" size="sm" onClick={onExport} disabled={!data || !data.rows.length}>Export CSV</Button>
           <Button variant="outline" size="sm" onClick={() => window.print()} disabled={!data || !data.rows.length}>
@@ -334,9 +430,9 @@ export const RevenueAnalysis: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-gray-200">
               {data.rows.map((row, i) => (
-                <tr key={i} className="hover:bg-gray-50">
+                <tr key={i} className={row.__subtotal ? 'bg-gray-100 font-semibold border-t' : 'hover:bg-gray-50'}>
                   {data.columns.map(c => (
-                    <td key={c.key} className={`px-4 py-3 text-sm text-${c.align || 'left'} ${c.money ? 'font-mono font-semibold text-gray-800' : 'text-gray-700'}`}>
+                    <td key={c.key} className={`px-4 py-3 text-sm text-${c.align || 'left'} ${c.money ? `font-mono ${row.__subtotal ? '' : 'font-semibold'} text-gray-800` : 'text-gray-700'}`}>
                       {fmt(c, row[c.key])}
                     </td>
                   ))}

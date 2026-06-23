@@ -112,7 +112,7 @@ export const ChartOfAccounts: React.FC = () => {
   })).filter(g => g.rows.length > 0);
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Chart of Accounts</h2>

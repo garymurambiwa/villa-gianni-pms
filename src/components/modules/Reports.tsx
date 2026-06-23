@@ -16,6 +16,7 @@ import { CostMarginReport } from '@/components/modules/CostMarginReport';
 import { PilferageAnalysisReport } from '@/components/modules/PilferageAnalysisReport';
 import { MonthEndClosingReport } from '@/components/modules/MonthEndClosingReport';
 import RevenueAnalysis from '@/components/modules/RevenueAnalysis';
+import UsaliPLStatement from '@/components/modules/UsaliPLStatement';
 // Map named export GLAccounting to default for React.lazy to avoid default import collisions
 const GLAccountingLazy = React.lazy(() =>
   import('./GLAccounting').then((m) => ({ default: m.GLAccounting }))
@@ -388,6 +389,7 @@ export const Reports: React.FC = () => {
               { key: 'daily', name: 'Daily Report' },
               { key: 'night-audit', name: 'Night Audit' },
               { key: 'revenue', name: 'Revenue Analysis' },
+              { key: 'pnl-usali', name: 'P&L Statement (USALI)' },
               { key: 'inventory', name: 'Inventory Reports' },
               { key: 'gl', name: 'GL Accounting' },
               { key: 'pos', name: 'POS Reports (Managers)' },
@@ -815,6 +817,12 @@ export const Reports: React.FC = () => {
       {reportType === 'revenue' && (
         <ErrorBoundary fallbackTitle="Revenue Analysis Error" fallbackMessage="Unable to load revenue analysis. Please reload or contact support.">
           <RevenueAnalysis />
+        </ErrorBoundary>
+      )}
+
+      {reportType === 'pnl-usali' && (
+        <ErrorBoundary fallbackTitle="P&L Statement Error" fallbackMessage="Unable to load the P&L statement. Please reload or contact support.">
+          <UsaliPLStatement />
         </ErrorBoundary>
       )}
 

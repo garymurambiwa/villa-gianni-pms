@@ -1350,6 +1350,7 @@ app.get('/api/reports/journals', async (req, res) => {
                jl.gl_account_id AS account_id,
                COALESCE(a.name, jl.gl_account_id) AS account_name,
                COALESCE(a.category, 'Unknown')    AS account_category,
+               COALESCE(NULLIF(a.department, ''), 'Undistributed') AS department,
                COALESCE(jl.description, je.description) AS line_description,
                COALESCE(jl.debit_amount, 0)::numeric(14,2)  AS debit,
                COALESCE(jl.credit_amount, 0)::numeric(14,2) AS credit
@@ -1367,6 +1368,7 @@ app.get('/api/reports/journals', async (req, res) => {
             business_date: r.business_date, entry_id: r.entry_id, reference: r.reference,
             source: r.source, entry_description: r.entry_description, line_number: r.line_number,
             account_id: r.account_id, account_name: r.account_name, account_category: r.account_category,
+            department: r.department,
             line_description: r.line_description, debit: Number(r.debit), credit: Number(r.credit)
         }));
         const totalDebit = rows.reduce((s, r) => s + r.debit, 0);
