@@ -1217,10 +1217,33 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
   const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [postingId, setPostingId] = useState<string | null>(null);
 
   useEffect(() => {
     apiGet('/transfer?limit=500').then(r => { if (r.ok) setTransfers(r.data); });
   }, []);
+
+  // Post a pending transfer: approves it, committing the stock movement out of
+  // source and into destination (draft/pending → approved). Uses the existing
+  // idempotent approve endpoint, so it can't double-move stock.
+  const postTransfer = async (t: any) => {
+    if (t.status === 'approved') return;
+    if (!window.confirm(`Post transfer ${t.transfer_number}? This commits the stock movement and locks it.`)) return;
+    setPostingId(t.id);
+    try {
+      const r = await apiPost(`/transfer/${t.id}/approve`, { approved_by: user?.id || 'system' });
+      if (r.ok) {
+        toast({ title: `Transfer ${t.transfer_number} posted`, description: 'Stock movement committed to the ledger.' });
+        const res = await apiGet('/transfer?limit=500');
+        if (res.ok) setTransfers(res.data);
+      } else {
+        toast({ title: 'Post failed', description: r.error, variant: 'destructive' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Post failed', description: e.message, variant: 'destructive' });
+    }
+    setPostingId(null);
+  };
 
   // Auto-initialize src/dst to first active storage/outlet locations from the API
   const allStorageLocs  = locations.filter((l:any) => l.location_type === 'Storage');
@@ -1332,13 +1355,13 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50 sticky top-0">
             <tr>
-              {['Transfer #','From','To','Ref','Status','Date'].map(h => (
+              {['Transfer #','From','To','Ref','Status','Date','Actions'].map(h => (
                 <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {filteredTransfers.length === 0 && <tr><td colSpan={6} className="text-center py-10 text-gray-400">No transfers found</td></tr>}
+            {filteredTransfers.length === 0 && <tr><td colSpan={7} className="text-center py-10 text-gray-400">No transfers found</td></tr>}
             {transfersPg.pageItems.map((t:any) => (
               <tr key={t.id} className="hover:bg-amber-50 cursor-pointer" onClick={() => setDetailId(t.id)}
                   title="Click to view transfer details">
@@ -1352,6 +1375,19 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
                   </span>
                 </td>
                 <td className="px-3 py-2 text-gray-500 text-xs">{new Date(t.inserted_at).toLocaleDateString()}</td>
+                <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                  {(t.status === 'pending' || t.status === 'draft' || t.status === 'submitted') ? (
+                    <button
+                      disabled={postingId === t.id}
+                      onClick={() => postTransfer(t)}
+                      title="Post this transfer (commit stock movement)"
+                      className="text-xs text-white bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed px-2 py-1 rounded transition-colors">
+                      {postingId === t.id ? 'Posting…' : 'Post'}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
