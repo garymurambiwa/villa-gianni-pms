@@ -518,6 +518,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const [detailLines, setDetailLines] = useState<any[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [postingId, setPostingId] = useState<string | null>(null);
   const [editingGrnId, setEditingGrnId] = useState<string | null>(null); // null = new GRN, non-null = editing draft
   // GRN header fields — these were the missing state variables causing ReferenceError
   const [grnDate, setGrnDate] = useState(new Date().toISOString().split('T')[0]);
@@ -610,6 +611,30 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
       toast({ title: 'Delete failed', description: e.message, variant: 'destructive' });
     }
     setDeletingId(null);
+  };
+
+  // Post a draft GRN: commits it to the stock ledger (draft → posted). This is
+  // the same server action used when a GRN is created+posted in one step, so the
+  // stock receipt and weighted-average cost update happen exactly once. Posted
+  // GRNs become read-only (no further edit).
+  const postGrn = async (g: any) => {
+    if (g.status === 'posted') return;
+    if (!window.confirm(`Post ${g.grn_number}? This commits the stock receipt and locks the GRN.`)) return;
+    setPostingId(g.id);
+    try {
+      const r = await apiPost(`/grn/${g.id}/post`, { posted_by: user?.id || 'system' });
+      if (r.ok) {
+        toast({ title: `GRN ${g.grn_number} posted`, description: 'Stock receipt committed to the ledger.' });
+        const res = await apiGet('/grn?limit=500');
+        if (res.ok) setGrns(res.data);
+        if (detailGrn?.id === g.id) setDetailGrn(prev => prev ? { ...prev, status: 'posted' } : prev);
+      } else {
+        toast({ title: 'Post failed', description: r.error, variant: 'destructive' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Post failed', description: e.message, variant: 'destructive' });
+    }
+    setPostingId(null);
   };
 
   // Edit a saved GRN: load its lines and pre-populate the form.
@@ -838,6 +863,15 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 <td className="px-3 py-2 text-gray-500 text-xs">{new Date(g.inserted_at).toLocaleDateString()}</td>
                 <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center gap-1">
+                    {g.status === 'draft' && (
+                      <button
+                        disabled={postingId === g.id}
+                        onClick={() => postGrn(g)}
+                        title="Post this draft GRN (commit stock receipt)"
+                        className="text-xs text-white bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed px-2 py-1 rounded transition-colors">
+                        {postingId === g.id ? 'Posting…' : 'Post'}
+                      </button>
+                    )}
                     <button
                       onClick={() => editGrn(g)}
                       title={g.status === 'posted' ? 'Posted GRNs are locked' : 'Edit this GRN'}
@@ -877,6 +911,14 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
               {detailGrn.supplier_invoice_number && <span className="ml-2 text-xs text-gray-400">INV# {detailGrn.supplier_invoice_number}</span>}
             </div>
             <div className="flex items-center gap-2">
+              {detailGrn.status === 'draft' && (
+                <button
+                  disabled={postingId === detailGrn.id}
+                  onClick={() => postGrn(detailGrn)}
+                  className="text-xs text-white bg-green-600 hover:bg-green-700 disabled:opacity-40 px-3 py-1 rounded transition-colors">
+                  {postingId === detailGrn.id ? 'Posting…' : 'Post GRN'}
+                </button>
+              )}
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${detailGrn.status==='posted'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>{detailGrn.status}</span>
               <button onClick={() => setDetailGrn(null)} className="text-gray-400 hover:text-gray-700">✕</button>
             </div>
