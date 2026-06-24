@@ -39,15 +39,29 @@ FROM vendor_expenses e
 WHERE COALESCE(e.status,'') <> 'voided' AND COALESCE(e.total_cost,0) > 0
 ON CONFLICT (id) DO NOTHING;
 
--- 2. Debit lines — Expense account by department (mirrors the live mapping)
+-- 2. Debit lines — Expense account by CATEGORY (refined; falls back to
+--    department-level USALI account, then A&G overhead). Mirrors the live path's
+--    category→GL mapping so backfilled and newly-posted expenses agree.
 INSERT INTO gl_journal_lines (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
 SELECT 'GL_'||e.id||'_L1', 'GL_'||e.id,
-  CASE e.department
-    WHEN 'Administrative & General'            THEN '5300'
-    WHEN 'Food & Beverage'                     THEN '5100'
-    WHEN 'Property Operations & Maintenance'   THEN '5500'
-    WHEN 'Rooms'                               THEN '5000'
-    ELSE '5300'  -- Other Operated Departments / unmapped → A&G overhead
+  CASE e.category
+    WHEN 'Cost of Food Sold'      THEN '5100'      -- F&B Cost of Sales (COGS)
+    WHEN 'Kitchen Supplies'       THEN '5297-01'   -- F&B other operating
+    WHEN 'Other F&B Expenses'     THEN '5297-01'
+    WHEN 'Cleaning Supplies'      THEN '5000'      -- Rooms
+    WHEN 'Guest Supplies'         THEN '5000'
+    WHEN 'Laundry & Linen'        THEN '5000'
+    WHEN 'Equipment Maintenance'  THEN '5500'      -- Property Operations & Maintenance
+    WHEN 'Other POM Expenses'     THEN '5500'
+    WHEN 'Other A&G Expenses'     THEN '5300'      -- Administrative & General
+    WHEN 'Professional Fees'      THEN '5300'
+    ELSE CASE e.department                          -- fallback: department-level account
+      WHEN 'Administrative & General'          THEN '5300'
+      WHEN 'Food & Beverage'                   THEN '5100'
+      WHEN 'Property Operations & Maintenance' THEN '5500'
+      WHEN 'Rooms'                             THEN '5000'
+      ELSE '5300'
+    END
   END,
   e.total_cost, 0, COALESCE(e.description,'Vendor expense'), NOW()
 FROM vendor_expenses e

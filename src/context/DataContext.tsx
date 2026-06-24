@@ -2536,10 +2536,24 @@ name = ?, contact_person = ?, phone = ?, email = ?, address = ?, tax_id = ?,
       // POST TO GL LEDGER — bridge vendor expenses into the reporting/P&L engine
       try {
         const accs = gl.getAccounts();
-        // Prefer the explicitly mapped GL account from the expense form;
-        // fall back to the legacy department-name heuristic for old callers.
+        // Category → GL account map (USALI). Keeps the GL posting aligned with the
+        // expense's category when the form didn't set an explicit gl_account_id.
+        const CATEGORY_GL: Record<string, string> = {
+          'Cost of Food Sold': '5100', 'Kitchen Supplies': '5297-01', 'Other F&B Expenses': '5297-01',
+          'Cleaning Supplies': '5000', 'Guest Supplies': '5000', 'Laundry & Linen': '5000',
+          'Equipment Maintenance': '5500', 'Other POM Expenses': '5500',
+          'Other A&G Expenses': '5300', 'Professional Fees': '5300',
+        };
+        const DEPT_GL: Record<string, string> = {
+          'administrative & general': '5300', 'food & beverage': '5100',
+          'property operations & maintenance': '5500', 'rooms': '5000',
+        };
+        // Prefer the explicitly mapped GL account from the expense form; then the
+        // category map; then the department map; then any Expense account.
         const dept = String(expenseData.department || '').toLowerCase();
         const expAccId = expenseData.gl_account_id
+          || CATEGORY_GL[String(expenseData.category || '')]
+          || DEPT_GL[dept]
           || accs.find(a => a.category === 'Expense' && a.name.toLowerCase().includes(dept))?.id
           || accs.find(a => a.category === 'Expense')?.id
           || '5000';
