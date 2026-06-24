@@ -1973,6 +1973,47 @@ router.get('/items-with-balance/:location_id', async (req, res) => {
   }
 });
 
+ /**
+  * GET /api/v1/inventory/stock-sheet/:location_id
+  * Full physical stock-count sheet for a location: every active item with a
+  * non-zero on-hand balance, returning name / sku / category / UOM /
+  * weighted-average cost / total value. Fixes the Stock Sheet Report which
+  * previously hit /balance (only {item_id, current_balance}) and rendered
+  * NaN balances and blank name/cost columns.
+  */
+router.get('/stock-sheet/:location_id', async (req, res) => {
+  const { location_id } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT
+         i.id                                          AS item_id,
+         i.name                                        AS item_name,
+         COALESCE(NULLIF(i.sku, ''), i.short_id, i.id) AS sku,
+         COALESCE(i.category, '')                      AS category,
+         COALESCE(SUM(sl.quantity_change), 0)          AS balance,
+         COALESCE(u.name, u.code, i.base_uom_id, '')   AS uom_symbol,
+         COALESCE(i.weighted_avg_cost, 0)              AS weighted_avg_cost
+       FROM public.inv_items i
+       LEFT JOIN public.inv_stock_ledger sl ON sl.item_id = i.id AND sl.location_id = $1
+       LEFT JOIN public.inv_uom_definitions u ON u.id = i.base_uom_id
+       WHERE i.is_active = true
+       GROUP BY i.id, i.name, i.sku, i.short_id, i.category, u.name, u.code, i.base_uom_id, i.weighted_avg_cost
+       HAVING COALESCE(SUM(sl.quantity_change), 0) <> 0
+       ORDER BY i.name`,
+      [location_id]
+    );
+    const rows = result.rows.map(r => ({
+      ...r,
+      balance: Number(r.balance),
+      weighted_avg_cost: Number(r.weighted_avg_cost),
+      total_value: Number(r.balance) * Number(r.weighted_avg_cost),
+    }));
+    res.json({ ok: true, data: rows });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
 /**
  * GET /api/v1/inventory/ledger
  * Query stock ledger entries

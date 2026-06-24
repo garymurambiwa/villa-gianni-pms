@@ -26,7 +26,7 @@ export const StockSheetReport: React.FC<StockSheetReportProps> = () => {
   const fetchStockSheet = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/v1/inventory/balance/${location}`);
+      const response = await fetch(`/api/v1/inventory/stock-sheet/${location}`);
       const data = await response.json();
 
       if (data.ok && data.data) {
