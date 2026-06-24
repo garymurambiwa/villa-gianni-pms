@@ -2552,6 +2552,8 @@ name = ?, contact_person = ?, phone = ?, email = ?, address = ?, tax_id = ?,
           id: `GL_${expenseId}`.trim(),
           date: expenseData.expense_date || new Date().toISOString().split('T')[0],
           reference: `Vendor Expense: ${expenseData.description || ''}`.slice(0, 100),
+          // Carry the poster so the GL entry records WHO posted it (created_by/posted_by)
+          attachments: { userId: expenseData.created_by || expenseData.posted_by || expenseData.user_id },
           lines: [
             // Double-entry (USALI): Dr Expense account  /  Cr Accounts Payable
             { accountId: expAccId, description: expenseData.description || 'Vendor expense', debit: totalCost, credit: 0 },

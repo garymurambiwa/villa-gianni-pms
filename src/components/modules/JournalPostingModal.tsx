@@ -55,7 +55,7 @@ const JournalPostingModal: React.FC<JournalPostingModalProps> = ({ open, onOpenC
     }
   };
 
-  const post = () => {
+  const post = async () => {
     setStatus('');
     // Validation: balanced, valid accounts, positive numbers
     const glLines = lines.map(l => ({ accountId: l.accountId.trim(), description: l.description || reference, debit: Number(l.debit || 0), credit: Number(l.credit || 0) }));
@@ -66,12 +66,22 @@ const JournalPostingModal: React.FC<JournalPostingModalProps> = ({ open, onOpenC
     if (nonPositive) { setStatus('Amounts must be non-negative.'); return; }
 
     try {
-      const entry = { id: `GLJE_${date}_${Date.now()}`, date, lines: glLines, reference, attachments: { reconciliationKey: 'corepms_reconciliation_last' } } as any;
+      const entry = { id: `GLMAN_${date}_${Date.now()}`, date, lines: glLines, reference, attachments: { reconciliationKey: 'corepms_reconciliation_last' } } as any;
       try { const shiftRaw = localStorage.getItem('corepms_activeShift'); const shift = shiftRaw ? JSON.parse(shiftRaw) : null; if (shift?.id) { entry.attachments = { ...(entry.attachments||{}), shiftId: shift.id }; } } catch {}
       try { const backupRaw = localStorage.getItem('corepms_backup_last'); const backup = backupRaw ? JSON.parse(backupRaw) : null; entry.attachments = { ...(entry.attachments||{}), businessDate: date, auditSnapshotKey: backup?.key, userId: user?.id, userName: user?.name }; } catch {}
+      // 1. Fast local cache so the in-browser trial balance / P&L preview reflects it immediately.
       gl.appendLedger(entry);
-      toast({ title: 'Journal posted', description: `Date ${date} • Lines ${glLines.length}` });
-      setStatus('Posted successfully.');
+      // 2. Persist to the DB so the authoritative reports (P&L, Trial Balance, Balance
+      //    Sheet, Daily Journal) update in real time and across devices. Without this the
+      //    entry lived only in this browser's localStorage and never reached the GL.
+      const persisted = await gl.persistJournalEntryToDB(entry, 'manual');
+      if (!persisted.ok) {
+        setStatus(`Saved locally, but DB persist failed: ${persisted.error || 'unknown'}`);
+        toast({ title: 'Posted locally only', description: persisted.error || 'Could not reach the GL server. Reports may not update until retried.', variant: 'destructive' });
+        return;
+      }
+      toast({ title: 'Journal posted', description: `Date ${date} • Lines ${glLines.length} • Synced to GL` });
+      setStatus('Posted and synced to the General Ledger.');
       onOpenChange(false);
     } catch (err) {
       console.error('Journal posting failed', err);
