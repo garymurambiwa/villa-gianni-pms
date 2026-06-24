@@ -31,12 +31,13 @@ const REPORTS = [
   { key: 'by-outlet', name: 'Revenue by Outlet / Cost Centre' },
   { key: 'daily-trend', name: 'Daily Revenue Trend' },
   { key: 'rooms-kpi', name: 'Rooms KPIs (ADR / RevPAR / Occupancy)' },
+  { key: 'journal-daily', name: 'Daily Journal — Summary (by day, who posted)' },
   { key: 'journal-summary', name: 'Journal Postings — Summary (by Category / Dept)' },
   { key: 'journal-detailed', name: 'Journal Postings — Detailed (per transaction)' },
 ];
 
 // Reports that support the Category filter (the GL journal-posting reports).
-const JOURNAL_REPORTS = new Set(['journal-summary', 'journal-detailed']);
+const JOURNAL_REPORTS = new Set(['journal-daily', 'journal-summary', 'journal-detailed']);
 const CATEGORIES = ['all', 'Revenue', 'Expense', 'Asset', 'Liability', 'Equity'];
 
 const last30 = (): Range => {
@@ -246,7 +247,7 @@ export const RevenueAnalysis: React.FC = () => {
         return;
       }
 
-      if (selected === 'journal-summary' || selected === 'journal-detailed') {
+      if (selected === 'journal-daily' || selected === 'journal-summary' || selected === 'journal-detailed') {
         // All posted journal lines in range, optionally filtered by category.
         const res = await fetch(`/api/reports/journals?from=${start}&to=${end}`);
         const d = await res.json();
@@ -256,6 +257,33 @@ export const RevenueAnalysis: React.FC = () => {
 
         const grandDr = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
         const grandCr = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+
+        if (selected === 'journal-daily') {
+          // One row per business date: entry count, who posted, Dr/Cr totals.
+          const byDay = new Map<string, { entries: Set<string>; posters: Set<string>; sources: Set<string>; debit: number; credit: number }>();
+          lines.forEach((l: any) => {
+            const day = l.business_date;
+            const cur = byDay.get(day) || { entries: new Set(), posters: new Set(), sources: new Set(), debit: 0, credit: 0 };
+            cur.entries.add(l.entry_id); cur.posters.add(l.posted_by || 'system'); cur.sources.add(l.source || '—');
+            cur.debit += Number(l.debit || 0); cur.credit += Number(l.credit || 0);
+            byDay.set(day, cur);
+          });
+          const rows = Array.from(byDay.entries())
+            .map(([date, v]) => ({ date, entries: v.entries.size, posted_by: Array.from(v.posters).join(', '), sources: Array.from(v.sources).join(', '), debit: v.debit, credit: v.credit }))
+            .sort((a, b) => (a.date < b.date ? 1 : -1));
+          setData({
+            columns: [
+              { key: 'date', label: 'Business Date', align: 'left' },
+              { key: 'entries', label: 'Entries', align: 'right' },
+              { key: 'sources', label: 'Source(s)', align: 'left' },
+              { key: 'posted_by', label: 'Posted By', align: 'left' },
+              { key: 'debit', label: 'Total Debit', align: 'right', money: true },
+              { key: 'credit', label: 'Total Credit', align: 'right', money: true },
+            ],
+            rows, total: { entries: rows.reduce((s, r) => s + r.entries, 0), debit: grandDr, credit: grandCr }
+          });
+          return;
+        }
 
         if (selected === 'journal-summary') {
           // Group by Category → Department → Account; per-category subtotals + grand total.
@@ -302,6 +330,7 @@ export const RevenueAnalysis: React.FC = () => {
             rows.push({
               date: l.business_date, account: `${l.account_id} · ${l.account_name}`, category: l.account_category,
               department: l.department || 'Undistributed', reference: l.reference || l.entry_id, source: l.source || '—',
+              posted_by: l.posted_by || 'system',
               description: l.line_description || '', debit: Number(l.debit || 0), credit: Number(l.credit || 0),
             });
             catDr += Number(l.debit || 0); catCr += Number(l.credit || 0);
@@ -314,6 +343,7 @@ export const RevenueAnalysis: React.FC = () => {
               { key: 'department', label: 'Department', align: 'left' },
               { key: 'reference', label: 'Reference', align: 'left' },
               { key: 'source', label: 'Source', align: 'left' },
+              { key: 'posted_by', label: 'Posted By', align: 'left' },
               { key: 'description', label: 'Description', align: 'left' },
               { key: 'debit', label: 'Debit', align: 'right', money: true },
               { key: 'credit', label: 'Credit', align: 'right', money: true },
