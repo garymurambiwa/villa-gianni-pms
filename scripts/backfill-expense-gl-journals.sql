@@ -45,6 +45,7 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO gl_journal_lines (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
 SELECT 'GL_'||e.id||'_L1', 'GL_'||e.id,
   CASE e.category
+    -- Villa Gianni category vocabulary
     WHEN 'Cost of Food Sold'      THEN '5100'      -- F&B Cost of Sales (COGS)
     WHEN 'Kitchen Supplies'       THEN '5297-01'   -- F&B other operating
     WHEN 'Other F&B Expenses'     THEN '5297-01'
@@ -55,6 +56,12 @@ SELECT 'GL_'||e.id||'_L1', 'GL_'||e.id,
     WHEN 'Other POM Expenses'     THEN '5500'
     WHEN 'Other A&G Expenses'     THEN '5300'      -- Administrative & General
     WHEN 'Professional Fees'      THEN '5300'
+    -- Baradzanwa category vocabulary (note: its COA has no 5297-01)
+    WHEN 'Cost of Goods Sold'     THEN '5100'
+    WHEN 'Repairs & Maintenance'  THEN '5500'
+    WHEN 'Grounds and Gardens'    THEN '5500'
+    WHEN 'Administrative'         THEN '5300'
+    WHEN 'Supplies'               THEN '5300'
     ELSE CASE e.department                          -- fallback: department-level account
       WHEN 'Administrative & General'          THEN '5300'
       WHEN 'Food & Beverage'                   THEN '5100'
