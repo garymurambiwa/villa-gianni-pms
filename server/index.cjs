@@ -207,6 +207,133 @@ app.get('/api/gl/accounts', async (req, res) => {
   }
 });
 
+// ── GL JOURNAL ENTRIES (ported from api/handler.js for Render/Villa Gianni parity) ──
+// These were missing from index.cjs, so every persistJournalEntryToDB() call from
+// the accounting module (manual JE, vendor expense, night-audit frontend) hit 404
+// on Villa Gianni and silently never wrote a gl_journal_entries row — only the
+// backfilled night-audit entries existed. Porting them closes that lifecycle gap.
+
+// GET /api/gl/journal-entries — entries (with lines) filtered by date/range/source
+app.get('/api/gl/journal-entries', async (req, res) => {
+  try {
+    const { date, from, to, source, limit } = req.query;
+    let sql = `SELECT je.*, COALESCE(json_agg(jl ORDER BY jl.id) FILTER (WHERE jl.id IS NOT NULL),'[]') as lines
+               FROM gl_journal_entries je
+               LEFT JOIN gl_journal_lines jl ON jl.journal_entry_id = je.id
+               WHERE je.status != 'voided'`;
+    const params = [];
+    if (date)   { sql += ` AND je.business_date = $${params.length+1}::date`; params.push(date); }
+    if (from)   { sql += ` AND je.business_date >= $${params.length+1}::date`; params.push(from); }
+    if (to)     { sql += ` AND je.business_date <= $${params.length+1}::date`; params.push(to); }
+    if (source) { sql += ` AND je.source = $${params.length+1}`; params.push(source); }
+    sql += ` GROUP BY je.id ORDER BY je.business_date DESC, je.inserted_at DESC`;
+    if (limit)  { sql += ` LIMIT $${params.length+1}`; params.push(parseInt(limit)); }
+    const r = await db.query(sql, params);
+    res.json(r);
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// POST /api/gl/journal-entries — create/upsert a balanced journal entry + lines
+app.post('/api/gl/journal-entries', async (req, res) => {
+  const { id, date, business_date, reference, source, description, lines, created_by } = req.body || {};
+  const entryDate = business_date || date;
+  if (!entryDate || !Array.isArray(lines) || lines.length === 0)
+    return res.json({ ok: false, error: 'business_date and lines[] required' });
+
+  const sumDebit  = lines.reduce((s, l) => s + Number(l.debit  || 0), 0);
+  const sumCredit = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+  if (Math.abs(sumDebit - sumCredit) > 0.005)
+    return res.json({ ok: false, error: `Journal not balanced: debits $${sumDebit.toFixed(2)} ≠ credits $${sumCredit.toFixed(2)}` });
+
+  try {
+    const entryId = id || `GLJE_${entryDate}_${Date.now().toString(36)}`;
+    const src = source || 'manual';
+    const ops = [
+      {
+        sql: `INSERT INTO gl_journal_entries
+                (id, entry_date, business_date, description, reference, source, status,
+                 total_debit, total_credit, is_balanced, created_by, posted_by, posted_at, inserted_at)
+              VALUES ($1, $2::date, $2::date, $3, $4, $5, 'posted', $6, $7, true, $8, $8, NOW(), NOW())
+              ON CONFLICT (id) DO UPDATE SET
+                description=EXCLUDED.description, reference=EXCLUDED.reference,
+                total_debit=EXCLUDED.total_debit, total_credit=EXCLUDED.total_credit,
+                updated_at=NOW()
+              RETURNING id`,
+        params: [entryId, entryDate, description || reference || `Journal ${entryDate}`,
+                 reference || null, src, sumDebit, sumCredit, created_by || 'system']
+      },
+      { sql: `DELETE FROM gl_journal_lines WHERE journal_entry_id=$1`, params: [entryId] },
+      ...lines.map((l, i) => ({
+        sql: `INSERT INTO gl_journal_lines (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
+              VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+        params: [`${entryId}_L${i+1}`, entryId, l.accountId || l.gl_account_id,
+                 Number(l.debit||0), Number(l.credit||0), l.description || null]
+      }))
+    ];
+    const txResult = await db.transaction(ops);
+    if (!txResult.ok) throw new Error(txResult.error || 'Transaction failed');
+    res.json({ ok: true, id: entryId, date: entryDate, totalDebit: sumDebit, totalCredit: sumCredit });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// GET /api/gl/journal-entries/pl — P&L summary from DB journal lines
+app.get('/api/gl/journal-entries/pl', async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.json({ ok: false, error: 'from and to dates required' });
+  try {
+    const result = await db.query(
+      `SELECT a.category, a.name as account_name, jl.gl_account_id,
+              COALESCE(SUM(jl.debit_amount),0)  as total_debit,
+              COALESCE(SUM(jl.credit_amount),0) as total_credit,
+              COALESCE(SUM(jl.credit_amount),0) - COALESCE(SUM(jl.debit_amount),0) as net_balance
+       FROM gl_journal_lines jl
+       JOIN gl_journal_entries je ON je.id = jl.journal_entry_id
+       LEFT JOIN gl_accounts   a  ON a.id  = jl.gl_account_id
+       WHERE je.business_date >= $1::date AND je.business_date <= $2::date AND je.status = 'posted'
+       GROUP BY a.category, a.name, jl.gl_account_id ORDER BY a.category, a.name`,
+      [from, to]
+    );
+    const rows = result.rows || [];
+    const revenue = rows.filter(r => r.category === 'Revenue').reduce((s, r) => s + Number(r.net_balance||0), 0);
+    const expense = rows.filter(r => r.category === 'Expense').reduce((s, r) => s + Number(r.total_debit||0) - Number(r.total_credit||0), 0);
+    res.json({ ok: true, from, to, lines: rows, revenue: Number(revenue.toFixed(2)), expense: Number(expense.toFixed(2)), netIncome: Number((revenue - expense).toFixed(2)) });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// GET /api/gl/daily-journal-report?date=YYYY-MM-DD — daily journal + night-audit snapshot
+app.get('/api/gl/daily-journal-report', async (req, res) => {
+  const { date } = req.query;
+  if (!date) return res.json({ ok: false, error: 'date required' });
+  try {
+    const [journalRes, auditRes] = await Promise.all([
+      db.query(
+        `SELECT je.id, je.business_date, je.description, je.reference, je.source,
+                je.total_debit, je.total_credit, je.status, je.posted_at,
+                COALESCE(je.posted_by, je.created_by, 'system') AS posted_by,
+                COALESCE(json_agg(jl ORDER BY jl.id) FILTER (WHERE jl.id IS NOT NULL),'[]') as lines
+         FROM gl_journal_entries je
+         LEFT JOIN gl_journal_lines jl ON jl.journal_entry_id = je.id
+         WHERE je.business_date = $1::date AND je.status='posted'
+         GROUP BY je.id ORDER BY je.inserted_at DESC`,
+        [date]
+      ),
+      db.query(
+        `SELECT business_date, room_revenue, total_revenue, occupancy_percent, adr, revpar,
+                rooms_posted, reports_snapshot, status
+         FROM night_audit_runs WHERE business_date::date = $1::date LIMIT 1`,
+        [date]
+      )
+    ]);
+    res.json({
+      ok: true, date,
+      journalEntries: journalRes.rows || [],
+      nightAudit: auditRes.rows?.[0] || null,
+      totalDebit:  (journalRes.rows || []).reduce((s, e) => s + Number(e.total_debit||0), 0),
+      totalCredit: (journalRes.rows || []).reduce((s, e) => s + Number(e.total_credit||0), 0),
+    });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // POST /api/gl/accounts
 app.post('/api/gl/accounts', async (req, res) => {
   const { id, account_number, name, category } = req.body;
@@ -1346,6 +1473,8 @@ app.get('/api/reports/journals', async (req, res) => {
                je.reference     AS reference,
                je.source        AS source,
                je.description   AS entry_description,
+               COALESCE(je.posted_by, je.created_by, 'system') AS posted_by,
+               COALESCE(je.posted_at, je.inserted_at)::text    AS posted_at,
                jl.line_number   AS line_number,
                jl.gl_account_id AS account_id,
                COALESCE(a.name, jl.gl_account_id) AS account_name,
@@ -1368,7 +1497,7 @@ app.get('/api/reports/journals', async (req, res) => {
             business_date: r.business_date, entry_id: r.entry_id, reference: r.reference,
             source: r.source, entry_description: r.entry_description, line_number: r.line_number,
             account_id: r.account_id, account_name: r.account_name, account_category: r.account_category,
-            department: r.department,
+            department: r.department, posted_by: r.posted_by, posted_at: r.posted_at,
             line_description: r.line_description, debit: Number(r.debit), credit: Number(r.credit)
         }));
         const totalDebit = rows.reduce((s, r) => s + r.debit, 0);

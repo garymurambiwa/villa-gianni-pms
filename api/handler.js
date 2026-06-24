@@ -1617,6 +1617,8 @@ app.get('/api/reports/journals', async (req, res) => {
          je.reference     AS reference,
          je.source        AS source,
          je.description   AS entry_description,
+         COALESCE(je.posted_by, je.created_by, 'system') AS posted_by,
+         COALESCE(je.posted_at, je.inserted_at)::text    AS posted_at,
          jl.line_number   AS line_number,
          jl.gl_account_id AS account_id,
          COALESCE(a.name, jl.gl_account_id) AS account_name,
@@ -1639,7 +1641,7 @@ app.get('/api/reports/journals', async (req, res) => {
       business_date: r.business_date, entry_id: r.entry_id, reference: r.reference,
       source: r.source, entry_description: r.entry_description, line_number: r.line_number,
       account_id: r.account_id, account_name: r.account_name, account_category: r.account_category,
-      department: r.department,
+      department: r.department, posted_by: r.posted_by, posted_at: r.posted_at,
       line_description: r.line_description, debit: Number(r.debit), credit: Number(r.credit)
     }));
     const totalDebit = rows.reduce((s, r) => s + r.debit, 0);
