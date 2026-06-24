@@ -466,10 +466,13 @@ function writeReports(date, data) {
 
   const hr  = '─'.repeat(60);
   const ts  = new Date().toLocaleString('en-ZW', { timeZone: 'Africa/Harare' });
+  // Property name comes from this deployment's branding config (set per-property),
+  // so Baradzanwa prints "BARADZANWA CULTURAL VILLAGE", not a hardcoded "VILLA GIANNI".
+  const brand = String(data.propertyName || 'Property Management System').toUpperCase();
 
   // ── Front Office Report ────────────────────────────────────────────────────
   let fo = `${'═'.repeat(60)}\n`;
-  fo += `  VILLA GIANNI  –  FRONT OFFICE NIGHT AUDIT REPORT\n`;
+  fo += `  ${brand}  –  FRONT OFFICE NIGHT AUDIT REPORT\n`;
   fo += `  Business Date : ${date}\n`;
   fo += `  Generated     : ${ts}\n`;
   fo += `${'═'.repeat(60)}\n\n`;
@@ -498,7 +501,7 @@ function writeReports(date, data) {
 
   // ── F&B / POS Report ──────────────────────────────────────────────────────
   let fnb = `${'═'.repeat(60)}\n`;
-  fnb += `  VILLA GIANNI  –  FOOD & BEVERAGE NIGHT AUDIT REPORT\n`;
+  fnb += `  ${brand}  –  FOOD & BEVERAGE NIGHT AUDIT REPORT\n`;
   fnb += `  Business Date : ${date}\n`;
   fnb += `  Generated     : ${ts}\n`;
   fnb += `${'═'.repeat(60)}\n\n`;
@@ -517,7 +520,7 @@ function writeReports(date, data) {
 
   // ── Reconciliation Report ─────────────────────────────────────────────────
   let rec = `${'═'.repeat(60)}\n`;
-  rec += `  VILLA GIANNI  –  NIGHT AUDIT RECONCILIATION\n`;
+  rec += `  ${brand}  –  NIGHT AUDIT RECONCILIATION\n`;
   rec += `  Business Date : ${date}\n`;
   rec += `  Generated     : ${ts}\n`;
   rec += `${'═'.repeat(60)}\n\n`;
@@ -695,7 +698,12 @@ async function runNightAudit(triggeredBy = 'scheduler') {
 
     // ── Step 9: Write reports ───────────────────────────────────────────────
     await updateStep('Writing report files', 94);
+    // Property name from this deployment's branding config (per-property) so the
+    // report header is correct on every property, not a hardcoded "VILLA GIANNI".
+    let propertyName = await getSystemConfig('hotel_name', 'Property Management System');
+    if (typeof propertyName === 'string') propertyName = propertyName.replace(/^"|"$/g, '');
     const reportDir = writeReports(businessDate, {
+      propertyName,
       businessDate, nextDate, startedAt,
       roomRevenue:     roomResult.totalRevenue,
       taxRevenue,

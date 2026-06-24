@@ -248,6 +248,12 @@ router.get('/reports/:date/:file', async (req, res) => {
       ? Number(snap.fbRevenue)
       : Number(run.total_revenue) - Number(run.room_revenue);
     const genTime = run.completed_at ? new Date(run.completed_at).toLocaleString() : date;
+    // Property name from this deployment's branding config, so the header reflects
+    // the actual property (e.g. Baradzanwa) rather than a hardcoded "VILLA GIANNI".
+    const brandRow = await db.query(`SELECT value FROM system_configs WHERE key='hotel_name' LIMIT 1`);
+    let brand = (brandRow.ok && brandRow.rows && brandRow.rows[0]) ? brandRow.rows[0].value : 'Property Management System';
+    if (typeof brand === 'string') brand = brand.replace(/^"|"$/g, '');
+    brand = String(brand || 'Property Management System').toUpperCase();
     const div = '════════════════════════════════════════════════════════════';
     const sub = '────────────────────────────────────────────────────────────';
 
@@ -255,7 +261,7 @@ router.get('/reports/:date/:file', async (req, res) => {
 
     if (file === 'front_office_report.txt') {
       content = `${div}
-  VILLA GIANNI  –  FRONT OFFICE NIGHT AUDIT REPORT
+  ${brand}  –  FRONT OFFICE NIGHT AUDIT REPORT
   Business Date : ${date}
   Generated     : ${genTime}
 ${div}
@@ -289,7 +295,7 @@ ${div}`;
 
     } else if (file === 'fnb_report.txt') {
       content = `${div}
-  VILLA GIANNI  –  FOOD & BEVERAGE NIGHT AUDIT REPORT
+  ${brand}  –  FOOD & BEVERAGE NIGHT AUDIT REPORT
   Business Date : ${date}
   Generated     : ${genTime}
 ${div}
@@ -313,7 +319,7 @@ ${div}`;
     } else if (file === 'reconciliation_report.txt') {
       const variance = Number(run.total_revenue || 0) - Number(run.room_revenue || 0) - fbRevenue;
       content = `${div}
-  VILLA GIANNI  –  RECONCILIATION REPORT
+  ${brand}  –  RECONCILIATION REPORT
   Business Date : ${date}
   Generated     : ${genTime}
 ${div}
@@ -578,9 +584,14 @@ router.post('/backfill', async (req, res) => {
     const hr = '─'.repeat(60);
     const dv = '═'.repeat(60);
     const ts = new Date().toLocaleString('en-ZW', { timeZone: 'Africa/Harare' });
+    // Per-property branding (not a hardcoded "VILLA GIANNI") for backfilled reports.
+    const bRow = await db.query(`SELECT value FROM system_configs WHERE key='hotel_name' LIMIT 1`);
+    let brand = (bRow.ok && bRow.rows && bRow.rows[0]) ? bRow.rows[0].value : 'Property Management System';
+    if (typeof brand === 'string') brand = brand.replace(/^"|"$/g, '');
+    brand = String(brand || 'Property Management System').toUpperCase();
 
     // Front Office Report
-    let fo = `${dv}\n  VILLA GIANNI  –  FRONT OFFICE NIGHT AUDIT REPORT\n`;
+    let fo = `${dv}\n  ${brand}  –  FRONT OFFICE NIGHT AUDIT REPORT\n`;
     fo += `  Business Date : ${date}  [BACKFILLED]\n  Generated     : ${ts}\n${dv}\n\n`;
     fo += `ROOM OCCUPANCY\n${hr}\n  Occupied Rooms : ${occupiedRooms}\n  Available Rooms: ${totalRooms}\n  Occupancy %    : ${occupancyPct.toFixed(1)}%\n\n`;
     fo += `ROOM REVENUE\n${hr}\n  Room Revenue   : $${roomRevenue.toFixed(2)}\n  Tax Revenue    : $${taxRevenue.toFixed(2)}\n  ADR            : $${adr.toFixed(2)}\n  RevPAR         : $${revpar.toFixed(2)}\n\n`;
@@ -590,14 +601,14 @@ router.post('/backfill', async (req, res) => {
     fs.writeFileSync(path.join(dir, 'front_office_report.txt'), fo);
 
     // F&B Report
-    let fnb = `${dv}\n  VILLA GIANNI  –  FOOD & BEVERAGE NIGHT AUDIT REPORT\n`;
+    let fnb = `${dv}\n  ${brand}  –  FOOD & BEVERAGE NIGHT AUDIT REPORT\n`;
     fnb += `  Business Date : ${date}  [BACKFILLED]\n  Generated     : ${ts}\n${dv}\n\n`;
     fnb += `POS REVENUE\n${hr}\n  POS / F&B Revenue : $${posRevenue.toFixed(2)}\n\n`;
     fnb += `${dv}\n  END OF F&B REPORT (BACKFILLED)\n${dv}\n`;
     fs.writeFileSync(path.join(dir, 'fnb_report.txt'), fnb);
 
     // Reconciliation Report
-    let rec = `${dv}\n  VILLA GIANNI  –  NIGHT AUDIT RECONCILIATION\n`;
+    let rec = `${dv}\n  ${brand}  –  NIGHT AUDIT RECONCILIATION\n`;
     rec += `  Business Date : ${date}  [BACKFILLED]\n  Generated     : ${ts}\n${dv}\n\n`;
     rec += `REVENUE SUMMARY\n${hr}\n  Room Revenue : $${roomRevenue.toFixed(2)}\n  Tax Revenue  : $${taxRevenue.toFixed(2)}\n  F&B Revenue  : $${posRevenue.toFixed(2)}\n  ${hr}\n  TOTAL        : $${totalRevenue.toFixed(2)}\n\n`;
     rec += `NOTE: This audit was backfilled on ${new Date().toISOString()}.\nOriginal audit was not run on ${date}. Data reconstructed from reservation records.\n`;

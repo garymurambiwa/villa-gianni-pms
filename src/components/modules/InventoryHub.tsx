@@ -3,6 +3,7 @@
  * Tabs: Items · Suppliers · GRN · Transfer · Recipes · Reports
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { getHotelName } from '@/lib/brand';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
@@ -2711,7 +2712,7 @@ const TransferDetailModal: React.FC<{
   }, [id]);
   React.useEffect(() => { load(); }, [load]);
 
-  const hotelName = (import.meta as any).env?.VITE_HOTEL_NAME || 'Villa Gianni';
+  const hotelName = getHotelName();
 
   const printGTN = () => {
     if (!transfer) return;
