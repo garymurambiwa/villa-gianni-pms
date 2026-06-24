@@ -50,7 +50,8 @@ deploy_app() {
 
   log "$label: ${local_sha:0:8} -> ${remote_sha:0:8} — deploying"
   git reset --hard origin/main
-  npm ci --omit=dev
+  # full install: the build needs devDependencies (vite); --omit=dev breaks build
+  npm ci
   npm run build
   # --update-env so any new env vars are picked up; restart is zero-config
   pm2 restart "$pm2name" --update-env || pm2 start npm --name "$pm2name" -- start

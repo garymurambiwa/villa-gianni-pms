@@ -37,8 +37,10 @@ if (-not (Test-Path $KeyPath)) {
 function Deploy-App {
   param([string] $Dir, [string] $Pm2Name, [string] $Label)
   Write-Host "`n=== Deploying $Label ===" -ForegroundColor Cyan
-  # pull -> install prod deps -> build -> restart pm2 (so the change goes live)
-  $remote = "cd $Dir && git pull origin main && npm ci --omit=dev && npm run build && pm2 restart $Pm2Name --update-env && echo DEPLOY_OK"
+  # pull -> install ALL deps (build tools like vite are devDependencies) ->
+  # build -> restart pm2 (so the change goes live). Using --omit=dev here breaks
+  # the build with "vite: not found".
+  $remote = "cd $Dir && git pull origin main && npm ci && npm run build && pm2 restart $Pm2Name --update-env && echo DEPLOY_OK"
   ssh -i $KeyPath -o StrictHostKeyChecking=no $Server $remote
   if ($LASTEXITCODE -ne 0) { Write-Host "$Label deploy FAILED (exit $LASTEXITCODE)" -ForegroundColor Red; exit 1 }
   Write-Host "$Label deployed." -ForegroundColor Green
