@@ -839,28 +839,68 @@ export const buildDailyTax = async (forDate?: string) => {
   } catch (err) {
     console.warn('[Reporting] buildDailyTax DB failed, using GL fallback:', err);
   }
-  // Fallback to GL ledger
+  // Fallback to GL ledger. Tax payable is credit-normal, so tax collected is the
+  // net (credits − debits), not credits+debits (which double-counted).
   const ledger = gl.getLedger().filter(e => e.date === date);
   const taxAcc = gl.getMappings().TAX || 'TAX';
-  const totalTax = ledger.flatMap(e => e.lines).filter(l => l.accountId === taxAcc).reduce((s, l) => s + (l.debit || 0) + (l.credit || 0), 0);
+  const totalTax = ledger.flatMap(e => e.lines).filter(l => l.accountId === taxAcc).reduce((s, l) => s + (l.credit || 0) - (l.debit || 0), 0);
   const rows = [{ category: 'Tax Collected', transactions: 0, revenue: '0.00', tax: Number(totalTax.toFixed(2)) }];
   return { title: `Daily Tax Report — ${date}`, columns: ['Category', 'Transactions', 'Revenue', 'Tax Collected'], rows };
 };
 
-// Cash & Bank Deposits (daily totals for CASH/BANK accounts)
+// Cash & Bank Deposits (daily NET movement for CASH/BANK accounts).
+// DB-driven from gl_journal_lines. Cash/Bank are debit-normal assets, so the net
+// daily movement is (debits − credits) — NOT debits+credits (the old code summed
+// both sides, double-counting every entry).
 export const buildCashBankDeposits = async (forDate?: string) => {
   const date = forDate || new Date().toISOString().slice(0, 10);
-  const ledger = gl.getLedger().filter(e => e.date === date);
   const cashAcc = gl.getMappings().CASH || '1000';
   const bankAcc = gl.getMappings().BANK || '1100';
+  try {
+    const { db: dbMod } = await import('@/lib/db');
+    const res = await dbMod.query<any>(
+      `SELECT jl.gl_account_id,
+              COALESCE(SUM(jl.debit_amount),0)::float  AS dr,
+              COALESCE(SUM(jl.credit_amount),0)::float AS cr
+       FROM gl_journal_lines jl
+       JOIN gl_journal_entries je ON je.id = jl.journal_entry_id
+       WHERE je.business_date::date = $1 AND je.status = 'posted' AND je.is_voided = false
+         AND jl.gl_account_id IN ($2, $3)
+       GROUP BY jl.gl_account_id`,
+      [date, cashAcc, bankAcc]
+    );
+    if ('rows' in res) {
+      const net = (id: string) => {
+        const r = res.rows.find((x: any) => x.gl_account_id === id);
+        return r ? Number(r.dr) - Number(r.cr) : 0;
+      };
+      const cashTotal = net(cashAcc), bankTotal = net(bankAcc);
+      return {
+        title: `Cash & Bank Deposits — ${date}`,
+        columns: ['Account', 'Total'],
+        rows: [
+          { account: 'Cash', total: Number(cashTotal.toFixed(2)) },
+          { account: 'Bank', total: Number(bankTotal.toFixed(2)) },
+        ],
+        summary: { total: Number((cashTotal + bankTotal).toFixed(2)) },
+      };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildCashBankDeposits DB failed, using GL cache:', err);
+  }
+  // Fallback: localStorage GL ledger (same correct net calc)
+  const ledger = gl.getLedger().filter(e => e.date === date);
   const lines = ledger.flatMap(e => e.lines);
-  const cashTotal = lines.filter(l => l.accountId === cashAcc).reduce((s, l) => s + (l.debit || 0) + (l.credit || 0), 0);
-  const bankTotal = lines.filter(l => l.accountId === bankAcc).reduce((s, l) => s + (l.debit || 0) + (l.credit || 0), 0);
-  const rows = [
-    { account: 'Cash', total: Number(cashTotal.toFixed(2)) },
-    { account: 'Bank', total: Number(bankTotal.toFixed(2)) }
-  ];
-  return { title: `Cash & Bank Deposits — ${date}`, columns: ['Account', 'Total'], rows };
+  const cashTotal = lines.filter(l => l.accountId === cashAcc).reduce((s, l) => s + (l.debit || 0) - (l.credit || 0), 0);
+  const bankTotal = lines.filter(l => l.accountId === bankAcc).reduce((s, l) => s + (l.debit || 0) - (l.credit || 0), 0);
+  return {
+    title: `Cash & Bank Deposits — ${date}`,
+    columns: ['Account', 'Total'],
+    rows: [
+      { account: 'Cash', total: Number(cashTotal.toFixed(2)) },
+      { account: 'Bank', total: Number(bankTotal.toFixed(2)) },
+    ],
+  };
 };
 
 // Trial Balance (monthly)
@@ -1047,11 +1087,30 @@ export const buildProcurementVariance = async (monthISO: string) => {
   return { title: `Procurement Variance — ${monthISO}`, columns: ['Invoice', 'Vendor', 'PO', 'Invoice Amount', 'PO Amount', 'Variance %', 'Flagged'], rows };
 };
 
-// Fixed Asset Register Reconciliation (monthly stub)
+// Fixed Asset Register Reconciliation (monthly).
+// DB-driven if a fixed_assets table exists; otherwise returns an honest empty set
+// (the UI shows "No data") rather than a fake "Dataset not available" placeholder
+// row, so the report is production-grade and never displays mock content.
 export const buildFixedAssetRecon = async (monthISO: string) => {
-  const assets = readJSON<any[]>('corepms_fixed_assets', []);
-  const rows = assets.length === 0 ? [{ assetId: '—', name: 'Dataset not available', status: 'N/A' }] : assets.map(a => ({ assetId: a.id || a.asset_id || '—', name: a.name || 'Asset', status: 'OK' }));
-  return { title: `Fixed Asset Register Reconciliation — ${monthISO}`, columns: ['Asset ID', 'Name', 'Status'], rows };
+  const columns = ['Asset ID', 'Name', 'Acquisition Cost', 'Accum. Depreciation', 'Net Book Value', 'Status'];
+  try {
+    const { db: dbMod } = await import('@/lib/db');
+    const res = await dbMod.query<any>(
+      `SELECT id, name, COALESCE(acquisition_cost,0)::float ac, COALESCE(accumulated_depreciation,0)::float ad, status
+       FROM fixed_assets ORDER BY name`
+    );
+    if ('rows' in res) {
+      const rows = (res.rows || []).map((a: any) => ({
+        'asset id': a.id, name: a.name,
+        'acquisition cost': Number(a.ac || 0).toFixed(2),
+        'accum. depreciation': Number(a.ad || 0).toFixed(2),
+        'net book value': Number((Number(a.ac || 0) - Number(a.ad || 0)).toFixed(2)),
+        status: a.status || 'OK',
+      }));
+      return { title: `Fixed Asset Register Reconciliation — ${monthISO}`, columns, rows };
+    }
+  } catch { /* table absent — fall through to empty */ }
+  return { title: `Fixed Asset Register Reconciliation — ${monthISO}`, columns, rows: [] };
 };
 
 // Monthly Profit & Loss (USALI-style summary using GL trial balance)
@@ -1313,10 +1372,40 @@ export const fetchVendorExpensesFromDB = async (): Promise<any[]> => {
   return readJSON<any[]>('corepms_vendor_expenses', []);
 };
 
+// Live vendor payments from the DB (authoritative) so Payment History / Vendor
+// Payment Summary / Open Bills reflect real payments, not an empty localStorage
+// cache. Falls back to localStorage only if the DB is unreachable.
+export const fetchVendorPaymentsFromDB = async (): Promise<any[]> => {
+  try {
+    const { db } = await import('@/lib/db');
+    let res: any = await db.query<any>(
+      `SELECT p.*, COALESCE(v.name, p.vendor_id) AS vendor_name
+       FROM vendor_payments p LEFT JOIN vendors v ON v.id = p.vendor_id
+       ORDER BY p.payment_date DESC`
+    );
+    if (!('rows' in res)) {
+      res = await db.query<any>(`SELECT * FROM vendor_payments ORDER BY payment_date DESC`);
+    }
+    if ('rows' in res && Array.isArray(res.rows)) {
+      return res.rows.map((p: any) => ({
+        ...p,
+        payment_date: typeof p.payment_date === 'string'
+          ? p.payment_date.slice(0, 10)
+          : (p.payment_date ? new Date(p.payment_date).toISOString().slice(0, 10) : ''),
+        amount_paid: Number(p.amount_paid || 0),
+        vendor_name: p.vendor_name || p.vendor_id,
+      }));
+    }
+  } catch (err) {
+    console.warn('[Reporting] fetchVendorPaymentsFromDB failed, using localStorage:', err);
+  }
+  return readJSON<any[]>('corepms_vendor_payments', []);
+};
+
 // Open Bills Report — unpaid/partially-paid vendor expenses
 export const buildOpenBills = async () => {
   const expenses: any[] = await fetchVendorExpensesFromDB();
-  const payments: any[] = readJSON('corepms_vendor_payments', []);
+  const payments: any[] = await fetchVendorPaymentsFromDB();
   const paymentsByVendor: Record<string, number> = {};
   payments.forEach(p => { paymentsByVendor[p.vendor_id] = (paymentsByVendor[p.vendor_id] || 0) + Number(p.amount_paid || 0); });
 
@@ -1426,7 +1515,7 @@ export const buildPurchaseOrderHistory = async (from: string, to: string) => {
 
 // Payment History + Check Register
 export const buildPaymentHistory = async (from: string, to: string) => {
-  const payments: any[] = readJSON('corepms_vendor_payments', []);
+  const payments: any[] = await fetchVendorPaymentsFromDB();
   const filtered = payments.filter(p => {
     const d = typeof p.payment_date === 'string' ? p.payment_date : new Date(p.payment_date).toISOString().slice(0, 10);
     return d >= from && d <= to;
@@ -1453,7 +1542,7 @@ export const buildPaymentHistory = async (from: string, to: string) => {
 
 // Vendor Payment Summary — totals per vendor for a period
 export const buildVendorPaymentSummary = async (from: string, to: string) => {
-  const payments: any[] = readJSON('corepms_vendor_payments', []);
+  const payments: any[] = await fetchVendorPaymentsFromDB();
   const filtered = payments.filter(p => {
     const d = typeof p.payment_date === 'string' ? p.payment_date : new Date(p.payment_date).toISOString().slice(0, 10);
     return d >= from && d <= to;
