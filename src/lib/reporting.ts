@@ -1279,9 +1279,43 @@ export const buildInventoryCOGS = async (monthISO: string) => {
 // VENDOR REPORTING SUITE
 // ============================================================================
 
+// Live vendor expenses from the DB (authoritative) so the vendor reports are not
+// empty on browsers without a localStorage cache and reflect every device's data.
+// Falls back to the localStorage cache only if the DB is unreachable. Returns the
+// real expense `id` on each row so reports can drill down to the source document.
+export const fetchVendorExpensesFromDB = async (): Promise<any[]> => {
+  try {
+    const { db } = await import('@/lib/db');
+    let res: any = await db.query<any>(
+      `SELECT e.*, COALESCE(v.name, e.vendor_id) AS vendor_name
+       FROM vendor_expenses e LEFT JOIN vendors v ON v.id = e.vendor_id
+       WHERE COALESCE(e.status,'') <> 'voided' ORDER BY e.expense_date DESC`
+    );
+    if (!('rows' in res)) {
+      // vendors join failed (table absent) — retry without it
+      res = await db.query<any>(
+        `SELECT * FROM vendor_expenses WHERE COALESCE(status,'') <> 'voided' ORDER BY expense_date DESC`
+      );
+    }
+    if ('rows' in res && Array.isArray(res.rows)) {
+      return res.rows.map((e: any) => ({
+        ...e,
+        expense_date: typeof e.expense_date === 'string'
+          ? e.expense_date.slice(0, 10)
+          : (e.expense_date ? new Date(e.expense_date).toISOString().slice(0, 10) : ''),
+        total_cost: Number(e.total_cost || 0),
+        vendor_name: e.vendor_name || e.vendor_id,
+      }));
+    }
+  } catch (err) {
+    console.warn('[Reporting] fetchVendorExpensesFromDB failed, using localStorage:', err);
+  }
+  return readJSON<any[]>('corepms_vendor_expenses', []);
+};
+
 // Open Bills Report — unpaid/partially-paid vendor expenses
 export const buildOpenBills = async () => {
-  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const expenses: any[] = await fetchVendorExpensesFromDB();
   const payments: any[] = readJSON('corepms_vendor_payments', []);
   const paymentsByVendor: Record<string, number> = {};
   payments.forEach(p => { paymentsByVendor[p.vendor_id] = (paymentsByVendor[p.vendor_id] || 0) + Number(p.amount_paid || 0); });
@@ -1317,7 +1351,7 @@ export const buildOpenBills = async () => {
 
 // Aged Payables Summary — aging buckets: Current, 1-30, 31-60, 61-90, 90+
 export const buildAgedPayables = async (asOfISO: string = new Date().toISOString().slice(0, 10)) => {
-  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const expenses: any[] = await fetchVendorExpensesFromDB();
   const asOf = new Date(asOfISO);
   const diffDays = (d: string) => Math.floor((asOf.getTime() - new Date(d).getTime()) / 86400000);
 
@@ -1362,7 +1396,7 @@ export const buildAgedPayables = async (asOfISO: string = new Date().toISOString
 
 // Purchase Order History (uses expense records as purchase proxies)
 export const buildPurchaseOrderHistory = async (from: string, to: string) => {
-  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const expenses: any[] = await fetchVendorExpensesFromDB();
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to)
     .sort((a, b) => b.expense_date.localeCompare(a.expense_date));
 
@@ -1452,7 +1486,7 @@ export const buildVendorPaymentSummary = async (from: string, to: string) => {
 
 // Expenses by Department / Date Range
 export const buildExpensesByDepartment = async (from: string, to: string) => {
-  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const expenses: any[] = await fetchVendorExpensesFromDB();
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to);
 
   const byDept: Record<string, { total: number; count: number; categories: Record<string, number> }> = {};
@@ -1496,7 +1530,7 @@ export const buildExpensesByDepartment = async (from: string, to: string) => {
 
 // Daily / Monthly Expense Summaries
 export const buildExpenseSummary = async (period: 'daily' | 'monthly', from: string, to: string) => {
-  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const expenses: any[] = await fetchVendorExpensesFromDB();
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to);
 
   const byPeriod: Record<string, { total: number; count: number }> = {};
@@ -1527,7 +1561,7 @@ export const buildExpenseSummary = async (period: 'daily' | 'monthly', from: str
 
 // Detailed Line-Item Export — every expense row with all fields
 export const buildDetailedLineItemExport = async (from: string, to: string) => {
-  const expenses: any[] = readJSON('corepms_vendor_expenses', []);
+  const expenses: any[] = await fetchVendorExpensesFromDB();
   const filtered = expenses.filter(e => e.expense_date >= from && e.expense_date <= to)
     .sort((a, b) => a.expense_date.localeCompare(b.expense_date));
 

@@ -11,6 +11,9 @@ const ReportingDashboard: React.FC = () => {
   const [reportType, setReportType] = React.useState<ReportType>('flash');
   const [dailyDate, setDailyDate] = React.useState<string>(new Date().toISOString().slice(0, 10));
   const [month, setMonth] = React.useState<string>(new Date().toISOString().slice(0, 7));
+  // From/To range for the vendor reports (default: start of current month → today)
+  const [fromDate, setFromDate] = React.useState<string>(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10));
+  const [toDate, setToDate] = React.useState<string>(new Date().toISOString().slice(0, 10));
   const [threshold, setThreshold] = React.useState<number>(() => { try { const v = localStorage.getItem('corepms_high_balance_threshold'); return v ? Number(v) : 500; } catch { return 500; } });
   const [dataset, setDataset] = React.useState<{ title: string; columns: string[]; rows: any[] }>({ title: '', columns: [], rows: [] });
   const { user } = useAuth();
@@ -64,19 +67,19 @@ const ReportingDashboard: React.FC = () => {
       case 'high-balance': data = await buildHighBalance(threshold, dailyDate); break;
       case 'proc-variance': data = await buildProcurementVariance(month); break;
       case 'fa-recon': data = await buildFixedAssetRecon(month); break;
-      // Vendor reports
+      // Vendor reports — all driven by the From/To date range
       case 'open-bills': data = await buildOpenBills(); break;
-      case 'aged-payables': data = await buildAgedPayables(dailyDate); break;
-      case 'po-history': data = await buildPurchaseOrderHistory(month + '-01', month + '-31'); break;
-      case 'payment-history': data = await buildPaymentHistory(month + '-01', month + '-31'); break;
-      case 'vendor-payment-summary': data = await buildVendorPaymentSummary(month + '-01', month + '-31'); break;
-      case 'expenses-by-dept': data = await buildExpensesByDepartment(month + '-01', month + '-31'); break;
-      case 'expense-summary-daily': data = await buildExpenseSummary('daily', month + '-01', month + '-31'); break;
-      case 'expense-summary-monthly': { const yr = month.slice(0, 4); data = await buildExpenseSummary('monthly', yr + '-01-01', yr + '-12-31'); break; }
-      case 'line-item-export': data = await buildDetailedLineItemExport(month + '-01', month + '-31'); break;
+      case 'aged-payables': data = await buildAgedPayables(toDate); break;
+      case 'po-history': data = await buildPurchaseOrderHistory(fromDate, toDate); break;
+      case 'payment-history': data = await buildPaymentHistory(fromDate, toDate); break;
+      case 'vendor-payment-summary': data = await buildVendorPaymentSummary(fromDate, toDate); break;
+      case 'expenses-by-dept': data = await buildExpensesByDepartment(fromDate, toDate); break;
+      case 'expense-summary-daily': data = await buildExpenseSummary('daily', fromDate, toDate); break;
+      case 'expense-summary-monthly': data = await buildExpenseSummary('monthly', fromDate, toDate); break;
+      case 'line-item-export': data = await buildDetailedLineItemExport(fromDate, toDate); break;
     }
     if (data) setDataset(data);
-  }, [reportType, dailyDate, month, threshold]);
+  }, [reportType, dailyDate, month, threshold, fromDate, toDate]);
 
   React.useEffect(() => { load(); }, [load]);
 
@@ -174,6 +177,16 @@ const ReportingDashboard: React.FC = () => {
           <div className="flex items-center gap-2">
             <label className="text-xs">Threshold</label>
             <Input type="number" value={threshold} onChange={(e) => { const v = Number(e.target.value || 0); setThreshold(v); try { localStorage.setItem('corepms_high_balance_threshold', String(v)); } catch { } }} />
+          </div>
+        )}
+        {['open-bills','aged-payables','po-history','payment-history','vendor-payment-summary','expenses-by-dept','expense-summary-daily','expense-summary-monthly','line-item-export'].includes(reportType) && (
+          <div className="flex items-center gap-2">
+            <label className="text-xs">{reportType === 'aged-payables' ? 'As Of' : 'From'}</label>
+            {reportType !== 'aged-payables' && (
+              <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-40" />
+            )}
+            {reportType !== 'aged-payables' && <label className="text-xs">To</label>}
+            <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-40" />
           </div>
         )}
         <div className="ml-auto flex items-center gap-2">
