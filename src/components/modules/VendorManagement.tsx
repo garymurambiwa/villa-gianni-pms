@@ -110,6 +110,22 @@ const VendorManagement: React.FC = () => {
     glExpenseAccounts.find(a => a.name === categoryName)?.id || '';
 
   const [activeTab, setActiveTab] = useState('vendors');
+  const [focusExpenseId, setFocusExpenseId] = useState<string>('');
+
+  // Drill-down landing: a vendor report can stash an expense id and navigate here.
+  // Open the Expenses tab and highlight the source document so it can be viewed,
+  // edited, credited or deleted.
+  useEffect(() => {
+    try {
+      const focus = localStorage.getItem('corepms_focus_expense');
+      if (focus) {
+        setActiveTab('expenses');
+        setFocusExpenseId(focus);
+        localStorage.removeItem('corepms_focus_expense');
+      }
+    } catch { /* noop */ }
+  }, []);
+
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
   const [showAddExpenseModal, setShowAddExpenseModal] = useState(false);
   const [showBatchExpenseModal, setShowBatchExpenseModal] = useState(false);
@@ -1558,7 +1574,9 @@ const VendorManagement: React.FC = () => {
 
                           return (
                             <React.Fragment key={expense.id}>
-                              <TableRow>
+                              <TableRow
+                                ref={(el) => { if (el && focusExpenseId && expense.id === focusExpenseId) el.scrollIntoView({ block: 'center' }); }}
+                                className={focusExpenseId && expense.id === focusExpenseId ? 'ring-2 ring-inset ring-indigo-400 bg-indigo-50' : ''}>
                                 <TableCell title={expense.id}>{expense.id.slice(0, 8)}...</TableCell>
                                 <TableCell>{expense.vendor_name}</TableCell>
                                 <TableCell>

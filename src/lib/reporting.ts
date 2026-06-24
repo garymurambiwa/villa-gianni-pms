@@ -1338,6 +1338,8 @@ export const buildOpenBills = async () => {
     outstanding: b.outstanding.toFixed(2),
     department: b.department,
     status: b.status,
+    _sourceId: b.id,
+    _sourceType: 'expense',
   }));
 
   const totalOutstanding = openBills.reduce((s, b) => s + b.outstanding, 0);
@@ -1579,6 +1581,8 @@ export const buildDetailedLineItemExport = async (from: string, to: string) => {
     taxAmount: Number(e.tax_amount || 0).toFixed(2),
     total: Number(e.total_cost || 0).toFixed(2),
     status: e.status,
+    _sourceId: e.id,          // real expense id → drill down to the source document
+    _sourceType: 'expense',
   }));
 
   const grandTotal = filtered.reduce((s, e) => s + Number(e.total_cost || 0), 0);

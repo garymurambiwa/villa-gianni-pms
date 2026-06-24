@@ -211,15 +211,28 @@ const ReportingDashboard: React.FC = () => {
             {dataset.rows.length === 0 && (
               <tr><td className="p-4 text-gray-500 text-center" colSpan={dataset.columns.length || 1}>No data for the selected period.</td></tr>
             )}
-            {dataset.rows.map((r, idx) => (
-              <tr key={idx}>
-                {dataset.columns.map(c => (
-                  <td key={c} className={(c.toLowerCase().includes('date') || c.toLowerCase().includes('id')) ? 'hide-on-mobile' : ''}>
-                    {String((r as any)[c.toLowerCase()] ?? (r as any)[c] ?? '')}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {dataset.rows.map((r, idx) => {
+              const srcId = (r as any)._sourceId;
+              const openSource = () => {
+                if (!srcId) return;
+                // Drill down to the editable source document (Vendor Management →
+                // Expenses), where the row can be viewed, edited, credited or deleted.
+                try { localStorage.setItem('corepms_focus_expense', String(srcId)); } catch { /* noop */ }
+                window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'vendor-management' } }));
+              };
+              return (
+                <tr key={idx}
+                    onClick={srcId ? openSource : undefined}
+                    className={srcId ? 'cursor-pointer hover:bg-indigo-50' : ''}
+                    title={srcId ? 'Open source document (view / edit / delete)' : undefined}>
+                  {dataset.columns.map(c => (
+                    <td key={c} className={(c.toLowerCase().includes('date') || c.toLowerCase().includes('id')) ? 'hide-on-mobile' : ''}>
+                      {srcId && c === dataset.columns[0] ? '🔎 ' : ''}{String((r as any)[c.toLowerCase()] ?? (r as any)[c] ?? '')}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
