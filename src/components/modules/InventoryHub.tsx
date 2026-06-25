@@ -2935,7 +2935,6 @@ const StockTake: React.FC = () => {
   const [lines, setLines] = React.useState<any[]>([]);
   const [generating, setGenerating] = React.useState(false);
   const [locking, setLocking] = React.useState(false);
-  const [adjustModal, setAdjustModal] = React.useState<any>(null);
   const [error, setError] = React.useState('');
 
   React.useEffect(() => {
@@ -3001,7 +3000,14 @@ const StockTake: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ physical_qty: qty }),
       }).then(r => r.json());
-      if (r.ok) setLines(prev => prev.map(l => l.id === lineId ? { ...l, ...r.line } : l));
+      if (r.ok) setLines(prev => prev.map(l => {
+        if (l.id !== lineId) return l;
+        const merged = { ...l, ...r.line };
+        // Recompute variance immediately so it shows as counts are entered, not only after lock.
+        const expected = Number(merged.opening_qty) + Number(merged.purchases_qty) + Number(merged.transfers_in_qty)
+          - Number(merged.transfers_out_qty) - Number(merged.theoretical_sales_qty) - Number(merged.adjustments_qty);
+        return { ...merged, variance_qty: merged.physical_qty != null ? Number(merged.physical_qty) - expected : null };
+      }));
       else setError(r.error || 'Save failed');
     } catch (_e) {
       setError('Network error');
@@ -3048,10 +3054,6 @@ const StockTake: React.FC = () => {
     }
   };
 
-  const handleAdjust = async (qty: number, reason: string) => {
-    if (!adjustModal || !sheet) return;
-    try {
-      const r = await fetch(`/api/v1/inventory/stock-take/${sheet.id}/adjust`, {
   const locked = sheet?.status === 'locked';
   const unfilledCount = lines.filter(l => l.physical_qty == null).length;
 
@@ -3158,11 +3160,9 @@ const StockTake: React.FC = () => {
                         />
                       )}
                     </td>
-                    {locked && (
-                      <td className={`text-right px-3 py-2 ${varColor}`}>
-                        {v != null ? Number(v).toFixed(2) : '—'}
-                      </td>
-                    )}
+                    <td className={`text-right px-3 py-2 ${varColor}`}>
+                      {v != null ? Number(v).toFixed(2) : '—'}
+                    </td>
                   </tr>
                 );
               })}
@@ -3185,13 +3185,6 @@ const StockTake: React.FC = () => {
         </div>
       )}
 
-      {adjustModal && (
-        <AdjustModal
-          itemName={adjustModal.item_name}
-          onSubmit={handleAdjust}
-          onClose={() => setAdjustModal(null)}
-        />
-      )}
     </div>
   );
 };
