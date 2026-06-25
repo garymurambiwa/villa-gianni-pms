@@ -2624,7 +2624,7 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 <button onClick={() => downloadCSV(
                   `movement-${mvLocation}-${mvFrom}-${mvTo}.csv`,
                   visibleMvRows,
-                  ['id','sku','date','item_name','category','cost_price','ledger_type','reference_number','quantity_change','uom','running_balance','posted_by']
+                  ['id','sku','date','item_name','category','cost_price','avg_cost','ledger_type','reference_number','quantity_change','uom','running_balance','posted_by']
                 )} className="px-4 py-1.5 border rounded text-sm font-medium text-gray-600 hover:bg-gray-50">
                   ⬇ Export CSV
                 </button>
@@ -2641,6 +2641,7 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Item</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Category</th>
                     <th className="px-4 py-2 text-right font-medium text-gray-600">Cost Price</th>
+                    <th className="px-4 py-2 text-right font-medium text-gray-600">Avg Cost</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Type</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Reference</th>
                     <th className="px-4 py-2 text-right font-medium text-gray-600">Qty Change</th>
@@ -2656,6 +2657,7 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
                       <td className="px-4 py-2 font-medium">{row.item_name}</td>
                       <td className="px-4 py-2 text-gray-500">{row.category}</td>
                       <td className="px-4 py-2 text-right font-mono">${Number(row.cost_price || 0).toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-gray-500">${Number(row.avg_cost || 0).toFixed(2)}</td>
                       <td className="px-4 py-2">
                         <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${
                           row.ledger_type?.includes('OUT') || row.ledger_type?.includes('ADJ')
