@@ -1120,8 +1120,7 @@ router.post('/grn/:id/post', async (req, res) => {
       await client.query(
         `INSERT INTO public.inv_stock_ledger
          (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, cost_per_unit, total_cost, posted_by, gl_account_code, inserted_at)
-         VALUES ($1,$2,$3,'GRN',$4,$5,$6,$7,$8,$9,'INVENTORY_ASSET',NOW())
-         ON CONFLICT ON CONSTRAINT uq_ledger_transfer_line DO NOTHING`,
+         VALUES ($1,$2,$3,'GRN',$4,$5,$6,$7,$8,$9,'INVENTORY_ASSET',NOW())`,
         [randomUUID(), line.item_id, grn.destination_location_id, grn.grn_number + '-L' + line.line_number,
          newQty, baseUomId, newUnitCost, line.line_total || line.total_cost || (newQty * newUnitCost), posted_by]
       );
@@ -1884,8 +1883,10 @@ router.get('/report/stock-on-hand', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT i.id,
+              i.sku,
               i.name,
               i.category,
+              i.weighted_avg_cost AS cost_price,
               COALESCE(SUM(sl.quantity_change), 0) AS balance,
               i.base_uom_id AS uom
        FROM public.inv_items i
@@ -1893,7 +1894,7 @@ router.get('/report/stock-on-hand', async (req, res) => {
          ON sl.item_id = i.id
          AND sl.location_id = $1
          AND sl.inserted_at <= $2::timestamptz
-       GROUP BY i.id, i.name, i.category, i.base_uom_id
+       GROUP BY i.id, i.sku, i.name, i.category, i.weighted_avg_cost, i.base_uom_id
        ORDER BY i.category, i.name`,
       [location_id, as_of]
     );
@@ -1917,24 +1918,51 @@ router.get('/report/movement', async (req, res) => {
   }
   try {
     const result = await pool.query(
-      `SELECT sl.inserted_at::date AS date,
-              i.name AS item_name,
-              sl.ledger_type,
-              sl.reference_number,
-              sl.quantity_change,
-              sl.base_uom_id AS uom,
-              sl.posted_by,
-              SUM(sl.quantity_change) OVER (
-                PARTITION BY sl.item_id
-                ORDER BY sl.inserted_at
+      `WITH start_balances AS (
+         SELECT item_id, COALESCE(SUM(quantity_change), 0) as start_bal
+         FROM public.inv_stock_ledger
+         WHERE location_id = $1 AND inserted_at < $2::date
+         GROUP BY item_id
+       ),
+       period_movements AS (
+         SELECT sl.inserted_at::date AS date,
+                i.id,
+                i.sku,
+                i.name AS item_name,
+                i.category,
+                i.weighted_avg_cost AS cost_price,
+                sl.item_id,
+                sl.ledger_type,
+                sl.reference_number,
+                sl.quantity_change,
+                sl.base_uom_id AS uom,
+                sl.posted_by,
+                sl.inserted_at
+         FROM public.inv_stock_ledger sl
+         JOIN public.inv_items i ON i.id = sl.item_id
+         WHERE sl.location_id = $1
+           AND sl.inserted_at >= $2::date
+           AND sl.inserted_at < ($3::date + interval '1 day')
+       )
+       SELECT m.date,
+              m.id,
+              m.sku,
+              m.item_name,
+              m.category,
+              m.cost_price,
+              m.ledger_type,
+              m.reference_number,
+              m.quantity_change,
+              m.uom,
+              m.posted_by,
+              COALESCE(sb.start_bal, 0) + SUM(m.quantity_change) OVER (
+                PARTITION BY m.item_id
+                ORDER BY m.inserted_at
                 ROWS UNBOUNDED PRECEDING
               ) AS running_balance
-       FROM public.inv_stock_ledger sl
-       JOIN public.inv_items i ON i.id = sl.item_id
-       WHERE sl.location_id = $1
-         AND sl.inserted_at >= $2::date
-         AND sl.inserted_at < ($3::date + interval '1 day')
-       ORDER BY sl.inserted_at DESC`,
+       FROM period_movements m
+       LEFT JOIN start_balances sb ON m.item_id = sb.item_id
+       ORDER BY m.inserted_at DESC`,
       [location_id, from, to]
     );
     res.json({ ok: true, rows: result.rows, location_id, from, to });
@@ -2189,14 +2217,14 @@ router.post('/variance/generate', async (req, res) => {
           WHEN sl.quantity_change > 0 THEN sl.quantity_change
           ELSE -ABS(sl.quantity_change)
         END) AS theoretical_qty,
-        AVG(NULLIF(sl.cost_per_unit, 0)) AS avg_cost
+        COALESCE(AVG(NULLIF(sl.cost_per_unit, 0)), i.weighted_avg_cost, 0) AS avg_cost
       FROM public.inv_stock_ledger sl
       JOIN public.inv_items i ON i.id = sl.item_id
       LEFT JOIN public.inv_uom_definitions u ON u.id = i.base_uom_id
       WHERE sl.location_id = $1
         AND sl.inserted_at BETWEEN $2::timestamptz AND $3::date + interval '1 day'
         AND i.is_active = true
-      GROUP BY sl.item_id, i.name, i.sku, i.category, i.base_uom_id, u.code
+      GROUP BY sl.item_id, i.name, i.sku, i.category, i.base_uom_id, u.code, i.weighted_avg_cost
       HAVING SUM(ABS(sl.quantity_change)) > 0
     `, [location_id, period_start, period_end]);
 
@@ -2255,12 +2283,12 @@ router.post('/variance/generate', async (req, res) => {
       await client.query(`
         INSERT INTO public.inv_variance_lines
           (id, variance_report_id, item_id,
-           pos_theoretical_qty, physical_count_qty, variance_qty,
-           variance_pct, variance_value, alert_level, base_uom_id, inserted_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
+           theoretical_qty, physical_qty, variance_qty,
+           variance_percentage, variance_value, alert_level, item_cost)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [randomUUID(), reportId, l.item_id,
          l.theoretical, l.physical, l.variance,
-         l.variancePct, l.varianceVal, l.alert, 'uom_unit']
+         l.variancePct, l.varianceVal, l.alert, l.cost]
       );
     }
 

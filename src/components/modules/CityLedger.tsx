@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { printDocument, generateCityLedgerReceiptHTML } from '../../lib/posIntegration';
 import { usePagination } from '@/hooks/usePagination';
 import PaginationBar from '@/components/shared/PaginationBar';
-import { HOTEL_NAME } from '../../lib/brand';
+import { HOTEL_NAME, getHotelName } from '../../lib/brand';
 
 export const CityLedger: React.FC = () => {
   const { 
@@ -168,6 +168,7 @@ export const CityLedger: React.FC = () => {
 
   const printAccount = (account: any) => {
     const aging = computeAging(account);
+    const currentHotelName = getHotelName();
 
     const txRows = (account.transactions || [])
       .slice()
@@ -179,7 +180,7 @@ export const CityLedger: React.FC = () => {
 <html>
 <head>
 <meta charset="utf-8" />
-<title>${HOTEL_NAME} - City Ledger Statement</title>
+<title>${currentHotelName} - City Ledger Statement</title>
 <style>
   body { font-family: Arial, sans-serif; padding: 24px; color: #333; }
   .header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 16px; margin-bottom: 24px; }
@@ -197,7 +198,7 @@ export const CityLedger: React.FC = () => {
 </head>
 <body>
 <div class="header">
-  <div class="logo">${HOTEL_NAME}</div>
+  <div class="logo">${currentHotelName}</div>
   <div class="subtitle">Hospitality Management System</div>
 </div>
 <h1>City Ledger Statement</h1>
@@ -227,7 +228,7 @@ export const CityLedger: React.FC = () => {
   </table>
 </div>
 <div class="footer">
-  ${HOTEL_NAME} | Confidential Business Document | Generated on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}
+  ${currentHotelName} | Confidential Business Document | Generated on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}
 </div>
 <script>window.onload = function(){ window.print(); }</script>
 </body>

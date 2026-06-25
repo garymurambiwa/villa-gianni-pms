@@ -2400,6 +2400,9 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const [mvRows, setMvRows] = React.useState<any[]>([]);
   const [mvLoading, setMvLoading] = React.useState(false);
   const [mvItemFilter, setMvItemFilter] = React.useState('');
+  const [mvCategoryFilter, setMvCategoryFilter] = React.useState('');
+  const [mvQtyFilterOp, setMvQtyFilterOp] = React.useState('');
+  const [mvQtyFilterVal, setMvQtyFilterVal] = React.useState('');
 
   // Drill-down: clicking a stock-on-hand row opens the item's stock card
   // (movement report scoped to that item at the same location).
@@ -2421,9 +2424,18 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
     } finally { setMvLoading(false); }
   };
 
-  const visibleMvRows = mvItemFilter
-    ? mvRows.filter(r => r.item_name === mvItemFilter)
-    : mvRows;
+  const visibleMvRows = mvRows.filter(r => {
+    if (mvItemFilter && r.item_name !== mvItemFilter) return false;
+    if (mvCategoryFilter && r.category !== mvCategoryFilter) return false;
+    if (mvQtyFilterOp && mvQtyFilterVal !== '') {
+      const v = Number(r.quantity_change);
+      const f = Number(mvQtyFilterVal);
+      if (mvQtyFilterOp === '>' && !(v > f)) return false;
+      if (mvQtyFilterOp === '<' && !(v < f)) return false;
+      if (mvQtyFilterOp === '=' && !(v === f)) return false;
+    }
+    return true;
+  });
 
   const runStockOnHand = async () => {
     if (!ohLocation) { toast({ title: 'Select a location', variant: 'destructive' }); return; }
@@ -2495,13 +2507,18 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
               {ohLoading ? 'Running…' : 'Run Report'}
             </button>
             {ohRows.length > 0 && (
-              <button onClick={() => downloadCSV(
-                `stock-onhand-${ohLocation}-${ohAsOf}.csv`,
-                ohRows,
-                ['id','name','category','balance','uom']
-              )} className="px-4 py-1.5 border rounded text-sm font-medium text-gray-600 hover:bg-gray-50">
-                ⬇ Export CSV
-              </button>
+              <div className="flex gap-2">
+                <button onClick={() => window.print()} className="px-4 py-1.5 border rounded text-sm font-medium text-gray-600 hover:bg-gray-50">
+                  🖨 Print
+                </button>
+                <button onClick={() => downloadCSV(
+                  `stock-onhand-${ohLocation}-${ohAsOf}.csv`,
+                  ohRows,
+                  ['id','sku','name','category','cost_price','balance','uom']
+                )} className="px-4 py-1.5 border rounded text-sm font-medium text-gray-600 hover:bg-gray-50">
+                  ⬇ Export CSV
+                </button>
+              </div>
             )}
           </div>
           {ohRows.length > 0 && (
@@ -2509,8 +2526,10 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50 border-b">
                   <tr>
+                    <th className="px-4 py-2 text-left font-medium text-gray-600">SKU</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Item</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Category</th>
+                    <th className="px-4 py-2 text-right font-medium text-gray-600">Cost Price</th>
                     <th className="px-4 py-2 text-right font-medium text-gray-600">Balance</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">UOM</th>
                   </tr>
@@ -2520,9 +2539,11 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
                     <tr key={row.id} onClick={() => drillToMovement(row)}
                       title="Click to view this item's stock card (movement history)"
                       className={`border-b cursor-pointer hover:bg-indigo-50 ${Number(row.balance) === 0 ? 'text-gray-400' : ''} ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
-                      <td className="px-4 py-2">{row.name}</td>
+                      <td className="px-4 py-2 text-indigo-600 font-medium">{row.sku || '-'}</td>
+                      <td className="px-4 py-2 font-medium">{row.name}</td>
                       <td className="px-4 py-2 text-gray-500">{row.category}</td>
-                      <td className="px-4 py-2 text-right font-mono">{fmtQ(Number(row.balance))}</td>
+                      <td className="px-4 py-2 text-right font-mono">${Number(row.cost_price || 0).toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-gray-800 font-semibold">{fmtQ(Number(row.balance))}</td>
                       <td className="px-4 py-2 text-gray-500">{row.uom}</td>
                     </tr>
                   ))}
@@ -2560,6 +2581,31 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
               <input type="date" value={mvTo} onChange={e => setMvTo(e.target.value)}
                 className="border rounded px-2 py-1.5 text-sm" />
             </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1">Category</label>
+              <select value={mvCategoryFilter} onChange={e => setMvCategoryFilter(e.target.value)}
+                className="border rounded px-2 py-1.5 text-sm min-w-[120px]">
+                <option value="">All</option>
+                {Array.from(new Set(mvRows.map(r => r.category))).filter(Boolean).map((c: any) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-1 items-end">
+              <div>
+                <label className="text-xs font-medium text-gray-600 block mb-1">Qty Change</label>
+                <select value={mvQtyFilterOp} onChange={e => setMvQtyFilterOp(e.target.value)} className="border rounded px-2 py-1.5 text-sm">
+                  <option value="">All</option>
+                  <option value=">">&gt;</option>
+                  <option value="<">&lt;</option>
+                  <option value="=">=</option>
+                </select>
+              </div>
+              {mvQtyFilterOp && (
+                <input type="number" value={mvQtyFilterVal} onChange={e => setMvQtyFilterVal(e.target.value)}
+                  className="border rounded px-2 py-1.5 text-sm w-20" placeholder="Val" />
+              )}
+            </div>
             <button onClick={runMovement} disabled={mvLoading}
               className="px-4 py-1.5 bg-indigo-600 text-white rounded text-sm font-medium disabled:opacity-50">
               {mvLoading ? 'Running…' : 'Run Report'}
@@ -2571,13 +2617,18 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
               </span>
             )}
             {mvRows.length > 0 && (
-              <button onClick={() => downloadCSV(
-                `movement-${mvLocation}-${mvFrom}-${mvTo}.csv`,
-                mvRows,
-                ['date','item_name','ledger_type','reference_number','quantity_change','uom','running_balance','posted_by']
-              )} className="px-4 py-1.5 border rounded text-sm font-medium text-gray-600 hover:bg-gray-50">
-                ⬇ Export CSV
-              </button>
+              <div className="flex gap-2">
+                <button onClick={() => window.print()} className="px-4 py-1.5 border rounded text-sm font-medium text-gray-600 hover:bg-gray-50">
+                  🖨 Print
+                </button>
+                <button onClick={() => downloadCSV(
+                  `movement-${mvLocation}-${mvFrom}-${mvTo}.csv`,
+                  visibleMvRows,
+                  ['id','sku','date','item_name','category','cost_price','ledger_type','reference_number','quantity_change','uom','running_balance','posted_by']
+                )} className="px-4 py-1.5 border rounded text-sm font-medium text-gray-600 hover:bg-gray-50">
+                  ⬇ Export CSV
+                </button>
+              </div>
             )}
           </div>
           {mvRows.length > 0 && (
@@ -2586,7 +2637,10 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 <thead className="bg-gray-50 border-b">
                   <tr>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Date</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-600">SKU</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Item</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-600">Category</th>
+                    <th className="px-4 py-2 text-right font-medium text-gray-600">Cost Price</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Type</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Reference</th>
                     <th className="px-4 py-2 text-right font-medium text-gray-600">Qty Change</th>
@@ -2598,7 +2652,10 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
                   {visibleMvRows.map((row, i) => (
                     <tr key={i} className={`border-b ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
                       <td className="px-4 py-2 text-gray-500">{row.date}</td>
-                      <td className="px-4 py-2">{row.item_name}</td>
+                      <td className="px-4 py-2 text-indigo-600 font-medium">{row.sku || '-'}</td>
+                      <td className="px-4 py-2 font-medium">{row.item_name}</td>
+                      <td className="px-4 py-2 text-gray-500">{row.category}</td>
+                      <td className="px-4 py-2 text-right font-mono">${Number(row.cost_price || 0).toFixed(2)}</td>
                       <td className="px-4 py-2">
                         <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${
                           row.ledger_type?.includes('OUT') || row.ledger_type?.includes('ADJ')
@@ -2610,7 +2667,7 @@ function StockReports({ data }: { data: ReturnType<typeof useInventoryData> }) {
                       <td className={`px-4 py-2 text-right font-mono ${Number(row.quantity_change) < 0 ? 'text-red-600' : 'text-green-700'}`}>
                         {Number(row.quantity_change) > 0 ? '+' : ''}{fmtQ(Number(row.quantity_change))}
                       </td>
-                      <td className="px-4 py-2 text-right font-mono text-gray-700">{fmtQ(Number(row.running_balance))}</td>
+                      <td className="px-4 py-2 text-right font-mono text-gray-700 font-semibold">{fmtQ(Number(row.running_balance))}</td>
                       <td className="px-4 py-2 text-gray-500 text-xs">{row.posted_by || '—'}</td>
                     </tr>
                   ))}
@@ -2888,6 +2945,13 @@ const StockTake: React.FC = () => {
       .catch(() => {});
   }, []);
 
+  // Auto-fetch open sheet for current location/period to persist state across tabs
+  React.useEffect(() => {
+    if (locationId && periodStart && periodEnd) {
+      handleGenerate(true);
+    }
+  }, [locationId, period]);
+
   const periodStart = `${period}-01`;
   const periodEnd = (() => {
     const [y, m] = period.split('-').map(Number);
@@ -2905,9 +2969,9 @@ const StockTake: React.FC = () => {
           : null,
     }));
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (silent = false) => {
     if (!locationId) return setError('Select a location first');
-    setGenerating(true);
+    if (!silent) setGenerating(true);
     setError('');
     try {
       const r = await fetch('/api/v1/inventory/stock-take/generate', {
@@ -2915,13 +2979,16 @@ const StockTake: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ location_id: locationId, period_start: periodStart, period_end: periodEnd }),
       }).then(r => r.json());
-      if (!r.ok) return setError(r.error || 'Generate failed');
+      if (!r.ok) {
+        if (!silent) setError(r.error || 'Generate failed');
+        return;
+      }
       setSheet(r.sheet);
       setLines(attachVariance(r.lines));
     } catch (_e) {
-      setError('Network error');
+      if (!silent) setError('Network error');
     } finally {
-      setGenerating(false);
+      if (!silent) setGenerating(false);
     }
   };
 
@@ -2985,21 +3052,6 @@ const StockTake: React.FC = () => {
     if (!adjustModal || !sheet) return;
     try {
       const r = await fetch(`/api/v1/inventory/stock-take/${sheet.id}/adjust`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ item_id: adjustModal.item_id, qty, reason }),
-      }).then(r => r.json());
-      if (r.ok) {
-        setLines(prev => prev.map(l => l.id === r.line.id ? { ...l, ...r.line } : l));
-        setAdjustModal(null);
-      } else {
-        setError(r.error || 'Adjust failed');
-      }
-    } catch (_e) {
-      setError('Network error');
-    }
-  };
-
   const locked = sheet?.status === 'locked';
   const unfilledCount = lines.filter(l => l.physical_qty == null).length;
 
@@ -3029,9 +3081,9 @@ const StockTake: React.FC = () => {
               <button
                 onClick={handleLock}
                 disabled={locking || unfilledCount > 0}
-                title={unfilledCount > 0 ? `${unfilledCount} item(s) still need a count` : 'Lock this period'}
-                className="bg-green-700 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50">
-                {locking ? 'Locking…' : `Lock Period${unfilledCount > 0 ? ` (${unfilledCount} remaining)` : ''}`}
+                title={unfilledCount > 0 ? `${unfilledCount} item(s) still need a count` : 'Reconcile this period'}
+                className={`${unfilledCount === 0 ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'} text-white px-4 py-1.5 rounded text-sm font-medium transition-colors`}>
+                {locking ? 'Reconciling…' : `Reconcile${unfilledCount > 0 ? ` (${unfilledCount} remaining)` : ''}`}
               </button>
             )}
             {locked && isAdmin && (
@@ -3106,18 +3158,11 @@ const StockTake: React.FC = () => {
                         />
                       )}
                     </td>
-                    <td className={`text-right px-3 py-2 ${varColor}`}>
-                      {v != null ? v.toFixed(2) : '—'}
-                    </td>
-                    <td className="px-3 py-2">
-                      {!locked && line.physical_qty != null && (
-                        <button
-                          onClick={() => setAdjustModal(line)}
-                          className="text-xs text-gray-500 border border-gray-200 rounded px-2 py-0.5 hover:bg-gray-100">
-                          Adjust
-                        </button>
-                      )}
-                    </td>
+                    {locked && (
+                      <td className={`text-right px-3 py-2 ${varColor}`}>
+                        {v != null ? Number(v).toFixed(2) : '—'}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -3128,11 +3173,11 @@ const StockTake: React.FC = () => {
           <div className="flex gap-4 px-3 py-2 border-t bg-gray-50 text-xs text-gray-500">
             <span>{lines.length} items</span>
             {unfilledCount > 0 && <span className="text-amber-600">{unfilledCount} not yet counted</span>}
-            {lines.some(l => l.variance_qty != null && l.variance_qty < 0) && (
+            {locked && lines.some(l => l.variance_qty != null && Number(l.variance_qty) < 0) && (
               <span className="ml-auto text-red-600 font-medium">
                 Total shrinkage: {lines
-                  .filter(l => l.variance_qty != null && l.variance_qty < 0)
-                  .reduce((s, l) => s + Math.abs(l.variance_qty) * Number(l.unit_cost), 0)
+                  .filter(l => l.variance_qty != null && Number(l.variance_qty) < 0)
+                  .reduce((s, l) => s + Math.abs(Number(l.variance_qty)) * Number(l.unit_cost), 0)
                   .toFixed(2)}
               </span>
             )}

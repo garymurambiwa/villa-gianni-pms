@@ -263,17 +263,35 @@ export const InventoryV11VarianceReport: React.FC = () => {
           <Card>
             <CardHeader className="flex justify-between items-center">
               <CardTitle>Variance Details</CardTitle>
-              <Button size="sm" variant="outline">
-                <Download className="w-4 h-4 mr-1" />
-                Export PDF
-              </Button>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => window.print()}>
+                  Print
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => {
+                  const rows = report.lines || [];
+                  const columns = ['item_id', 'sku', 'name', 'category', 'pos_theoretical_qty', 'physical_count_qty', 'variance_qty', 'variance_pct', 'variance_value', 'item_cost', 'alert_level'];
+                  const header = columns.join(',');
+                  const body = rows.map((r: any) => columns.map(c => JSON.stringify(r[c] ?? '')).join(',')).join('\n');
+                  const blob = new Blob([header + '\n' + body], { type: 'text/csv' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url; a.download = `variance-${report.report_number}.csv`; a.click();
+                  URL.revokeObjectURL(url);
+                }}>
+                  <Download className="w-4 h-4 mr-1" />
+                  Export CSV
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="border rounded-lg overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b">
                     <tr>
+                      <th className="px-4 py-2 text-left font-medium">SKU</th>
                       <th className="px-4 py-2 text-left font-medium">Item</th>
+                      <th className="px-4 py-2 text-left font-medium">Category</th>
+                      <th className="px-4 py-2 text-right font-medium">Unit Cost</th>
                       <th className="px-4 py-2 text-right font-medium">POS Theoretical</th>
                       <th className="px-4 py-2 text-right font-medium">Physical Count</th>
                       <th className="px-4 py-2 text-right font-medium">Variance Qty</th>
@@ -284,20 +302,23 @@ export const InventoryV11VarianceReport: React.FC = () => {
                   </thead>
                   <tbody>
                      {report.lines.map((line, idx) => (
-                       <tr key={idx} className={`border-b ${getAlertColor(line.alert_level)}`}>
-                         <td className="px-4 py-2">
-                           <div>
-                             <div className="font-medium">{line.name}</div>
-                             <div className="text-xs text-gray-500">{line.item_id}</div>
-                           </div>
-                         </td>
-                         <td className="px-4 py-2 text-right">{Number(line.theoretical_qty || 0).toFixed(2)}</td>
-                         <td className="px-4 py-2 text-right">{Number(line.physical_qty || 0).toFixed(2)}</td>
-                         <td className="px-4 py-2 text-right font-medium">{Number(line.variance_qty || 0).toFixed(2)}</td>
-                         <td className="px-4 py-2 text-right font-medium">{Number(line.variance_percentage || 0).toFixed(2)}%</td>
-                         <td className="px-4 py-2 text-right font-medium">${Number(line.variance_value || 0).toFixed(2)}</td>
-                         <td className="px-4 py-2 text-center">{getAlertIcon(line.alert_level)}</td>
-                       </tr>
+                        <tr key={idx} className={`border-b ${getAlertColor(line.alert_level)}`}>
+                          <td className="px-4 py-2 text-indigo-600 font-medium">{line.sku || '-'}</td>
+                          <td className="px-4 py-2">
+                            <div>
+                              <div className="font-medium">{line.name}</div>
+                              <div className="text-xs text-gray-500">{line.item_id}</div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-gray-500">{line.category || '-'}</td>
+                          <td className="px-4 py-2 text-right font-mono">${Number(line.item_cost || 0).toFixed(2)}</td>
+                          <td className="px-4 py-2 text-right">{Number(line.theoretical_qty || 0).toFixed(2)}</td>
+                          <td className="px-4 py-2 text-right">{Number(line.physical_qty || 0).toFixed(2)}</td>
+                          <td className="px-4 py-2 text-right font-medium">{Number(line.variance_qty || 0).toFixed(2)}</td>
+                          <td className="px-4 py-2 text-right font-medium">{Number(line.variance_percentage || 0).toFixed(2)}%</td>
+                          <td className="px-4 py-2 text-right font-medium">${Number(line.variance_value || 0).toFixed(2)}</td>
+                          <td className="px-4 py-2 text-center">{getAlertIcon(line.alert_level)}</td>
+                        </tr>
                      ))}
                   </tbody>
                 </table>
