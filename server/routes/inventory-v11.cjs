@@ -3567,34 +3567,61 @@ router.post('/stock-take/:sheetId/lock', async (req, res) => {
       netVarianceValue += varianceValue;
 
       if (Math.abs(varianceQty) < 0.0005) continue; // skip zero-variance lines
+      const variancePct = theoreticalQty > 0 ? Math.abs(varianceQty / theoreticalQty) * 100 : 0;
+      const alert = variancePct >= 5 ? 'CRITICAL' : variancePct >= 2 ? 'WARNING' : 'OK';
+      // FIX: use the real inv_variance_lines columns (variance_report_id / item_cost /
+      // variance_percentage / alert_level) — the old report_id/unit_cost names don't
+      // exist and made Reconcile (lock) fail.
       await client.query(
         `INSERT INTO public.inv_variance_lines
-           (id, report_id, item_id, physical_qty, theoretical_qty, variance_qty, unit_cost, variance_value)
-         VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7)`,
-        [reportId, line.item_id, line.physical_qty, theoreticalQty, varianceQty,
-         line.unit_cost, varianceValue]
+           (id, variance_report_id, item_id, theoretical_qty, physical_qty, variance_qty,
+            variance_percentage, variance_value, alert_level, item_cost)
+         VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [reportId, line.item_id, theoreticalQty, line.physical_qty, varianceQty,
+         variancePct, varianceValue, alert, Number(line.unit_cost || 0)]
       );
     }
 
-    // GL pending batch for net variance (skip if immaterial)
+    // ── Post the net variance to the GENERAL LEDGER (real audit trail) ───────
+    // Shrinkage (net loss): Dr 5100 Cost of Sales / Cr 1400 Inventory.
+    // Surplus  (net gain):  Dr 1400 Inventory     / Cr 5100 Cost of Sales.
+    // Posted as a balanced journal entry so it shows in P&L / Trial Balance
+    // immediately. Idempotent on the sheet id (re-lock never double-posts).
+    // A gl_pending_batches row (status POSTED) is kept as the reopen marker.
     let glBatchId = null;
     if (Math.abs(netVarianceValue) > 0.005) {
       const isShrinkage = netVarianceValue < 0;
+      const amount  = Number(Math.abs(netVarianceValue).toFixed(2));
+      const drAcct  = isShrinkage ? '5100' : '1400';
+      const crAcct  = isShrinkage ? '1400' : '5100';
+      const entryId = `GLVAR_${sheet.id}`;
+      const desc    = `Stock Take ${reportNumber} — inventory ${isShrinkage ? 'shrinkage' : 'surplus'}`;
+      const bizDate = sheet.period_end;
+      const entryIns = await client.query(
+        `INSERT INTO public.gl_journal_entries
+           (id, entry_date, business_date, description, reference, source, status,
+            total_debit, total_credit, is_balanced, created_by, posted_by, posted_at, inserted_at)
+         VALUES ($1,$2::date,$2::date,$3,$4,'stock_take','posted',$5,$5,true,$6,$6,NOW(),NOW())
+         ON CONFLICT (id) DO NOTHING RETURNING id`,
+        [entryId, bizDate, desc, reportNumber, amount, locked_by || 'system']
+      );
+      if (entryIns.rows.length) {
+        await client.query(
+          `INSERT INTO public.gl_journal_lines
+             (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
+           VALUES ($1,$2,$3,$4,0,$6,NOW()), ($5,$2,$7,0,$4,$6,NOW())`,
+          [`${entryId}_L1`, entryId, drAcct, amount, `${entryId}_L2`, desc, crAcct]
+        );
+      }
       const glRes = await client.query(
         `INSERT INTO public.gl_pending_batches
-           (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount)
-         VALUES ('inv_stock_take_sheets', $1, $2, $3, $4, $5)
+           (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount, status)
+         VALUES ('inv_stock_take_sheets', $1, $2, $3, $4, $5, 'POSTED')
          ON CONFLICT (origin_table, origin_id) DO NOTHING
          RETURNING id`,
-        [
-          sheet.id,
-          `Stock Take ${reportNumber} — ${isShrinkage ? 'shrinkage' : 'surplus'}`,
-          isShrinkage ? '5100' : '1400',
-          isShrinkage ? '1400' : '5100',
-          Math.abs(netVarianceValue),
-        ]
+        [sheet.id, desc, drAcct, crAcct, amount]
       );
-      glBatchId = glRes.rows[0]?.id || null;
+      glBatchId = glRes.rows[0]?.id || entryId;
     }
 
     // Lock the sheet
@@ -3783,22 +3810,21 @@ router.post('/stock-take/:sheetId/reopen', async (req, res) => {
       return res.status(409).json({ ok: false, error: 'Sheet is not locked' });
     }
 
-    // GL batch created at lock — refuse if already posted to the GL
-    const batchRes = await client.query(
-      `SELECT id, status FROM public.gl_pending_batches
+    // GL entry posted at lock — REVERSE it (void) rather than refuse, so the
+    // period can be reopened while preserving the audit trail. Voiding excludes
+    // it from P&L / Trial Balance (those filter is_voided = false).
+    await client.query(
+      `UPDATE public.gl_journal_entries
+       SET is_voided = true, voided_at = NOW(), voided_by = $2,
+           void_reason = 'Stock take sheet reopened', updated_at = NOW()
+       WHERE id = $1`,
+      [`GLVAR_${sheet.id}`, reopened_by || 'admin']
+    );
+    await client.query(
+      `DELETE FROM public.gl_pending_batches
        WHERE origin_table = 'inv_stock_take_sheets' AND origin_id = $1`,
       [sheet.id]
     );
-    if (batchRes.rows.length && batchRes.rows[0].status === 'POSTED') {
-      await client.query('ROLLBACK');
-      return res.status(409).json({
-        ok: false,
-        error: 'GL batch already posted — reverse the journal first, then reopen',
-      });
-    }
-    if (batchRes.rows.length) {
-      await client.query(`DELETE FROM public.gl_pending_batches WHERE id = $1`, [batchRes.rows[0].id]);
-    }
 
     // Variance report + lines created at lock (matched by location + period)
     const repRes = await client.query(
@@ -3807,7 +3833,7 @@ router.post('/stock-take/:sheetId/reopen', async (req, res) => {
       [sheet.location_id, sheet.period_start, sheet.period_end]
     );
     for (const rep of repRes.rows) {
-      await client.query(`DELETE FROM public.inv_variance_lines WHERE report_id = $1`, [rep.id]);
+      await client.query(`DELETE FROM public.inv_variance_lines WHERE variance_report_id = $1`, [rep.id]);
       await client.query(`DELETE FROM public.inv_variance_reports WHERE id = $1`, [rep.id]);
     }
 
