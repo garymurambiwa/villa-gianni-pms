@@ -2228,16 +2228,37 @@ router.post('/variance/generate', async (req, res) => {
       HAVING SUM(ABS(sl.quantity_change)) > 0
     `, [location_id, period_start, period_end]);
 
-    // ── Physical counts (if a count session was linked) ───────────────────
+    // ── Physical counts ───────────────────────────────────────────────────
+    // Priority: an explicitly-linked count session; otherwise the most recent
+    // LOCKED stock-take sheet for this location overlapping the period. This
+    // unifies the on-demand variance report with the authoritative stock-take
+    // counts — without a real count it would otherwise show zero variance.
     const physicalMap = {};
+    let physicalSource = null;
     if (physical_count_id) {
       const physRes = await client.query(
         `SELECT item_id, physical_qty FROM public.inv_physical_count_lines WHERE count_id=$1`,
         [physical_count_id]
       );
-      for (const row of physRes.rows) {
-        physicalMap[row.item_id] = Number(row.physical_qty);
-      }
+      for (const row of physRes.rows) physicalMap[row.item_id] = Number(row.physical_qty);
+      physicalSource = 'count_session';
+    } else {
+      const stRes = await client.query(
+        `SELECT stl.item_id, stl.physical_qty
+         FROM public.inv_stock_take_lines stl
+         JOIN public.inv_stock_take_sheets sts ON sts.id = stl.sheet_id
+         WHERE sts.location_id = $1 AND sts.status = 'locked'
+           AND stl.physical_qty IS NOT NULL
+           AND sts.period_end >= $2::date AND sts.period_start <= $3::date
+           AND sts.locked_at = (
+             SELECT MAX(s2.locked_at) FROM public.inv_stock_take_sheets s2
+             WHERE s2.location_id = $1 AND s2.status = 'locked'
+               AND s2.period_end >= $2::date AND s2.period_start <= $3::date
+           )`,
+        [location_id, period_start, period_end]
+      ).catch(() => ({ rows: [] }));
+      for (const row of stRes.rows) physicalMap[row.item_id] = Number(row.physical_qty);
+      if (stRes.rows.length) physicalSource = 'stock_take';
     }
 
     // ── Report number — safe: count existing reports + 1 ─────────────────
@@ -2250,8 +2271,9 @@ router.post('/variance/generate', async (req, res) => {
 
     for (const row of theoreticalRes.rows) {
       const theoretical = Math.max(0, Number(row.theoretical_qty || 0));
-      // If no physical count session: use theoretical (zero variance) — report shows gaps
-      const physical    = physical_count_id ? (physicalMap[row.item_id] ?? 0) : theoretical;
+      // Physical from the count/stock-take map; items not counted fall back to
+      // theoretical (zero variance) so they don't show as false shrinkage.
+      const physical    = (row.item_id in physicalMap) ? physicalMap[row.item_id] : theoretical;
       const variance    = physical - theoretical;
       const variancePct = theoretical > 0 ? Math.abs(variance / theoretical) * 100 : 0;
       const cost        = Number(row.avg_cost || 0);
@@ -2305,6 +2327,7 @@ router.post('/variance/generate', async (req, res) => {
         warning_count:  warnCount,
         critical_count: critCount,
         total_items:    lines.length,
+        physical_source: physicalSource,   // 'count_session' | 'stock_take' | null (no real count → zero-variance)
         lines
       }
     });
