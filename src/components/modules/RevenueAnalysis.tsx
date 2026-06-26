@@ -30,6 +30,7 @@ const REPORTS = [
   { key: 'by-payment', name: 'Revenue by Payment Method' },
   { key: 'by-outlet', name: 'Revenue by Outlet / Cost Centre' },
   { key: 'payment-by-dept', name: 'Sales by Payment Method × Department' },
+  { key: 'sales-matrix', name: 'Sales Matrix (Department × Category × Payment Method)' },
   { key: 'daily-trend', name: 'Daily Revenue Trend' },
   { key: 'rooms-kpi', name: 'Rooms KPIs (ADR / RevPAR / Occupancy)' },
   { key: 'journal-daily', name: 'Daily Journal — Summary (by day, who posted)' },
@@ -175,6 +176,45 @@ export const RevenueAnalysis: React.FC = () => {
             { key: 'amount', label: 'Revenue', align: 'right', money: true },
           ],
           rows, total: { orders: sorted.reduce((s, r) => s + r.orders, 0), amount: grand }
+        });
+        return;
+      }
+
+      if (selected === 'sales-matrix') {
+        // Department × Category × Payment Method (category lives in the order items JSONB).
+        const res = await db.query<any>(
+          `SELECT COALESCE(o.cost_center,'Unassigned') dept,
+                  COALESCE(item->'menuItem'->>'category', item->>'category','Uncategorized') category,
+                  COALESCE(o.payment_method,'unknown') pm,
+                  SUM(COALESCE((item->>'quantity')::numeric,1) * COALESCE(NULLIF(item->'menuItem'->>'price','')::numeric, NULLIF(item->>'price','')::numeric, 0))::float amt
+           FROM pos_orders o, jsonb_array_elements(CASE WHEN jsonb_typeof(o.items)='array' THEN o.items ELSE '[]'::jsonb END) item
+           WHERE o.status='closed' AND o.created_at::date >= $1::date AND o.created_at::date <= $2::date
+           GROUP BY 1,2,3 ORDER BY 1,2,4 DESC`,
+          [start, end]
+        );
+        const raw = 'rows' in res ? res.rows : [];
+        const grand = raw.reduce((s: number, r: any) => s + Number(r.amt || 0), 0);
+        const sorted = raw
+          .map((r: any) => ({ dept: r.dept, category: r.category, method: paymentMethodLabel(normalizePaymentMethod(r.pm)), amount: Number(r.amt || 0) }))
+          .sort((a, b) => a.dept.localeCompare(b.dept) || a.category.localeCompare(b.category) || b.amount - a.amount);
+        const rows: any[] = [];
+        let curDept = '', curCat = '', deptAmt = 0, catAmt = 0;
+        const flushCat = () => { if (curCat) rows.push({ __subtotal: true, dept: '', category: `Subtotal — ${curCat}`, method: '', amount: catAmt }); };
+        const flushDept = () => { if (curDept) rows.push({ __subtotal: true, dept: `TOTAL — ${curDept}`, category: '', method: '', amount: deptAmt }); };
+        sorted.forEach(r => {
+          if (r.dept !== curDept) { flushCat(); flushDept(); curDept = r.dept; curCat = ''; deptAmt = 0; }
+          if (r.category !== curCat) { if (curCat) flushCat(); curCat = r.category; catAmt = 0; }
+          rows.push(r); catAmt += r.amount; deptAmt += r.amount;
+        });
+        flushCat(); flushDept();
+        setData({
+          columns: [
+            { key: 'dept', label: 'Department', align: 'left' },
+            { key: 'category', label: 'Category', align: 'left' },
+            { key: 'method', label: 'Payment Method', align: 'left' },
+            { key: 'amount', label: 'Revenue', align: 'right', money: true },
+          ],
+          rows, total: { amount: grand }
         });
         return;
       }
