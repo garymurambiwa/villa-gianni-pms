@@ -304,16 +304,19 @@ export const createDailyJournalFromNightAudit = (businessDate: string, bundle: a
   if (card > 0) lines.push({ accountId: mappings['CARD_CLEARING'] || mappings['CARD'] || '1300', description: 'Card Receipts', debit: card, credit: 0 });
   if (ar > 0) lines.push({ accountId: mappings['CITY_LEDGER'] || '1100', description: 'City Ledger Transfers', debit: ar, credit: 0 });
 
-  // If not balanced due to tax, add balancing line to equity (temporary)
+  // If not balanced, post the difference to a SUSPENSE/CLEARING account — never to
+  // Owner's Equity. Plugging equity overstates capital and hides revenue, corrupting
+  // the balance sheet. A suspense balance correctly flags an unreconciled amount to
+  // investigate (e.g. revenue not captured in the night-audit bundle).
   if (!isBalanced(lines)) {
     const sumDebit = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
     const sumCredit = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
     const diff = Number((sumCredit - sumDebit).toFixed(2));
+    const suspense = mappings['SUSPENSE'] || mappings['CLEARING'] || '9999';
     if (diff > 0) {
-      // Need more debits
-      lines.push({ accountId: '3000', description: 'Balancing Entry', debit: diff, credit: 0 });
+      lines.push({ accountId: suspense, description: 'Unreconciled — Suspense (review)', debit: diff, credit: 0 });
     } else if (diff < 0) {
-      lines.push({ accountId: '3000', description: 'Balancing Entry', debit: 0, credit: Math.abs(diff) });
+      lines.push({ accountId: suspense, description: 'Unreconciled — Suspense (review)', debit: 0, credit: Math.abs(diff) });
     }
   }
 
