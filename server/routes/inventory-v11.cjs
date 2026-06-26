@@ -2994,14 +2994,31 @@ router.get('/stock-summary', async (req, res) => {
  */
 router.post('/sale-depletion', async (req, res) => {
   // Always return 200 — POS must never see inventory errors
-  const { bill_id, shift_id, location_id, items } = req.body;
+  const { bill_id, shift_id, location_id, outlet, items } = req.body;
 
   if (!bill_id || !Array.isArray(items) || items.length === 0) {
     return res.json({ ok: true, skipped: true, reason: 'No items or bill_id' });
   }
 
-  const locId = location_id || 'loc_restaurant';
   const client = await pool.connect();
+
+  // ── Resolve the depletion location from the OUTLET NAME ──────────────────
+  // The POS client sends a hardcoded location guess (e.g. every "*bar*" → loc_bar1),
+  // which depleted the wrong outlet. Resolve by matching the outlet name to an
+  // active inv_locations row so each outlet (Pool bar, Main Bar, …) depletes its
+  // OWN stock. Fall back to the passed location_id, then loc_restaurant.
+  let locId = location_id || 'loc_restaurant';
+  if (outlet) {
+    try {
+      const m = await client.query(
+        `SELECT id FROM public.inv_locations
+         WHERE LOWER(name) = LOWER($1) AND is_active IS DISTINCT FROM false
+         ORDER BY (location_type = 'Outlet') DESC LIMIT 1`,
+        [String(outlet).trim()]
+      );
+      if (m.rows.length) locId = m.rows[0].id;
+    } catch { /* fall back to passed location_id */ }
+  }
 
   try {
     await client.query('BEGIN');
