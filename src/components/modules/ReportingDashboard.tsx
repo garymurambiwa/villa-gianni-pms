@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { printDocument } from '@/lib/posIntegration';
-import { buildFlashReport, buildPosReconciliation, buildPurchaseReceivingLog, buildMonthlyPL, buildAgedAR, buildInventoryCOGS, buildHousekeepingStatus, buildDailyTax, buildCashBankDeposits, buildTrialBalance, buildDepartmentalSummary, buildArrivalsDepartures, buildHighBalance, buildProcurementVariance, buildFixedAssetRecon, buildOpenBills, buildAgedPayables, buildPurchaseOrderHistory, buildPaymentHistory, buildVendorPaymentSummary, buildExpensesByDepartment, buildExpenseSummary, buildDetailedLineItemExport, exportCSV, exportXLS, generateReportHTML, ReportType, exportMonthlyWorkbookXLS } from '@/lib/reporting';
+import { buildFlashReport, buildPosReconciliation, buildPurchaseReceivingLog, buildMonthlyPL, buildAgedAR, buildBalanceSheet, buildInventoryCOGS, buildHousekeepingStatus, buildDailyTax, buildCashBankDeposits, buildTrialBalance, buildDepartmentalSummary, buildArrivalsDepartures, buildHighBalance, buildProcurementVariance, buildFixedAssetRecon, buildOpenBills, buildAgedPayables, buildPurchaseOrderHistory, buildPaymentHistory, buildVendorPaymentSummary, buildExpensesByDepartment, buildExpenseSummary, buildDetailedLineItemExport, exportCSV, exportXLS, generateReportHTML, ReportType, exportMonthlyWorkbookXLS } from '@/lib/reporting';
 import { useAuth } from '@/context/AuthContext';
 import { canViewReport } from '@/lib/permissions';
 
@@ -57,6 +57,7 @@ const ReportingDashboard: React.FC = () => {
       case 'purchase-log': data = await buildPurchaseReceivingLog(dailyDate); break;
       case 'pl': data = await buildMonthlyPL(month); break;
       case 'aged-ar': data = await buildAgedAR(dailyDate); break;
+      case 'balance-sheet': data = await buildBalanceSheet(dailyDate); break;
       case 'inventory-cogs': data = await buildInventoryCOGS(month); break;
       case 'housekeeping': data = await buildHousekeepingStatus(); break;
       case 'daily-tax': data = await buildDailyTax(dailyDate); break;
@@ -109,6 +110,7 @@ const ReportingDashboard: React.FC = () => {
     { key: 'high-balance', label: 'Daily: High Balance' },
     { key: 'pl', label: 'Monthly: Profit & Loss (USALI)' },
     { key: 'aged-ar', label: 'Monthly: Aged Accounts Receivable' },
+    { key: 'balance-sheet', label: 'Monthly: Balance Sheet' },
     { key: 'inventory-cogs', label: 'Monthly: Inventory & COGS' },
     { key: 'trial-balance', label: 'Monthly: Trial Balance' },
     { key: 'dept-summary', label: 'Monthly: Departmental Summary (USALI)' },
@@ -138,7 +140,7 @@ const ReportingDashboard: React.FC = () => {
             {reportOptions.map(o => (<SelectItem key={o.key} value={o.key}>{o.label}</SelectItem>))}
           </SelectContent>
         </Select>
-        {(reportType === 'flash' || reportType === 'pos-recon' || reportType === 'purchase-log' || reportType === 'aged-ar') && (
+        {(reportType === 'flash' || reportType === 'pos-recon' || reportType === 'purchase-log' || reportType === 'aged-ar' || reportType === 'balance-sheet') && (
           <div className="flex items-center gap-2">
             <label className="text-xs">Business Date</label>
             <Input

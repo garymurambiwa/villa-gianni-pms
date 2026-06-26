@@ -300,9 +300,11 @@ export const createDailyJournalFromNightAudit = (businessDate: string, bundle: a
   if (taxEstimate > 0) lines.push({ accountId: mappings['TAX'] || '2000', description: 'Tax Payable', debit: 0, credit: taxEstimate });
 
   // Receipts debits
-  if (cash > 0) lines.push({ accountId: mappings['CASH'] || '1000', description: 'Cash Receipts', debit: cash, credit: 0 });
-  if (card > 0) lines.push({ accountId: mappings['CARD_CLEARING'] || mappings['CARD'] || '1300', description: 'Card Receipts', debit: card, credit: 0 });
-  if (ar > 0) lines.push({ accountId: mappings['CITY_LEDGER'] || '1100', description: 'City Ledger Transfers', debit: ar, credit: 0 });
+  // Defaults aligned to the chart of accounts: Cash on Hand 1000, Card/Bank
+  // Clearing 1100, City Ledger / A/R 1300 (config mappings override these).
+  if (cash > 0) lines.push({ accountId: mappings['CASH'] || '1000', description: 'Cash Receipts → Cash on Hand', debit: cash, credit: 0 });
+  if (card > 0) lines.push({ accountId: mappings['CARD_CLEARING'] || mappings['CARD'] || '1100', description: 'Card Receipts → Card/Bank Clearing', debit: card, credit: 0 });
+  if (ar > 0) lines.push({ accountId: mappings['CITY_LEDGER'] || '1300', description: 'Credit Sales → City Ledger / A/R', debit: ar, credit: 0 });
 
   // If not balanced, post the difference to a SUSPENSE/CLEARING account — never to
   // Owner's Equity. Plugging equity overstates capital and hides revenue, corrupting

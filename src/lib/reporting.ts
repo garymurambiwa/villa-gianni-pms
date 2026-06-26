@@ -1239,6 +1239,34 @@ export const buildJournalPostings = async (from: string, to: string, source?: st
   return { title: `Journal Postings (GL) — ${from} to ${to}`, columns, rows: [] };
 };
 
+// Classified Balance Sheet — Assets = Liabilities + Equity (incl. current earnings)
+export const buildBalanceSheet = async (asOf?: string) => {
+  const date = asOf || getBusinessDate();
+  const columns = ['Section', 'Account', 'Amount'];
+  try {
+    const res = await fetch(`/api/reports/balance-sheet?as_of=${date}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    if (d.ok) {
+      const rows: any[] = [];
+      const section = (label: string, items: any[], total: number) => {
+        rows.push({ Section: label.toUpperCase(), Account: '', Amount: '' });
+        (items || []).forEach((a: any) => rows.push({ Section: '', Account: `${a.id} · ${a.name}`, Amount: Number(a.amount).toFixed(2) }));
+        rows.push({ Section: `TOTAL ${label.toUpperCase()}`, Account: '', Amount: Number(total).toFixed(2) });
+      };
+      section('Assets', d.sections.Asset, d.totals.assets);
+      section('Liabilities', d.sections.Liability, d.totals.liabilities);
+      section('Equity', d.sections.Equity, d.totals.equity);
+      rows.push({ Section: 'LIABILITIES + EQUITY', Account: '', Amount: Number(d.totals.liabilities_plus_equity).toFixed(2) });
+      rows.push({ Section: d.totals.balanced ? '✓ BALANCED (A = L + E)' : '⚠ OUT OF BALANCE', Account: '', Amount: '' });
+      return { title: `Balance Sheet — as of ${date}`, columns, rows };
+    }
+  } catch (err) {
+    console.warn('[Reporting] buildBalanceSheet DB fetch failed:', err);
+  }
+  return { title: `Balance Sheet — as of ${date}`, columns, rows: [] };
+};
+
 // Aged Accounts Receivable (City Ledger Aging)
 export const buildAgedAR = async (asOf?: string) => {
   const date = asOf || getBusinessDate();

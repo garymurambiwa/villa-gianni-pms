@@ -1650,6 +1650,49 @@ app.get('/api/reports/journals', async (req, res) => {
   } catch (e) { safeJson(res, { ok: false, error: e.message }); }
 });
 
+// GET /api/reports/balance-sheet?as_of=YYYY-MM-DD
+// Classified balance sheet (Assets = Liabilities + Equity incl. current earnings).
+app.get('/api/reports/balance-sheet', async (req, res) => {
+  const asOf = req.query.as_of || new Date().toISOString().slice(0, 10);
+  try {
+    const r = await db.query(
+      `SELECT a.id, a.name, a.category,
+              COALESCE(SUM(jl.debit_amount),0)::numeric(14,2)  AS dr,
+              COALESCE(SUM(jl.credit_amount),0)::numeric(14,2) AS cr
+       FROM gl_accounts a
+       LEFT JOIN gl_journal_lines jl ON jl.gl_account_id = a.id
+       LEFT JOIN gl_journal_entries je ON je.id = jl.journal_entry_id
+             AND je.status = 'posted' AND je.is_voided = false
+             AND je.business_date <= $1::date
+       GROUP BY a.id, a.name, a.category`,
+      [asOf]
+    );
+    const rows = r.ok ? r.rows || [] : [];
+    const bal = (x) => Number(x.dr) - Number(x.cr);
+    const sections = { Asset: [], Liability: [], Equity: [] };
+    let revenue = 0, expense = 0;
+    for (const x of rows) {
+      const signed = bal(x);
+      if (x.category === 'Asset' && signed !== 0) sections.Asset.push({ id: x.id, name: x.name, amount: Number(signed.toFixed(2)) });
+      else if (x.category === 'Liability' && signed !== 0) sections.Liability.push({ id: x.id, name: x.name, amount: Number((-signed).toFixed(2)) });
+      else if (x.category === 'Equity' && signed !== 0) sections.Equity.push({ id: x.id, name: x.name, amount: Number((-signed).toFixed(2)) });
+      else if (x.category === 'Revenue') revenue += -signed;
+      else if (x.category === 'Expense') expense += signed;
+    }
+    const currentEarnings = Number((revenue - expense).toFixed(2));
+    if (currentEarnings !== 0) sections.Equity.push({ id: 'CYE', name: 'Current-Year Earnings (net income)', amount: currentEarnings });
+    const totalAssets = Number(sections.Asset.reduce((s, a) => s + a.amount, 0).toFixed(2));
+    const totalLiabilities = Number(sections.Liability.reduce((s, a) => s + a.amount, 0).toFixed(2));
+    const totalEquity = Number(sections.Equity.reduce((s, a) => s + a.amount, 0).toFixed(2));
+    safeJson(res, {
+      ok: true, as_of: asOf, sections,
+      totals: { assets: totalAssets, liabilities: totalLiabilities, equity: totalEquity,
+                liabilities_plus_equity: Number((totalLiabilities + totalEquity).toFixed(2)),
+                balanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01 }
+    });
+  } catch (e) { safeJson(res, { ok: false, error: e.message }); }
+});
+
 // GET /api/reports/aged-ar?as_of=YYYY-MM-DD
 // City ledger aging: returns each outstanding transaction (debit>credit) with its
 // age bucket (0-30/31-60/61-90/90+). The frontend renders one row per transaction.
