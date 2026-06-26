@@ -29,6 +29,7 @@ const REPORTS = [
   { key: 'by-department', name: 'Revenue by Department' },
   { key: 'by-payment', name: 'Revenue by Payment Method' },
   { key: 'by-outlet', name: 'Revenue by Outlet / Cost Centre' },
+  { key: 'payment-by-dept', name: 'Sales by Payment Method × Department' },
   { key: 'daily-trend', name: 'Daily Revenue Trend' },
   { key: 'rooms-kpi', name: 'Rooms KPIs (ADR / RevPAR / Occupancy)' },
   { key: 'journal-daily', name: 'Daily Journal — Summary (by day, who posted)' },
@@ -138,6 +139,42 @@ export const RevenueAnalysis: React.FC = () => {
             { key: 'pct', label: 'Share', align: 'right', pct: true },
           ],
           rows, total: { orders: rows.reduce((s, r) => s + r.orders, 0), amount: grand, pct: 100 }
+        });
+        return;
+      }
+
+      if (selected === 'payment-by-dept') {
+        // Cross-tab: department (cost centre) × payment method, with per-department subtotals.
+        const res = await db.query<any>(
+          `SELECT COALESCE(cost_center, 'Unassigned') AS dept,
+                  COALESCE(payment_method, 'unknown') AS pm,
+                  COALESCE(SUM(total_amount), 0) AS total, COUNT(*) AS orders
+           FROM pos_orders
+           WHERE status = 'closed' AND created_at::date >= $1::date AND created_at::date <= $2::date
+           GROUP BY 1, 2 ORDER BY 1, 3 DESC`,
+          [start, end]
+        );
+        const raw = 'rows' in res ? res.rows : [];
+        const grand = raw.reduce((s: number, r: any) => s + Number(r.total || 0), 0);
+        const sorted = raw
+          .map((r: any) => ({ dept: r.dept, method: paymentMethodLabel(normalizePaymentMethod(r.pm)), orders: Number(r.orders || 0), amount: Number(r.total || 0) }))
+          .sort((a, b) => a.dept.localeCompare(b.dept));
+        const rows: any[] = [];
+        let curDept = ''; let dOrders = 0, dAmt = 0;
+        const flush = () => { if (curDept) rows.push({ __subtotal: true, dept: `Subtotal — ${curDept}`, method: '', orders: dOrders, amount: dAmt }); };
+        sorted.forEach(r => {
+          if (r.dept !== curDept) { flush(); curDept = r.dept; dOrders = 0; dAmt = 0; }
+          rows.push(r); dOrders += r.orders; dAmt += r.amount;
+        });
+        flush();
+        setData({
+          columns: [
+            { key: 'dept', label: 'Department', align: 'left' },
+            { key: 'method', label: 'Payment Method', align: 'left' },
+            { key: 'orders', label: 'Orders', align: 'right' },
+            { key: 'amount', label: 'Revenue', align: 'right', money: true },
+          ],
+          rows, total: { orders: sorted.reduce((s, r) => s + r.orders, 0), amount: grand }
         });
         return;
       }
