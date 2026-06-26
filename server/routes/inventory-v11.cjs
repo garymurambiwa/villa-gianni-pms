@@ -3324,8 +3324,15 @@ router.post('/stock-take/generate', async (req, res) => {
          WHERE stl.sheet_id = $1 ORDER BY i.name`,
         [existing.rows[0].id]
       );
-      await client.query('ROLLBACK');
-      return res.json({ ok: true, sheet: existing.rows[0], lines: existingLines.rows });
+      // Only short-circuit if the draft already has lines (preserves entered counts).
+      // An EMPTY draft means it was generated before stock arrived at this location —
+      // delete it and regenerate so newly-stocked items appear (fixes the disparity
+      // where a transferred-in item didn't show on the stock-take sheet).
+      if (existingLines.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.json({ ok: true, sheet: existing.rows[0], lines: existingLines.rows });
+      }
+      await client.query(`DELETE FROM public.inv_stock_take_sheets WHERE id = $1`, [existing.rows[0].id]);
     }
 
     // Create sheet header
