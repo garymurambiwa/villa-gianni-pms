@@ -4,6 +4,7 @@ const path = require('path');
 
 // Load database module
 const db = require('./db-web.cjs');
+const { normalizeGLSource } = require('./glSource');
 
 // Load environment variables
 try { require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }) } catch { }
@@ -247,7 +248,7 @@ app.post('/api/gl/journal-entries', async (req, res) => {
 
   try {
     const entryId = id || `GLJE_${entryDate}_${Date.now().toString(36)}`;
-    const src = source || 'manual';
+    const src = normalizeGLSource(source);
     const ops = [
       {
         sql: `INSERT INTO gl_journal_entries

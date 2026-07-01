@@ -14,6 +14,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const db = require('../server/db-web.cjs');
+const { normalizeGLSource } = require('../server/glSource');
 
 const app = express();
 app.use(cors({ origin: '*' }));
@@ -169,7 +170,7 @@ app.post('/api/gl/journal-entries', async (req, res) => {
 
   try {
     const entryId = id || `GLJE_${entryDate}_${Date.now().toString(36)}`;
-    const src = source || 'manual';
+    const src = normalizeGLSource(source);
     const ops = [
       {
         sql: `INSERT INTO gl_journal_entries
