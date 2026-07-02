@@ -179,8 +179,12 @@ export const postExpenseToGL = async (id: string, user?: User | null): Promise<{
 
     if (!gl.isBalanced(lines)) return { ok: false, error: 'GL lines not balanced' };
 
-    // Post to GL
-    gl.appendLedger({ id: `GL_EXP_${exp.id}`, date: exp.date, lines, reference: `Expense ${exp.invoiceRef}` });
+    // Stage to GL: local ledger cache + DB gl_journal_* as a DRAFT so the entry
+    // lands in the controller's daily batch for review before it hits reports.
+    const glEntry = { id: `GL_EXP_${exp.id}`, date: exp.date, lines, reference: `Expense ${exp.invoiceRef}` };
+    gl.appendLedger(glEntry);
+    const persist = await gl.persistJournalEntryToDB(glEntry as any, 'expense', 'draft');
+    if (!persist.ok) return { ok: false, error: persist.error || 'GL persist failed' };
 
     // Update DB
     await db.query("UPDATE expenses SET status = 'posted', posted_at = NOW() WHERE id = ?", [id]);

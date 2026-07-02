@@ -236,7 +236,7 @@ app.get('/api/gl/journal-entries', async (req, res) => {
 
 // POST /api/gl/journal-entries — create/upsert a balanced journal entry + lines
 app.post('/api/gl/journal-entries', async (req, res) => {
-  const { id, date, business_date, reference, source, description, lines, created_by } = req.body || {};
+  const { id, date, business_date, reference, source, description, lines, created_by, status } = req.body || {};
   const entryDate = business_date || date;
   if (!entryDate || !Array.isArray(lines) || lines.length === 0)
     return res.json({ ok: false, error: 'business_date and lines[] required' });
@@ -249,19 +249,33 @@ app.post('/api/gl/journal-entries', async (req, res) => {
   try {
     const entryId = id || `GLJE_${entryDate}_${Date.now().toString(36)}`;
     const src = normalizeGLSource(source);
+    // Daily-batch review gate: discretionary journals (manual JEs, vendor expenses,
+    // inventory/stock adjustments) land as 'draft' so the controller can examine and
+    // adjust the accounts, then post the batch. Automated sources (night audit, POS,
+    // folio, etc.) still post directly. An explicit `status` in the body overrides.
+    const DRAFT_SOURCES = ['manual', 'expense', 'adjustment'];
+    const entryStatus = ['draft', 'pending', 'posted'].includes(status)
+      ? status
+      : (DRAFT_SOURCES.includes(src) ? 'draft' : 'posted');
+    const isPosted = entryStatus === 'posted';
     const ops = [
       {
         sql: `INSERT INTO gl_journal_entries
                 (id, entry_date, business_date, description, reference, source, status,
                  total_debit, total_credit, is_balanced, created_by, posted_by, posted_at, inserted_at)
-              VALUES ($1, $2::date, $2::date, $3, $4, $5, 'posted', $6, $7, true, $8, $8, NOW(), NOW())
+              VALUES ($1, $2::date, $2::date, $3, $4, $5, $9, $6, $7, true, $8,
+                      CASE WHEN $9='posted' THEN $8 ELSE NULL END,
+                      CASE WHEN $9='posted' THEN NOW() ELSE NULL END, NOW())
               ON CONFLICT (id) DO UPDATE SET
                 description=EXCLUDED.description, reference=EXCLUDED.reference,
                 total_debit=EXCLUDED.total_debit, total_credit=EXCLUDED.total_credit,
+                status=EXCLUDED.status,
+                posted_by=CASE WHEN EXCLUDED.status='posted' THEN EXCLUDED.posted_by ELSE NULL END,
+                posted_at=CASE WHEN EXCLUDED.status='posted' THEN NOW() ELSE NULL END,
                 updated_at=NOW()
               RETURNING id`,
         params: [entryId, entryDate, description || reference || `Journal ${entryDate}`,
-                 reference || null, src, sumDebit, sumCredit, created_by || 'system']
+                 reference || null, src, sumDebit, sumCredit, created_by || 'system', entryStatus]
       },
       { sql: `DELETE FROM gl_journal_lines WHERE journal_entry_id=$1`, params: [entryId] },
       ...lines.map((l, i) => ({
@@ -273,7 +287,69 @@ app.post('/api/gl/journal-entries', async (req, res) => {
     ];
     const txResult = await db.transaction(ops);
     if (!txResult.ok) throw new Error(txResult.error || 'Transaction failed');
-    res.json({ ok: true, id: entryId, date: entryDate, totalDebit: sumDebit, totalCredit: sumCredit });
+    res.json({ ok: true, id: entryId, date: entryDate, status: entryStatus, totalDebit: sumDebit, totalCredit: sumCredit });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ─── Daily Journal Batch (review-then-post gate) ─────────────────────────────
+// GET /api/gl/daily-batch?date=YYYY-MM-DD — draft/pending entries + lines for review
+app.get('/api/gl/daily-batch', async (req, res) => {
+  const { date } = req.query;
+  if (!date) return res.json({ ok: false, error: 'date required' });
+  try {
+    const r = await db.query(
+      `SELECT je.id, je.business_date, je.description, je.reference, je.source, je.status,
+              je.total_debit, je.total_credit, je.created_by, je.inserted_at,
+              COALESCE(json_agg(json_build_object(
+                 'id', jl.id, 'gl_account_id', jl.gl_account_id,
+                 'account_name', a.name, 'account_category', a.category,
+                 'debit_amount', jl.debit_amount, 'credit_amount', jl.credit_amount,
+                 'description', jl.description
+               ) ORDER BY jl.id) FILTER (WHERE jl.id IS NOT NULL), '[]') AS lines
+       FROM gl_journal_entries je
+       LEFT JOIN gl_journal_lines jl ON jl.journal_entry_id = je.id
+       LEFT JOIN gl_accounts a ON a.id = jl.gl_account_id
+       WHERE je.business_date = $1::date AND je.status IN ('draft','pending')
+       GROUP BY je.id ORDER BY je.inserted_at DESC`,
+      [date]
+    );
+    const rows = r.rows || [];
+    res.json({
+      ok: true, date, entries: rows, count: rows.length,
+      totalDebit:  rows.reduce((s, e) => s + Number(e.total_debit || 0), 0),
+      totalCredit: rows.reduce((s, e) => s + Number(e.total_credit || 0), 0),
+    });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// POST /api/gl/journal-entries/:id/post — post a single draft/pending entry
+app.post('/api/gl/journal-entries/:id/post', async (req, res) => {
+  const { id } = req.params;
+  const { posted_by } = req.body || {};
+  try {
+    const r = await db.query(
+      `UPDATE gl_journal_entries
+         SET status='posted', posted_by=$2, posted_at=NOW(), updated_at=NOW()
+       WHERE id=$1 AND status IN ('draft','pending') RETURNING id`,
+      [id, posted_by || 'system']
+    );
+    if (!r.rows?.length) return res.json({ ok: false, error: 'Entry not found or already posted' });
+    res.json({ ok: true, id });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// POST /api/gl/daily-batch/post — post ALL draft/pending entries for a business date
+app.post('/api/gl/daily-batch/post', async (req, res) => {
+  const { date, posted_by } = req.body || {};
+  if (!date) return res.json({ ok: false, error: 'date required' });
+  try {
+    const r = await db.query(
+      `UPDATE gl_journal_entries
+         SET status='posted', posted_by=$2, posted_at=NOW(), updated_at=NOW()
+       WHERE business_date=$1::date AND status IN ('draft','pending') RETURNING id`,
+      [date, posted_by || 'system']
+    );
+    res.json({ ok: true, posted: r.rows?.length || 0, ids: (r.rows || []).map(x => x.id) });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 

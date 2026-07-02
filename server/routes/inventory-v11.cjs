@@ -3650,7 +3650,7 @@ router.post('/stock-take/:sheetId/lock', async (req, res) => {
         `INSERT INTO public.gl_journal_entries
            (id, entry_date, business_date, description, reference, source, status,
             total_debit, total_credit, is_balanced, created_by, posted_by, posted_at, inserted_at)
-         VALUES ($1,$2::date,$2::date,$3,$4,'adjustment','posted',$5,$5,true,$6,$6,NOW(),NOW())
+         VALUES ($1,$2::date,$2::date,$3,$4,'adjustment','draft',$5,$5,true,$6,NULL,NULL,NOW())
          ON CONFLICT (id) DO NOTHING RETURNING id`,
         [entryId, bizDate, desc, reportNumber, amount, locked_by || 'system']
       );

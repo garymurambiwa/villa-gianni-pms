@@ -367,8 +367,9 @@ export const postDailyJournalFromNightAudit = (businessDate: string, bundle: any
  */
 export const persistJournalEntryToDB = async (
   entry: GLJournalEntry,
-  source: string = 'manual'
-): Promise<{ ok: boolean; error?: string }> => {
+  source: string = 'manual',
+  status?: 'draft' | 'pending' | 'posted'
+): Promise<{ ok: boolean; error?: string; status?: string }> => {
   try {
     const res = await fetch('/api/gl/journal-entries', {
       method: 'POST',
@@ -379,6 +380,7 @@ export const persistJournalEntryToDB = async (
         reference: entry.reference,
         description: entry.reference || `Journal ${entry.date}`,
         source,
+        ...(status ? { status } : {}),
         lines: entry.lines.map(l => ({
           accountId: l.accountId,
           debit: l.debit,
@@ -389,7 +391,7 @@ export const persistJournalEntryToDB = async (
       })
     });
     const data = await res.json();
-    return { ok: data.ok, error: data.error };
+    return { ok: data.ok, error: data.error, status: data.status };
   } catch (e: any) {
     return { ok: false, error: e.message };
   }

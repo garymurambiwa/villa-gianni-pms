@@ -152,7 +152,9 @@ export const GLAccounting: React.FC = () => {
     setReclassBusy(true);
     try {
       gl.appendLedger(entry);
-      const r = await gl.persistJournalEntryToDB(entry, 'adjustment');
+      // Reclassification is a deliberate controller correction — post it directly
+      // (status='posted') rather than routing it into the draft daily batch.
+      const r = await gl.persistJournalEntryToDB(entry, 'adjustment', 'posted');
       if (!r.ok) throw new Error(r.error || 'DB persist failed');
       // Local audit trail (mirrors the CoA edit audit above)
       try {
@@ -1002,11 +1004,188 @@ export const GLAccounting: React.FC = () => {
         </div>
       </div>
 
+      {/* Daily Journal Batch — controller review & post */}
+      <div className="p-4 border rounded">
+        <DailyBatchReview />
+      </div>
+
       {/* Manual Journal Entry */}
       <div className="p-4 border rounded">
         <div className="font-semibold mb-2">Manual Journal Entry</div>
         <ManualJECreator />
       </div>
+    </div>
+  );
+};
+
+// Controller's daily batch: discretionary journals (manual, expense, inventory)
+// land here as DRAFT. The controller reviews the accounts, reallocates any line to
+// a different GL account (edited in place while still draft), then posts entries
+// individually or the whole day at once. Only posted entries flow into reports.
+const DailyBatchReview: React.FC = () => {
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [entries, setEntries] = useState<any[]>([]);
+  const [totals, setTotals] = useState<{ totalDebit: number; totalCredit: number }>({ totalDebit: 0, totalCredit: 0 });
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  // pending account changes: { [entryId]: { [lineId]: newAccountId } }
+  const [lineEdits, setLineEdits] = useState<Record<string, Record<string, string>>>({});
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const accounts = gl.getAccounts();
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/gl/daily-batch?date=${date}`).then(r => r.json());
+      if (res.ok) {
+        setEntries(res.entries || []);
+        setTotals({ totalDebit: res.totalDebit || 0, totalCredit: res.totalCredit || 0 });
+      } else {
+        toast({ title: 'Load failed', description: res.error || 'Could not load batch' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Load failed', description: String(e?.message || e) });
+    } finally { setLoading(false); }
+  }, [date, toast]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const setLineAccount = (entryId: string, lineId: string, accountId: string) =>
+    setLineEdits(prev => ({ ...prev, [entryId]: { ...prev[entryId], [lineId]: accountId } }));
+
+  const entryHasEdits = (entryId: string) => Object.keys(lineEdits[entryId] || {}).length > 0;
+
+  // Save reallocated accounts on a still-draft entry by re-upserting it (keeps draft).
+  const saveEdits = async (entry: any) => {
+    const edits = lineEdits[entry.id] || {};
+    const lines = (entry.lines || []).map((l: any) => ({
+      accountId: edits[l.id] ?? l.gl_account_id,
+      debit: Number(l.debit_amount || 0),
+      credit: Number(l.credit_amount || 0),
+      description: l.description,
+    }));
+    setBusy(entry.id);
+    try {
+      const res = await fetch('/api/gl/journal-entries', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: entry.id, business_date: entry.business_date, reference: entry.reference,
+          description: entry.description, source: entry.source, status: 'draft',
+          lines, created_by: user?.username || 'system',
+        }),
+      }).then(r => r.json());
+      if (!res.ok) throw new Error(res.error || 'Save failed');
+      toast({ title: 'Accounts updated', description: `Draft ${entry.id} reallocated.` });
+      setLineEdits(prev => { const n = { ...prev }; delete n[entry.id]; return n; });
+      await load();
+    } catch (e: any) {
+      toast({ title: 'Save failed', description: String(e?.message || e) });
+    } finally { setBusy(null); }
+  };
+
+  const postOne = async (entry: any) => {
+    if (entryHasEdits(entry.id)) { toast({ title: 'Unsaved changes', description: 'Save account changes before posting.' }); return; }
+    setBusy(entry.id);
+    try {
+      const res = await fetch(`/api/gl/journal-entries/${encodeURIComponent(entry.id)}/post`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ posted_by: user?.username || 'system' }),
+      }).then(r => r.json());
+      if (!res.ok) throw new Error(res.error || 'Post failed');
+      toast({ title: 'Posted', description: `${entry.id} posted to the ledger.` });
+      await load();
+    } catch (e: any) {
+      toast({ title: 'Post failed', description: String(e?.message || e) });
+    } finally { setBusy(null); }
+  };
+
+  const postAll = async () => {
+    if (Object.keys(lineEdits).some(id => entryHasEdits(id))) { toast({ title: 'Unsaved changes', description: 'Save all account changes before posting the batch.' }); return; }
+    if (!confirm(`Post all ${entries.length} draft entr${entries.length === 1 ? 'y' : 'ies'} for ${date}? They will flow into the financial reports.`)) return;
+    setBusy('__all__');
+    try {
+      const res = await fetch('/api/gl/daily-batch/post', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, posted_by: user?.username || 'system' }),
+      }).then(r => r.json());
+      if (!res.ok) throw new Error(res.error || 'Post failed');
+      toast({ title: 'Batch posted', description: `${res.posted} entr${res.posted === 1 ? 'y' : 'ies'} posted for ${date}.` });
+      await load();
+    } catch (e: any) {
+      toast({ title: 'Post failed', description: String(e?.message || e) });
+    } finally { setBusy(null); }
+  };
+
+  const acctSelect = (entryId: string, l: any) => (
+    <select className="border rounded px-1 py-0.5 text-xs w-full" value={lineEdits[entryId]?.[l.id] ?? l.gl_account_id}
+      onChange={(e) => setLineAccount(entryId, l.id, e.target.value)}>
+      {(['Revenue', 'Expense', 'Asset', 'Liability', 'Equity'] as const).map(cat => {
+        const opts = accounts.filter(a => a.category === cat);
+        if (opts.length === 0) return null;
+        return <optgroup key={cat} label={cat}>{opts.map(a => <option key={a.id} value={a.id}>{a.id} - {a.name}{a.department ? ` (${a.department})` : ''}</option>)}</optgroup>;
+      })}
+    </select>
+  );
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-end justify-between gap-2 mb-3">
+        <div>
+          <div className="font-semibold">Daily Journal Batch — Review &amp; Post</div>
+          <div className="text-xs text-gray-500">Draft manual / expense / inventory journals wait here until you post them. Posted entries flow into the P&amp;L, Trial Balance &amp; Balance Sheet.</div>
+        </div>
+        <div className="flex items-end gap-2">
+          <div><label className="text-xs block">Business Date</label><Input type="date" className="ds-input-compact" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+          <Button variant="outline" className="ds-button-compact" onClick={load} disabled={loading}>{loading ? 'Loading…' : 'Refresh'}</Button>
+          <Button className="ds-button-compact bg-green-600 text-white" disabled={busy !== null || entries.length === 0} onClick={postAll}>
+            {busy === '__all__' ? 'Posting…' : `Post All (${entries.length})`}
+          </Button>
+        </div>
+      </div>
+
+      {entries.length === 0 ? (
+        <div className="text-sm text-gray-500 border rounded p-4 bg-gray-50">No draft journals awaiting review for {date}.</div>
+      ) : (
+        <>
+          <div className="text-xs text-gray-600 mb-2">Batch totals — Debit: <span className="font-mono font-semibold">$ {totals.totalDebit.toFixed(2)}</span> · Credit: <span className="font-mono font-semibold">$ {totals.totalCredit.toFixed(2)}</span></div>
+          <div className="space-y-3">
+            {entries.map((entry) => (
+              <div key={entry.id} className="border rounded">
+                <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-amber-50 border-b">
+                  <div className="text-sm">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-200 text-amber-800 uppercase mr-2">{entry.source}</span>
+                    <span className="font-medium">{entry.description || entry.reference || entry.id}</span>
+                    <span className="ml-2 font-mono text-[11px] text-gray-500">{entry.id}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono">$ {Number(entry.total_debit || 0).toFixed(2)}</span>
+                    {entryHasEdits(entry.id) && (
+                      <Button className="ds-button-compact bg-indigo-600 text-white" disabled={busy === entry.id} onClick={() => saveEdits(entry)}>{busy === entry.id ? 'Saving…' : 'Save Changes'}</Button>
+                    )}
+                    <Button className="ds-button-compact bg-green-600 text-white" disabled={busy === entry.id || entryHasEdits(entry.id)} onClick={() => postOne(entry)}>Post</Button>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="text-gray-500"><th className="p-1.5 text-left w-2/5">GL Account (click to reallocate)</th><th className="p-1.5 text-left">Description</th><th className="p-1.5 text-right">Debit</th><th className="p-1.5 text-right">Credit</th></tr></thead>
+                    <tbody>
+                      {(entry.lines || []).map((l: any) => (
+                        <tr key={l.id} className={`border-t ${lineEdits[entry.id]?.[l.id] && lineEdits[entry.id][l.id] !== l.gl_account_id ? 'bg-indigo-50' : ''}`}>
+                          <td className="p-1.5">{acctSelect(entry.id, l)}</td>
+                          <td className="p-1.5 text-gray-600">{l.description || '—'}</td>
+                          <td className="p-1.5 text-right font-mono">{Number(l.debit_amount || 0) ? `$ ${Number(l.debit_amount).toFixed(2)}` : ''}</td>
+                          <td className="p-1.5 text-right font-mono">{Number(l.credit_amount || 0) ? `$ ${Number(l.credit_amount).toFixed(2)}` : ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 };
@@ -1035,7 +1214,7 @@ const ManualJECreator: React.FC = () => {
       // authoritative P&L / Trial Balance and survives a browser wipe.
       gl.persistJournalEntryToDB(entry, 'manual').catch((e: any) =>
         console.warn('[GLAccounting] manual JE DB persist failed (non-fatal):', e?.message));
-      setMessage('Journal posted.');
+      setMessage('Journal added to today\'s draft batch — review & post it under "Daily Journal Batch".');
     } catch (err) { setMessage('Failed to post.'); console.error(err); }
   };
   return (
