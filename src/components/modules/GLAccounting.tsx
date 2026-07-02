@@ -67,9 +67,18 @@ export const GLAccounting: React.FC = () => {
     }
   }, []);
 
-  const tb = useMemo(() => gl.getTrialBalance(range.from, range.to), [range]);
+  // Bump to force the DB-backed report memos (trial balance, P&L, drill lines)
+  // to recompute after a reclassification writes a new entry to the ledger.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const tb = useMemo(() => gl.getTrialBalance(range.from, range.to), [range, refreshTick]);
   // Drill-down: account selected from the Trial Balance → its journal lines
   const [drillAccount, setDrillAccount] = useState<{ id: string; name: string } | null>(null);
+  // Reclassification (controller "change GL account"): which drill line is being
+  // reclassified, the chosen target account, an optional reason, and busy flag.
+  const [reclassIdx, setReclassIdx] = useState<number | null>(null);
+  const [reclassTarget, setReclassTarget] = useState<string>('');
+  const [reclassReason, setReclassReason] = useState<string>('');
+  const [reclassBusy, setReclassBusy] = useState(false);
   // Classify a journal entry's originating sub-ledger from its id/reference so the
   // drill panel can offer an "open source document" link.
   const classifySource = (entryId: string, reference: string): { source: string; module: string | null } => {
@@ -94,12 +103,12 @@ export const GLAccounting: React.FC = () => {
       }
     }
     return rows.sort((a, b) => a.date.localeCompare(b.date));
-  }, [drillAccount, range]);
+  }, [drillAccount, range, refreshTick]);
   const openSourceModule = (module: string | null) => {
     if (!module) return;
     try { window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module } })); } catch { /* noop */ }
   };
-  const pl = useMemo(() => gl.getPLStatement(range.from, range.to), [range]);
+  const pl = useMemo(() => gl.getPLStatement(range.from, range.to), [range, refreshTick]);
   // Expandable P&L — break revenue & expense down to the account level so each
   // line can be drilled to the journal entries (and from there to source docs).
   const plDetail = useMemo(() => {
@@ -118,7 +127,51 @@ export const GLAccounting: React.FC = () => {
       .sort((a, b) => b.amount - a.amount);
     return { revenue, expense };
   }, [tb]);
-  const bs = useMemo(() => gl.getBalanceSheet ? gl.getBalanceSheet(range.from, range.to) : { assets: 0, liabilities: 0, equity: 0 }, [range]);
+  const bs = useMemo(() => gl.getBalanceSheet ? gl.getBalanceSheet(range.from, range.to) : { assets: 0, liabilities: 0, equity: 0 }, [range, refreshTick]);
+
+  // Post a balanced reclassification journal that moves a posted line's amount
+  // from its current account (drillAccount) to a controller-chosen target account.
+  // The original entry is never mutated — we book a reversing/allocating pair so
+  // the audit trail is preserved and the net effect is a clean reallocation:
+  //   • line was a DEBIT  → Dr newAccount / Cr oldAccount
+  //   • line was a CREDIT → Cr newAccount / Dr oldAccount
+  const postReclass = async (line: { date: string; reference: string; debit: number; credit: number; entryId: string }) => {
+    if (!drillAccount || !reclassTarget || reclassTarget === drillAccount.id) return;
+    const amt = Number(line.debit || line.credit || 0);
+    if (!(amt > 0)) { toast({ title: 'Reclassify Failed', description: 'Line has no amount to move.' }); return; }
+    const wasDebit = Number(line.debit || 0) > 0;
+    const oldId = drillAccount.id;
+    const newId = reclassTarget;
+    const acctName = (id: string) => coa.find(a => a.id === id)?.name || id;
+    const ref = `Reclass ${oldId}→${newId} [${line.reference || line.entryId}]${reclassReason ? `: ${reclassReason}` : ''}`;
+    const glLines = (wasDebit
+      ? [{ accountId: newId, debit: amt, credit: 0 }, { accountId: oldId, debit: 0, credit: amt }]
+      : [{ accountId: newId, debit: 0, credit: amt }, { accountId: oldId, debit: amt, credit: 0 }]
+    ).map(l => ({ ...l, description: ref }));
+    const entry: any = { id: `GLRECLASS_${line.date}_${Date.now()}`, date: line.date, lines: glLines, reference: ref };
+    setReclassBusy(true);
+    try {
+      gl.appendLedger(entry);
+      const r = await gl.persistJournalEntryToDB(entry, 'adjustment');
+      if (!r.ok) throw new Error(r.error || 'DB persist failed');
+      // Local audit trail (mirrors the CoA edit audit above)
+      try {
+        const raw = localStorage.getItem('corepms_gl_reclass_audit');
+        const list = raw ? JSON.parse(raw) : [];
+        list.unshift({ entryId: entry.id, from: oldId, to: newId, amount: amt, date: line.date, reason: reclassReason || null, source: line.reference || line.entryId, user: user?.username, timestamp: new Date().toISOString() });
+        localStorage.setItem('corepms_gl_reclass_audit', JSON.stringify(list.slice(0, 2000)));
+      } catch { /* non-fatal */ }
+      toast({ title: 'Reclassified', description: `$ ${amt.toFixed(2)} moved from ${oldId} ${acctName(oldId)} → ${newId} ${acctName(newId)}.` });
+      setReclassIdx(null); setReclassTarget(''); setReclassReason('');
+      setRefreshTick(t => t + 1);
+    } catch (err: any) {
+      // roll back the optimistic local append so the ledger stays consistent with the DB
+      try { const led = gl.getLedger().filter((e: any) => e.id !== entry.id); (gl as any).replaceLedger ? (gl as any).replaceLedger(led) : localStorage.setItem('corepms_gl_ledger', JSON.stringify(led)); } catch { /* noop */ }
+      toast({ title: 'Reclassify Failed', description: String(err?.message || err) });
+    } finally {
+      setReclassBusy(false);
+    }
+  };
   const mappingStatus = gl.validateMappingsComplete();
   const [aiSuggestions, setAiSuggestions] = useState<Array<{ code: string; accountId: string; reason: string }>>([]);
   const [validation, setValidation] = useState<{ status?: string; missing?: string[] } | null>(null);
@@ -834,10 +887,11 @@ export const GLAccounting: React.FC = () => {
                 ) : (
                   <div className="overflow-x-auto max-h-72 overflow-y-auto">
                     <table className="text-xs w-full">
-                      <thead><tr className="text-gray-500"><th className="p-1.5 text-left">Date</th><th className="p-1.5 text-left">Source</th><th className="p-1.5 text-left">Reference</th><th className="p-1.5 text-left">Description</th><th className="p-1.5 text-right">Debit</th><th className="p-1.5 text-right">Credit</th><th className="p-1.5 text-center">Open</th></tr></thead>
+                      <thead><tr className="text-gray-500"><th className="p-1.5 text-left">Date</th><th className="p-1.5 text-left">Source</th><th className="p-1.5 text-left">Reference</th><th className="p-1.5 text-left">Description</th><th className="p-1.5 text-right">Debit</th><th className="p-1.5 text-right">Credit</th><th className="p-1.5 text-center">Open</th>{isMgr && <th className="p-1.5 text-center">GL Account</th>}</tr></thead>
                       <tbody>
                         {drillLines.map((l, i) => (
-                          <tr key={`${l.entryId}-${i}`} className="border-t border-indigo-100">
+                          <React.Fragment key={`${l.entryId}-${i}`}>
+                          <tr className="border-t border-indigo-100">
                             <td className="p-1.5">{l.date}</td>
                             <td className="p-1.5"><span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-700">{l.source}</span></td>
                             <td className="p-1.5 text-gray-600">{l.reference}</td>
@@ -850,13 +904,50 @@ export const GLAccounting: React.FC = () => {
                                   className="text-indigo-600 hover:text-indigo-800 font-semibold">↗ Open</button>
                               ) : <span className="text-gray-300">—</span>}
                             </td>
+                            {isMgr && (
+                              <td className="p-1.5 text-center">
+                                <button
+                                  onClick={() => { if (reclassIdx === i) { setReclassIdx(null); } else { setReclassIdx(i); setReclassTarget(''); setReclassReason(''); } }}
+                                  title="Reallocate this posting to a different GL account"
+                                  className="text-amber-700 hover:text-amber-900 font-semibold">{reclassIdx === i ? 'Close' : '⇄ Change'}</button>
+                              </td>
+                            )}
                           </tr>
+                          {isMgr && reclassIdx === i && (
+                            <tr className="bg-amber-50/60 border-t border-amber-100">
+                              <td colSpan={8} className="p-2">
+                                <div className="flex flex-wrap items-end gap-2">
+                                  <div className="text-[11px] text-gray-600 mr-1">
+                                    Move <span className="font-mono font-semibold">$ {Number(l.debit || l.credit || 0).toFixed(2)}</span>
+                                    {' '}({l.debit ? 'Dr' : 'Cr'}) from <span className="font-mono">{drillAccount?.id}</span> to:
+                                  </div>
+                                  <select className="border rounded px-2 py-1 text-xs min-w-[220px]" value={reclassTarget} onChange={(e)=>setReclassTarget(e.target.value)}>
+                                    <option value="">Select target account…</option>
+                                    {(['Revenue','Expense','Asset','Liability','Equity'] as const).map(cat => {
+                                      const opts = coa.filter(a => a.category === cat && a.id !== drillAccount?.id);
+                                      if (opts.length === 0) return null;
+                                      return (
+                                        <optgroup key={cat} label={cat}>
+                                          {opts.map(a => <option key={a.id} value={a.id}>{a.id} - {a.name}{a.department ? ` (${a.department})` : ''}</option>)}
+                                        </optgroup>
+                                      );
+                                    })}
+                                  </select>
+                                  <Input className="ds-input-compact text-xs w-56" placeholder="Reason (e.g. chocolate → Bar snacks)" value={reclassReason} onChange={(e)=>setReclassReason(e.target.value)} />
+                                  <Button className="ds-button-compact bg-amber-600 text-white" disabled={reclassBusy || !reclassTarget} onClick={()=>postReclass(l)}>{reclassBusy ? 'Saving…' : 'Save Reclass'}</Button>
+                                  <Button variant="outline" className="ds-button-compact" onClick={()=>{ setReclassIdx(null); setReclassTarget(''); setReclassReason(''); }}>Cancel</Button>
+                                </div>
+                                <div className="text-[10px] text-gray-500 mt-1">Posts a balanced reallocation journal (source: adjustment). The original entry is preserved for audit.</div>
+                              </td>
+                            </tr>
+                          )}
+                          </React.Fragment>
                         ))}
                         <tr className="border-t-2 border-indigo-200 font-semibold">
                           <td className="p-1.5" colSpan={4}>Total ({drillLines.length} lines)</td>
                           <td className="p-1.5 text-right font-mono">$ {drillLines.reduce((s,l)=>s+l.debit,0).toFixed(2)}</td>
                           <td className="p-1.5 text-right font-mono">$ {drillLines.reduce((s,l)=>s+l.credit,0).toFixed(2)}</td>
-                          <td className="p-1.5"></td>
+                          <td className="p-1.5" colSpan={isMgr ? 2 : 1}></td>
                         </tr>
                       </tbody>
                     </table>
@@ -965,7 +1056,20 @@ const ManualJECreator: React.FC = () => {
           <tbody>
             {lines.map((l, idx) => (
               <tr key={idx}>
-                <td className="p-2"><Input placeholder="e.g. 1000" value={l.accountId} onChange={(e)=>setLines(prev => prev.map((x,i)=> i===idx ? { ...x, accountId: e.target.value } : x))} /></td>
+                <td className="p-2">
+                  <select className="border rounded px-2 py-2 w-full text-sm" value={l.accountId} onChange={(e)=>setLines(prev => prev.map((x,i)=> i===idx ? { ...x, accountId: e.target.value } : x))}>
+                    <option value="">Select GL account…</option>
+                    {(['Revenue','Expense','Asset','Liability','Equity'] as const).map(cat => {
+                      const opts = gl.getAccounts().filter(a => a.category === cat);
+                      if (opts.length === 0) return null;
+                      return (
+                        <optgroup key={cat} label={cat}>
+                          {opts.map(a => <option key={a.id} value={a.id}>{a.id} - {a.name}{a.department ? ` (${a.department})` : ''}</option>)}
+                        </optgroup>
+                      );
+                    })}
+                  </select>
+                </td>
                 <td className="p-2 text-right"><Input type="number" value={l.debit} onChange={(e)=>setLines(prev => prev.map((x,i)=> i===idx ? { ...x, debit: e.target.value } : x))} /></td>
                 <td className="p-2 text-right"><Input type="number" value={l.credit} onChange={(e)=>setLines(prev => prev.map((x,i)=> i===idx ? { ...x, credit: e.target.value } : x))} /></td>
                 <td className="p-2"><Button variant="outline" onClick={()=>removeLine(idx)}>Remove</Button></td>
