@@ -4,7 +4,7 @@ const path = require('path');
 
 // Load database module
 const db = require('./db-web.cjs');
-const { normalizeGLSource } = require('./glSource');
+const { normalizeGLSource } = require('./glSource.cjs');
 
 // Load environment variables
 try { require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }) } catch { }

@@ -14,7 +14,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const db = require('../server/db-web.cjs');
-const { normalizeGLSource } = require('../server/glSource');
+const { normalizeGLSource } = require('../server/glSource.cjs');
 
 const app = express();
 app.use(cors({ origin: '*' }));

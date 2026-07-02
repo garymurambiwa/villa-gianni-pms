@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeGLSource } from '../../../server/glSource.js';
+import { normalizeGLSource } from '../../../server/glSource.cjs';
 
 describe('normalizeGLSource', () => {
   it('maps inventory-related values to allowed GL source values', () => {
