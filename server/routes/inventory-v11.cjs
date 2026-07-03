@@ -3642,46 +3642,30 @@ router.post('/stock-take/:sheetId/lock', async (req, res) => {
       );
     }
 
-    // ── Post the net variance to the GENERAL LEDGER (real audit trail) ───────
+    // ── Stage the net variance as an EDITABLE PENDING GL BATCH ───────────────
     // Shrinkage (net loss): Dr 5100 Cost of Sales / Cr 1400 Inventory.
     // Surplus  (net gain):  Dr 1400 Inventory     / Cr 5100 Cost of Sales.
-    // Posted as a balanced journal entry so it shows in P&L / Trial Balance
-    // immediately. Idempotent on the sheet id (re-lock never double-posts).
-    // A gl_pending_batches row (status POSTED) is kept as the reopen marker.
+    // The reconcile no longer books the journal entry directly: it creates a
+    // PENDING gl_pending_batches row so the controller can review it in
+    // GL Pending Batches, reallocate the accounts (e.g. to a specific cost-of-
+    // sales account), then Post — which books the balanced 'adjustment' entry.
+    // Idempotent on (origin_table, origin_id): re-lock never double-stages.
     let glBatchId = null;
     if (Math.abs(netVarianceValue) > 0.005) {
       const isShrinkage = netVarianceValue < 0;
       const amount  = Number(Math.abs(netVarianceValue).toFixed(2));
       const drAcct  = isShrinkage ? '5100' : '1400';
       const crAcct  = isShrinkage ? '1400' : '5100';
-      const entryId = `GLVAR_${sheet.id}`;
       const desc    = `Stock Take ${reportNumber} — inventory ${isShrinkage ? 'shrinkage' : 'surplus'}`;
-      const bizDate = sheet.period_end;
-      const entryIns = await client.query(
-        `INSERT INTO public.gl_journal_entries
-           (id, entry_date, business_date, description, reference, source, status,
-            total_debit, total_credit, is_balanced, created_by, posted_by, posted_at, inserted_at)
-         VALUES ($1,$2::date,$2::date,$3,$4,'adjustment','draft',$5,$5,true,$6,NULL,NULL,NOW())
-         ON CONFLICT (id) DO NOTHING RETURNING id`,
-        [entryId, bizDate, desc, reportNumber, amount, locked_by || 'system']
-      );
-      if (entryIns.rows.length) {
-        await client.query(
-          `INSERT INTO public.gl_journal_lines
-             (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
-           VALUES ($1,$2,$3,$4,0,$6,NOW()), ($5,$2,$7,0,$4,$6,NOW())`,
-          [`${entryId}_L1`, entryId, drAcct, amount, `${entryId}_L2`, desc, crAcct]
-        );
-      }
       const glRes = await client.query(
         `INSERT INTO public.gl_pending_batches
            (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount, status)
-         VALUES ('inv_stock_take_sheets', $1, $2, $3, $4, $5, 'POSTED')
+         VALUES ('inv_stock_take_sheets', $1, $2, $3, $4, $5, 'PENDING')
          ON CONFLICT (origin_table, origin_id) DO NOTHING
          RETURNING id`,
         [sheet.id, desc, drAcct, crAcct, amount]
       );
-      glBatchId = glRes.rows[0]?.id || entryId;
+      glBatchId = glRes.rows[0]?.id || null;
     }
 
     // Lock the sheet
