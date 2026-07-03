@@ -327,7 +327,16 @@ async function ensureInventoryTables() {
           transaction_date TIMESTAMPTZ DEFAULT NOW(),
           inserted_at TIMESTAMPTZ DEFAULT NOW()
         )`);
-      await client.query(`ALTER TABLE public.inv_stock_ledger ADD CONSTRAINT uq_ledger_transfer_line UNIQUE (reference_number, ledger_type, location_id, item_id)`).catch(()=>{});
+      // Transfer-line idempotency guard. A FULL unique constraint over these columns
+      // cannot be created on databases with historical duplicate GRN/WASTE rows (the
+      // old ADD CONSTRAINT silently failed via .catch, and the transfer INSERTs'
+      // "ON CONFLICT ON CONSTRAINT uq_ledger_transfer_line" then crashed every Post).
+      // A PARTIAL unique index over transfer rows only is sufficient and always creatable.
+      await client.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS uq_ledger_transfer_line_idx
+           ON public.inv_stock_ledger (reference_number, ledger_type, location_id, item_id)
+           WHERE ledger_type IN ('TRANSFER_IN','TRANSFER_OUT')`
+      ).catch((e)=>{ console.error('[inventory] uq_ledger_transfer_line_idx create failed:', e.message); });
       await client.query(`ALTER TABLE public.inv_stock_ledger ADD COLUMN IF NOT EXISTS inserted_at TIMESTAMPTZ DEFAULT NOW()`);
       // Enforce 10-char max on short_id
       await client.query(`ALTER TABLE public.inv_items DROP CONSTRAINT IF EXISTS inv_items_short_len`).catch(() => {});
@@ -1547,7 +1556,8 @@ async function executeTransferLines(client, lines, sourceLocId, destLocId, trans
       `INSERT INTO public.inv_stock_ledger
        (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
        VALUES ($1,$2,$3,'TRANSFER_OUT',$4,$5,$6,$7,NOW())
-       ON CONFLICT ON CONSTRAINT uq_ledger_transfer_line DO NOTHING`,
+       ON CONFLICT (reference_number, ledger_type, location_id, item_id)
+         WHERE ledger_type IN ('TRANSFER_IN','TRANSFER_OUT') DO NOTHING`,
       [randomUUID(), line.item_id, sourceLocId, transferNumber + '-L' + lnum, -requested, line.source_uom_id, actorId]
     );
 
@@ -1577,7 +1587,8 @@ async function executeTransferLines(client, lines, sourceLocId, destLocId, trans
       `INSERT INTO public.inv_stock_ledger
        (id, item_id, location_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by, inserted_at)
        VALUES ($1,$2,$3,'TRANSFER_IN',$4,$5,$6,$7,NOW())
-       ON CONFLICT ON CONSTRAINT uq_ledger_transfer_line DO NOTHING`,
+       ON CONFLICT (reference_number, ledger_type, location_id, item_id)
+         WHERE ledger_type IN ('TRANSFER_IN','TRANSFER_OUT') DO NOTHING`,
       [randomUUID(), line.item_id, destLocId, transferNumber + '-L' + lnum, destQty, destUomId, actorId]
     );
   }

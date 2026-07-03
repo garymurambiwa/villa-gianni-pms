@@ -25,8 +25,27 @@ export function PendingBatchesLedger() {
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
-  // per-row account edits: { [batchId]: { debit, credit } }
-  const [edits, setEdits] = useState<Record<string, { debit: string; credit: string }>>({});
+  // per-row edits: accounts always; description/amount editable from the drill-down
+  const [edits, setEdits] = useState<Record<string, { debit: string; credit: string; description?: string; amount?: string }>>({});
+
+  // Map a batch's origin table to the module that owns the source document so the
+  // drill-down can jump straight to it (same navigateToModule event GLAccounting uses).
+  const sourceModuleOf = (b: Batch): { module: string; label: string } | null => {
+    const t = String(b.origin_table || '').toLowerCase();
+    if (t.includes('grn')) return { module: 'inventory', label: 'GRN' };
+    if (t.includes('stock') || t.includes('inv_')) return { module: 'inventory', label: 'Inventory' };
+    if (t.includes('expense')) return { module: 'vendors', label: 'Expense' };
+    if (t.includes('folio') || t.includes('reservation')) return { module: 'front-office', label: 'Folio' };
+    if (t.includes('pos') || t.includes('order')) return { module: 'pos', label: 'POS Order' };
+    return null;
+  };
+  const openSource = (b: Batch) => {
+    const target = sourceModuleOf(b);
+    if (!target) return;
+    try {
+      window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: target.module, reference: b.origin_id } }));
+    } catch { /* noop */ }
+  };
 
   const pendingCount = useMemo(() => rows.filter(b => b.status === 'PENDING').length, [rows]);
   const acctLabel = (id: string) => { const a = accounts.find(x => x.id === id); return a ? `${a.id} - ${a.name}` : id; };
@@ -57,19 +76,31 @@ export function PendingBatchesLedger() {
     fetch('/api/gl/accounts').then(r => r.json()).then(r => { if (r.ok) setAccounts(r.rows || []); }).catch(() => {});
   }, []);
 
-  const editOf = (b: Batch) => edits[b.id] || { debit: b.debit_gl_account, credit: b.credit_gl_account };
-  const isDirty = (b: Batch) => { const e = edits[b.id]; return !!e && (e.debit !== b.debit_gl_account || e.credit !== b.credit_gl_account); };
-  const setEdit = (b: Batch, field: 'debit' | 'credit', val: string) =>
+  const editOf = (b: Batch) => edits[b.id] || { debit: b.debit_gl_account, credit: b.credit_gl_account, description: b.description || '', amount: String(b.amount) };
+  const isDirty = (b: Batch) => {
+    const e = edits[b.id];
+    if (!e) return false;
+    return e.debit !== b.debit_gl_account || e.credit !== b.credit_gl_account
+      || (e.description !== undefined && e.description !== (b.description || ''))
+      || (e.amount !== undefined && Number(e.amount) !== Number(b.amount));
+  };
+  const setEdit = (b: Batch, field: 'debit' | 'credit' | 'description' | 'amount', val: string) =>
     setEdits(prev => ({ ...prev, [b.id]: { ...editOf(b), [field]: val } }));
 
   const saveAccounts = async (b: Batch) => {
     const e = editOf(b);
     if (e.debit === e.credit) { setToast('Debit and credit accounts must differ'); return; }
+    const amt = e.amount === undefined ? Number(b.amount) : Number(e.amount);
+    if (!(amt > 0)) { setToast('Amount must be greater than zero'); return; }
     setBusy(b.id);
     try {
       const r = await fetch(`/api/gl/pending-batches/${b.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ debit_gl_account: e.debit, credit_gl_account: e.credit }),
+        body: JSON.stringify({
+          debit_gl_account: e.debit, credit_gl_account: e.credit,
+          description: e.description === undefined ? undefined : e.description,
+          amount: amt,
+        }),
       }).then(r => r.json());
       if (!r.ok) throw new Error(r.error || 'Save failed');
       setEdits(prev => { const n = { ...prev }; delete n[b.id]; return n; });
@@ -232,18 +263,51 @@ export function PendingBatchesLedger() {
                       <td colSpan={7} style={{ padding: '10px 12px' }}>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12 }}>
                           <div>
-                            <div style={{ fontWeight: 600, marginBottom: 4 }}>Source document</div>
+                            <div style={{ fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
+                              Source document
+                              {sourceModuleOf(b) && (
+                                <button onClick={() => openSource(b)} title={`Open ${sourceModuleOf(b)!.label} ${b.origin_id}`}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2563eb', fontSize: 12, fontWeight: 600, padding: 0 }}>
+                                  ↗ Open {sourceModuleOf(b)!.label}
+                                </button>
+                              )}
+                            </div>
                             <div>Origin: <span style={{ fontFamily: 'monospace' }}>{b.origin_table} / {b.origin_id}</span></div>
                             <div>Batch id: <span style={{ fontFamily: 'monospace' }}>{b.id}</span></div>
-                            <div>Description: {b.description || '—'}</div>
+                            {pending ? (
+                              <div style={{ marginTop: 6, display: 'grid', gap: 6 }}>
+                                <label>
+                                  <span style={{ color: '#6b7280' }}>Description</span>
+                                  <input style={{ ...sel, width: '100%', maxWidth: 340, display: 'block', marginTop: 2 }}
+                                    value={e.description ?? (b.description || '')}
+                                    onChange={ev => setEdit(b, 'description', ev.target.value)} />
+                                </label>
+                                <label>
+                                  <span style={{ color: '#6b7280' }}>Amount</span>
+                                  <input type="number" step="0.01" min="0.01"
+                                    style={{ ...sel, width: 120, display: 'block', marginTop: 2 }}
+                                    value={e.amount ?? String(b.amount)}
+                                    onChange={ev => setEdit(b, 'amount', ev.target.value)} />
+                                </label>
+                                {isDirty(b) && (
+                                  <div>
+                                    <button onClick={() => saveAccounts(b)} disabled={busy === b.id} style={btn('#4f46e5')}>
+                                      {busy === b.id ? 'Saving…' : 'Save Changes'}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div>Description: {b.description || '—'}</div>
+                            )}
                           </div>
                           <div>
                             <div style={{ fontWeight: 600, marginBottom: 4 }}>Resulting journal entry (on post)</div>
                             <table style={{ width: '100%', fontSize: 12 }}>
                               <thead><tr style={{ color: '#6b7280' }}><th style={{ textAlign: 'left' }}>Account</th><th style={{ textAlign: 'right' }}>Debit</th><th style={{ textAlign: 'right' }}>Credit</th></tr></thead>
                               <tbody>
-                                <tr><td>{acctLabel(e.debit)}</td><td style={{ textAlign: 'right', fontFamily: 'monospace' }}>${Number(b.amount).toFixed(2)}</td><td></td></tr>
-                                <tr><td>{acctLabel(e.credit)}</td><td></td><td style={{ textAlign: 'right', fontFamily: 'monospace' }}>${Number(b.amount).toFixed(2)}</td></tr>
+                                <tr><td>{acctLabel(e.debit)}</td><td style={{ textAlign: 'right', fontFamily: 'monospace' }}>${Number(e.amount ?? b.amount).toFixed(2)}</td><td></td></tr>
+                                <tr><td>{acctLabel(e.credit)}</td><td></td><td style={{ textAlign: 'right', fontFamily: 'monospace' }}>${Number(e.amount ?? b.amount).toFixed(2)}</td></tr>
                               </tbody>
                             </table>
                           </div>
