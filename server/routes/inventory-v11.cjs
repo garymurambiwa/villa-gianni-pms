@@ -413,12 +413,18 @@ async function ensureInventoryTables() {
           theoretical_qty NUMERIC(12,4) NOT NULL,
           physical_qty NUMERIC(12,4) NOT NULL,
           variance_qty NUMERIC(12,4) NOT NULL,
-          variance_percentage NUMERIC(7,4) NOT NULL,
+          variance_percentage NUMERIC(12,4) NOT NULL,
           alert_level TEXT NOT NULL CHECK (alert_level IN ('OK','WARNING','CRITICAL')),
           item_cost NUMERIC(10,4),
           variance_value NUMERIC(12,2),
           inserted_at TIMESTAMPTZ DEFAULT NOW()
         )`);
+
+      // Existing DBs created variance_percentage as NUMERIC(7,4) (max ±999.9999):
+      // any variance over 1,000% — trivially reached when theoretical stock is
+      // near zero — blew up Reconcile with "numeric field overflow". Widen it.
+      await client.query(`ALTER TABLE public.inv_variance_lines ALTER COLUMN variance_percentage TYPE NUMERIC(12,4)`)
+        .catch((e)=>{ console.error('[inventory] variance_percentage widen failed:', e.message); });
 
       // Indexes — safe with IF NOT EXISTS
       await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ledger_item_loc ON public.inv_stock_ledger(item_id, location_id)`).catch(()=>{});
@@ -2288,7 +2294,8 @@ router.post('/variance/generate', async (req, res) => {
       // theoretical (zero variance) so they don't show as false shrinkage.
       const physical    = (row.item_id in physicalMap) ? physicalMap[row.item_id] : theoretical;
       const variance    = physical - theoretical;
-      const variancePct = theoretical > 0 ? Math.abs(variance / theoretical) * 100 : 0;
+      // Cap so extreme ratios (tiny theoretical) can never overflow NUMERIC(12,4)
+      const variancePct = Math.min(theoretical > 0 ? Math.abs(variance / theoretical) * 100 : 0, 99999999.9999);
       const cost        = Number(row.avg_cost || 0);
       const varianceVal = Math.abs(variance) * cost;
 
@@ -3433,6 +3440,121 @@ router.post('/stock-take/generate', async (req, res) => {
 });
 
 /**
+ * POST /api/v1/inventory/stock-take/:sheetId/refresh
+ * Re-pulls the THEORETICAL columns (opening, purchases, transfers, sales, cost)
+ * from the live ledger — for when transactions are corrected AFTER the sheet was
+ * generated. Keeps the sheet and every entered physical count untouched, and
+ * appends lines for items that gained ledger activity since generation.
+ * Only draft sheets can be refreshed.
+ */
+router.post('/stock-take/:sheetId/refresh', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const sheetRes = await client.query(
+      `SELECT * FROM public.inv_stock_take_sheets WHERE id = $1 FOR UPDATE`,
+      [req.params.sheetId]
+    );
+    const sheet = sheetRes.rows[0];
+    if (!sheet) { await client.query('ROLLBACK'); return res.status(404).json({ ok: false, error: 'Sheet not found' }); }
+    if (sheet.status === 'locked') { await client.query('ROLLBACK'); return res.status(409).json({ ok: false, error: 'Sheet is locked — reopen it before refreshing' }); }
+
+    const { location_id, period_start, period_end } = sheet;
+
+    // Same in-period aggregation the generator uses, from the CURRENT ledger.
+    const itemsRes = await client.query(`
+      SELECT
+        sl.item_id,
+        MAX(i.name) AS item_name,
+        COALESCE(SUM(CASE WHEN sl.ledger_type = 'GRN'
+          AND sl.inserted_at >= $2::date THEN sl.quantity_change END), 0) AS purchases_qty,
+        COALESCE(SUM(CASE WHEN sl.ledger_type = 'TRANSFER_IN'
+          AND sl.inserted_at >= $2::date THEN sl.quantity_change END), 0) AS transfers_in_qty,
+        COALESCE(ABS(SUM(CASE WHEN sl.ledger_type = 'TRANSFER_OUT'
+          AND sl.inserted_at >= $2::date THEN sl.quantity_change END)), 0) AS transfers_out_qty,
+        COALESCE(ABS(SUM(CASE WHEN sl.ledger_type = 'SALE_DEPLETION'
+          AND sl.inserted_at >= $2::date THEN sl.quantity_change END)), 0) AS theoretical_sales_qty,
+        (SELECT COALESCE(cost_per_unit, 0)
+         FROM public.inv_stock_ledger
+         WHERE item_id = sl.item_id AND cost_per_unit IS NOT NULL
+         ORDER BY inserted_at DESC LIMIT 1) AS unit_cost
+      FROM public.inv_stock_ledger sl
+      JOIN public.inv_items i ON i.id = sl.item_id
+      WHERE sl.location_id = $1
+        AND sl.inserted_at < $3::date + interval '1 day'
+      GROUP BY sl.item_id
+    `, [location_id, period_start, period_end]);
+
+    const existingRes = await client.query(
+      `SELECT id, item_id FROM public.inv_stock_take_lines WHERE sheet_id = $1`,
+      [sheet.id]
+    );
+    const existingByItem = new Map(existingRes.rows.map(r => [r.item_id, r.id]));
+
+    let updated = 0, added = 0;
+    for (const item of itemsRes.rows) {
+      // Opening: most recent LOCKED sheet count, else cumulative ledger before start
+      const openingRes = await client.query(`
+        SELECT stl.physical_qty
+        FROM public.inv_stock_take_lines stl
+        JOIN public.inv_stock_take_sheets sts ON sts.id = stl.sheet_id
+        WHERE stl.item_id = $1 AND sts.location_id = $2
+          AND sts.status = 'locked' AND sts.period_end < $3::date
+        ORDER BY sts.period_end DESC LIMIT 1
+      `, [item.item_id, location_id, period_start]);
+      let opening_qty;
+      if (openingRes.rows.length) {
+        opening_qty = Number(openingRes.rows[0].physical_qty);
+      } else {
+        const cumRes = await client.query(`
+          SELECT COALESCE(SUM(quantity_change), 0) AS balance
+          FROM public.inv_stock_ledger
+          WHERE item_id = $1 AND location_id = $2 AND inserted_at < $3::date
+        `, [item.item_id, location_id, period_start]);
+        opening_qty = Number(cumRes.rows[0].balance);
+      }
+
+      const lineId = existingByItem.get(item.item_id);
+      if (lineId) {
+        // Refresh theoretical columns; physical_qty (entered count) is preserved.
+        await client.query(`
+          UPDATE public.inv_stock_take_lines
+          SET opening_qty=$1, purchases_qty=$2, transfers_in_qty=$3,
+              transfers_out_qty=$4, theoretical_sales_qty=$5, unit_cost=$6
+          WHERE id=$7
+        `, [opening_qty, item.purchases_qty, item.transfers_in_qty,
+            item.transfers_out_qty, item.theoretical_sales_qty, item.unit_cost || 0, lineId]);
+        updated++;
+      } else {
+        await client.query(`
+          INSERT INTO public.inv_stock_take_lines
+            (sheet_id, item_id, item_name, opening_qty, purchases_qty, transfers_in_qty,
+             transfers_out_qty, theoretical_sales_qty, unit_cost)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `, [sheet.id, item.item_id, item.item_name, opening_qty,
+            item.purchases_qty, item.transfers_in_qty,
+            item.transfers_out_qty, item.theoretical_sales_qty, item.unit_cost || 0]);
+        added++;
+      }
+    }
+
+    const linesRes = await client.query(
+      `SELECT stl.*, i.name AS item_name FROM public.inv_stock_take_lines stl
+       JOIN public.inv_items i ON i.id = stl.item_id
+       WHERE stl.sheet_id = $1 ORDER BY i.name`,
+      [sheet.id]
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true, sheet, lines: linesRes.rows, refreshed: updated, added });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
  * GET /api/v1/inventory/stock-take/:sheetId
  * Returns sheet header + all lines with computed variance_qty.
  */
@@ -3627,7 +3749,8 @@ router.post('/stock-take/:sheetId/lock', async (req, res) => {
       netVarianceValue += varianceValue;
 
       if (Math.abs(varianceQty) < 0.0005) continue; // skip zero-variance lines
-      const variancePct = theoreticalQty > 0 ? Math.abs(varianceQty / theoreticalQty) * 100 : 0;
+      // Cap so extreme ratios (tiny theoretical) can never overflow NUMERIC(12,4)
+      const variancePct = Math.min(theoreticalQty > 0 ? Math.abs(varianceQty / theoreticalQty) * 100 : 0, 99999999.9999);
       const alert = variancePct >= 5 ? 'CRITICAL' : variancePct >= 2 ? 'WARNING' : 'OK';
       // FIX: use the real inv_variance_lines columns (variance_report_id / item_cost /
       // variance_percentage / alert_level) — the old report_id/unit_cost names don't

@@ -2993,6 +2993,27 @@ const StockTake: React.FC = () => {
     }
   };
 
+  // Re-pull theoretical quantities from the live ledger (transactions corrected
+  // after the sheet was generated) — keeps the sheet and all entered counts.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = async () => {
+    if (!sheet) return;
+    setRefreshing(true);
+    setError('');
+    try {
+      const r = await fetch(`/api/v1/inventory/stock-take/${sheet.id}/refresh`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      }).then(r => r.json());
+      if (!r.ok) return setError(r.error || 'Refresh failed');
+      setSheet(r.sheet);
+      setLines(attachVariance(r.lines));
+    } catch (_e) {
+      setError('Network error');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handlePhysicalQty = async (lineId: string, value: string) => {
     const qty = parseFloat(value);
     if (isNaN(qty)) return;
@@ -3081,6 +3102,15 @@ const StockTake: React.FC = () => {
             }`}>
               {locked ? '🔒 LOCKED' : 'DRAFT'}
             </span>
+            {!locked && (
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing || locking}
+                title="Re-pull theoretical quantities from the ledger (keeps your entered counts) — use after correcting transactions"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-50 transition-colors">
+                {refreshing ? 'Refreshing…' : '⟳ Refresh'}
+              </button>
+            )}
             {!locked && (
               <button
                 onClick={handleLock}
