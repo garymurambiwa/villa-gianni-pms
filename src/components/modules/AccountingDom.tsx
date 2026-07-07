@@ -74,6 +74,14 @@ const accountingModule = (() => {
           window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'pending-batches' } } as any));
           break;
         }
+        case 'gl-transactions': {
+          window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'gl-transactions' } } as any));
+          break;
+        }
+        case 'supplier-payments': {
+          window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'supplier-payments' } } as any));
+          break;
+        }
         default: {
           deps?.toast({ title: 'Unknown action', description: String(action || '') });
         }
@@ -132,6 +140,8 @@ const AccountingDom: React.FC = () => {
         <button type="button" data-action="inventory-recon" className="acct-btn" aria-label="Inventory Reconciliation"><span className="mr-2">📦</span>Inventory Reconciliation</button>
         <button type="button" data-action="chart-of-accounts" className="acct-btn" aria-label="Chart of Accounts"><span className="mr-2">📒</span>Chart of Accounts</button>
         <button type="button" data-action="pending-batches" className="acct-btn">📋 Pending GL Batches</button>
+        <button type="button" data-action="gl-transactions" className="acct-btn" aria-label="GL Transaction Listing"><span className="mr-2">📑</span>GL Transactions</button>
+        <button type="button" data-action="supplier-payments" className="acct-btn" aria-label="Supplier Payments"><span className="mr-2">💸</span>Supplier Payments</button>
       </div>
 
       {/* Daily Journal modal identical operation */}

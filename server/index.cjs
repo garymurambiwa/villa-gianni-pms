@@ -353,6 +353,156 @@ app.post('/api/gl/daily-batch/post', async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+// ─── GL Transaction Listing (detailed + summary) ─────────────────────────────
+// GET /api/gl/transactions?from&to&account_id&source
+// Detailed: every posted journal LINE in range (with its parent entry + account).
+// Summary: per-account debit/credit/net totals over the same filter.
+app.get('/api/gl/transactions', async (req, res) => {
+  const { from, to, account_id, source } = req.query;
+  if (!from || !to) return res.json({ ok: false, error: 'from and to dates required' });
+  try {
+    let where = `je.status = 'posted' AND je.business_date >= $1::date AND je.business_date <= $2::date`;
+    const params = [from, to];
+    if (account_id) { params.push(account_id); where += ` AND jl.gl_account_id = $${params.length}`; }
+    if (source)     { params.push(source);     where += ` AND je.source = $${params.length}`; }
+
+    const [detail, summary] = await Promise.all([
+      db.query(
+        `SELECT jl.id AS line_id, jl.journal_entry_id, jl.gl_account_id,
+                a.name AS account_name, a.category AS account_category,
+                jl.debit_amount, jl.credit_amount, jl.description AS line_description,
+                je.business_date, je.reference, je.description AS entry_description,
+                je.source, je.created_by, je.posted_by, je.posted_at
+         FROM gl_journal_lines jl
+         JOIN gl_journal_entries je ON je.id = jl.journal_entry_id
+         LEFT JOIN gl_accounts a ON a.id = jl.gl_account_id
+         WHERE ${where}
+         ORDER BY je.business_date DESC, je.inserted_at DESC, jl.id`,
+        params
+      ),
+      db.query(
+        `SELECT jl.gl_account_id, MAX(a.name) AS account_name, MAX(a.category) AS account_category,
+                COUNT(*) AS line_count,
+                COALESCE(SUM(jl.debit_amount),0)  AS total_debit,
+                COALESCE(SUM(jl.credit_amount),0) AS total_credit,
+                COALESCE(SUM(jl.debit_amount),0) - COALESCE(SUM(jl.credit_amount),0) AS net
+         FROM gl_journal_lines jl
+         JOIN gl_journal_entries je ON je.id = jl.journal_entry_id
+         LEFT JOIN gl_accounts a ON a.id = jl.gl_account_id
+         WHERE ${where}
+         GROUP BY jl.gl_account_id ORDER BY jl.gl_account_id`,
+        params
+      ),
+    ]);
+    res.json({
+      ok: true, from, to,
+      lines: detail.rows || [],
+      summary: summary.rows || [],
+      totalDebit:  (detail.rows || []).reduce((s, r) => s + Number(r.debit_amount || 0), 0),
+      totalCredit: (detail.rows || []).reduce((s, r) => s + Number(r.credit_amount || 0), 0),
+    });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ─── Supplier Payments (clear supplier AP against cash/bank) ─────────────────
+async function ensureSupplierPaymentsTable() {
+  await db.query(`CREATE TABLE IF NOT EXISTS ap_supplier_payments (
+    id TEXT PRIMARY KEY,
+    supplier_name TEXT NOT NULL,
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    method TEXT NOT NULL CHECK (method IN ('cash','bank')),
+    gl_cash_account TEXT NOT NULL,
+    reference TEXT,
+    journal_id TEXT,
+    paid_at DATE NOT NULL DEFAULT NOW()::date,
+    created_by TEXT,
+    inserted_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
+}
+
+// GET /api/ap/supplier-balances — payable (posted GRNs) vs paid, per supplier
+app.get('/api/ap/supplier-balances', async (req, res) => {
+  try {
+    await ensureSupplierPaymentsTable();
+    const r = await db.query(
+      `WITH grn AS (
+         SELECT supplier_name, COUNT(*) AS grn_count,
+                COALESCE(SUM(COALESCE(grn_total, total_value, 0)),0) AS payable
+         FROM inv_grn_headers WHERE status='posted' AND supplier_name IS NOT NULL
+         GROUP BY supplier_name
+       ), pay AS (
+         SELECT supplier_name, COALESCE(SUM(amount),0) AS paid
+         FROM ap_supplier_payments GROUP BY supplier_name
+       )
+       SELECT COALESCE(g.supplier_name, p.supplier_name) AS supplier_name,
+              COALESCE(g.grn_count,0) AS grn_count,
+              COALESCE(g.payable,0) AS payable,
+              COALESCE(p.paid,0) AS paid,
+              COALESCE(g.payable,0) - COALESCE(p.paid,0) AS balance
+       FROM grn g FULL OUTER JOIN pay p ON p.supplier_name = g.supplier_name
+       ORDER BY balance DESC`
+    );
+    res.json({ ok: true, rows: r.rows || [] });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// GET /api/ap/supplier-payments?supplier_name — payment history
+app.get('/api/ap/supplier-payments', async (req, res) => {
+  try {
+    await ensureSupplierPaymentsTable();
+    const { supplier_name } = req.query;
+    const params = [];
+    let where = '';
+    if (supplier_name) { params.push(supplier_name); where = `WHERE supplier_name = $1`; }
+    const r = await db.query(
+      `SELECT * FROM ap_supplier_payments ${where} ORDER BY paid_at DESC, inserted_at DESC LIMIT 500`, params
+    );
+    res.json({ ok: true, rows: r.rows || [] });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// POST /api/ap/supplier-payments — record a payment and post the settlement journal
+// Dr 2100 Accounts Payable / Cr 1000 Cash or 1100 Bank. Posted immediately (a cash
+// movement is a completed fact, not a discretionary estimate).
+app.post('/api/ap/supplier-payments', async (req, res) => {
+  const { supplier_name, amount, method, reference, date, created_by } = req.body || {};
+  const amt = Number(amount);
+  if (!supplier_name || !(amt > 0)) return res.json({ ok: false, error: 'supplier_name and positive amount required' });
+  if (!['cash', 'bank'].includes(method)) return res.json({ ok: false, error: "method must be 'cash' or 'bank'" });
+  try {
+    await ensureSupplierPaymentsTable();
+    const payDate = date || new Date().toISOString().slice(0, 10);
+    const crAcct = method === 'cash' ? '1000' : '1100';
+    const payId = `APPAY_${Date.now().toString(36)}`;
+    const entryId = `GLJE_${payId}`;
+    const desc = `Supplier payment — ${supplier_name}${reference ? ` (${reference})` : ''} via ${method}`;
+    const by = created_by || 'system';
+    const ops = [
+      {
+        sql: `INSERT INTO gl_journal_entries
+                (id, entry_date, business_date, description, reference, source, status,
+                 total_debit, total_credit, is_balanced, created_by, posted_by, posted_at, inserted_at)
+              VALUES ($1, $2::date, $2::date, $3, $4, 'expense', 'posted', $5, $5, true, $6, $6, NOW(), NOW())`,
+        params: [entryId, payDate, desc, reference || payId, amt, by]
+      },
+      {
+        sql: `INSERT INTO gl_journal_lines (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
+              VALUES ($1, $2, '2100', $3, 0, $4, NOW()), ($5, $2, $6, 0, $3, $4, NOW())`,
+        params: [`${entryId}_DR`, entryId, amt, desc, `${entryId}_CR`, crAcct]
+      },
+      {
+        sql: `INSERT INTO ap_supplier_payments
+                (id, supplier_name, amount, method, gl_cash_account, reference, journal_id, paid_at, created_by)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9)`,
+        params: [payId, supplier_name, amt, method, crAcct, reference || null, entryId, payDate, by]
+      },
+    ];
+    const tx = await db.transaction(ops);
+    if (!tx.ok) throw new Error(tx.error || 'Transaction failed');
+    res.json({ ok: true, id: payId, journal_id: entryId, supplier_name, amount: amt, method });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // GET /api/gl/journal-entries/pl — P&L summary from DB journal lines
 app.get('/api/gl/journal-entries/pl', async (req, res) => {
   const { from, to } = req.query;

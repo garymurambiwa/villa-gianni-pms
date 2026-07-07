@@ -60,6 +60,8 @@ import AccountingDom from './modules/AccountingDom';
 import AccountingTaxConfiguration from './modules/AccountingTaxConfiguration';
 import { ChartOfAccounts } from '@/components/modules/ChartOfAccounts';
 import { PendingBatchesLedger } from '@/components/modules/PendingBatchesLedger';
+import { GLTransactionListing } from '@/components/modules/GLTransactionListing';
+import { SupplierPayments } from '@/components/modules/SupplierPayments';
 import FOSetting from './modules/FOSetting';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { logger } from '@/lib/logger';
@@ -323,6 +325,12 @@ const AppLayout: React.FC = () => {
       }
       case 'pending-batches': {
         return <div className="flex-1 overflow-y-auto"><PendingBatchesLedger /></div>;
+      }
+      case 'gl-transactions': {
+        return <div className="flex-1 overflow-y-auto"><GLTransactionListing /></div>;
+      }
+      case 'supplier-payments': {
+        return <div className="flex-1 overflow-y-auto"><SupplierPayments /></div>;
       }
       case 'accounting-tax': {
         const role = normalizeRole(user?.role);

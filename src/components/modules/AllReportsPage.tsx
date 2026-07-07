@@ -117,6 +117,8 @@ const REPORTS = [
   { key: 'stock-adjust', name: 'Stock Adjustments', description: 'Before/after quantities and reasons', type: 'detailed' as const },
   { key: 'purchases', name: 'Purchases', description: 'Procurement activities with vendor analysis', type: 'detailed' as const },
   { key: 'journals', name: 'Journal Postings (GL)', description: 'Every GL journal posting in range — revenue, expense & all sources', type: 'detailed' as const },
+  { key: 'gl-tx-detailed', name: 'GL Transactions (Detailed)', description: 'Interactive posting-by-posting listing with drill-down and click-&-edit account reallocation', type: 'detailed' as const },
+  { key: 'gl-tx-summary', name: 'GL Transactions (Summary)', description: 'Interactive per-account totals — click any account to drill to its transactions', type: 'summary' as const },
   { key: 'trial-balance', name: 'Trial Balance', description: 'Monthly trial balance with debits and credits', type: 'summary' as const },
   { key: 'aged-ar', name: 'Aged Accounts Receivable', description: 'City ledger aging analysis', type: 'detailed' as const },
   { key: 'arrivals', name: 'Arrivals & Departures', description: 'Daily guest movement report', type: 'detailed' as const },
@@ -223,6 +225,18 @@ export const AllReportsPage: React.FC = () => {
 
   const openReportNewTab = async (key: string) => {
     setError(''); setOpeningKey(key);
+
+    // Interactive reports render in-app (drill-down + edit), not as a print tab.
+    if (key === 'gl-tx-detailed' || key === 'gl-tx-summary') {
+      setOpeningKey(null);
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('glTxMode', key === 'gl-tx-summary' ? 'summary' : 'detailed');
+        window.history.replaceState({}, '', url.toString());
+      } catch { /* noop */ }
+      window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'gl-transactions' } }));
+      return;
+    }
 
     // CRITICAL: open the tab synchronously inside the click handler so the
     // browser keeps the user-gesture trust. Doing window.open() after an
