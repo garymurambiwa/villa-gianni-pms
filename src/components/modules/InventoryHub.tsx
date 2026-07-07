@@ -528,7 +528,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   const [filters, setFilters] = useState<TransactionFilterValue>({ ...EMPTY_TRANSACTION_FILTER });
 
   useEffect(() => {
-    apiGet('/grn?limit=500').then(r => { if (r.ok) setGrns(r.data); });
+    apiGet('/grn?limit=5000').then(r => { if (r.ok) setGrns(r.data); });
   }, []);
 
   const locName = (id: string) => locations.find((l:any) => l.id === id)?.name || id || '';
@@ -626,7 +626,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
       const r = await apiPost(`/grn/${g.id}/post`, { posted_by: user?.id || 'system' });
       if (r.ok) {
         toast({ title: `GRN ${g.grn_number} posted`, description: 'Stock receipt committed to the ledger.' });
-        const res = await apiGet('/grn?limit=500');
+        const res = await apiGet('/grn?limit=5000');
         if (res.ok) setGrns(res.data);
         if (detailGrn?.id === g.id) setDetailGrn(prev => prev ? { ...prev, status: 'posted' } : prev);
       } else {
@@ -801,7 +801,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
       setLines([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, expiry_date:'' }]);
       setSupplier(''); setSupplierId(''); setInvoiceNum('');
       setGrnDate(new Date().toISOString().split('T')[0]); setGrnNotes('');
-      apiGet('/grn?limit=500').then(res => { if (res.ok) setGrns(res.data); });
+      apiGet('/grn?limit=5000').then(res => { if (res.ok) setGrns(res.data); });
     } else {
       toast({ title: 'GRN failed', description: r.error, variant:'destructive' });
     }
