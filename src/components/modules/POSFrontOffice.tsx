@@ -993,7 +993,7 @@ export const POSFrontOffice: React.FC = () => {
       name: i.menuItem?.name || i.name,
       quantity: Number(i.quantity || 0)
     }));
-    decrementInventory(soldItems, costCentre || 'Main Restaurant', shiftId || 'unknown')
+    decrementInventory(soldItems, costCentre || 'Main Restaurant', shiftId || 'unknown', bill.id)
       .catch(err => {
         console.warn('Inventory depletion failed:', err);
         logPaymentError('inventory', err, { billId: bill.id });

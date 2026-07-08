@@ -132,7 +132,7 @@ export const getPosSettings = async () => {
 /**
  * Decrement inventory quantities based on sold items
  */
-export const decrementInventory = async (soldItems: Array<{ name: string; id?: string; quantity: number }>, costCenter?: string, shiftId?: string) => {
+export const decrementInventory = async (soldItems: Array<{ name: string; id?: string; quantity: number }>, costCenter?: string, shiftId?: string, billId?: string) => {
   try {
     // 1. Sync LocalStorage for immediate UI feedback (Legacy/Hybrid Support)
     const raw = localStorage.getItem('corepms_pos_items');
@@ -189,26 +189,6 @@ export const decrementInventory = async (soldItems: Array<{ name: string; id?: s
             );
           }
 
-          // C. Log to V11 Stock Ledger for Reporting
-          if (itemId) {
-             // Fetch base UOM for item if possible
-             const uomRes = await db.query(`SELECT category_id FROM products WHERE id = $1`, [itemId]);
-             const uom = ('rows' in uomRes && uomRes.rows[0]) ? uomRes.rows[0].category_id : 'pcs';
-
-             await db.query(`
-               INSERT INTO inv_stock_ledger (
-                 id, item_id, ledger_type, reference_number, quantity_change, base_uom_id, posted_by
-               ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-             `, [
-               `LEDGER_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-               itemId,
-               'POS_SALE',
-               shiftId || 'POS',
-               -qty,
-               uom,
-               'POS_SYSTEM'
-             ]);
-          }
         }
         await db.query('COMMIT');
         console.log('[decrementInventory] Transaction committed successfully');
@@ -217,6 +197,28 @@ export const decrementInventory = async (soldItems: Array<{ name: string; id?: s
         console.error('[decrementInventory] Transaction failed, rolled back:', txErr);
       }
     }
+
+    // 4. V11 Stock Ledger — post through the recipe-aware server endpoint.
+    // The old direct INSERT used ledger_type='POS_SALE' (not in the ledger's CHECK
+    // constraint) and no location_id (NOT NULL), so the WHOLE transaction above
+    // rolled back on every sale — no SALE_DEPLETION row was ever written and even
+    // the products.stock_level updates were undone. The endpoint resolves the
+    // outlet's own inv_location, explodes recipes into ingredients, carries cost,
+    // and is idempotent on bill_id (safe for retries).
+    fetch('/api/v1/inventory/sale-depletion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bill_id: billId || `SHIFT-${shiftId || 'POS'}-${Date.now()}`,
+        shift_id: shiftId || null,
+        outlet: costCenter || null,
+        items: soldItems
+          .filter(si => si.id && Number(si.quantity || 0) > 0)
+          .map(si => ({ item_id: si.id, qty: Number(si.quantity) })),
+      }),
+    }).catch(err => {
+      console.debug('[decrementInventory] sale-depletion post failed (non-fatal):', err?.message);
+    });
   } catch (err) { 
     console.error('[decrementInventory] Critical failure:', err); 
   }
