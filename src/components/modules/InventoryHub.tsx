@@ -1627,7 +1627,10 @@ function RecipeBuilder({ data }: { data: ReturnType<typeof useInventoryData> }) 
     updateIngredient(lineIdx, 'item_name', item.name);
     updateIngredient(lineIdx, 'uom', item.base_uom_id || 'uom_unit');
     updateIngredient(lineIdx, 'unit_cost', Number(item.weighted_avg_cost || item.last_cost_price || 0));
-    setItemSearch(s => ({ ...s, [lineIdx]: '' }));
+    // DELETE the search key (don't set '') — the input renders
+    // `itemSearch[i] ?? line.item_name`, and '' is not nullish, so an empty
+    // string would mask the selected item's name and the field showed blank.
+    setItemSearch(s => { const n = { ...s }; delete n[lineIdx]; return n; });
   };
 
   const theoreticalCost = ingredients.reduce((s, l) => {
