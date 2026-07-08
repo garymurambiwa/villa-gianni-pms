@@ -3,6 +3,7 @@
  * Tabs: Items · Suppliers · GRN · Transfer · Recipes · Reports
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { getHotelName } from '@/lib/brand';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1599,6 +1600,11 @@ function RecipeBuilder({ data }: { data: ReturnType<typeof useInventoryData> }) 
   const [menuItems, setMenuItems] = useState<any[]>([]);
   const [selectedMenu, setSelectedMenu] = useState<any>(null);
   const [ingredients, setIngredients] = useState<any[]>([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', wastage_pct:0, unit_cost:0 }]);
+  // Floating "suspended window" for ingredient suggestions — anchored to the input
+  // and rendered in a body portal so it can never be clipped by the table's
+  // overflow container (which previously forced scrolling inside the table).
+  const [ingDropdown, setIngDropdown] = useState<{ lineIdx: number; rect: DOMRect } | null>(null);
+  const ingInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
   const [saving, setSaving] = useState(false);
   const [itemSearch, setItemSearch] = useState<Record<number,string>>({});
 
@@ -1714,19 +1720,44 @@ function RecipeBuilder({ data }: { data: ReturnType<typeof useInventoryData> }) 
                 <tr key={i} className="border-t border-gray-100">
                   <td className="px-2 py-1 relative min-w-[200px]">
                     <Input value={searchVal} placeholder="Search inventory item…"
-                      onChange={e => { setItemSearch(s=>({...s,[i]:e.target.value})); if (!e.target.value) updateIngredient(i,'item_id',''); }}
+                      ref={(el) => { ingInputRefs.current[i] = el; }}
+                      onFocus={e => setIngDropdown({ lineIdx: i, rect: e.currentTarget.getBoundingClientRect() })}
+                      onChange={e => {
+                        setItemSearch(s=>({...s,[i]:e.target.value}));
+                        if (!e.target.value) updateIngredient(i,'item_id','');
+                        const el = ingInputRefs.current[i];
+                        if (el) setIngDropdown({ lineIdx: i, rect: el.getBoundingClientRect() });
+                      }}
+                      onBlur={() => setTimeout(() => setIngDropdown(d => (d?.lineIdx === i ? null : d)), 180)}
                       className="text-sm" />
-                    {suggestions.length > 0 && (
-                      <div className="absolute z-30 top-full left-2 bg-white border rounded-lg shadow-lg w-72 max-h-40 overflow-y-auto">
-                        {suggestions.map((it:any) => (
-                          <div key={it.id} onClick={() => selectIngredientItem(i, it)}
-                            className="px-3 py-1.5 hover:bg-indigo-50 cursor-pointer text-xs flex justify-between items-center gap-2">
-                            {/* Item name only — never expose the raw item id (per cost-controller UX) */}
-                            <span className="truncate">{it.name}</span>
-                            <span className="text-indigo-600 whitespace-nowrap">{fmt(it.weighted_avg_cost)}/{it.base_uom_code || ''}</span>
-                          </div>
-                        ))}
-                      </div>
+                    {suggestions.length > 0 && ingDropdown?.lineIdx === i && createPortal(
+                      <div
+                        style={{
+                          position: 'fixed',
+                          top: Math.min(ingDropdown.rect.bottom + 4, window.innerHeight - 260),
+                          left: Math.min(ingDropdown.rect.left, window.innerWidth - 340),
+                          width: Math.max(ingDropdown.rect.width, 320),
+                          zIndex: 9999,
+                        }}
+                        className="bg-white border border-indigo-200 rounded-xl shadow-2xl overflow-hidden">
+                        <div className="px-3 py-1.5 bg-indigo-50 border-b border-indigo-100 flex items-center justify-between">
+                          <span className="text-[10px] font-semibold text-indigo-600 uppercase tracking-wide">Select Ingredient</span>
+                          <button onMouseDown={e => { e.preventDefault(); setIngDropdown(null); }}
+                            className="text-indigo-300 hover:text-indigo-600 text-xs">✕</button>
+                        </div>
+                        <div className="max-h-52 overflow-y-auto">
+                          {suggestions.map((it:any) => (
+                            <div key={it.id}
+                              onMouseDown={e => { e.preventDefault(); selectIngredientItem(i, it); setIngDropdown(null); }}
+                              className="px-3 py-1.5 hover:bg-indigo-50 cursor-pointer text-xs flex justify-between items-center gap-2">
+                              {/* Item name only — never expose the raw item id (per cost-controller UX) */}
+                              <span className="truncate">{it.name}</span>
+                              <span className="text-indigo-600 whitespace-nowrap">{fmt(it.weighted_avg_cost)}/{it.base_uom_code || ''}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>,
+                      document.body
                     )}
                   </td>
                   <td className="px-2 py-1 w-20">
