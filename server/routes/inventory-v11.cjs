@@ -2166,10 +2166,14 @@ router.post('/recipe', async (req, res) => {
     // Mark previous recipe as not current
     await client.query(`UPDATE public.inv_recipes SET is_current = false WHERE menu_item_id = $1`, [menu_item_id]);
 
-    // Create new recipe
+    // Create new recipe. version_number must be assigned explicitly: the table
+    // has UNIQUE (menu_item_id, version_number) and the column default collides
+    // on the second save for the same menu item ("duplicate key ..._version_number_key").
     const recipeRes = await client.query(
-      `INSERT INTO public.inv_recipes (id, menu_item_id, is_current, created_by, inserted_at)
-      VALUES ($1, $2, true, $3, $4)
+      `INSERT INTO public.inv_recipes (id, menu_item_id, version_number, is_current, created_by, inserted_at)
+      VALUES ($1, $2,
+              (SELECT COALESCE(MAX(version_number), 0) + 1 FROM public.inv_recipes WHERE menu_item_id = $2),
+              true, $3, $4)
       RETURNING *`,
       [randomUUID(), menu_item_id, created_by, new Date()]
     );
