@@ -1,3 +1,4 @@
+import { getHotelName } from './brand';
 export type PaperSize = 'A4' | 'Letter' | 'Legal';
 export type Orientation = 'portrait' | 'landscape';
 export type PrintQuality = 'draft' | 'normal' | 'high';
@@ -78,7 +79,7 @@ export const readReceiptBranding = (): ReceiptBranding => {
   if (__brandCache) return __brandCache.value;
 
   const defaults: ReceiptBranding = {
-    restaurant_name: import.meta.env.VITE_HOTEL_NAME || 'Company Name',
+    restaurant_name: getHotelName(),
     address: import.meta.env.VITE_HOTEL_ADDRESS || '',
     phone: import.meta.env.VITE_HOTEL_PHONE || '',
     logo_url: import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png',

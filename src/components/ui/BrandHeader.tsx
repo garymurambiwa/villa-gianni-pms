@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { getHotelName } from '@/lib/brand';
 import { useSettings } from '@/hooks/useSettings';
 // Removed local Customize button; customization moves to FO Settings.
 
@@ -20,7 +21,7 @@ const readJSON = <T,>(key: string, fallback: T): T => {
 const writeJSON = (key: string, value: any) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { } };
 
 const DEFAULT: BrandSettings = {
-  name: import.meta.env.VITE_HOTEL_NAME || 'Hotel Management',
+  name: getHotelName(),
   font: 'Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif',
   color: '#60a5fa', // text-blue-400
   sizePx: 24,

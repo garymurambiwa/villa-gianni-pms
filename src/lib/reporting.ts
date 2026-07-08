@@ -3,7 +3,7 @@ import { readReceiptBranding } from './printSettings';
 import roomSvc from '@/lib/roomService';
 import expenseSvc from '@/lib/expenseService';
 import { syncNightAuditRunToLocalStorage } from './dbSync';
-import { HOTEL_NAME } from './brand';
+import { getHotelName } from './brand';
 import { db } from './db';
 
 export type ReportType = 'flash' | 'pos-recon' | 'purchase-log' | 'pl' | 'aged-ar' | 'inventory-cogs' | 'housekeeping' | 'daily-tax' | 'cash-bank' | 'trial-balance' | 'dept-summary' | 'arrivals-departures' | 'high-balance' | 'proc-variance' | 'fa-recon' | 'open-bills' | 'aged-payables' | 'po-history' | 'payment-history' | 'vendor-payment-summary' | 'expenses-by-dept' | 'expense-summary-daily' | 'expense-summary-monthly' | 'line-item-export';
@@ -2317,7 +2317,7 @@ export const generateBlankCheckInFormHTML = (): string => {
     <body>
       <div class="header">
         ${brand.show_logo && brand.logo_url ? `<img src="${brand.logo_url}" alt="Logo" class="company-logo" />` : ''}
-        <h1>${brand.restaurant_name || HOTEL_NAME}</h1>
+        <h1>${brand.restaurant_name || getHotelName()}</h1>
         <p>${brand.address || ''} ${brand.phone ? `| Tel: ${brand.phone}` : ''}</p>
         <h2>GUEST REGISTRATION CARD</h2>
       </div>

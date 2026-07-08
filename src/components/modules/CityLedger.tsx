@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { printDocument, generateCityLedgerReceiptHTML } from '../../lib/posIntegration';
 import { usePagination } from '@/hooks/usePagination';
 import PaginationBar from '@/components/shared/PaginationBar';
-import { HOTEL_NAME, getHotelName } from '../../lib/brand';
+import { getHotelName } from '../../lib/brand';
 
 export const CityLedger: React.FC = () => {
   const { 

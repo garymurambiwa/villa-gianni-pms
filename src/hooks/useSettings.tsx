@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import pmsAuthDb from '@/lib/pmsAuthDb';
+import { getHotelName } from '@/lib/brand';
 
 export interface AppSettings {
     hotelName: string;
@@ -37,7 +38,7 @@ const getInitialDefaults = (): AppSettings => {
     const isBaradzanwa = host.includes('baradzanwa');
     
     return {
-        hotelName: isBaradzanwa ? 'Baradzanwa' : (import.meta.env.VITE_HOTEL_NAME || 'Hotel Name'),
+        hotelName: getHotelName(),
         hotelTagline: isBaradzanwa ? 'Welcome to Baradzanwa' : (import.meta.env.VITE_HOTEL_TAGLINE || 'Boutique Hotel'),
         logoUrl: isBaradzanwa ? '/logob.png' : (import.meta.env.VITE_HOTEL_LOGO_URL || '/logo.png'),
         themePreset: isBaradzanwa ? 'bronze' : 'light',
