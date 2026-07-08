@@ -1831,6 +1831,53 @@ function RecipeBuilder({ data }: { data: ReturnType<typeof useInventoryData> }) 
       </div>
 
       <div className="flex justify-end mt-5 gap-3">
+        <Button variant="outline" disabled={!selectedMenu || !ingredients.some(l => l.item_id)} onClick={() => {
+          // Export the recipe card as CSV
+          const uomCode = (id: string) => uoms.find((u: any) => u.id === id)?.code || id;
+          const rows = [
+            ['Recipe', selectedMenu?.name || ''],
+            ['Selling Price', Number(selectedMenu?.price || 0).toFixed(2)],
+            ['Theoretical Cost per Portion', theoreticalCost.toFixed(2)],
+            ['GP %', selectedMenu?.price ? (((Number(selectedMenu.price) - theoreticalCost) / Number(selectedMenu.price)) * 100).toFixed(1) : ''],
+            [],
+            ['Ingredient', 'Qty', 'UOM', 'Wastage %', 'Unit Cost', 'Effective Cost'],
+            ...ingredients.filter(l => l.item_id).map(l => {
+              const eff = Number(l.qty || 0) * Number(l.unit_cost || 0) * (1 + Number(l.wastage_pct || 0) / 100);
+              return [l.item_name, l.qty, uomCode(l.uom), l.wastage_pct, Number(l.unit_cost || 0).toFixed(4), eff.toFixed(2)];
+            }),
+          ];
+          const csv = rows.map(r => (r as any[]).map(x => `"${String(x ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+          const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+          const a = document.createElement('a');
+          a.href = url; a.download = `recipe_${(selectedMenu?.name || 'recipe').replace(/[^a-z0-9]+/gi, '_').toLowerCase()}.csv`;
+          a.click(); URL.revokeObjectURL(url);
+        }}>Export CSV</Button>
+        <Button variant="outline" disabled={!selectedMenu || !ingredients.some(l => l.item_id)} onClick={() => {
+          // Print a recipe cost card
+          const uomCode = (id: string) => uoms.find((u: any) => u.id === id)?.code || id;
+          const gp = selectedMenu?.price ? (((Number(selectedMenu.price) - theoreticalCost) / Number(selectedMenu.price)) * 100).toFixed(1) : '—';
+          const esc = (s: any) => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
+          const linesHtml = ingredients.filter(l => l.item_id).map(l => {
+            const eff = Number(l.qty || 0) * Number(l.unit_cost || 0) * (1 + Number(l.wastage_pct || 0) / 100);
+            return `<tr><td>${esc(l.item_name)}</td><td style="text-align:right">${esc(l.qty)}</td><td>${esc(uomCode(l.uom))}</td><td style="text-align:right">${esc(l.wastage_pct)}%</td><td style="text-align:right">$${Number(l.unit_cost || 0).toFixed(4)}</td><td style="text-align:right">$${eff.toFixed(2)}</td></tr>`;
+          }).join('');
+          const html = `<!doctype html><html><head><title>Recipe — ${esc(selectedMenu?.name)}</title><style>
+            body{font-family:system-ui,-apple-system,sans-serif;padding:24px;color:#111}
+            h1{font-size:20px;margin:0 0 2px} .sub{color:#666;font-size:12px;margin-bottom:16px}
+            table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+            th,td{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left}
+            th{background:#f5f5f7;font-size:11px;text-transform:uppercase;color:#555}
+            .totals{margin-top:16px;font-size:14px} .totals b{font-size:18px}
+          </style></head><body>
+            <h1>${esc(getHotelName())} — Recipe Cost Card</h1>
+            <div class="sub">${esc(selectedMenu?.name)} · Selling price $${Number(selectedMenu?.price || 0).toFixed(2)} · Printed ${new Date().toLocaleString()}</div>
+            <table><thead><tr><th>Ingredient</th><th style="text-align:right">Qty</th><th>UOM</th><th style="text-align:right">Wastage</th><th style="text-align:right">Unit Cost</th><th style="text-align:right">Effective Cost</th></tr></thead>
+            <tbody>${linesHtml}</tbody></table>
+            <div class="totals">Theoretical Cost per Portion: <b>$${theoreticalCost.toFixed(2)}</b> &nbsp;·&nbsp; GP: <b>${gp}%</b></div>
+          </body></html>`;
+          const w = window.open('', '_blank');
+          if (w) { w.document.write(html); w.document.close(); w.focus(); setTimeout(() => w.print(), 300); }
+        }}>🖨 Print</Button>
         <Button onClick={save} disabled={saving} className="bg-indigo-600 text-white hover:bg-indigo-700">
           {saving ? 'Saving…' : 'Save Recipe'}
         </Button>
