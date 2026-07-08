@@ -3765,6 +3765,40 @@ router.post('/stock-take/:sheetId/lock', async (req, res) => {
       );
     }
 
+    // ── TRUE-UP STOCK ON HAND to the physical count ──────────────────────────
+    // Stock-on-hand everywhere (stock reports, POS availability, next-period
+    // theoreticals, COS) is SUM(quantity_change) from inv_stock_ledger. Before
+    // this fix the lock recorded the variance REPORT and the GL batch but never
+    // corrected the LEDGER — so on-hand stayed at theoretical after every count.
+    // Now each counted line writes an ADJUSTMENT row bringing the item's ledger
+    // balance at this location exactly to the physical count. Idempotent per
+    // sheet+item via NOT EXISTS (re-lock never double-adjusts).
+    for (const line of lines) {
+      const balRes = await client.query(
+        `SELECT COALESCE(SUM(quantity_change), 0) AS balance
+         FROM public.inv_stock_ledger WHERE item_id = $1 AND location_id = $2`,
+        [line.item_id, sheet.location_id]
+      );
+      const ledgerBalance = Number(balRes.rows[0].balance);
+      const trueUp = Number(line.physical_qty) - ledgerBalance;
+      if (Math.abs(trueUp) < 0.0005) continue;
+      await client.query(
+        `INSERT INTO public.inv_stock_ledger
+           (id, item_id, location_id, ledger_type, reference_number, quantity_change,
+            base_uom_id, cost_per_unit, posted_by, inserted_at)
+         SELECT gen_random_uuid()::text, $1, $2, 'ADJUSTMENT', $3, $4,
+                COALESCE((SELECT base_uom_id FROM public.inv_items WHERE id = $1), 'uom_unit'),
+                $5, $6, NOW()
+         WHERE NOT EXISTS (
+           SELECT 1 FROM public.inv_stock_ledger
+           WHERE reference_number = $3 AND ledger_type = 'ADJUSTMENT'
+             AND item_id = $1 AND location_id = $2
+         )`,
+        [line.item_id, sheet.location_id, `STOCKTAKE-TRUEUP-${sheet.id}`,
+         trueUp, Number(line.unit_cost || 0), locked_by || 'system']
+      );
+    }
+
     // ── Stage the net variance as an EDITABLE PENDING GL BATCH ───────────────
     // Shrinkage (net loss): Dr 5100 Cost of Sales / Cr 1400 Inventory.
     // Surplus  (net gain):  Dr 1400 Inventory     / Cr 5100 Cost of Sales.
@@ -3991,6 +4025,14 @@ router.post('/stock-take/:sheetId/reopen', async (req, res) => {
       `DELETE FROM public.gl_pending_batches
        WHERE origin_table = 'inv_stock_take_sheets' AND origin_id = $1`,
       [sheet.id]
+    );
+
+    // Remove the ledger TRUE-UP adjustments written at lock so a re-lock
+    // recomputes them fresh against the then-current ledger (no double-count).
+    await client.query(
+      `DELETE FROM public.inv_stock_ledger
+       WHERE reference_number = $1 AND ledger_type = 'ADJUSTMENT'`,
+      [`STOCKTAKE-TRUEUP-${sheet.id}`]
     );
 
     // Variance report + lines created at lock (matched by location + period)
