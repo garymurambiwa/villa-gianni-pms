@@ -1617,6 +1617,34 @@ function RecipeBuilder({ data }: { data: ReturnType<typeof useInventoryData> }) 
     }).then(r => r.json()).then(d => { if (d.ok) setMenuItems(d.rows); });
   }, []);
 
+  // When a menu item is selected, load its saved recipe (if any) into the builder
+  // so an existing recipe can be reviewed/edited instead of always starting blank.
+  useEffect(() => {
+    if (!selectedMenu?.id) return;
+    let live = true;
+    fetch(`${API}/recipe/${encodeURIComponent(selectedMenu.id)}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!live) return;
+        const lines = d?.data?.lines;
+        if (Array.isArray(lines) && lines.length) {
+          setIngredients(lines.map((l: any) => ({
+            item_id: l.item_id,
+            item_name: l.name || l.item_id,
+            qty: Number(l.qty_required || 0),
+            uom: l.prep_uom_id || 'uom_unit',
+            wastage_pct: Number(l.wastage_pct || 0),
+            unit_cost: Number(l.weighted_avg_cost || 0),
+          })));
+          setItemSearch({});
+        } else {
+          setIngredients([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', wastage_pct:0, unit_cost:0 }]);
+        }
+      })
+      .catch(() => { /* offline — leave builder as-is */ });
+    return () => { live = false; };
+  }, [selectedMenu?.id]);
+
   const addIngredient = () => setIngredients(l => [...l, { item_id:'', item_name:'', qty:1, uom:'uom_unit', wastage_pct:0, unit_cost:0 }]);
   const removeIngredient = (i: number) => setIngredients(l => l.filter((_,idx) => idx !== i));
   const updateIngredient = (i: number, field: string, val: any) =>

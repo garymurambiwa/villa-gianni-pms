@@ -2137,10 +2137,26 @@ router.get('/recipe/:menu_item_id', async (req, res) => {
  * Create or update recipe version
  */
 router.post('/recipe', async (req, res) => {
-  const { menu_item_id, lines, created_by } = req.body;
+  const { menu_item_id, lines, ingredients, created_by } = req.body;
+  // The Recipe Builder client historically sent `ingredients` [{item_id, qty,
+  // uom_id, wastage_pct}] while this endpoint only read `lines` [{item_id,
+  // qty_required, prep_uom_id, …}] — so every recipe saved its header with ZERO
+  // ingredient lines ("empty recipe"). Accept both shapes, normalized.
+  const rawLines = Array.isArray(lines) && lines.length ? lines : ingredients;
+  const normLines = Array.isArray(rawLines)
+    ? rawLines.map(l => ({
+        item_id: l.item_id,
+        qty_required: Number(l.qty_required ?? l.qty ?? 0),
+        prep_uom_id: l.prep_uom_id ?? l.uom_id ?? l.uom ?? null,
+        wastage_pct: Number(l.wastage_pct || 0),
+      })).filter(l => l.item_id && l.qty_required > 0)
+    : [];
 
   if (!menu_item_id || !created_by) {
     return res.status(400).json({ ok: false, error: 'menu_item_id and created_by required' });
+  }
+  if (!normLines.length) {
+    return res.status(400).json({ ok: false, error: 'At least one ingredient line with a positive quantity is required' });
   }
 
   const client = await pool.connect();
@@ -2161,20 +2177,18 @@ router.post('/recipe', async (req, res) => {
     const recipe = recipeRes.rows[0];
 
     // Add lines
-    if (Array.isArray(lines)) {
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        await client.query(
-          `INSERT INTO public.inv_recipe_lines 
-          (id, recipe_id, item_id, qty_required, prep_uom_id, wastage_pct, line_number, inserted_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [randomUUID(), recipe.id, line.item_id, line.qty_required, line.prep_uom_id, line.wastage_pct || 0, i + 1, new Date()]
-        );
-      }
+    for (let i = 0; i < normLines.length; i++) {
+      const line = normLines[i];
+      await client.query(
+        `INSERT INTO public.inv_recipe_lines
+        (id, recipe_id, item_id, qty_required, prep_uom_id, wastage_pct, line_number, inserted_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [randomUUID(), recipe.id, line.item_id, line.qty_required, line.prep_uom_id, line.wastage_pct, i + 1, new Date()]
+      );
     }
 
     await client.query('COMMIT');
-    res.json({ ok: true, data: recipe });
+    res.json({ ok: true, data: recipe, lines_saved: normLines.length });
   } catch (error) {
     await client.query('ROLLBACK');
     res.status(500).json({ ok: false, error: error.message });
