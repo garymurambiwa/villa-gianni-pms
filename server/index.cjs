@@ -418,7 +418,45 @@ async function ensureSupplierPaymentsTable() {
     created_by TEXT,
     inserted_at TIMESTAMPTZ DEFAULT NOW()
   )`);
+  // Per-GRN settlement: a payment may be allocated to one specific GRN so the
+  // controller can verify and clear invoices document-by-document.
+  await db.query(`ALTER TABLE ap_supplier_payments ADD COLUMN IF NOT EXISTS grn_id TEXT`);
+  await db.query(`ALTER TABLE ap_supplier_payments ADD COLUMN IF NOT EXISTS grn_number TEXT`);
 }
+
+// GET /api/ap/supplier-grns?supplier_name= — the supplier's posted GRNs with
+// per-GRN paid amount (allocated payments) and outstanding balance, for
+// document-by-document verification and settlement.
+app.get('/api/ap/supplier-grns', async (req, res) => {
+  const { supplier_name } = req.query;
+  if (!supplier_name) return res.json({ ok: false, error: 'supplier_name required' });
+  try {
+    await ensureSupplierPaymentsTable();
+    const r = await db.query(
+      `SELECT g.id, g.grn_number, g.receipt_date, g.supplier_invoice_number,
+              g.destination_location_id, g.posted_at, g.posted_by,
+              COALESCE(g.grn_total, g.total_value, 0) AS grn_total,
+              COALESCE(p.paid, 0) AS paid,
+              COALESCE(g.grn_total, g.total_value, 0) - COALESCE(p.paid, 0) AS balance,
+              (SELECT COUNT(*) FROM inv_grn_lines gl WHERE gl.grn_header_id = g.id) AS line_count
+       FROM inv_grn_headers g
+       LEFT JOIN LATERAL (
+         SELECT SUM(amount) AS paid FROM ap_supplier_payments sp WHERE sp.grn_id = g.id
+       ) p ON true
+       WHERE g.status = 'posted' AND g.supplier_name = $1
+       ORDER BY g.receipt_date DESC NULLS LAST, g.grn_number DESC`,
+      [supplier_name]
+    );
+    const rows = r.rows || [];
+    // Unallocated supplier-level payments (no grn_id) shown so totals reconcile
+    const un = await db.query(
+      `SELECT COALESCE(SUM(amount),0) AS unallocated FROM ap_supplier_payments
+       WHERE supplier_name = $1 AND grn_id IS NULL`,
+      [supplier_name]
+    );
+    res.json({ ok: true, rows, unallocated: Number(un.rows?.[0]?.unallocated || 0) });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
 
 // GET /api/ap/supplier-balances — payable (posted GRNs) vs paid, per supplier
 app.get('/api/ap/supplier-balances', async (req, res) => {
@@ -465,17 +503,34 @@ app.get('/api/ap/supplier-payments', async (req, res) => {
 // Dr 2100 Accounts Payable / Cr 1000 Cash or 1100 Bank. Posted immediately (a cash
 // movement is a completed fact, not a discretionary estimate).
 app.post('/api/ap/supplier-payments', async (req, res) => {
-  const { supplier_name, amount, method, reference, date, created_by } = req.body || {};
+  const { supplier_name, amount, method, reference, date, created_by, grn_id, grn_number } = req.body || {};
   const amt = Number(amount);
   if (!supplier_name || !(amt > 0)) return res.json({ ok: false, error: 'supplier_name and positive amount required' });
   if (!['cash', 'bank'].includes(method)) return res.json({ ok: false, error: "method must be 'cash' or 'bank'" });
   try {
     await ensureSupplierPaymentsTable();
+    // Per-GRN settlement guard: validate the GRN belongs to this supplier and
+    // block over-settling a single document (supplier-level payments stay free-form).
+    let grnNo = grn_number || null;
+    if (grn_id) {
+      const g = await db.query(
+        `SELECT g.grn_number, COALESCE(g.grn_total, g.total_value, 0) AS total,
+                COALESCE((SELECT SUM(amount) FROM ap_supplier_payments WHERE grn_id = g.id), 0) AS paid
+         FROM inv_grn_headers g WHERE g.id = $1 AND g.supplier_name = $2 AND g.status = 'posted'`,
+        [grn_id, supplier_name]
+      );
+      const grn = g.rows?.[0];
+      if (!grn) return res.json({ ok: false, error: 'GRN not found for this supplier (or not posted)' });
+      const grnBalance = Number(grn.total) - Number(grn.paid);
+      if (amt > grnBalance + 0.005)
+        return res.json({ ok: false, error: `Payment $${amt.toFixed(2)} exceeds ${grn.grn_number}'s outstanding balance $${grnBalance.toFixed(2)}` });
+      grnNo = grn.grn_number;
+    }
     const payDate = date || new Date().toISOString().slice(0, 10);
     const crAcct = method === 'cash' ? '1000' : '1100';
     const payId = `APPAY_${Date.now().toString(36)}`;
     const entryId = `GLJE_${payId}`;
-    const desc = `Supplier payment — ${supplier_name}${reference ? ` (${reference})` : ''} via ${method}`;
+    const desc = `Supplier payment — ${supplier_name}${grnNo ? ` [${grnNo}]` : ''}${reference ? ` (${reference})` : ''} via ${method}`;
     const by = created_by || 'system';
     const ops = [
       {
@@ -492,9 +547,9 @@ app.post('/api/ap/supplier-payments', async (req, res) => {
       },
       {
         sql: `INSERT INTO ap_supplier_payments
-                (id, supplier_name, amount, method, gl_cash_account, reference, journal_id, paid_at, created_by)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9)`,
-        params: [payId, supplier_name, amt, method, crAcct, reference || null, entryId, payDate, by]
+                (id, supplier_name, amount, method, gl_cash_account, reference, journal_id, paid_at, created_by, grn_id, grn_number)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11)`,
+        params: [payId, supplier_name, amt, method, crAcct, reference || null, entryId, payDate, by, grn_id || null, grnNo]
       },
     ];
     const tx = await db.transaction(ops);
