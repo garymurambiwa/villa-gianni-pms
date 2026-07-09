@@ -62,6 +62,7 @@ import { ChartOfAccounts } from '@/components/modules/ChartOfAccounts';
 import { PendingBatchesLedger } from '@/components/modules/PendingBatchesLedger';
 import { GLTransactionListing } from '@/components/modules/GLTransactionListing';
 import { SupplierPayments } from '@/components/modules/SupplierPayments';
+import { SupplierStatement } from '@/components/modules/SupplierStatement';
 import FOSetting from './modules/FOSetting';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { logger } from '@/lib/logger';
@@ -331,6 +332,9 @@ const AppLayout: React.FC = () => {
       }
       case 'supplier-payments': {
         return <div className="flex-1 overflow-y-auto"><SupplierPayments /></div>;
+      }
+      case 'supplier-statement': {
+        return <div className="flex-1 overflow-y-auto"><SupplierStatement /></div>;
       }
       case 'accounting-tax': {
         const role = normalizeRole(user?.role);

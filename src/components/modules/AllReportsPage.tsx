@@ -119,6 +119,7 @@ const REPORTS = [
   { key: 'journals', name: 'Journal Postings (GL)', description: 'Every GL journal posting in range — revenue, expense & all sources', type: 'detailed' as const },
   { key: 'gl-tx-detailed', name: 'GL Transactions (Detailed)', description: 'Interactive posting-by-posting listing with drill-down and click-&-edit account reallocation', type: 'detailed' as const },
   { key: 'gl-tx-summary', name: 'GL Transactions (Summary)', description: 'Interactive per-account totals — click any account to drill to its transactions', type: 'summary' as const },
+  { key: 'supplier-statement', name: 'Supplier Statement', description: 'Per-supplier transactions by date — goods received, amounts paid and running balance, with edit, print & export', type: 'detailed' as const },
   { key: 'trial-balance', name: 'Trial Balance', description: 'Monthly trial balance with debits and credits', type: 'summary' as const },
   { key: 'aged-ar', name: 'Aged Accounts Receivable', description: 'City ledger aging analysis', type: 'detailed' as const },
   { key: 'arrivals', name: 'Arrivals & Departures', description: 'Daily guest movement report', type: 'detailed' as const },
@@ -227,6 +228,11 @@ export const AllReportsPage: React.FC = () => {
     setError(''); setOpeningKey(key);
 
     // Interactive reports render in-app (drill-down + edit), not as a print tab.
+    if (key === 'supplier-statement') {
+      setOpeningKey(null);
+      window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'supplier-statement' } }));
+      return;
+    }
     if (key === 'gl-tx-detailed' || key === 'gl-tx-summary') {
       setOpeningKey(null);
       try {

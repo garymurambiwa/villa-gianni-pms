@@ -62,14 +62,49 @@ export const SupplierPayments: React.FC = () => {
     setExpanded(supplier); setGrns([]); loadGrns(supplier);
   };
 
+  // Settle popup: clicking a GRN opens a suspended window with full/partial choice.
+  const [settleModal, setSettleModal] = useState<null | { supplier: string; grn: SupplierGrn }>(null);
+  const [settleMode, setSettleMode] = useState<'full' | 'partial'>('full');
+  const [settleAmount, setSettleAmount] = useState('');
+  const [settleMethod, setSettleMethod] = useState<'cash' | 'bank'>('cash');
+  const [settleDate, setSettleDate] = useState(new Date().toISOString().slice(0, 10));
+  const [settleRef, setSettleRef] = useState('');
+  const [settleBusy, setSettleBusy] = useState(false);
+
   const settleGrn = (supplier: string, g: SupplierGrn) => {
-    setForm(f => ({
-      ...f, supplier_name: supplier,
-      amount: Number(g.balance).toFixed(2),
-      reference: g.supplier_invoice_number || g.grn_number,
-      grn: { id: g.id, number: g.grn_number, balance: Number(g.balance) },
-    }));
-    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* noop */ }
+    setSettleModal({ supplier, grn: g });
+    setSettleMode('full');
+    setSettleAmount(Number(g.balance).toFixed(2));
+    setSettleMethod('cash');
+    setSettleDate(new Date().toISOString().slice(0, 10));
+    setSettleRef(g.supplier_invoice_number || g.grn_number);
+  };
+
+  const postSettle = async () => {
+    if (!settleModal) return;
+    const g = settleModal.grn;
+    const payAmt = settleMode === 'full' ? Number(g.balance) : Number(settleAmount || 0);
+    if (!(payAmt > 0)) { toast({ title: 'Enter a positive amount' }); return; }
+    if (payAmt > Number(g.balance) + 0.005) { toast({ title: 'Amount exceeds outstanding', description: `${g.grn_number} has $ ${Number(g.balance).toFixed(2)} outstanding.` }); return; }
+    setSettleBusy(true);
+    try {
+      const r = await fetch('/api/ap/supplier-payments', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supplier_name: settleModal.supplier, amount: payAmt, method: settleMethod,
+          reference: settleRef, date: settleDate,
+          grn_id: g.id, grn_number: g.grn_number,
+          created_by: user?.username || 'system',
+        }),
+      }).then(r => r.json());
+      if (!r.ok) throw new Error(r.error || 'Payment failed');
+      toast({ title: settleMode === 'full' ? 'GRN settled' : 'Partial payment recorded', description: `$ ${payAmt.toFixed(2)} against ${g.grn_number} — journal ${r.journal_id}.` });
+      setSettleModal(null);
+      await load();
+      if (expanded) await loadGrns(expanded);
+    } catch (e: any) {
+      toast({ title: 'Payment failed', description: String(e?.message || e) });
+    } finally { setSettleBusy(false); }
   };
 
   const selected = balances.find(b => b.supplier_name === form.supplier_name);
@@ -337,6 +372,80 @@ export const SupplierPayments: React.FC = () => {
           </tbody>
         </table>
       </div>
+
+      {/* Settle GRN — suspended window (full or partial payment) */}
+      {settleModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40" onClick={() => !settleBusy && setSettleModal(null)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b flex items-center justify-between">
+              <div>
+                <div className="font-bold text-sm">Settle {settleModal.grn.grn_number}</div>
+                <div className="text-xs text-gray-500">{settleModal.supplier}{settleModal.grn.supplier_invoice_number ? ` · Invoice ${settleModal.grn.supplier_invoice_number}` : ''}</div>
+              </div>
+              <button onClick={() => setSettleModal(null)} className="text-gray-400 hover:text-gray-700 font-bold text-lg" disabled={settleBusy}>✕</button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="p-2 rounded bg-gray-50">GRN Total<div className="font-mono font-semibold text-sm mt-0.5">$ {Number(settleModal.grn.grn_total).toFixed(2)}</div></div>
+                <div className="p-2 rounded bg-green-50 text-green-800">Paid<div className="font-mono font-semibold text-sm mt-0.5">$ {Number(settleModal.grn.paid).toFixed(2)}</div></div>
+                <div className="p-2 rounded bg-red-50 text-red-800">Outstanding<div className="font-mono font-semibold text-sm mt-0.5">$ {Number(settleModal.grn.balance).toFixed(2)}</div></div>
+              </div>
+
+              {/* Full vs Partial */}
+              <div className="flex gap-2">
+                <button onClick={() => { setSettleMode('full'); setSettleAmount(Number(settleModal.grn.balance).toFixed(2)); }}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border ${settleMode === 'full' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 hover:bg-gray-50'}`}>
+                  Settle Full Amount<div className="text-xs font-normal opacity-80">$ {Number(settleModal.grn.balance).toFixed(2)}</div>
+                </button>
+                <button onClick={() => setSettleMode('partial')}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border ${settleMode === 'partial' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 hover:bg-gray-50'}`}>
+                  Partial Payment<div className="text-xs font-normal opacity-80">choose an amount</div>
+                </button>
+              </div>
+
+              {settleMode === 'partial' && (
+                <div>
+                  <label className="text-xs block mb-1">Payment amount (max $ {Number(settleModal.grn.balance).toFixed(2)})</label>
+                  <Input type="number" step="0.01" min="0.01" max={Number(settleModal.grn.balance)} value={settleAmount}
+                    onChange={e => setSettleAmount(e.target.value)} autoFocus />
+                  {Number(settleAmount || 0) > Number(settleModal.grn.balance) + 0.005 && (
+                    <div className="text-xs text-red-600 mt-1">Exceeds outstanding balance — the server will reject this.</div>
+                  )}
+                  {Number(settleAmount || 0) > 0 && Number(settleAmount) <= Number(settleModal.grn.balance) && (
+                    <div className="text-xs text-gray-500 mt-1">Remaining after payment: $ {(Number(settleModal.grn.balance) - Number(settleAmount)).toFixed(2)}</div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs block mb-1">Pay From</label>
+                  <select className="border rounded px-2 py-1.5 text-sm w-full" value={settleMethod} onChange={e => setSettleMethod(e.target.value as 'cash' | 'bank')}>
+                    <option value="cash">Cash (1000)</option>
+                    <option value="bank">Bank (1100)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs block mb-1">Date</label>
+                  <Input type="date" value={settleDate} onChange={e => setSettleDate(e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs block mb-1">Reference</label>
+                <Input placeholder="Invoice / receipt #" value={settleRef} onChange={e => setSettleRef(e.target.value)} />
+              </div>
+              <div className="text-[11px] text-gray-500">Posts: Dr 2100 Accounts Payable / Cr {settleMethod === 'cash' ? '1000 Cash' : '1100 Bank'}.</div>
+            </div>
+            <div className="px-5 py-3 border-t flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setSettleModal(null)} disabled={settleBusy}>Cancel</Button>
+              <Button className="bg-green-600 text-white" onClick={postSettle}
+                disabled={settleBusy || (settleMode === 'partial' && !(Number(settleAmount || 0) > 0))}>
+                {settleBusy ? 'Posting…' : `Pay $ ${(settleMode === 'full' ? Number(settleModal.grn.balance) : Number(settleAmount || 0)).toFixed(2)}`}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

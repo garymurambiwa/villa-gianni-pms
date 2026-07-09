@@ -484,6 +484,81 @@ app.get('/api/ap/supplier-balances', async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+// GET /api/ap/supplier-statement?supplier_name=&from=&to= — full transaction
+// statement: GRN charges and payments merged by date with a running balance.
+app.get('/api/ap/supplier-statement', async (req, res) => {
+  const { supplier_name, from, to } = req.query;
+  if (!supplier_name) return res.json({ ok: false, error: 'supplier_name required' });
+  try {
+    await ensureSupplierPaymentsTable();
+    const params = [supplier_name];
+    let dateFilterGrn = '', dateFilterPay = '';
+    if (from) { params.push(from); dateFilterGrn += ` AND COALESCE(g.receipt_date, g.posted_at, g.inserted_at)::date >= $${params.length}::date`; dateFilterPay += ` AND p.paid_at >= $${params.length}::date`; }
+    if (to)   { params.push(to);   dateFilterGrn += ` AND COALESCE(g.receipt_date, g.posted_at, g.inserted_at)::date <= $${params.length}::date`; dateFilterPay += ` AND p.paid_at <= $${params.length}::date`; }
+    const r = await db.query(
+      `SELECT * FROM (
+         SELECT 'GRN' AS tx_type, g.id, g.grn_number AS doc_number,
+                COALESCE(g.receipt_date, g.posted_at, g.inserted_at)::date AS tx_date,
+                g.supplier_invoice_number AS reference,
+                COALESCE(g.grn_total, g.total_value, 0) AS charge, 0::numeric AS payment,
+                NULL AS method, NULL AS journal_id
+         FROM inv_grn_headers g
+         WHERE g.status='posted' AND g.supplier_name = $1 ${dateFilterGrn}
+         UNION ALL
+         SELECT 'PAYMENT' AS tx_type, p.id, COALESCE(p.grn_number, 'On account') AS doc_number,
+                p.paid_at AS tx_date, p.reference,
+                0::numeric AS charge, p.amount AS payment, p.method, p.journal_id
+         FROM ap_supplier_payments p
+         WHERE p.supplier_name = $1 ${dateFilterPay}
+       ) t ORDER BY tx_date, tx_type DESC, doc_number`,
+      params
+    );
+    const rows = r.rows || [];
+    let bal = 0;
+    for (const row of rows) { bal += Number(row.charge || 0) - Number(row.payment || 0); row.balance = Number(bal.toFixed(2)); }
+    res.json({
+      ok: true, supplier_name, from: from || null, to: to || null, rows,
+      totalCharges: rows.reduce((s, x) => s + Number(x.charge || 0), 0),
+      totalPayments: rows.reduce((s, x) => s + Number(x.payment || 0), 0),
+      closingBalance: bal,
+    });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// PATCH /api/ap/supplier-payments/:id — edit statement metadata on a payment
+// (reference / paid_at only — the amount is a posted GL fact and stays immutable).
+app.patch('/api/ap/supplier-payments/:id', async (req, res) => {
+  const { id } = req.params;
+  const { reference, paid_at } = req.body || {};
+  if (reference === undefined && !paid_at) return res.json({ ok: false, error: 'reference or paid_at required' });
+  try {
+    await ensureSupplierPaymentsTable();
+    const r = await db.query(
+      `UPDATE ap_supplier_payments
+         SET reference = COALESCE($1, reference),
+             paid_at = COALESCE($2::date, paid_at)
+       WHERE id = $3 RETURNING id`,
+      [reference ?? null, paid_at || null, id]
+    );
+    if (!r.rows?.length) return res.json({ ok: false, error: 'Payment not found' });
+    res.json({ ok: true, id });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// PATCH /api/ap/grn-invoice/:id — correct a GRN's supplier invoice number
+app.patch('/api/ap/grn-invoice/:id', async (req, res) => {
+  const { id } = req.params;
+  const { supplier_invoice_number } = req.body || {};
+  try {
+    const r = await db.query(
+      `UPDATE inv_grn_headers SET supplier_invoice_number = $1, updated_at = NOW() WHERE id = $2 RETURNING id`,
+      [supplier_invoice_number || null, id]
+    );
+    if (!r.rows?.length) return res.json({ ok: false, error: 'GRN not found' });
+    res.json({ ok: true, id });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // GET /api/ap/supplier-payments?supplier_name — payment history
 app.get('/api/ap/supplier-payments', async (req, res) => {
   try {
