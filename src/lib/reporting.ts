@@ -730,11 +730,13 @@ export const buildPosBillRegister = async (from?: string, to?: string) => {
   const end = to || start;
   try {
     const { db } = await import('@/lib/db');
+    // pos_orders schema: cost_center (not outlet); bill_number added by schema
+    // sync — orders closed before that carry no number and sort chronologically.
     const res = await db.query<any>(
-      `SELECT bill_number, id, created_at, outlet, payment_method, subtotal, tax_amount, total_amount
+      `SELECT bill_number, id, created_at, cost_center, payment_method, total_amount
        FROM pos_orders
        WHERE status = 'closed' AND created_at::date >= $1::date AND created_at::date <= $2::date
-       ORDER BY NULLIF(regexp_replace(COALESCE(bill_number,''), '\\D', '', 'g'), '')::bigint NULLS LAST,
+       ORDER BY NULLIF(regexp_replace(COALESCE(bill_number,''), '[^0-9]', '', 'g'), '')::bigint NULLS LAST,
                 created_at ASC`,
       [start, end]
     );
@@ -742,18 +744,16 @@ export const buildPosBillRegister = async (from?: string, to?: string) => {
       bill: r.bill_number || `(no #) ${String(r.id).slice(0, 8)}`,
       date: String(r.created_at).slice(0, 10),
       time: String(r.created_at).slice(11, 16),
-      outlet: r.outlet || '—',
+      outlet: r.cost_center || '—',
       method: r.payment_method || '—',
-      subtotal: Number(r.subtotal || 0).toFixed(2),
-      tax: Number(r.tax_amount || 0).toFixed(2),
       total: Number(r.total_amount || 0).toFixed(2),
     }));
     const total = rows.reduce((s: number, r: any) => s + Number(r.total), 0);
-    rows.push({ bill: `TOTAL (${rows.length} bills)`, date: '', time: '', outlet: '', method: '', subtotal: '', tax: '', total: total.toFixed(2) } as any);
+    rows.push({ bill: `TOTAL (${rows.length} bills)`, date: '', time: '', outlet: '', method: '', total: total.toFixed(2) } as any);
     return {
       title: `POS Bill Register ${start}${end !== start ? ` → ${end}` : ''}`,
-      columns: ['Bill #', 'Date', 'Time', 'Outlet', 'Payment', 'Subtotal', 'Tax', 'Total'],
-      rows: rows.map((r: any) => [r.bill, r.date, r.time, r.outlet, r.method, r.subtotal, r.tax, r.total]),
+      columns: ['Bill #', 'Date', 'Time', 'Outlet', 'Payment', 'Total'],
+      rows: rows.map((r: any) => [r.bill, r.date, r.time, r.outlet, r.method, r.total]),
     };
   } catch (err) {
     console.warn('[Reporting] buildPosBillRegister failed:', err);

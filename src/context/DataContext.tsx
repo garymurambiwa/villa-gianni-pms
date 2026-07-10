@@ -725,7 +725,7 @@ check_in_date = ?, check_out_date = ?, status = ?,
     }
   };
 
-  const closePosOrder = async (tableNumber: string, costCentre?: string, paymentMethod?: string): Promise<boolean> => {
+  const closePosOrder = async (tableNumber: string, costCentre?: string, paymentMethod?: string, billNumber?: string): Promise<boolean> => {
     // Optimistic update — remove from local state immediately so posOrders effect
     // never re-occupies the table while the DB update is in-flight.
     // Use case-insensitive comparison for cost_center — DB may store 'conference'
@@ -746,10 +746,16 @@ check_in_date = ?, check_out_date = ?, status = ?,
       // Also persist payment_method so the Reports → Payment Methods breakdown
       // shows cash/ecocash/swipe/room-charge instead of "Unknown".
       const setMethod = paymentMethod ? ", payment_method = ?" : "";
-      const baseParams: any[] = paymentMethod ? [paymentMethod] : [];
+      // Persist the sequential bill number so the POS Bill Register can list
+      // bills in numbering sequence (column added by the startup schema sync).
+      const setBill = billNumber ? ", bill_number = ?" : "";
+      const baseParams: any[] = [
+        ...(paymentMethod ? [paymentMethod] : []),
+        ...(billNumber ? [billNumber] : []),
+      ];
       const query = costCentre
-        ? `UPDATE pos_orders SET status = 'closed'${setMethod}, updated_at = NOW() WHERE table_number = ? AND status = 'open' AND LOWER(cost_center) = LOWER(?)`
-        : `UPDATE pos_orders SET status = 'closed'${setMethod}, updated_at = NOW() WHERE table_number = ? AND status = 'open'`;
+        ? `UPDATE pos_orders SET status = 'closed'${setMethod}${setBill}, updated_at = NOW() WHERE table_number = ? AND status = 'open' AND LOWER(cost_center) = LOWER(?)`
+        : `UPDATE pos_orders SET status = 'closed'${setMethod}${setBill}, updated_at = NOW() WHERE table_number = ? AND status = 'open'`;
       const params = costCentre
         ? [...baseParams, tableNumber, costCentre]
         : [...baseParams, tableNumber];

@@ -1022,7 +1022,7 @@ export const POSFrontOffice: React.FC = () => {
     if (closePosOrder) {
       // Pass paymentData.paymentMethod so the DB row records cash/ecocash/swipe/
       // room-charge — Reports → Payment Methods reads this column directly.
-      const doClose = () => closePosOrder(bill.tableId, costCentre || undefined, paymentData?.paymentMethod);
+      const doClose = () => closePosOrder(bill.tableId, costCentre || undefined, paymentData?.paymentMethod, billNumber);
       doClose()
         .then(() => {
           console.log('POS order closed (first pass)');
