@@ -180,15 +180,17 @@ export const postRoomAndTax = (ctx: NightAuditContext) => {
     // Also create folio charge entries for the guest's account
     if (guestId) {
       const chargeId = `CHG_NA_${businessDate}_${room.number}_${Date.now()}`;
-      // Room charge (base rate)
+      // Conference rooms bill to their own revenue stream — category 'Conference'
+      // keeps the charge OUT of room revenue so ADR/RevPAR stay accurate.
+      const isConference = /conference/i.test(String(room.type || ''));
       const roomCharge = {
         id: chargeId,
         guestId,
         roomNumber: room.number,
-        description: `Room Charge - ${room.number}`,
+        description: `${isConference ? 'Conference Room Charge' : 'Room Charge'} - ${room.number}`,
         amount: baseRate,
         date: businessDate,
-        category: 'Room',
+        category: isConference ? 'Conference' : 'Room',
         type: 'charge',
         source: 'night_audit'
       };
@@ -344,8 +346,11 @@ export const backupSnapshot = (ctx: NightAuditContext) => {
 };
 
 export const generateReportsBundle = (ctx: NightAuditContext, auditBusinessDate?: string) => {
-  const occupied = ctx.rooms.filter((r: any) => r.status === 'OC' || r.status === 'OD').length;
-  const availableRooms = ctx.rooms.filter((r: any) => r.status !== 'OOO' && r.status !== 'OOS').length;
+  // Conference rooms are EXCLUDED from all rooms KPIs (occupancy, ADR, RevPAR,
+  // rooms available/sold) so conference space never distorts accommodation stats.
+  const guestRooms = (ctx.rooms || []).filter((r: any) => !/conference/i.test(String(r.type || '')));
+  const occupied = guestRooms.filter((r: any) => r.status === 'OC' || r.status === 'OD').length;
+  const availableRooms = guestRooms.filter((r: any) => r.status !== 'OOO' && r.status !== 'OOS').length;
   const occupancy = availableRooms ? ((occupied / availableRooms) * 100) : 0;
 
   // CRITICAL FIX: Use the audit date (BEFORE rollover) not the current business date.
@@ -390,7 +395,13 @@ export const generateReportsBundle = (ctx: NightAuditContext, auditBusinessDate?
     .filter((c: any) => c.category === 'F&B')
     .reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
 
-  const totalRevenue = roomRevenue + fbRevenue;
+  // Conference/Events revenue — its own stream, NEVER in room revenue (so it
+  // can't inflate ADR/RevPAR) but included in total revenue.
+  const conferenceRevenue = mergedCharges
+    .filter((c: any) => c.category === 'Conference')
+    .reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
+
+  const totalRevenue = roomRevenue + fbRevenue + conferenceRevenue;
   const avgDailyRate = occupied > 0 && roomRevenue > 0 ? roomRevenue / occupied : 0;
 
   // RevPAR = Total Room Revenue / Total Available Rooms
@@ -408,6 +419,7 @@ export const generateReportsBundle = (ctx: NightAuditContext, auditBusinessDate?
     occupancy: Number(occupancy.toFixed(2)),
     roomRevenue: Number(roomRevenue.toFixed(2)),
     fbRevenue: Number(fbRevenue.toFixed(2)),
+    conferenceRevenue: Number(conferenceRevenue.toFixed(2)),
     totalRevenue: Number(totalRevenue.toFixed(2)),
     avgDailyRate: Number(avgDailyRate.toFixed(2)),
     revPAR: Number(revPAR.toFixed(2)),

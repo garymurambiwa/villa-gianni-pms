@@ -289,6 +289,7 @@ export const createDailyJournalFromNightAudit = (businessDate: string, bundle: a
   const lines: GLPostingLine[] = [];
   const revRooms = Number(bundle?.roomRevenue || 0);
   const revFB = Number(bundle?.fbRevenue || 0);
+  const revConference = Number(bundle?.conferenceRevenue || 0);
   const taxEstimate = 0; // tax postings may be computed separately; use mappings['TAX'] when available
   const cash = Number(readJSON<any>('corepms_shift_totals', { cash: 0 }).cash || 0);
   const card = Number(readJSON<any>('corepms_shift_totals', { card: 0 }).card || 0);
@@ -297,6 +298,7 @@ export const createDailyJournalFromNightAudit = (businessDate: string, bundle: a
   // Revenue credits
   if (revRooms > 0) lines.push({ accountId: mappings['ROOM_REVENUE'] || '4000', description: 'Rooms Revenue', debit: 0, credit: revRooms });
   if (revFB > 0) lines.push({ accountId: mappings['FB_REVENUE'] || '4100', description: 'F&B Revenue', debit: 0, credit: revFB });
+  if (revConference > 0) lines.push({ accountId: mappings['CONFERENCE_REVENUE'] || '4200', description: 'Conference & Events Revenue', debit: 0, credit: revConference });
   if (taxEstimate > 0) lines.push({ accountId: mappings['TAX'] || '2000', description: 'Tax Payable', debit: 0, credit: taxEstimate });
 
   // Receipts debits

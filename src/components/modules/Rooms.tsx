@@ -23,7 +23,7 @@ export const Rooms: React.FC = () => {
   const [ascending, setAscending] = useState(true);
   const [selected, setSelected] = useState<string[]>([]);
   const [showAdd, setShowAdd] = useState(false);
-  const [addForm, setAddForm] = useState<{ number: string; type: string; floor: number; rate: number }>({ number: '', type: '', floor: 1, rate: 0 });
+  const [addForm, setAddForm] = useState<{ number: string; type: string; floor: number; rate: number; category: 'guest' | 'conference' }>({ number: '', type: '', floor: 1, rate: 0, category: 'guest' });
   const [processing, setProcessing] = useState(false);
   const [editing, setEditing] = useState<Room | null>(null);
   const [deleting, setDeleting] = useState<Room | null>(null);
@@ -210,12 +210,17 @@ export const Rooms: React.FC = () => {
                   <div className="flex justify-between items-start mb-4">
                     <div>
                       <h3 className={view === 'xl' ? 'text-4xl font-bold text-gray-800' : view === 'sm' ? 'text-lg font-bold text-gray-800' : 'text-2xl font-bold text-gray-800'}>Room {room.number}</h3>
-                      <p className={view === 'xl' ? 'text-base text-gray-600' : 'text-sm text-gray-600'}>{room.type}</p>
+                      <p className={view === 'xl' ? 'text-base text-gray-600' : 'text-sm text-gray-600'}>
+                        {room.type}
+                        {/conference/i.test(String(room.type || '')) && (
+                          <span className="ml-1.5 align-middle px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-700">CONFERENCE</span>
+                        )}
+                      </p>
                       {view !== 'sm' && <p className="text-sm text-gray-500">Floor {room.floor}</p>}
                     </div>
                     <div className="text-right">
                       <p className={view === 'xl' ? 'text-2xl font-bold text-blue-600' : 'text-lg font-bold text-blue-600'}>${room.rate}</p>
-                      <p className="text-xs text-gray-500">per night</p>
+                      <p className="text-xs text-gray-500">{/conference/i.test(String(room.type || '')) ? 'per day' : 'per night'}</p>
                     </div>
                   </div>
                   <div className={`${statusColors[room.status]} text-white ${view === 'sm' ? 'px-2 py-1' : 'px-3 py-2'} rounded-lg text-center font-semibold mb-4`}>
@@ -309,6 +314,20 @@ export const Rooms: React.FC = () => {
               <DialogDescription>Provide room number and name. Required fields are validated.</DialogDescription>
             </DialogHeader>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="md:col-span-2">
+                <label htmlFor="new-room-category" className="text-xs">Room Category</label>
+                <select id="new-room-category" className="border rounded px-2 py-2 w-full text-sm" value={addForm.category}
+                  onChange={(e) => setAddForm(f => ({ ...f, category: e.target.value as 'guest' | 'conference' }))}>
+                  <option value="guest">Guest Room</option>
+                  <option value="conference">Conference Room</option>
+                </select>
+                {addForm.category === 'conference' && (
+                  <div className="text-xs mt-1 text-indigo-700">
+                    Conference rooms book through the same reservation calendar with their own daily rate, but are
+                    excluded from occupancy / ADR / RevPAR and their revenue posts to Conference &amp; Events (4200) — room statistics stay untouched.
+                  </div>
+                )}
+              </div>
               <div>
                 <label htmlFor="new-room-number" className="text-xs">Room Number</label>
                 <Input id="new-room-number" value={addForm.number} onChange={(e) => setAddForm(f => ({ ...f, number: e.target.value }))} placeholder="e.g. 305" />
@@ -357,9 +376,14 @@ export const Rooms: React.FC = () => {
                       return;
                     }
 
+                    // Conference rooms carry a "Conference" type marker so KPI
+                    // exclusions and revenue routing recognize them everywhere.
+                    const savedType = addForm.category === 'conference'
+                      ? (/conference/i.test(addForm.type) ? addForm.type.trim() : `Conference — ${addForm.type.trim()}`.replace(/ — $/, ''))
+                      : addForm.type;
                     const success = await addRoom?.({
                       number: addForm.number,
-                      type: addForm.type,
+                      type: savedType,
                       floor: addForm.floor,
                       rate: parseFloat(String(addForm.rate)) || 0
                     });

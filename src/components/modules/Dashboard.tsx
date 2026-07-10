@@ -28,17 +28,21 @@ export const Dashboard: React.FC = () => {
     return 'VC';
   };
 
+  // Conference rooms are excluded from ALL rooms KPIs (occupancy, ADR, RevPAR) —
+  // they book through the same system but must never distort accommodation stats.
+  const kpiRooms = rooms.filter(r => !/conference/i.test(String((r as any).type || '')));
+
   // OCCUPIED = rooms physically occupied (OC + OD status on the rooms table).
   // This is the industry standard (Smith Travel Research / STR) — use room status,
   // not reservation count, so the dashboard stays in sync with the Availability Grid.
-  const occupiedRooms = rooms.filter(r => {
+  const occupiedRooms = kpiRooms.filter(r => {
     const c = getStatusCategory(r.status);
     return c === 'OCC' || c === 'OD';
   }).length;
 
   // TOTAL AVAILABLE ROOMS = physical inventory minus permanently blocked (OOO/OOS).
   // Denominator for Occupancy %, ADR and RevPAR.
-  const totalAvailableRooms = rooms.filter(r => {
+  const totalAvailableRooms = kpiRooms.filter(r => {
     const c = getStatusCategory(r.status);
     return c !== 'OOO' && c !== 'OOS';
   }).length;
