@@ -298,7 +298,9 @@ export const createDailyJournalFromNightAudit = (businessDate: string, bundle: a
   // Revenue credits
   if (revRooms > 0) lines.push({ accountId: mappings['ROOM_REVENUE'] || '4000', description: 'Rooms Revenue', debit: 0, credit: revRooms });
   if (revFB > 0) lines.push({ accountId: mappings['FB_REVENUE'] || '4100', description: 'F&B Revenue', debit: 0, credit: revFB });
-  if (revConference > 0) lines.push({ accountId: mappings['CONFERENCE_REVENUE'] || '4200', description: 'Conference & Events Revenue', debit: 0, credit: revConference });
+  // Per-property mapping first (CONFERENCE_REVENUE, legacy CONF_REVENUE) — the
+  // 4200 fallback is only safe where 4200 IS the conference account (charts differ).
+  if (revConference > 0) lines.push({ accountId: mappings['CONFERENCE_REVENUE'] || mappings['CONF_REVENUE'] || '4200', description: 'Conference & Events Revenue', debit: 0, credit: revConference });
   if (taxEstimate > 0) lines.push({ accountId: mappings['TAX'] || '2000', description: 'Tax Payable', debit: 0, credit: taxEstimate });
 
   // Receipts debits
