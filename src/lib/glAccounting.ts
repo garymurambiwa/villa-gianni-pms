@@ -297,10 +297,23 @@ export const createDailyJournalFromNightAudit = (businessDate: string, bundle: a
 
   // Revenue credits
   if (revRooms > 0) lines.push({ accountId: mappings['ROOM_REVENUE'] || '4000', description: 'Rooms Revenue', debit: 0, credit: revRooms });
-  if (revFB > 0) lines.push({ accountId: mappings['FB_REVENUE'] || '4100', description: 'F&B Revenue', debit: 0, credit: revFB });
+  // F&B splits into Food vs Beverage revenue streams when the bundle provides
+  // them (mapped per property: FOOD_REVENUE / BEVERAGE_REVENUE). Falls back to
+  // the combined F&B account for older bundles without the split.
+  const revFood = Number(bundle?.foodRevenue || 0);
+  const revBeverage = Number(bundle?.beverageRevenue || 0);
+  if (revFood > 0 || revBeverage > 0) {
+    if (revFood > 0) lines.push({ accountId: mappings['FOOD_REVENUE'] || mappings['FB_REVENUE'] || '4100', description: 'Food Revenue', debit: 0, credit: revFood });
+    if (revBeverage > 0) lines.push({ accountId: mappings['BEVERAGE_REVENUE'] || mappings['FB_REVENUE'] || '4100', description: 'Beverage Revenue', debit: 0, credit: revBeverage });
+    // Any residual (charges that didn't classify) stays on the combined account
+    const residual = Number((revFB - revFood - revBeverage).toFixed(2));
+    if (residual > 0.005) lines.push({ accountId: mappings['FB_REVENUE'] || '4100', description: 'F&B Revenue (unclassified)', debit: 0, credit: residual });
+  } else if (revFB > 0) {
+    lines.push({ accountId: mappings['FB_REVENUE'] || '4100', description: 'F&B Revenue', debit: 0, credit: revFB });
+  }
   // Per-property mapping first (CONFERENCE_REVENUE, legacy CONF_REVENUE) — the
   // 4200 fallback is only safe where 4200 IS the conference account (charts differ).
-  if (revConference > 0) lines.push({ accountId: mappings['CONFERENCE_REVENUE'] || mappings['CONF_REVENUE'] || '4200', description: 'Conference & Events Revenue', debit: 0, credit: revConference });
+  if (revConference > 0) lines.push({ accountId: mappings['CONFERENCE_REVENUE'] || mappings['CONF_REVENUE'] || '4200', description: 'Conference Room Hire Revenue', debit: 0, credit: revConference });
   if (taxEstimate > 0) lines.push({ accountId: mappings['TAX'] || '2000', description: 'Tax Payable', debit: 0, credit: taxEstimate });
 
   // Receipts debits

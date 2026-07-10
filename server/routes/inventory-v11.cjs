@@ -209,6 +209,26 @@ async function ensureInventoryTables() {
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS posted_by TEXT`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS supplier_id TEXT`);
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS supplier_invoice_number TEXT`);
+      // Controller-defined cost categories for GRN capture (Service Stocks,
+      // Paper Supply, Crockery & Cutlery, Kitchen Utensils, …). Each category can
+      // point at a GL account that becomes the staged batch's DEBIT account.
+      await client.query(`CREATE TABLE IF NOT EXISTS public.inv_cost_categories (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        gl_account TEXT,
+        is_active BOOLEAN DEFAULT true,
+        created_by TEXT,
+        inserted_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+      await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS cost_category TEXT`);
+      await client.query(`INSERT INTO public.inv_cost_categories (id, name, gl_account) VALUES
+        ('cc_food_stocks', 'Food Stocks', '1400'),
+        ('cc_beverage_stocks', 'Beverage Stocks', '1400'),
+        ('cc_service_stocks', 'Service Stocks', NULL),
+        ('cc_paper_supply', 'Paper Supply', NULL),
+        ('cc_crockery_cutlery', 'Crockery & Cutlery', NULL),
+        ('cc_kitchen_utensils', 'Kitchen Utensils', NULL)
+        ON CONFLICT (id) DO NOTHING`).catch(() => {});
       await client.query(`ALTER TABLE public.inv_grn_headers ADD COLUMN IF NOT EXISTS receipt_date DATE`);
 
       // Ensure inventory_transactions has columns needed by GRN post route
@@ -872,8 +892,35 @@ router.get('/init', async (req, res) => {
  * POST /api/v1/inventory/grn
  * Create new GRN header and optional line items
  */
+// ── Cost categories (controller-defined, drive the GRN batch debit account) ──
+router.get('/cost-categories', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, name, gl_account, is_active FROM public.inv_cost_categories
+       WHERE is_active IS DISTINCT FROM false ORDER BY name`
+    );
+    res.json({ ok: true, rows: r.rows });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.post('/cost-categories', async (req, res) => {
+  const { name, gl_account, created_by } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ ok: false, error: 'name required' });
+  try {
+    const id = 'cc_' + String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const r = await pool.query(
+      `INSERT INTO public.inv_cost_categories (id, name, gl_account, created_by)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (name) DO UPDATE SET gl_account = COALESCE(EXCLUDED.gl_account, inv_cost_categories.gl_account), is_active = true
+       RETURNING *`,
+      [id, String(name).trim(), gl_account || null, created_by || 'system']
+    );
+    res.json({ ok: true, row: r.rows[0] });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 router.post('/grn', async (req, res) => {
-  const { supplier_name, destination_location_id, created_by, lines } = req.body;
+  const { supplier_name, destination_location_id, created_by, lines, cost_category } = req.body;
 
   if (!supplier_name || !destination_location_id || !created_by) {
     return res.status(400).json({ ok: false, error: 'Missing required fields' });
@@ -906,11 +953,11 @@ router.post('/grn', async (req, res) => {
 
     // Create GRN header
     const grnRes = await client.query(
-      `INSERT INTO public.inv_grn_headers 
-      (id, grn_number, supplier_name, destination_location_id, created_by, status, inserted_at)
-      VALUES ($1, $2, $3, $4, $5, 'draft', $6)
+      `INSERT INTO public.inv_grn_headers
+      (id, grn_number, supplier_name, destination_location_id, created_by, status, cost_category, inserted_at)
+      VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7)
       RETURNING *`,
-      [randomUUID(), grnNumber, supplier_name, destination_location_id, created_by, new Date()]
+      [randomUUID(), grnNumber, supplier_name, destination_location_id, created_by, cost_category || null, new Date()]
     );
 
     const grn = grnRes.rows[0];
@@ -1236,14 +1283,31 @@ router.post('/grn/:id/post', async (req, res) => {
     await client.query('COMMIT');
 
     // ── GL Pending Batch (post-commit, non-fatal) ──────────────────────────────
+    // The GRN's cost category (Service Stocks, Paper Supply, Crockery & Cutlery,
+    // Kitchen Utensils, …) drives the DEBIT account of the staged batch so the
+    // controller's P&L classifies receipts correctly; default is 1400 Inventory.
     const glGrnValue = linesRes.rows.reduce((s, l) => s + Number(l.qty_received) * Number(l.unit_cost), 0);
     if (glGrnValue > 0) {
       try {
+        let drAcct = '1400';
+        let catLabel = 'stock receipt';
+        if (grn.cost_category) {
+          const cat = await pool.query(
+            `SELECT name, gl_account FROM inv_cost_categories WHERE id = $1 OR name = $1 LIMIT 1`,
+            [grn.cost_category]
+          ).catch(() => ({ rows: [] }));
+          if (cat.rows?.length) {
+            catLabel = cat.rows[0].name;
+            if (cat.rows[0].gl_account) drAcct = cat.rows[0].gl_account;
+          } else {
+            catLabel = grn.cost_category;
+          }
+        }
         await pool.query(
           `INSERT INTO gl_pending_batches (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount)
-           VALUES ('inv_grn_headers', $1, $2, '1400', '2100', $3)
+           VALUES ('inv_grn_headers', $1, $2, $3, '2100', $4)
            ON CONFLICT (origin_table, origin_id) DO NOTHING`,
-          [id, `GRN ${grn.grn_number} — stock receipt`, glGrnValue]
+          [id, `GRN ${grn.grn_number} — ${catLabel}`, drAcct, glGrnValue]
         );
       } catch (glErr) {
         console.warn('[inv-v11] gl_pending_batches insert skipped for GRN:', glErr.message);
@@ -1289,7 +1353,7 @@ router.get('/grn/:id', async (req, res) => {
 router.put('/grn/:id', async (req, res) => {
   const { id } = req.params;
   const { supplier_name, supplier_id, supplier_invoice_number, destination_location_id,
-          receipt_date, notes, lines } = req.body || {};
+          receipt_date, notes, lines, cost_category } = req.body || {};
 
   const client = await pool.connect();
   try {
@@ -1362,14 +1426,15 @@ router.put('/grn/:id', async (req, res) => {
          destination_location_id = COALESCE($4, destination_location_id),
          receipt_date  = COALESCE($5::date, receipt_date),
          notes         = COALESCE($6, notes),
-         total_value   = $7,
-         vat_total     = $8,
-         grn_total     = $9,
+         cost_category = COALESCE($7, cost_category),
+         total_value   = $8,
+         vat_total     = $9,
+         grn_total     = $10,
          updated_at    = NOW()
-       WHERE id = $10`,
+       WHERE id = $11`,
       [supplier_name || null, supplier_id || null, supplier_invoice_number || null,
        destination_location_id || null, receipt_date || null, notes || null,
-       totalValue, totalVat, grnTotal, id]
+       cost_category || null, totalValue, totalVat, grnTotal, id]
     );
 
     await client.query('COMMIT');

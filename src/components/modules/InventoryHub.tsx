@@ -525,6 +525,11 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   // GRN header fields — these were the missing state variables causing ReferenceError
   const [grnDate, setGrnDate] = useState(new Date().toISOString().split('T')[0]);
   const [grnNotes, setGrnNotes] = useState('');
+  // Controller-defined cost categories (Service Stocks, Paper Supply, …) — the
+  // selected one drives the GL debit account of the GRN's staged pending batch.
+  const [costCategory, setCostCategory] = useState('');
+  const [costCategories, setCostCategories] = useState<any[]>([]);
+  useEffect(() => { apiGet('/cost-categories').then(r => { if (r.ok) setCostCategories(r.rows || []); }); }, []);
   // Shared transaction filters (date period / status / search)
   const [filters, setFilters] = useState<TransactionFilterValue>({ ...EMPTY_TRANSACTION_FILTER });
 
@@ -664,7 +669,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
       setInvoiceNum(g.supplier_invoice_number || '');
       setDestLocation(g.destination_location_id || destLocation);
       setGrnDate(g.receipt_date ? String(g.receipt_date).slice(0, 10) : new Date().toISOString().slice(0, 10));
-      setGrnNotes(g.notes || '');
+      setGrnNotes(g.notes || ''); setCostCategory(g.cost_category || '');
       setLines(loadedLines.length ? loadedLines : [{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, vat_type:'15.50', expiry_date:'' }]);
       setEditingGrnId(g.id);
       setShowForm(true);
@@ -764,6 +769,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
       destination_location_id: destLocation,
       receipt_date: grnDate || undefined,
       notes: grnNotes || undefined,
+      cost_category: costCategory || undefined,
       created_by: user?.id || 'system',
       lines: lines.filter(l => l.item_id).map(l => {
         const sub = Number(l.qty || 0) * Number(l.unit_cost || 0);
@@ -801,7 +807,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
       setShowForm(false); setFullScreen(false);
       setLines([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, expiry_date:'' }]);
       setSupplier(''); setSupplierId(''); setInvoiceNum('');
-      setGrnDate(new Date().toISOString().split('T')[0]); setGrnNotes('');
+      setGrnDate(new Date().toISOString().split('T')[0]); setGrnNotes(''); setCostCategory('');
       apiGet('/grn?limit=5000').then(res => { if (res.ok) setGrns(res.data); });
     } else {
       toast({ title: 'GRN failed', description: r.error, variant:'destructive' });
@@ -827,7 +833,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 // Reset to a clean slate when opening as "New GRN"
                 setEditingGrnId(null);
                 setSupplier(''); setSupplierId(''); setInvoiceNum('');
-                setGrnDate(new Date().toISOString().split('T')[0]); setGrnNotes('');
+                setGrnDate(new Date().toISOString().split('T')[0]); setGrnNotes(''); setCostCategory('');
                 setLines([{ item_id:'', item_name:'', qty:1, uom:'uom_unit', unit_cost:0, vat_type:'15.50', expiry_date:'' }]);
                 setShowForm(true);
               }}
@@ -841,13 +847,13 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50 sticky top-0">
             <tr>
-              {['GRN #','Supplier','Invoice #','Destination','Total','Status','Date','Actions'].map(h => (
+              {['GRN #','Supplier','Invoice #','Destination','Category','Total','Status','Date','Actions'].map(h => (
                 <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {filteredGrns.length === 0 && <tr><td colSpan={8} className="text-center py-10 text-gray-400">{grns.length === 0 ? 'No GRNs yet' : 'No GRNs match the current filter'}</td></tr>}
+            {filteredGrns.length === 0 && <tr><td colSpan={9} className="text-center py-10 text-gray-400">{grns.length === 0 ? 'No GRNs yet' : 'No GRNs match the current filter'}</td></tr>}
             {grnsPg.pageItems.map((g:any) => (
               <tr key={g.id}
                 className={`hover:bg-indigo-50 cursor-pointer transition-colors ${detailGrn?.id === g.id ? 'bg-indigo-50 ring-1 ring-inset ring-indigo-300' : ''}`}
@@ -856,6 +862,7 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                 <td className="px-3 py-2">{g.supplier_name}</td>
                 <td className="px-3 py-2 text-gray-500">{g.supplier_invoice_number || '—'}</td>
                 <td className="px-3 py-2">{locations.find((l:any) => l.id === g.destination_location_id)?.name || g.destination_location_id}</td>
+                <td className="px-3 py-2 text-xs">{costCategories.find((c:any) => c.id === g.cost_category)?.name || (g.cost_category ? g.cost_category : <span className="text-gray-400">Stock</span>)}</td>
                 <td className="px-3 py-2 font-bold">{fmt(g.total_value)}</td>
                 <td className="px-3 py-2">
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${g.status==='posted'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>
@@ -1003,11 +1010,35 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
               </div>
             </div>
 
-            {/* GRN date + notes row — both fields are part of the GRN payload */}
-            <div className="grid grid-cols-2 gap-4 mb-4">
+            {/* GRN date + cost category + notes row — all part of the GRN payload */}
+            <div className="grid grid-cols-3 gap-4 mb-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Receipt / Delivery Date</label>
                 <Input type="date" value={grnDate} onChange={e => setGrnDate(e.target.value)} className="text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Cost Category</label>
+                <select className="w-full border rounded-md px-3 py-2 text-sm" value={costCategory}
+                  onChange={async e => {
+                    if (e.target.value === '__new__') {
+                      const name = window.prompt('New cost category name (e.g. Cleaning Chemicals):');
+                      if (name && name.trim()) {
+                        const r = await apiPost('/cost-categories', { name: name.trim(), created_by: user?.id || 'system' });
+                        if (r.ok) {
+                          const list = await apiGet('/cost-categories');
+                          if (list.ok) setCostCategories(list.rows || []);
+                          setCostCategory(r.row?.id || '');
+                          toast({ title: `Category "${name.trim()}" added` });
+                        } else toast({ title: 'Category failed', description: r.error, variant: 'destructive' });
+                      }
+                      return;
+                    }
+                    setCostCategory(e.target.value);
+                  }}>
+                  <option value="">Stock (default — Inventory 1400)</option>
+                  {costCategories.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  <option value="__new__">＋ Add new category…</option>
+                </select>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>

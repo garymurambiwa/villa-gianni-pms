@@ -5,6 +5,7 @@ import { printDocument } from '@/lib/posIntegration';
 import { 
   buildFlashReport,
   buildPosReconciliation,
+  buildPosBillRegister,
   buildPL,
   buildJournalPostings,
   buildAgedAR,
@@ -111,6 +112,7 @@ const REPORTS = [
   { key: 'menu-cos', name: 'Menu Item COS', description: 'Sales vs cost with gross margin', type: 'detailed' as const },
   { key: 'sales-summary', name: 'Sales Summary by Cost Centre', description: 'Aggregated sales by centre', type: 'summary' as const },
   { key: 'sales-detail', name: 'Detailed Sales by Cost Centre', description: 'Transaction-level details with filters', type: 'detailed' as const },
+  { key: 'bill-register', name: 'POS Bill Register', description: 'Every closed bill in bill-number sequence — verify numbering is continuous', type: 'detailed' as const },
   { key: 'stock-movement', name: 'Stock Movement', description: 'Inventory changes over time', type: 'detailed' as const },
   { key: 'voids', name: 'Voids', description: 'Voided transactions with reasons', type: 'detailed' as const },
   { key: 'recon-summary', name: 'Daily Reconciliation (Summary)', description: 'Key reconciliation metrics', type: 'summary' as const },
@@ -149,6 +151,9 @@ const quickPrint = async (key: string, start: string, end: string) => {
       case 'sales-summary':
       case 'sales-detail':
         data = await buildPosReconciliation(businessDate);
+        break;
+      case 'bill-register':
+        data = await buildPosBillRegister(start, end);
         break;
       case 'stock-movement':
       case 'stock-adjust':
@@ -281,6 +286,9 @@ export const AllReportsPage: React.FC = () => {
         case 'sales-summary':
         case 'sales-detail':
           data = await buildPosReconciliation(businessDateStr);
+          break;
+        case 'bill-register':
+          data = await buildPosBillRegister(start, end);
           break;
         case 'stock-movement':
         case 'stock-adjust':

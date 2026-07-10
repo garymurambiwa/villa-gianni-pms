@@ -391,9 +391,15 @@ export const generateReportsBundle = (ctx: NightAuditContext, auditBusinessDate?
     .filter((c: any) => c.category === 'Room')
     .reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
 
-  const fbRevenue = mergedCharges
-    .filter((c: any) => c.category === 'F&B')
+  const fbCharges = mergedCharges.filter((c: any) => c.category === 'F&B');
+  const fbRevenue = fbCharges.reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
+  // Split F&B into Food vs Beverage revenue streams for the P&L. POS-originated
+  // folio charges carry the outlet in the description ("Bar POS - bill-0012"),
+  // so bar/beverage outlets classify as Beverage, everything else as Food.
+  const beverageRevenue = fbCharges
+    .filter((c: any) => /\b(bar|beverage|liquor|pub)\b/i.test(String(c.description || '')))
     .reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
+  const foodRevenue = Number((fbRevenue - beverageRevenue).toFixed(2));
 
   // Conference/Events revenue — its own stream, NEVER in room revenue (so it
   // can't inflate ADR/RevPAR) but included in total revenue.
@@ -419,6 +425,8 @@ export const generateReportsBundle = (ctx: NightAuditContext, auditBusinessDate?
     occupancy: Number(occupancy.toFixed(2)),
     roomRevenue: Number(roomRevenue.toFixed(2)),
     fbRevenue: Number(fbRevenue.toFixed(2)),
+    foodRevenue: Number(foodRevenue.toFixed(2)),
+    beverageRevenue: Number(beverageRevenue.toFixed(2)),
     conferenceRevenue: Number(conferenceRevenue.toFixed(2)),
     totalRevenue: Number(totalRevenue.toFixed(2)),
     avgDailyRate: Number(avgDailyRate.toFixed(2)),

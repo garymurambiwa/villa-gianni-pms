@@ -722,6 +722,45 @@ export const buildPosReconciliation = async (forDate?: string) => {
   };
 };
 
+// POS Bill Register — every closed bill listed IN BILL-NUMBER SEQUENCE so the
+// controller can verify the numbering is continuous (missing numbers = voided
+// or lost bills). Falls back to chronological order for bills without a number.
+export const buildPosBillRegister = async (from?: string, to?: string) => {
+  const start = from || getBusinessDate();
+  const end = to || start;
+  try {
+    const { db } = await import('@/lib/db');
+    const res = await db.query<any>(
+      `SELECT bill_number, id, created_at, outlet, payment_method, subtotal, tax_amount, total_amount
+       FROM pos_orders
+       WHERE status = 'closed' AND created_at::date >= $1::date AND created_at::date <= $2::date
+       ORDER BY NULLIF(regexp_replace(COALESCE(bill_number,''), '\\D', '', 'g'), '')::bigint NULLS LAST,
+                created_at ASC`,
+      [start, end]
+    );
+    const rows = ('rows' in res ? res.rows : []).map((r: any) => ({
+      bill: r.bill_number || `(no #) ${String(r.id).slice(0, 8)}`,
+      date: String(r.created_at).slice(0, 10),
+      time: String(r.created_at).slice(11, 16),
+      outlet: r.outlet || '—',
+      method: r.payment_method || '—',
+      subtotal: Number(r.subtotal || 0).toFixed(2),
+      tax: Number(r.tax_amount || 0).toFixed(2),
+      total: Number(r.total_amount || 0).toFixed(2),
+    }));
+    const total = rows.reduce((s: number, r: any) => s + Number(r.total), 0);
+    rows.push({ bill: `TOTAL (${rows.length} bills)`, date: '', time: '', outlet: '', method: '', subtotal: '', tax: '', total: total.toFixed(2) } as any);
+    return {
+      title: `POS Bill Register ${start}${end !== start ? ` → ${end}` : ''}`,
+      columns: ['Bill #', 'Date', 'Time', 'Outlet', 'Payment', 'Subtotal', 'Tax', 'Total'],
+      rows: rows.map((r: any) => [r.bill, r.date, r.time, r.outlet, r.method, r.subtotal, r.tax, r.total]),
+    };
+  } catch (err) {
+    console.warn('[Reporting] buildPosBillRegister failed:', err);
+    return { title: 'POS Bill Register', columns: ['Bill #'], rows: [['No data — DB unavailable']] };
+  }
+};
+
 // Daily Purchase & Receiving Log — DB-driven from inventory GRN transactions
 export const buildPurchaseReceivingLog = async (forDate?: string) => {
   const date = forDate || getBusinessDate();
