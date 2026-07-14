@@ -90,11 +90,11 @@ const JournalPostingModal: React.FC<JournalPostingModalProps> = ({ open, onOpenC
     }
   };
 
-  const importFromNightAudit = () => {
+  const importFromNightAudit = async () => {
     try {
       const raw = localStorage.getItem('corepms_nightAudit_lastReports');
       const bundle = raw ? JSON.parse(raw) : {};
-      const entry = gl.createDailyJournalFromNightAudit(date, bundle);
+      const entry = await gl.createDailyJournalFromNightAudit(date, bundle);
       setReference(entry.reference || 'Daily Reconciliation');
       setLines(entry.lines.map(l => ({ accountId: l.accountId, description: l.description || reference, debit: String(Number(l.debit || 0)), credit: String(Number(l.credit || 0)) })));
       setStatus('Imported suggested lines from Night Audit. Please review and post.');
@@ -104,11 +104,11 @@ const JournalPostingModal: React.FC<JournalPostingModalProps> = ({ open, onOpenC
     }
   };
 
-  const postFromNightAudit = () => {
+  const postFromNightAudit = async () => {
     try {
       const raw = localStorage.getItem('corepms_nightAudit_lastReports');
       const bundle = raw ? JSON.parse(raw) : {};
-      const res = gl.postDailyJournalFromNightAudit(date, bundle);
+      const res = await gl.postDailyJournalFromNightAudit(date, bundle);
       if (!res.ok) {
         setStatus(res.error || 'Posting failed');
         toast({ title: 'Posting failed', description: res.error || 'Unknown error', variant: 'destructive' });

@@ -283,45 +283,89 @@ export const isBalanced = (lines: GLPostingLine[]): boolean => {
 };
 
 // Build a simple daily JE from Night Audit bundle
-export const createDailyJournalFromNightAudit = (businessDate: string, bundle: any): GLJournalEntry => {
+export const createDailyJournalFromNightAudit = async (businessDate: string, bundle: any): Promise<GLJournalEntry> => {
   ensureUSALIBaseAccounts();
   const mappings = getMappings();
   const lines: GLPostingLine[] = [];
   const revRooms = Number(bundle?.roomRevenue || 0);
-  const revFB = Number(bundle?.fbRevenue || 0);
   const revConference = Number(bundle?.conferenceRevenue || 0);
-  const taxEstimate = 0; // tax postings may be computed separately; use mappings['TAX'] when available
-  const cash = Number(readJSON<any>('corepms_shift_totals', { cash: 0 }).cash || 0);
-  const card = Number(readJSON<any>('corepms_shift_totals', { card: 0 }).card || 0);
-  const ar = Number(readJSON<any[]>('corepms_city_ledger', []).reduce((s, t: any) => s + Number(t.amount || 0), 0));
+  const revTax = Number(bundle?.taxRevenue || 0);
+
+  // ── Receipts & F&B revenue from the DATABASE, split by payment method ──────
+  // Previously debits came from a localStorage shift total (often stale/zero)
+  // while credits came from folio charges — the mismatch was plugged to
+  // suspense every night. Now both sides derive from the day's actual closed
+  // POS orders: revenue split Food vs Beverage by outlet, receipts split
+  // Cash / Swipe(Bank) / EcoCash / Room-charge by the recorded payment method,
+  // so the journal balances by construction.
+  const pos = { cash: 0, swipe: 0, ecocash: 0, roomCharge: 0, unknown: 0, food: 0, beverage: 0, total: 0 };
+  let posLoaded = false;
+  try {
+    const { db } = await import('./db');
+    const r = await db.query<any>(
+      `SELECT COALESCE(payment_method, 'unknown') AS method, cost_center, SUM(total_amount) AS amt
+       FROM pos_orders
+       WHERE status = 'closed' AND created_at::date = $1::date
+       GROUP BY 1, 2`,
+      [businessDate]
+    );
+    if ('rows' in r) {
+      posLoaded = true;
+      for (const row of r.rows) {
+        const amt = Number(row.amt || 0);
+        const m = String(row.method || 'unknown').toLowerCase();
+        if (m === 'cash') pos.cash += amt;
+        else if (m === 'swipe' || m === 'card' || m === 'bank') pos.swipe += amt;
+        else if (m === 'ecocash') pos.ecocash += amt;
+        else if (m === 'room-charge' || m === 'room_charge') pos.roomCharge += amt;
+        else pos.unknown += amt;
+        if (/\b(bar|pub|beverage|liquor)\b/i.test(String(row.cost_center || ''))) pos.beverage += amt;
+        else pos.food += amt;
+        pos.total += amt;
+      }
+    }
+  } catch { /* offline — fall back below */ }
 
   // Revenue credits
   if (revRooms > 0) lines.push({ accountId: mappings['ROOM_REVENUE'] || '4000', description: 'Rooms Revenue', debit: 0, credit: revRooms });
-  // F&B splits into Food vs Beverage revenue streams when the bundle provides
-  // them (mapped per property: FOOD_REVENUE / BEVERAGE_REVENUE). Falls back to
-  // the combined F&B account for older bundles without the split.
-  const revFood = Number(bundle?.foodRevenue || 0);
-  const revBeverage = Number(bundle?.beverageRevenue || 0);
-  if (revFood > 0 || revBeverage > 0) {
+  if (posLoaded) {
+    if (pos.food > 0) lines.push({ accountId: mappings['FOOD_REVENUE'] || mappings['FB_REVENUE'] || '4100', description: 'Food Revenue (POS)', debit: 0, credit: Number(pos.food.toFixed(2)) });
+    if (pos.beverage > 0) lines.push({ accountId: mappings['BEVERAGE_REVENUE'] || mappings['FB_REVENUE'] || '4100', description: 'Beverage Revenue (POS)', debit: 0, credit: Number(pos.beverage.toFixed(2)) });
+  } else {
+    // Offline fallback: folio-based F&B split from the bundle
+    const revFood = Number(bundle?.foodRevenue || 0);
+    const revBeverage = Number(bundle?.beverageRevenue || 0);
+    const revFB = Number(bundle?.fbRevenue || 0);
     if (revFood > 0) lines.push({ accountId: mappings['FOOD_REVENUE'] || mappings['FB_REVENUE'] || '4100', description: 'Food Revenue', debit: 0, credit: revFood });
     if (revBeverage > 0) lines.push({ accountId: mappings['BEVERAGE_REVENUE'] || mappings['FB_REVENUE'] || '4100', description: 'Beverage Revenue', debit: 0, credit: revBeverage });
-    // Any residual (charges that didn't classify) stays on the combined account
     const residual = Number((revFB - revFood - revBeverage).toFixed(2));
     if (residual > 0.005) lines.push({ accountId: mappings['FB_REVENUE'] || '4100', description: 'F&B Revenue (unclassified)', debit: 0, credit: residual });
-  } else if (revFB > 0) {
-    lines.push({ accountId: mappings['FB_REVENUE'] || '4100', description: 'F&B Revenue', debit: 0, credit: revFB });
   }
   // Per-property mapping first (CONFERENCE_REVENUE, legacy CONF_REVENUE) — the
   // 4200 fallback is only safe where 4200 IS the conference account (charts differ).
   if (revConference > 0) lines.push({ accountId: mappings['CONFERENCE_REVENUE'] || mappings['CONF_REVENUE'] || '4200', description: 'Conference Room Hire Revenue', debit: 0, credit: revConference });
-  if (taxEstimate > 0) lines.push({ accountId: mappings['TAX'] || '2000', description: 'Tax Payable', debit: 0, credit: taxEstimate });
+  if (revTax > 0) lines.push({ accountId: mappings['TAX'] || '2000', description: 'Accommodation Tax Payable', debit: 0, credit: revTax });
 
-  // Receipts debits
-  // Defaults aligned to the chart of accounts: Cash on Hand 1000, Card/Bank
-  // Clearing 1100, City Ledger / A/R 1300 (config mappings override these).
-  if (cash > 0) lines.push({ accountId: mappings['CASH'] || '1000', description: 'Cash Receipts → Cash on Hand', debit: cash, credit: 0 });
-  if (card > 0) lines.push({ accountId: mappings['CARD_CLEARING'] || mappings['CARD'] || '1100', description: 'Card Receipts → Card/Bank Clearing', debit: card, credit: 0 });
-  if (ar > 0) lines.push({ accountId: mappings['CITY_LEDGER'] || '1300', description: 'Credit Sales → City Ledger / A/R', debit: ar, credit: 0 });
+  // Receipts debits — one line per payment method, clearly labelled
+  if (posLoaded) {
+    if (pos.cash > 0) lines.push({ accountId: mappings['CASH'] || '1000', description: 'POS Cash Receipts → Cash on Hand', debit: Number(pos.cash.toFixed(2)), credit: 0 });
+    if (pos.swipe > 0) lines.push({ accountId: mappings['CARD_CLEARING'] || mappings['CARD'] || mappings['BANK'] || '1100', description: 'POS Swipe/Card Receipts → Bank/Card Clearing', debit: Number(pos.swipe.toFixed(2)), credit: 0 });
+    if (pos.ecocash > 0) lines.push({ accountId: mappings['ECOCASH'] || mappings['ECOCASH_CLEARING'] || '1180', description: 'POS EcoCash Receipts → EcoCash Clearing', debit: Number(pos.ecocash.toFixed(2)), credit: 0 });
+    if (pos.unknown > 0) lines.push({ accountId: mappings['SUSPENSE'] || '9999', description: 'POS receipts — payment method not recorded (review)', debit: Number(pos.unknown.toFixed(2)), credit: 0 });
+    // Room-charged POS + tonight's room/conference/tax postings sit on guest folios
+    const guestLedger = Number((revRooms + revConference + revTax + pos.roomCharge).toFixed(2));
+    if (guestLedger > 0) lines.push({ accountId: mappings['GUEST_LEDGER'] || mappings['ROOM_CHARGE'] || '1200', description: 'Folio postings (rooms, conference, tax & room-charged POS) → Guest Ledger', debit: guestLedger, credit: 0 });
+  } else {
+    // Offline fallback: legacy localStorage receipts
+    const cash = Number(readJSON<any>('corepms_shift_totals', { cash: 0 }).cash || 0);
+    const card = Number(readJSON<any>('corepms_shift_totals', { card: 0 }).card || 0);
+    const ar = Number(readJSON<any[]>('corepms_city_ledger', []).reduce((s, t: any) => s + Number(t.amount || 0), 0));
+    if (cash > 0) lines.push({ accountId: mappings['CASH'] || '1000', description: 'Cash Receipts → Cash on Hand', debit: cash, credit: 0 });
+    if (card > 0) lines.push({ accountId: mappings['CARD_CLEARING'] || mappings['CARD'] || '1100', description: 'Card Receipts → Card/Bank Clearing', debit: card, credit: 0 });
+    if (ar > 0) lines.push({ accountId: mappings['CITY_LEDGER'] || '1300', description: 'Credit Sales → City Ledger / A/R', debit: ar, credit: 0 });
+    const guestLedger = Number((revRooms + revConference + revTax).toFixed(2));
+    if (guestLedger > 0) lines.push({ accountId: mappings['GUEST_LEDGER'] || mappings['ROOM_CHARGE'] || '1200', description: 'Folio postings → Guest Ledger', debit: guestLedger, credit: 0 });
+  }
 
   // If not balanced, post the difference to a SUSPENSE/CLEARING account — never to
   // Owner's Equity. Plugging equity overstates capital and hides revenue, corrupting
@@ -352,10 +396,10 @@ export const createDailyJournalFromNightAudit = (businessDate: string, bundle: a
   return entry;
 };
 
-export const postDailyJournalFromNightAudit = (businessDate: string, bundle: any): { ok: boolean; error?: string; entry?: GLJournalEntry } => {
+export const postDailyJournalFromNightAudit = async (businessDate: string, bundle: any): Promise<{ ok: boolean; error?: string; entry?: GLJournalEntry }> => {
   const mappingsOk = validateMappingsComplete();
   if (!mappingsOk.ok) return { ok: false, error: `Missing GL mappings: ${mappingsOk.missing.join(', ')}` };
-  const entry = createDailyJournalFromNightAudit(businessDate, bundle);
+  const entry = await createDailyJournalFromNightAudit(businessDate, bundle);
   try {
     const backup = readJSON<any>('corepms_backup_last', null);
     entry.attachments = {

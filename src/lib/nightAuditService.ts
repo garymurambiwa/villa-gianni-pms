@@ -407,6 +407,11 @@ export const generateReportsBundle = (ctx: NightAuditContext, auditBusinessDate?
     .filter((c: any) => c.category === 'Conference')
     .reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
 
+  // Accommodation tax posted to folios — credited to Taxes Payable in the journal
+  const taxRevenue = mergedCharges
+    .filter((c: any) => c.category === 'Tax')
+    .reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
+
   const totalRevenue = roomRevenue + fbRevenue + conferenceRevenue;
   const avgDailyRate = occupied > 0 && roomRevenue > 0 ? roomRevenue / occupied : 0;
 
@@ -428,6 +433,7 @@ export const generateReportsBundle = (ctx: NightAuditContext, auditBusinessDate?
     foodRevenue: Number(foodRevenue.toFixed(2)),
     beverageRevenue: Number(beverageRevenue.toFixed(2)),
     conferenceRevenue: Number(conferenceRevenue.toFixed(2)),
+    taxRevenue: Number(taxRevenue.toFixed(2)),
     totalRevenue: Number(totalRevenue.toFixed(2)),
     avgDailyRate: Number(avgDailyRate.toFixed(2)),
     revPAR: Number(revPAR.toFixed(2)),
@@ -839,7 +845,7 @@ export const runNightAudit = async (ctx: NightAuditContext, options: ValidationO
 
   // GL posting using the audit date (before rollover)
   try {
-    const glResult = gl.postDailyJournalFromNightAudit(businessDateBefore, reports);
+    const glResult = await gl.postDailyJournalFromNightAudit(businessDateBefore, reports);
     if (!glResult.ok) {
       console.warn('GL posting skipped:', glResult.error);
     }
@@ -918,7 +924,7 @@ export const runNightAuditSync = async (ctx: NightAuditContext) => {
 
   // GL posting using the audit business date (before rollover)
   try {
-    const glResult = gl.postDailyJournalFromNightAudit(businessDateBefore, reports);
+    const glResult = await gl.postDailyJournalFromNightAudit(businessDateBefore, reports);
     if (!glResult.ok) {
       console.warn('GL posting skipped:', glResult.error);
     }

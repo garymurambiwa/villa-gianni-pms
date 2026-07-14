@@ -16,12 +16,12 @@ const stubBundle = {
   fbRevenue: 50,
 };
 
-export const validateNightAuditMappings = (businessDate: string): MappingValidationResult => {
+export const validateNightAuditMappings = async (businessDate: string): Promise<MappingValidationResult> => {
   const mappingStatus = gl.validateMappingsComplete();
   if (!mappingStatus.ok) {
     return { ok: false, missing: mappingStatus.missing, balanced: false, error: 'Missing required GL mappings' };
   }
-  const res = gl.postDailyJournalFromNightAudit(businessDate, stubBundle);
+  const res = await gl.postDailyJournalFromNightAudit(businessDate, stubBundle);
   if (!res.ok) {
     return { ok: false, missing: [], balanced: false, error: res.error };
   }
@@ -72,8 +72,8 @@ export const runExpensePostingSmokeTest = (): ExpenseSmokeResult => {
   }
 };
 
-export const runSmokeTests = (businessDate: string): { nightAudit: MappingValidationResult; expense: ExpenseSmokeResult } => {
-  const nightAudit = validateNightAuditMappings(businessDate);
+export const runSmokeTests = async (businessDate: string): Promise<{ nightAudit: MappingValidationResult; expense: ExpenseSmokeResult }> => {
+  const nightAudit = await validateNightAuditMappings(businessDate);
   const expense = runExpensePostingSmokeTest();
   return { nightAudit, expense };
 };

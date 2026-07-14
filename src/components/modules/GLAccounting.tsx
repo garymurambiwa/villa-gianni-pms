@@ -217,11 +217,12 @@ export const GLAccounting: React.FC = () => {
 
   // Dev-only auto verification: run mapping validation and smoke tests on mount
   React.useEffect(() => {
+    (async () => {
     try {
       // Only in dev to avoid noisy production behavior
       if ((import.meta as any)?.env?.DEV) {
         const date = new Date().toISOString().slice(0, 10);
-        const results = glHarness.runSmokeTests(date);
+        const results = await glHarness.runSmokeTests(date);
         const na = results.nightAudit.ok
           ? `Night Audit OK (balanced ${results.nightAudit.entryId || ''})`
           : `Night Audit FAIL ${results.nightAudit.error ? `— ${results.nightAudit.error}` : ''}${results.nightAudit.missing?.length ? ` — Missing: ${results.nightAudit.missing.join(', ')}` : ''}`;
@@ -230,7 +231,7 @@ export const GLAccounting: React.FC = () => {
           : `Expense FAIL ${results.expense.error ? `— ${results.expense.error}` : ''}`;
         setSmoke({ nightAudit: na, expense: exp });
 
-        const mapVal = glHarness.validateNightAuditMappings(date);
+        const mapVal = await glHarness.validateNightAuditMappings(date);
         if (!mapVal.ok) {
           if (mapVal.missing && mapVal.missing.length) setValidation({ status: 'Missing mappings', missing: mapVal.missing });
           else setValidation({ status: `Validation failed: ${mapVal.error || 'Unknown error'}` });
@@ -239,6 +240,7 @@ export const GLAccounting: React.FC = () => {
         }
       }
     } catch {}
+    })();
   }, []);
 
   return (
@@ -377,9 +379,9 @@ export const GLAccounting: React.FC = () => {
         </div>
         <div className={`mt-2 text-sm ${mappingStatus.ok ? 'text-green-700' : 'text-red-700'}`}>{mappingStatus.ok ? 'All required codes mapped.' : `Missing: ${mappingStatus.missing.join(', ')}`}</div>
         <div className="mt-2 flex items-center gap-2">
-          <Button variant="outline" onClick={()=>{
+          <Button variant="outline" onClick={async ()=>{
             const date = new Date().toISOString().slice(0,10);
-            const res = glHarness.validateNightAuditMappings(date);
+            const res = await glHarness.validateNightAuditMappings(date);
             if (!res.ok) {
               if (res.missing && res.missing.length) setValidation({ status: 'Missing mappings', missing: res.missing });
               else setValidation({ status: `Validation failed: ${res.error || 'Unknown error'}` });
@@ -390,9 +392,9 @@ export const GLAccounting: React.FC = () => {
           {validation?.status && (
             <span className="text-xs text-gray-700">{validation.status}{validation.missing?.length ? `: ${validation.missing.join(', ')}` : ''}</span>
           )}
-          <Button variant="outline" onClick={()=>{
+          <Button variant="outline" onClick={async ()=>{
             const date = new Date().toISOString().slice(0,10);
-            const results = glHarness.runSmokeTests(date);
+            const results = await glHarness.runSmokeTests(date);
             const na = results.nightAudit.ok ? `Night Audit OK (balanced ${results.nightAudit.entryId || ''})` : `Night Audit FAIL ${results.nightAudit.error ? `— ${results.nightAudit.error}` : ''}${results.nightAudit.missing?.length ? ` — Missing: ${results.nightAudit.missing.join(', ')}` : ''}`;
             const exp = results.expense.ok ? `Expense OK (expense ${results.expense.expenseId || ''}, entry ${results.expense.entryId || ''})` : `Expense FAIL ${results.expense.error ? `— ${results.expense.error}` : ''}`;
             setSmoke({ nightAudit: na, expense: exp });
