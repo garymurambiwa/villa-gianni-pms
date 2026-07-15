@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import gl from '@/lib/glAccounting';
+import { getHotelName } from '@/lib/brand';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 
@@ -130,13 +131,74 @@ const JournalPostingModal: React.FC<JournalPostingModalProps> = ({ open, onOpenC
     }
   };
 
+  // ── Print / Export the journal entry as currently drafted ───────────────────
+  const usedLines = () => lines.filter(l => l.accountId.trim() || Number(l.debit || 0) || Number(l.credit || 0));
+  const acctName = (id: string) => { try { return gl.getAccounts().find(a => a.id === id)?.name || ''; } catch { return ''; } };
+  const esc = (s: any) => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
+
+  const exportCSV = () => {
+    const rows = [
+      [`${getHotelName()} — Journal Voucher`, reference, date],
+      [],
+      ['Account', 'Account Name', 'Description', 'Debit', 'Credit'],
+      ...usedLines().map(l => [l.accountId, acctName(l.accountId.trim()), l.description || reference,
+        Number(l.debit || 0) ? Number(l.debit).toFixed(2) : '', Number(l.credit || 0) ? Number(l.credit).toFixed(2) : '']),
+      [],
+      ['Totals', '', '', sumDebit.toFixed(2), sumCredit.toFixed(2)],
+      ['Status', balanced ? 'BALANCED' : 'NOT BALANCED'],
+    ];
+    const csv = rows.map(r => r.map(x => `"${String(x ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `journal_${date}.csv`; a.click(); URL.revokeObjectURL(url);
+  };
+
+  const printVoucher = () => {
+    const body = usedLines().map(l =>
+      `<tr><td class="mono">${esc(l.accountId)}</td><td>${esc(acctName(l.accountId.trim()) || '—')}</td><td>${esc(l.description || reference)}</td><td class="r mono">${Number(l.debit || 0) ? '$' + Number(l.debit).toFixed(2) : ''}</td><td class="r mono">${Number(l.credit || 0) ? '$' + Number(l.credit).toFixed(2) : ''}</td></tr>`).join('');
+    const html = `<!doctype html><html><head><title>Journal Voucher — ${esc(date)}</title><style>
+      body{font-family:system-ui,-apple-system,sans-serif;padding:24px;color:#111}
+      h1{font-size:19px;margin:0 0 2px} .sub{color:#666;font-size:12px;margin-bottom:14px}
+      table{width:100%;border-collapse:collapse;font-size:12px}
+      th,td{border-bottom:1px solid #ddd;padding:5px 8px;text-align:left}
+      th{background:#f5f5f7;font-size:10px;text-transform:uppercase;color:#555}
+      .r{text-align:right} .mono{font-family:ui-monospace,monospace}
+      .totals{margin-top:12px;font-size:13px} .totals b{font-size:15px}
+      .sig{margin-top:36px;display:flex;gap:48px;font-size:11px;color:#555}
+      .sig div{border-top:1px solid #999;padding-top:4px;width:180px;text-align:center}
+    </style></head><body>
+      <h1>${esc(getHotelName())} — Journal Voucher</h1>
+      <div class="sub">${esc(reference)} · Business date ${esc(date)} · Printed ${new Date().toLocaleString()} · Prepared by ${esc(user?.name || user?.username || '—')}</div>
+      <table><thead><tr><th>Account</th><th>Account Name</th><th>Description</th><th class="r">Debit</th><th class="r">Credit</th></tr></thead>
+      <tbody>${body}</tbody></table>
+      <div class="totals">Debits: <b>$${sumDebit.toFixed(2)}</b> &nbsp;·&nbsp; Credits: <b>$${sumCredit.toFixed(2)}</b> &nbsp;·&nbsp; ${balanced ? '<b style="color:#15803d">BALANCED</b>' : '<b style="color:#b91c1c">NOT BALANCED</b>'}</div>
+      <div class="sig"><div>Prepared by</div><div>Reviewed by</div><div>Approved by</div></div>
+    </body></html>`;
+    const w = window.open('', '_blank');
+    if (w) { w.document.write(html); w.document.close(); w.focus(); setTimeout(() => w.print(), 300); }
+  };
+
+  // Drill down: open the interactive GL Transaction Listing filtered to an account
+  const drillAccount = (accountId: string) => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('glTxAccount', accountId);
+      url.searchParams.set('glTxMode', 'detailed');
+      window.history.replaceState({}, '', url.toString());
+    } catch { /* noop */ }
+    onOpenChange(false);
+    window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'gl-transactions' } }));
+  };
+
+  const accountOptions = React.useMemo(() => { try { return gl.getAccounts(); } catch { return []; } }, [open]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-4xl max-h-[88vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Daily Journal Posting</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3 overflow-y-auto pr-1 flex-1 min-h-0">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             <div>
               <Label htmlFor="je-date">Date</Label>
@@ -147,20 +209,36 @@ const JournalPostingModal: React.FC<JournalPostingModalProps> = ({ open, onOpenC
               <Input id="je-ref" value={reference} onChange={(e)=>setReference(e.target.value)} />
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={importFromNightAudit}>Import from Night Audit</Button>
             <Button className="bg-indigo-600 text-white" onClick={postFromNightAudit}>Post from Night Audit</Button>
+            <div className="ml-auto flex gap-2">
+              <Button variant="outline" onClick={exportCSV} disabled={usedLines().length === 0}>Export CSV</Button>
+              <Button variant="outline" onClick={printVoucher} disabled={usedLines().length === 0}>🖨 Print</Button>
+            </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr><th className="p-2 text-left">Account Code</th><th className="p-2 text-left">Description</th><th className="p-2 text-right">Debit</th><th className="p-2 text-right">Credit</th><th className="p-2">Actions</th></tr></thead>
+          {/* Lines — scrolls inside the modal so many lines never push it off-page */}
+          <div className="overflow-x-auto overflow-y-auto max-h-[38vh] border rounded">
+            <table className="w-full text-sm min-w-[720px]">
+              <thead className="sticky top-0 bg-gray-50 z-10"><tr><th className="p-2 text-left">Account</th><th className="p-2 text-left">Description</th><th className="p-2 text-right">Debit</th><th className="p-2 text-right">Credit</th><th className="p-2">Actions</th></tr></thead>
               <tbody>
                 {lines.map((l, idx) => (
-                  <tr key={idx}>
-                    <td className="p-2"><Input aria-label={`Account code line ${idx+1}`} placeholder="e.g. 1000" value={l.accountId} onChange={(e)=>setLines(prev => prev.map((x,i)=> i===idx ? { ...x, accountId: e.target.value } : x))} /></td>
+                  <tr key={idx} className="border-t">
+                    <td className="p-2 min-w-[220px]">
+                      <select aria-label={`Account line ${idx+1}`} className="border rounded px-2 py-2 w-full text-sm"
+                        value={l.accountId}
+                        onChange={(e)=>setLines(prev => prev.map((x,i)=> i===idx ? { ...x, accountId: e.target.value } : x))}>
+                        <option value="">Select account…</option>
+                        {(['Asset','Liability','Equity','Revenue','Expense'] as const).map(cat => {
+                          const opts = accountOptions.filter((a:any) => a.category === cat);
+                          if (!opts.length) return null;
+                          return <optgroup key={cat} label={cat}>{opts.map((a:any) => <option key={a.id} value={a.id}>{a.id} - {a.name}</option>)}</optgroup>;
+                        })}
+                      </select>
+                    </td>
                     <td className="p-2"><Input aria-label={`Description line ${idx+1}`} placeholder="Description" value={l.description} onChange={(e)=>setLines(prev => prev.map((x,i)=> i===idx ? { ...x, description: e.target.value } : x))} /></td>
-                    <td className="p-2 text-right"><Input aria-label={`Debit line ${idx+1}`} type="number" value={l.debit} onChange={(e)=>setLines(prev => prev.map((x,i)=> i===idx ? { ...x, debit: e.target.value } : x))} /></td>
-                    <td className="p-2 text-right"><Input aria-label={`Credit line ${idx+1}`} type="number" value={l.credit} onChange={(e)=>setLines(prev => prev.map((x,i)=> i===idx ? { ...x, credit: e.target.value } : x))} /></td>
+                    <td className="p-2 text-right w-28"><Input aria-label={`Debit line ${idx+1}`} type="number" value={l.debit} onChange={(e)=>setLines(prev => prev.map((x,i)=> i===idx ? { ...x, debit: e.target.value } : x))} /></td>
+                    <td className="p-2 text-right w-28"><Input aria-label={`Credit line ${idx+1}`} type="number" value={l.credit} onChange={(e)=>setLines(prev => prev.map((x,i)=> i===idx ? { ...x, credit: e.target.value } : x))} /></td>
                     <td className="p-2"><Button variant="outline" onClick={()=>removeLine(idx)}>Remove</Button></td>
                   </tr>
                 ))}
@@ -197,7 +275,16 @@ const JournalPostingModal: React.FC<JournalPostingModalProps> = ({ open, onOpenC
                         return { id, name, base: Number(base.toFixed?.(2) ?? base), delta: Number(delta.toFixed(2)), next };
                       });
                       return rows.map(r => (
-                        <tr key={r.id}><td className="p-1">{r.name} ({r.id})</td><td className="p-1 text-right">${r.base.toFixed(2)}</td><td className="p-1 text-right">${r.delta.toFixed(2)}</td><td className="p-1 text-right">${r.next.toFixed(2)}</td></tr>
+                        <tr key={r.id}>
+                          <td className="p-1">
+                            <button type="button" className="text-indigo-600 hover:underline text-left"
+                              title={`Open ${r.id} in the GL Transaction Listing (drill to every posting)`}
+                              onClick={() => drillAccount(r.id)}>
+                              {r.name} ({r.id}) ↗
+                            </button>
+                          </td>
+                          <td className="p-1 text-right">${r.base.toFixed(2)}</td><td className="p-1 text-right">${r.delta.toFixed(2)}</td><td className="p-1 text-right">${r.next.toFixed(2)}</td>
+                        </tr>
                       ));
                     } catch { return <tr><td className="p-1" colSpan={4}>N/A</td></tr>; }
                   })()}

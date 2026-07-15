@@ -48,10 +48,14 @@ export const GLTransactionListing: React.FC<{ initialMode?: 'summary' | 'detaile
       return m === 'summary' || m === 'detailed' ? m : null;
     } catch { return null; }
   })();
+  // Deep-link account filter (e.g. from the Daily Journal modal's drill-down)
+  const urlAccount = (() => {
+    try { return new URLSearchParams(window.location.search).get('glTxAccount') || ''; } catch { return ''; }
+  })();
   const [mode, setMode] = useState<'summary' | 'detailed'>(initialMode || urlMode || 'detailed');
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo] = useState(today());
-  const [accountFilter, setAccountFilter] = useState('');
+  const [accountFilter, setAccountFilter] = useState(urlAccount);
   const [sourceFilter, setSourceFilter] = useState('');
   const [lines, setLines] = useState<TxLine[]>([]);
   const [summary, setSummary] = useState<SummaryRow[]>([]);
