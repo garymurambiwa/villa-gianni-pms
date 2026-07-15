@@ -36,6 +36,10 @@ const NightAudit: React.FC = () => {
   const [validationWarnings, setValidationWarnings] = React.useState<string[]>([]);
   const [canForceOptions, setCanForceOptions] = React.useState<string[]>([]);
   const [lastRun, setLastRun] = React.useState<any | null>(null);
+  // LIVE business date from the DB (system_configs) — the single source of truth.
+  // The tile previously showed a per-browser lastRun snapshot, which drifted from
+  // System Settings (DB) whenever another device/cron performed the rollover.
+  const [bizDateLive, setBizDateLive] = React.useState<string>('');
   const [lastReports, setLastReports] = React.useState<any | null>(null);
   const [currentRecon, setCurrentRecon] = React.useState<any | null>(null);
 
@@ -131,6 +135,18 @@ const NightAudit: React.FC = () => {
     fetch('/api/night-audit/status').then(r => r.json()).then(async status => {
       if (!status.ok) return;
       if (status.dateIsAhead) setDateIsAhead(true);
+      // ── Business-date sync: the DB (system_configs) is authoritative. Show it
+      // live on this page AND heal this browser's localStorage copy so the night
+      // audit service, schedulers and reports all operate on the same date —
+      // System Settings and Night Audit can never disagree again.
+      try {
+        const biz = status.businessDate?.date || status.businessDate;
+        if (typeof biz === 'string' && /^\d{4}-\d{2}-\d{2}/.test(biz)) {
+          const d = biz.slice(0, 10);
+          setBizDateLive(d);
+          localStorage.setItem('corepms_business_date', JSON.stringify(d));
+        }
+      } catch { /* non-fatal */ }
       const today = new Date().toISOString().split('T')[0];
 
       // Determine the anchor date: last completed audit OR system business date OR yesterday
@@ -753,8 +769,13 @@ const NightAudit: React.FC = () => {
               <div className="text-xl font-semibold">{lastRun?.transfers?.count ?? 0}</div>
             </div>
             <div className="p-3 border rounded">
-              <div className="text-xs text-gray-500">Business Date →</div>
-              <div className="text-sm">{lastRun?.rollover?.previous} → <span className="font-semibold">{lastRun?.rollover?.next}</span></div>
+              <div className="text-xs text-gray-500">Business Date (live)</div>
+              <div className="text-sm">
+                <span className="font-semibold">{bizDateLive || lastRun?.rollover?.next || '—'}</span>
+                {lastRun?.rollover?.previous && (
+                  <span className="block text-[11px] text-gray-400">last rollover: {lastRun.rollover.previous} → {lastRun.rollover.next}</span>
+                )}
+              </div>
             </div>
             {lastRun?.reconciliation && (
               <div className="p-3 border rounded">
