@@ -12,8 +12,10 @@ const Maintenance: React.FC = () => {
   const { rooms, updateRoomStatus } = useData();
   const { toast } = useToast();
 
-  // Work Orders
-  const [orders, setOrders] = React.useState<WorkOrder[]>(() => maintenanceService.listWorkOrders());
+  // Work Orders — the maintenance service is ASYNC (DB-backed): initializing
+  // state with its Promise made orders.map()/assets.map() crash the whole page
+  // ("orders.map is not a function"). Start empty and hydrate in an effect.
+  const [orders, setOrders] = React.useState<WorkOrder[]>([]);
   const [title, setTitle] = React.useState('');
   const [desc, setDesc] = React.useState('');
   const [woRoom, setWoRoom] = React.useState('');
@@ -21,7 +23,25 @@ const Maintenance: React.FC = () => {
   const [priority, setPriority] = React.useState<'low' | 'medium' | 'high'>('medium');
 
   // Assets
-  const [assets, setAssets] = React.useState<Asset[]>(() => maintenanceService.listAssets());
+  const [assets, setAssets] = React.useState<Asset[]>([]);
+  const [stats, setStats] = React.useState<any>(null);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const [os, as, st] = await Promise.all([
+          maintenanceService.listWorkOrders(),
+          maintenanceService.listAssets(),
+          maintenanceService.getMaintenanceStats(),
+        ]);
+        setOrders(Array.isArray(os) ? os : []);
+        setAssets(Array.isArray(as) ? as : []);
+        setStats(st || null);
+      } catch (e) {
+        console.warn('[Maintenance] load failed:', e);
+      }
+    })();
+  }, []);
   const [assetName, setAssetName] = React.useState('');
   const [assetLocation, setAssetLocation] = React.useState('');
   const [assetSerial, setAssetSerial] = React.useState('');
@@ -31,37 +51,39 @@ const Maintenance: React.FC = () => {
   const [targetRoomId, setTargetRoomId] = React.useState('');
   const [targetStatus, setTargetStatus] = React.useState<'OOO' | 'OOS'>('OOO');
 
-  const refreshOrders = () => setOrders(maintenanceService.listWorkOrders());
-  const refreshAssets = () => setAssets(maintenanceService.listAssets());
+  const refreshOrders = async () => { const os = await maintenanceService.listWorkOrders(); setOrders(Array.isArray(os) ? os : []); };
+  const refreshAssets = async () => { const as = await maintenanceService.listAssets(); setAssets(Array.isArray(as) ? as : []); };
 
-  const createOrder = () => {
+  const createOrder = async () => {
     if (!title.trim()) { toast({ title: 'Missing title', description: 'Provide a brief work order title.' }); return; }
-    const wo = maintenanceService.createWorkOrder({ title: title.trim(), description: desc.trim(), roomNumber: woRoom || undefined, assetId: assetId || undefined, priority });
+    const wo = await maintenanceService.createWorkOrder({ title: title.trim(), description: desc.trim(), roomNumber: woRoom || undefined, assetId: assetId || undefined, priority });
+    if (!wo) { toast({ title: 'Create failed', description: 'Work order could not be saved.' }); return; }
     setTitle(''); setDesc(''); setWoRoom(''); setAssetId(''); setPriority('medium');
-    setOrders([wo, ...orders]);
+    setOrders(prev => [wo, ...prev]);
     toast({ title: 'Work Order Created', description: `#${wo.id} opened.` });
   };
 
-  const setStatus = (id: string, status: 'open' | 'in_progress' | 'closed') => {
-    const updated = maintenanceService.setWorkOrderStatus(id, status);
+  const setStatus = async (id: string, status: 'open' | 'in_progress' | 'closed') => {
+    const updated = await maintenanceService.setWorkOrderStatus(id, status);
     if (updated) setOrders(prev => prev.map(o => o.id === id ? updated : o));
   };
 
-  const assign = (id: string, assignee: string) => {
-    const updated = maintenanceService.assignWorkOrder(id, assignee);
+  const assign = async (id: string, assignee: string) => {
+    const updated = await maintenanceService.assignWorkOrder(id, assignee);
     if (updated) setOrders(prev => prev.map(o => o.id === id ? updated : o));
   };
 
-  const linkAsset = (id: string, asset: string) => {
-    const updated = maintenanceService.updateWorkOrder(id, { assetId: asset || undefined });
+  const linkAsset = async (id: string, asset: string) => {
+    const updated = await maintenanceService.updateWorkOrder(id, { assetId: asset || undefined });
     if (updated) setOrders(prev => prev.map(o => o.id === id ? updated : o));
   };
 
-  const addAsset = () => {
+  const addAsset = async () => {
     if (!assetName.trim()) { toast({ title: 'Missing asset name', description: 'Enter an asset name.' }); return; }
-    const a = maintenanceService.addAsset({ name: assetName.trim(), location: assetLocation || undefined, serialNumber: assetSerial || undefined, notes: assetNotes || undefined });
+    const a = await maintenanceService.addAsset({ name: assetName.trim(), location: assetLocation || undefined, serialNumber: assetSerial || undefined, notes: assetNotes || undefined });
+    if (!a) { toast({ title: 'Add failed', description: 'Asset could not be saved.' }); return; }
     setAssetName(''); setAssetLocation(''); setAssetSerial(''); setAssetNotes('');
-    setAssets([a, ...assets]);
+    setAssets(prev => [a, ...prev]);
     toast({ title: 'Asset Added', description: `#${a.id} ${a.name}` });
   };
 
@@ -71,7 +93,6 @@ const Maintenance: React.FC = () => {
     toast({ title: 'Room Status Updated', description: `Room updated to ${targetStatus}.` });
   };
 
-  const stats = maintenanceService.getMaintenanceStats();
 
   return (
     <div className="p-6 space-y-6">
@@ -249,15 +270,15 @@ const Maintenance: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="p-3 border rounded">
             <div className="text-xs text-gray-500">Open Work Orders</div>
-            <div className="text-xl font-semibold">{stats.open}</div>
+            <div className="text-xl font-semibold">{stats?.open ?? 0}</div>
           </div>
           <div className="p-3 border rounded">
             <div className="text-xs text-gray-500">Closed Work Orders</div>
-            <div className="text-xl font-semibold">{stats.closed}</div>
+            <div className="text-xl font-semibold">{stats?.closed ?? 0}</div>
           </div>
           <div className="p-3 border rounded">
             <div className="text-xs text-gray-500">Average Repair Time (hrs)</div>
-            <div className="text-xl font-semibold">{stats.avgRepairHours}</div>
+            <div className="text-xl font-semibold">{stats?.avgRepairHours ?? 0}</div>
           </div>
         </div>
       </section>
