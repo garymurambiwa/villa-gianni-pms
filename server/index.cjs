@@ -1925,6 +1925,15 @@ app.get('/api/folio/statement', async (req, res) => {
   const { reservation_id, guest_id, folio_id } = req.query;
   if (!reservation_id && !guest_id && !folio_id)
     return res.json({ ok: false, error: 'reservation_id, guest_id or folio_id required' });
+  // Format a pg DATE/timestamp (returned as a JS Date at UTC midnight) or string
+  // to a clean YYYY-MM-DD — String(date).slice mangles Date objects.
+  const ymd = (v) => {
+    if (!v) return '';
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    const s = String(v);
+    const m = s.match(/^\d{4}-\d{2}-\d{2}/);
+    return m ? m[0] : (new Date(s).toISOString().slice(0, 10));
+  };
   try {
     // Locate the charges by whichever key was supplied
     const conds = []; const params = [];
@@ -1953,7 +1962,7 @@ app.get('/api/folio/statement', async (req, res) => {
       if (rid) {
         const rr = await db.query(
           `SELECT r.id AS reservation_id, r.status, r.check_in_date, r.check_out_date, r.guest_id,
-                  g.name AS guest_name, ro.number AS room_number
+                  g.full_name AS guest_name, ro.number AS room_number
            FROM reservations r
            LEFT JOIN guests g ON g.id = r.guest_id
            LEFT JOIN rooms ro ON ro.id = r.room_id
@@ -1961,13 +1970,13 @@ app.get('/api/folio/statement', async (req, res) => {
         if (rr.rows?.length) {
           const x = rr.rows[0];
           header = { guest_name: x.guest_name, room_number: x.room_number || rows[0]?.room_number || null,
-                     arrival: x.check_in_date, departure: x.check_out_date, status: x.status,
+                     arrival: ymd(x.check_in_date), departure: ymd(x.check_out_date), status: x.status,
                      folio_id: rows[0]?.folio_id || null, reservation_id: x.reservation_id };
         }
       }
       if (!header.guest_name && gid) {
-        const gr = await db.query(`SELECT name FROM guests WHERE id = $1 LIMIT 1`, [gid]);
-        if (gr.rows?.length) header.guest_name = gr.rows[0].name;
+        const gr = await db.query(`SELECT full_name FROM guests WHERE id = $1 LIMIT 1`, [gid]);
+        if (gr.rows?.length) header.guest_name = gr.rows[0].full_name;
       }
       if (!header.room_number && rows[0]?.room_number) header.room_number = rows[0].room_number;
     } catch { /* header best-effort */ }
@@ -1981,7 +1990,7 @@ app.get('/api/folio/statement', async (req, res) => {
       const payment = isPayment ? Math.abs(gross) : 0;
       charges += charge; payments += payment; balance += charge - payment;
       return {
-        date: String(r.tx_date).slice(0, 10),
+        date: ymd(r.tx_date),
         description: r.description || (isPayment ? 'Payment' : r.category || 'Charge'),
         category: r.category, department: r.department, reference: r.source_reference,
         charge: Number(charge.toFixed(2)), payment: Number(payment.toFixed(2)),
