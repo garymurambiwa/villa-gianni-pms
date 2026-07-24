@@ -57,6 +57,9 @@ export const GLTransactionListing: React.FC<{ initialMode?: 'summary' | 'detaile
   const [to, setTo] = useState(today());
   const [accountFilter, setAccountFilter] = useState(urlAccount);
   const [sourceFilter, setSourceFilter] = useState('');
+  // Transaction date (business date — when it happened) is the system default;
+  // posting date (when it was captured) available as an alternative basis.
+  const [dateBasis, setDateBasis] = useState<'transaction' | 'posting'>('transaction');
   const [lines, setLines] = useState<TxLine[]>([]);
   const [summary, setSummary] = useState<SummaryRow[]>([]);
   const [totals, setTotals] = useState({ totalDebit: 0, totalCredit: 0 });
@@ -79,6 +82,7 @@ export const GLTransactionListing: React.FC<{ initialMode?: 'summary' | 'detaile
       const qs = new URLSearchParams({ from, to });
       if (accountFilter) qs.set('account_id', accountFilter);
       if (sourceFilter) qs.set('source', sourceFilter);
+      if (dateBasis === 'posting') qs.set('basis', 'posting');
       const r = await fetch(`/api/gl/transactions?${qs}`).then(r => r.json());
       if (!r.ok) throw new Error(r.error || 'Load failed');
       setLines(r.lines || []);
@@ -87,7 +91,7 @@ export const GLTransactionListing: React.FC<{ initialMode?: 'summary' | 'detaile
     } catch (e: any) {
       setError(String(e?.message || e));
     } finally { setLoading(false); }
-  }, [from, to, accountFilter, sourceFilter]);
+  }, [from, to, accountFilter, sourceFilter, dateBasis]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -173,6 +177,15 @@ export const GLTransactionListing: React.FC<{ initialMode?: 'summary' | 'detaile
           <label className="text-xs block">Source</label>
           <select className="border rounded px-2 py-1.5 text-sm" value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}>
             {SOURCES.map(s => <option key={s} value={s}>{s || 'All sources'}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs block">Date Basis</label>
+          <select className="border rounded px-2 py-1.5 text-sm" value={dateBasis}
+            title="Transaction Date = when it happened (business date). Posting Date = when it was captured into the system."
+            onChange={e => setDateBasis(e.target.value as 'transaction' | 'posting')}>
+            <option value="transaction">Transaction Date</option>
+            <option value="posting">Posting Date</option>
           </select>
         </div>
         <Button variant="outline" className="ds-button-compact" onClick={load} disabled={loading}>{loading ? 'Loading…' : 'Refresh'}</Button>

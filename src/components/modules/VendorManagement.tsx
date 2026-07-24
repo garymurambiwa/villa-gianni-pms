@@ -660,7 +660,9 @@ const VendorManagement: React.FC = () => {
 
   // Apply the shared transaction filters (date period / category / department / status / search).
   const filteredExpenses = filterRows(vendorExpenses, filters, {
+    // Transaction date = the expense/invoice date; posting date = when captured.
     date: (e: any) => e.expense_date,
+    postingDate: (e: any) => e.posted_at || e.created_at || e.inserted_at || e.expense_date,
     category: (e: any) => e.category,
     department: (e: any) => e.department,
     status: (e: any) => e.status,

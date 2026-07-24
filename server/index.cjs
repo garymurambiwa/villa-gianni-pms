@@ -358,10 +358,15 @@ app.post('/api/gl/daily-batch/post', async (req, res) => {
 // Detailed: every posted journal LINE in range (with its parent entry + account).
 // Summary: per-account debit/credit/net totals over the same filter.
 app.get('/api/gl/transactions', async (req, res) => {
-  const { from, to, account_id, source } = req.query;
+  const { from, to, account_id, source, basis } = req.query;
   if (!from || !to) return res.json({ ok: false, error: 'from and to dates required' });
   try {
-    let where = `je.status = 'posted' AND je.business_date >= $1::date AND je.business_date <= $2::date`;
+    // Date basis: 'transaction' (default) filters on business_date — WHEN the
+    // event happened; 'posting' filters on posted_at — when it was captured.
+    const dateCol = basis === 'posting'
+      ? `COALESCE(je.posted_at, je.inserted_at)::date`
+      : `je.business_date`;
+    let where = `je.status = 'posted' AND ${dateCol} >= $1::date AND ${dateCol} <= $2::date`;
     const params = [from, to];
     if (account_id) { params.push(account_id); where += ` AND jl.gl_account_id = $${params.length}`; }
     if (source)     { params.push(source);     where += ` AND je.source = $${params.length}`; }

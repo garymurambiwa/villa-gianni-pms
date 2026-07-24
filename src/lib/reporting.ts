@@ -768,14 +768,14 @@ export const buildPurchaseReceivingLog = async (forDate?: string) => {
     const { db: dbMod } = await import('@/lib/db');
     // Pull from inventory GRN headers + lines for the given date
     const grnRes = await dbMod.query<any>(
-      `SELECT h.grn_number, h.supplier_name, h.inserted_at::date::text as date,
+      `SELECT h.grn_number, h.supplier_name, COALESCE(h.receipt_date, h.inserted_at)::date::text as date,
               l.item_id, i.name as item_name, l.qty_received, l.unit_cost,
               l.line_total, u.code as uom
        FROM inv_grn_headers h
        JOIN inv_grn_lines l ON l.grn_header_id = h.id
        LEFT JOIN inv_items i ON i.id = l.item_id
        LEFT JOIN inv_uom_definitions u ON u.id = l.received_uom_id
-       WHERE h.status = 'posted' AND h.inserted_at::date = $1
+       WHERE h.status = 'posted' AND COALESCE(h.receipt_date, h.inserted_at)::date = $1
        ORDER BY h.grn_number, l.line_number`,
       [date]
     );

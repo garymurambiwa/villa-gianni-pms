@@ -92,6 +92,16 @@ export const TransactionFilterBar: React.FC<TransactionFilterBarProps> = ({
       {s.date && (
         <>
           <div>
+            <Label className="text-xs text-gray-500 mb-1 block">Date Basis</Label>
+            <Select value={value.dateBasis || 'transaction'} onValueChange={(v) => set({ dateBasis: v as 'transaction' | 'posting' })}>
+              <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="transaction">Transaction Date</SelectItem>
+                <SelectItem value="posting">Posting Date</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
             <Label className="text-xs text-gray-500 mb-1 block">From</Label>
             <Input
               type="date"

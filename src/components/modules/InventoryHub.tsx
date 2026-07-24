@@ -542,7 +542,9 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
   // Apply shared filters. GRNs have no category/department, so we filter on
   // date (receipt/created), status (posted/draft) and free-text search.
   const filteredGrns = filterRows(grns, filters, {
+    // Transaction date = when the goods were received; posting date = when captured/posted.
     date: (g:any) => g.receipt_date || g.inserted_at,
+    postingDate: (g:any) => g.posted_at || g.inserted_at,
     status: (g:any) => g.status,
     search: (g:any) => [g.grn_number, g.supplier_name, g.supplier_invoice_number, locName(g.destination_location_id)],
   });
@@ -869,7 +871,13 @@ function GRNModule({ data }: { data: ReturnType<typeof useInventoryData> }) {
                     {g.status}
                   </span>
                 </td>
-                <td className="px-3 py-2 text-gray-500 text-xs">{new Date(g.inserted_at).toLocaleDateString()}</td>
+                <td className="px-3 py-2 text-gray-500 text-xs">
+                  {/* Transaction (receipt) date is the primary date system-wide */}
+                  <div>{new Date(g.receipt_date || g.inserted_at).toLocaleDateString()}</div>
+                  {g.posted_at && String(g.posted_at).slice(0,10) !== String(g.receipt_date || '').slice(0,10) && (
+                    <div className="text-[10px] text-gray-400">posted {new Date(g.posted_at).toLocaleDateString()}</div>
+                  )}
+                </td>
                 <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center gap-1">
                     {g.status === 'draft' && (
@@ -1296,7 +1304,9 @@ function StockTransfer({ data }: { data: ReturnType<typeof useInventoryData> }) 
 
   // Shared transaction filters (date period / status / search). No category/department for transfers.
   const filteredTransfers = filterRows(transfers, filters, {
-    date: (t:any) => t.inserted_at,
+    // Transaction date = the transfer's own date; posting date = when captured.
+    date: (t:any) => t.transfer_date || t.requested_at || t.inserted_at,
+    postingDate: (t:any) => t.posted_at || t.inserted_at,
     status: (t:any) => t.status,
     search: (t:any) => [t.transfer_number, t.reference_note, locName(t.source_location_id), locName(t.destination_location_id)],
   });
