@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { format, differenceInCalendarDays, addDays, startOfToday } from 'date-fns';
 import { Calendar, CreditCard, Search, UserCheck, UserX, Printer, Utensils, AlertTriangle, FileText, FileSearch, Settings, LayoutGrid, ArrowRightLeft } from 'lucide-react';
 import { toast } from 'sonner';
+import { getHotelName } from '@/lib/brand';
 import { getResPackageLabel, computeTotalRate, sanitizePackageCode } from '@/lib/packageUtils';
 import { logger } from '@/lib/logger';
 import FOPrintCustomization from '@/components/modules/FOPrintCustomization';
@@ -1180,6 +1181,65 @@ export const FrontOffice: React.FC = () => {
     );
   }, [filteredReservations]);
 
+  // Open + print a guest folio statement (works for checked-out guests — reads
+  // folio_charges from the DB, which persists after checkout).
+  const [statementBusy, setStatementBusy] = useState<string | null>(null);
+  const openGuestStatement = async (res: any) => {
+    const rid = res.id || res.reservation_id;
+    const gid = res.guestId || res.guest_id;
+    if (!rid && !gid) { toast.error('No folio reference', { description: 'This reservation has no id to look up its statement.' }); return; }
+    setStatementBusy(rid || gid);
+    // Open the window synchronously so the browser keeps user-gesture trust
+    const win = window.open('', '_blank');
+    if (win) { try { win.document.write('<!doctype html><title>Loading statement…</title><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;color:#475569">⏳ Loading guest statement…</body>'); } catch { /* noop */ } }
+    try {
+      const qs = new URLSearchParams();
+      if (rid) qs.set('reservation_id', rid);
+      if (gid) qs.set('guest_id', gid);
+      const data = await fetch(`/api/folio/statement?${qs}`).then(r => r.json());
+      if (!data.ok) throw new Error(data.error || 'Failed to load statement');
+      const esc = (s: any) => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
+      const d10 = (s: any) => (s ? String(s).slice(0, 10) : '—');
+      const h = data.header || {};
+      const guestName = h.guest_name || res.guestName || 'Guest';
+      const body = (data.lines || []).map((l: any) =>
+        `<tr><td>${esc(d10(l.date))}</td><td>${esc(l.description)}</td><td>${esc(l.category || '')}</td><td class="r">${l.charge ? '$' + Number(l.charge).toFixed(2) : ''}</td><td class="r">${l.payment ? '$' + Number(l.payment).toFixed(2) : ''}</td><td class="r"><b>$${Number(l.balance).toFixed(2)}</b></td></tr>`).join('');
+      const html = `<!doctype html><html><head><title>Guest Statement — ${esc(guestName)}</title><style>
+        body{font-family:system-ui,-apple-system,sans-serif;padding:24px;color:#111}
+        h1{font-size:20px;margin:0 0 2px} .sub{color:#666;font-size:12px;margin-bottom:12px}
+        .meta{display:flex;gap:28px;font-size:12px;margin-bottom:14px;flex-wrap:wrap}
+        .meta b{color:#111}
+        table{width:100%;border-collapse:collapse;font-size:12px}
+        th,td{border-bottom:1px solid #ddd;padding:5px 8px;text-align:left}
+        th{background:#f5f5f7;font-size:10px;text-transform:uppercase;color:#555}
+        .r{text-align:right}
+        .totals{margin-top:14px;font-size:13px;text-align:right} .totals b{font-size:16px}
+        .paid{color:#15803d} .owed{color:#b91c1c}
+      </style></head><body>
+        <h1>${esc(getHotelName())} — Guest Statement</h1>
+        <div class="sub">Folio account history · Printed ${new Date().toLocaleString()}</div>
+        <div class="meta">
+          <div>Guest: <b>${esc(guestName)}</b></div>
+          <div>Room: <b>${esc(h.room_number || res.roomType || '—')}</b></div>
+          <div>Arrival: <b>${esc(d10(h.arrival))}</b></div>
+          <div>Departure: <b>${esc(d10(h.departure || res.checkOut))}</b></div>
+          <div>Status: <b>${esc(h.status || 'checked-out')}</b></div>
+        </div>
+        <table><thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="r">Charges</th><th class="r">Payments</th><th class="r">Balance</th></tr></thead>
+        <tbody>${body || '<tr><td colspan="6" style="text-align:center;color:#888;padding:16px">No folio transactions found for this guest.</td></tr>'}</tbody></table>
+        <div class="totals">
+          Charges: <b>$${Number(data.totalCharges || 0).toFixed(2)}</b> &nbsp;·&nbsp;
+          Payments: <b class="paid">$${Number(data.totalPayments || 0).toFixed(2)}</b> &nbsp;·&nbsp;
+          Balance: <b class="${Number(data.closingBalance) > 0.005 ? 'owed' : 'paid'}">$${Number(data.closingBalance || 0).toFixed(2)}</b>
+        </div>
+      </body></html>`;
+      if (win) { win.document.open(); win.document.write(html); win.document.close(); win.focus(); setTimeout(() => { try { win.print(); } catch { /* noop */ } }, 300); }
+    } catch (e: any) {
+      if (win) { try { win.document.body.innerHTML = `<p style="color:#b91c1c;font-family:system-ui;padding:24px">Failed to load statement: ${e?.message || e}</p>`; } catch { /* noop */ } }
+      toast.error('Statement failed', { description: String(e?.message || e) });
+    } finally { setStatementBusy(null); }
+  };
+
   if ((dataError || dbError) && guests.length === 0 && reservations.length === 0) {
     // Non-blocking now
   }
@@ -1503,12 +1563,13 @@ export const FrontOffice: React.FC = () => {
                     <TableHead>Departure</TableHead>
                     <TableHead>Balance</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Statement</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {checkedOutToday.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                         No departures today
                       </TableCell>
                     </TableRow>
@@ -1532,6 +1593,13 @@ export const FrontOffice: React.FC = () => {
                             ${(Number(res.rate) || 0).toFixed(2)}
                           </TableCell>
                           <TableCell><Badge variant="secondary" className="bg-gray-100 text-gray-800">Checked Out</Badge></TableCell>
+                          <TableCell className="text-right">
+                            <Button size="sm" variant="outline" disabled={statementBusy === res.id}
+                              onClick={() => openGuestStatement(res)}>
+                              <Printer className="w-3.5 h-3.5 mr-1" />
+                              {statementBusy === res.id ? 'Loading…' : 'Statement'}
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       );
                     })

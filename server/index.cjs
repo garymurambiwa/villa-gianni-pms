@@ -1917,6 +1917,87 @@ app.get('/api/reports/journals', async (req, res) => {
     }
 });
 
+// ─── Guest Folio Statement (front-office, incl. checked-out guests) ──────────
+// GET /api/folio/statement?reservation_id=…  OR  ?guest_id=…  OR ?folio_id=…
+// Full charge & payment history for a guest's stay with a running balance —
+// works AFTER checkout (reads folio_charges, which persists post-checkout).
+app.get('/api/folio/statement', async (req, res) => {
+  const { reservation_id, guest_id, folio_id } = req.query;
+  if (!reservation_id && !guest_id && !folio_id)
+    return res.json({ ok: false, error: 'reservation_id, guest_id or folio_id required' });
+  try {
+    // Locate the charges by whichever key was supplied
+    const conds = []; const params = [];
+    if (reservation_id) { params.push(reservation_id); conds.push(`fc.reservation_id = $${params.length}`); }
+    if (guest_id)       { params.push(guest_id);       conds.push(`fc.guest_id = $${params.length}`); }
+    if (folio_id)       { params.push(folio_id);       conds.push(`fc.folio_id = $${params.length}`); }
+    const where = conds.join(' OR ');
+
+    const chargesRes = await db.query(
+      `SELECT fc.id, fc.charge_type, fc.category, fc.description, fc.amount, fc.tax_amount,
+              fc.total_amount, fc.source, fc.source_reference, fc.department,
+              COALESCE(fc.business_date, fc.posting_date, fc.inserted_at::date) AS tx_date,
+              fc.posting_date, fc.room_number, fc.is_voided, fc.guest_id, fc.reservation_id, fc.folio_id
+       FROM folio_charges fc
+       WHERE (${where}) AND fc.is_voided IS NOT TRUE
+       ORDER BY COALESCE(fc.business_date, fc.posting_date, fc.inserted_at::date), fc.inserted_at`,
+      params
+    );
+    const rows = chargesRes.rows || [];
+
+    // Header: guest, room, stay dates — from reservations/guests/folios when available
+    let header = { guest_name: null, room_number: null, arrival: null, departure: null, status: null, folio_id: null, reservation_id: null };
+    try {
+      const rid = reservation_id || rows.find(r => r.reservation_id)?.reservation_id;
+      const gid = guest_id || rows.find(r => r.guest_id)?.guest_id;
+      if (rid) {
+        const rr = await db.query(
+          `SELECT r.id AS reservation_id, r.status, r.check_in_date, r.check_out_date, r.guest_id,
+                  g.name AS guest_name, ro.number AS room_number
+           FROM reservations r
+           LEFT JOIN guests g ON g.id = r.guest_id
+           LEFT JOIN rooms ro ON ro.id = r.room_id
+           WHERE r.id = $1 LIMIT 1`, [rid]);
+        if (rr.rows?.length) {
+          const x = rr.rows[0];
+          header = { guest_name: x.guest_name, room_number: x.room_number || rows[0]?.room_number || null,
+                     arrival: x.check_in_date, departure: x.check_out_date, status: x.status,
+                     folio_id: rows[0]?.folio_id || null, reservation_id: x.reservation_id };
+        }
+      }
+      if (!header.guest_name && gid) {
+        const gr = await db.query(`SELECT name FROM guests WHERE id = $1 LIMIT 1`, [gid]);
+        if (gr.rows?.length) header.guest_name = gr.rows[0].name;
+      }
+      if (!header.room_number && rows[0]?.room_number) header.room_number = rows[0].room_number;
+    } catch { /* header best-effort */ }
+
+    // Running balance: charges add, payments subtract
+    let balance = 0, charges = 0, payments = 0;
+    const lines = rows.map(r => {
+      const isPayment = String(r.charge_type || '').toLowerCase() === 'payment' || String(r.category || '').toLowerCase() === 'payment';
+      const gross = Number(r.total_amount ?? (Number(r.amount || 0) + Number(r.tax_amount || 0)));
+      const charge = isPayment ? 0 : gross;
+      const payment = isPayment ? Math.abs(gross) : 0;
+      charges += charge; payments += payment; balance += charge - payment;
+      return {
+        date: String(r.tx_date).slice(0, 10),
+        description: r.description || (isPayment ? 'Payment' : r.category || 'Charge'),
+        category: r.category, department: r.department, reference: r.source_reference,
+        charge: Number(charge.toFixed(2)), payment: Number(payment.toFixed(2)),
+        balance: Number(balance.toFixed(2)),
+      };
+    });
+
+    res.json({
+      ok: true, header, lines,
+      totalCharges: Number(charges.toFixed(2)),
+      totalPayments: Number(payments.toFixed(2)),
+      closingBalance: Number(balance.toFixed(2)),
+    });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // GET /api/reports/balance-sheet?as_of=YYYY-MM-DD
 // Classified balance sheet from gl_journal_lines up to as_of: Assets (debit-normal),
 // Liabilities & Equity (credit-normal), plus Current-Year Earnings (Revenue−Expense)
