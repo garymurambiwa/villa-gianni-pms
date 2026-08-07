@@ -14,16 +14,10 @@
 let ready = false;
 async function ensureFinanceTables(db) {
   if (ready) return;
-  await db.query(`CREATE TABLE IF NOT EXISTS accounting_periods (
-    period TEXT PRIMARY KEY,              -- 'YYYY-MM'
-    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
-    closed_by TEXT,
-    closed_at TIMESTAMPTZ,
-    reopened_by TEXT,
-    reopened_at TIMESTAMPTZ,
-    note TEXT,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-  )`);
+  // Reuse the pre-existing accounting_periods table (period_year, period_month,
+  // status, …). Add a unique index so we can upsert one row per month cleanly.
+  await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_accounting_periods_ym
+                  ON accounting_periods (period_year, period_month)`).catch(() => {});
   await db.query(`CREATE TABLE IF NOT EXISTS doc_sequences (
     doc_type TEXT PRIMARY KEY,            -- 'GRN','JV','PAY','TRF','EXP','ADJ'
     next_val BIGINT NOT NULL DEFAULT 1
@@ -31,15 +25,16 @@ async function ensureFinanceTables(db) {
   ready = true;
 }
 
-/** 'YYYY-MM' for a date-ish value. */
-function periodOf(dateLike) {
+/** {year, month, label 'YYYY-MM'} for a date-ish value, or null. */
+function periodParts(dateLike) {
   const s = String(dateLike || '');
   const m = s.match(/^(\d{4})-(\d{2})/);
-  if (m) return `${m[1]}-${m[2]}`;
-  const d = new Date(dateLike);
-  if (isNaN(d.getTime())) return null;
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  let y, mo;
+  if (m) { y = Number(m[1]); mo = Number(m[2]); }
+  else { const d = new Date(dateLike); if (isNaN(d.getTime())) return null; y = d.getUTCFullYear(); mo = d.getUTCMonth() + 1; }
+  return { year: y, month: mo, label: `${y}-${String(mo).padStart(2, '0')}` };
 }
+function periodOf(dateLike) { const p = periodParts(dateLike); return p ? p.label : null; }
 
 /**
  * Throws { code:'PERIOD_CLOSED', period, message } when `date` falls in a closed
@@ -47,13 +42,14 @@ function periodOf(dateLike) {
  */
 async function assertPeriodOpen(db, date, action = 'post') {
   await ensureFinanceTables(db);
-  const period = periodOf(date);
-  if (!period) return; // unparseable date — don't block (never hide on bad input)
-  const r = await db.query(`SELECT status FROM accounting_periods WHERE period = $1`, [period]);
-  if (r.rows && r.rows.length && r.rows[0].status === 'closed') {
-    const err = new Error(`Accounting period ${period} is closed — cannot ${action} a transaction dated in it. Reopen the period (Accounting → Period Close) or use a date in an open period.`);
+  const p = periodParts(date);
+  if (!p) return; // unparseable date — don't block (never hide on bad input)
+  const r = await db.query(
+    `SELECT status FROM accounting_periods WHERE period_year=$1 AND period_month=$2`, [p.year, p.month]);
+  if (r.rows && r.rows.length && String(r.rows[0].status).toLowerCase() === 'closed') {
+    const err = new Error(`Accounting period ${p.label} is closed — cannot ${action} a transaction dated in it. Reopen the period (Accounting → Period Close) or use a date in an open period.`);
     err.code = 'PERIOD_CLOSED';
-    err.period = period;
+    err.period = p.label;
     throw err;
   }
 }
@@ -61,10 +57,41 @@ async function assertPeriodOpen(db, date, action = 'post') {
 /** Non-throwing check: returns { closed:boolean, period }. */
 async function isPeriodClosed(db, date) {
   await ensureFinanceTables(db);
-  const period = periodOf(date);
-  if (!period) return { closed: false, period: null };
-  const r = await db.query(`SELECT status FROM accounting_periods WHERE period = $1`, [period]);
-  return { closed: !!(r.rows && r.rows.length && r.rows[0].status === 'closed'), period };
+  const p = periodParts(date);
+  if (!p) return { closed: false, period: null };
+  const r = await db.query(
+    `SELECT status FROM accounting_periods WHERE period_year=$1 AND period_month=$2`, [p.year, p.month]);
+  return { closed: !!(r.rows && r.rows.length && String(r.rows[0].status).toLowerCase() === 'closed'), period: p.label };
+}
+
+/** Set a period's status ('open'|'closed'); upserts the month row. */
+async function setPeriodStatus(db, label, status, actor, note) {
+  await ensureFinanceTables(db);
+  const p = periodParts(label + '-01');
+  if (!p) throw new Error('period must be YYYY-MM');
+  const startDate = `${p.label}-01`;
+  const endDate = new Date(Date.UTC(p.year, p.month, 0)).toISOString().slice(0, 10); // last day of month
+  const name = new Date(Date.UTC(p.year, p.month - 1, 1)).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const isClose = status === 'closed';
+  await db.query(
+    `INSERT INTO accounting_periods
+       (id, period_year, period_month, period_name, start_date, end_date, status,
+        closed_by, closed_at, reopened_by, reopened_at, reopen_reason, inserted_at, updated_at)
+     VALUES (gen_random_uuid()::text, $1,$2,$3,$4::date,$5::date,$6,
+        CASE WHEN $6='closed' THEN $7 ELSE NULL END, CASE WHEN $6='closed' THEN NOW() ELSE NULL END,
+        CASE WHEN $6='open' THEN $7 ELSE NULL END,  CASE WHEN $6='open' THEN NOW() ELSE NULL END,
+        $8, NOW(), NOW())
+     ON CONFLICT (period_year, period_month) DO UPDATE SET
+        status=$6,
+        closed_by=CASE WHEN $6='closed' THEN $7 ELSE accounting_periods.closed_by END,
+        closed_at=CASE WHEN $6='closed' THEN NOW() ELSE accounting_periods.closed_at END,
+        reopened_by=CASE WHEN $6='open' THEN $7 ELSE accounting_periods.reopened_by END,
+        reopened_at=CASE WHEN $6='open' THEN NOW() ELSE accounting_periods.reopened_at END,
+        reopen_reason=COALESCE($8, accounting_periods.reopen_reason),
+        updated_at=NOW()`,
+    [p.year, p.month, name, startDate, endDate, status, actor || 'controller', note || null]
+  );
+  return { period: p.label, status };
 }
 
 /**
@@ -93,4 +120,4 @@ async function seedSequence(db, docType, startAtLeast) {
   );
 }
 
-module.exports = { ensureFinanceTables, assertPeriodOpen, isPeriodClosed, nextDocId, seedSequence, periodOf };
+module.exports = { ensureFinanceTables, assertPeriodOpen, isPeriodClosed, setPeriodStatus, nextDocId, seedSequence, periodOf, periodParts };

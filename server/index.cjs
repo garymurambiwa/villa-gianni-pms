@@ -5,7 +5,7 @@ const path = require('path');
 // Load database module
 const db = require('./db-web.cjs');
 const { normalizeGLSource } = require('./glSource.cjs');
-const { ensureFinanceTables, assertPeriodOpen, isPeriodClosed, nextDocId } = require('./finance-core.cjs');
+const { ensureFinanceTables, assertPeriodOpen, isPeriodClosed, setPeriodStatus, nextDocId } = require('./finance-core.cjs');
 
 // Load environment variables
 try { require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }) } catch { }
@@ -804,37 +804,25 @@ app.post('/api/gl/pending-batches', async (req, res) => {
 app.get('/api/gl/periods', async (req, res) => {
   try {
     await ensureFinanceTables(db);
-    const r = await db.query(`SELECT * FROM accounting_periods ORDER BY period DESC`);
+    const r = await db.query(
+      `SELECT period_year, period_month,
+              to_char(make_date(period_year, period_month, 1),'YYYY-MM') AS period,
+              period_name, status, closed_by, closed_at, reopened_by, reopened_at
+       FROM accounting_periods ORDER BY period_year DESC, period_month DESC`);
     res.json({ ok: true, rows: r.rows || [] });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 app.post('/api/gl/periods/close', async (req, res) => {
   const { period, closed_by, note } = req.body || {};
   if (!/^\d{4}-\d{2}$/.test(String(period || ''))) return res.json({ ok: false, error: 'period must be YYYY-MM' });
-  try {
-    await ensureFinanceTables(db);
-    await db.query(
-      `INSERT INTO accounting_periods (period, status, closed_by, closed_at, note, updated_at)
-       VALUES ($1,'closed',$2,NOW(),$3,NOW())
-       ON CONFLICT (period) DO UPDATE SET status='closed', closed_by=$2, closed_at=NOW(), note=$3, updated_at=NOW()`,
-      [period, closed_by || 'controller', note || null]
-    );
-    res.json({ ok: true, period, status: 'closed' });
-  } catch (e) { res.json({ ok: false, error: e.message }); }
+  try { const r = await setPeriodStatus(db, period, 'closed', closed_by, note); res.json({ ok: true, ...r }); }
+  catch (e) { res.json({ ok: false, error: e.message }); }
 });
 app.post('/api/gl/periods/reopen', async (req, res) => {
   const { period, reopened_by, note } = req.body || {};
   if (!/^\d{4}-\d{2}$/.test(String(period || ''))) return res.json({ ok: false, error: 'period must be YYYY-MM' });
-  try {
-    await ensureFinanceTables(db);
-    await db.query(
-      `INSERT INTO accounting_periods (period, status, reopened_by, reopened_at, note, updated_at)
-       VALUES ($1,'open',$2,NOW(),$3,NOW())
-       ON CONFLICT (period) DO UPDATE SET status='open', reopened_by=$2, reopened_at=NOW(), note=$3, updated_at=NOW()`,
-      [period, reopened_by || 'controller', note || null]
-    );
-    res.json({ ok: true, period, status: 'open' });
-  } catch (e) { res.json({ ok: false, error: e.message }); }
+  try { const r = await setPeriodStatus(db, period, 'open', reopened_by, note); res.json({ ok: true, ...r }); }
+  catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
 // Build the transaction ops that book one pending batch into the GL as a balanced
