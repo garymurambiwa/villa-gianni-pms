@@ -5,6 +5,7 @@ const path = require('path');
 // Load database module
 const db = require('./db-web.cjs');
 const { normalizeGLSource } = require('./glSource.cjs');
+const { ensureFinanceTables, assertPeriodOpen, isPeriodClosed, nextDocId } = require('./finance-core.cjs');
 
 // Load environment variables
 try { require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }) } catch { }
@@ -247,7 +248,16 @@ app.post('/api/gl/journal-entries', async (req, res) => {
     return res.json({ ok: false, error: `Journal not balanced: debits $${sumDebit.toFixed(2)} ≠ credits $${sumCredit.toFixed(2)}` });
 
   try {
-    const entryId = id || `GLJE_${entryDate}_${Date.now().toString(36)}`;
+    // Closed-period guard: a posted entry dated into a closed month is blocked
+    // (drafts may still be staged for review — they only hit the ledger on post).
+    const willPost = ['draft', 'pending'].includes(status) ? false : true;
+    if (willPost) {
+      try { await assertPeriodOpen(db, entryDate, 'post journal'); }
+      catch (pe) { if (pe.code === 'PERIOD_CLOSED') return res.json({ ok: false, error: pe.message, code: pe.code, period: pe.period }); throw pe; }
+    }
+    // 5-digit journal voucher id (JV-00001) for new manual/system entries; callers
+    // that supply an id (reclass, night audit GLJE_<date>) keep theirs.
+    const entryId = id || await nextDocId(db, 'JV');
     const src = normalizeGLSource(source);
     // Daily-batch review gate: discretionary journals (manual JEs, vendor expenses,
     // inventory/stock adjustments) land as 'draft' so the controller can examine and
@@ -607,9 +617,12 @@ app.post('/api/ap/supplier-payments', async (req, res) => {
       grnNo = grn.grn_number;
     }
     const payDate = date || new Date().toISOString().slice(0, 10);
+    // Block paying into a closed period (the payment journal is dated payDate).
+    try { await assertPeriodOpen(db, payDate, 'record payment'); }
+    catch (pe) { if (pe.code === 'PERIOD_CLOSED') return res.json({ ok: false, error: pe.message, code: pe.code, period: pe.period }); throw pe; }
     const crAcct = method === 'cash' ? '1000' : '1100';
-    const payId = `APPAY_${Date.now().toString(36)}`;
-    const entryId = `GLJE_${payId}`;
+    const payId = await nextDocId(db, 'PAY');        // PAY-00001
+    const entryId = `JV-${payId}`;                    // journal id derived from payment id
     const desc = `Supplier payment — ${supplier_name}${grnNo ? ` [${grnNo}]` : ''}${reference ? ` (${reference})` : ''} via ${method}`;
     const by = created_by || 'system';
     const ops = [
@@ -769,19 +782,58 @@ app.get('/api/gl/pending-batches', async (req, res) => {
 
 // POST /api/gl/pending-batches (create)
 app.post('/api/gl/pending-batches', async (req, res) => {
-  const { origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount } = req.body || {};
+  const { origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount, txn_date } = req.body || {};
   if (!origin_table || !origin_id || !debit_gl_account || !credit_gl_account || amount == null)
     return res.json({ ok: false, error: 'origin_table, origin_id, debit_gl_account, credit_gl_account, amount required' });
   try {
+    await db.query(`ALTER TABLE gl_pending_batches ADD COLUMN IF NOT EXISTS txn_date DATE`);
     const r = await db.query(
-      `INSERT INTO gl_pending_batches (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount)
-       VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO gl_pending_batches (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount, txn_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::date)
        ON CONFLICT (origin_table, origin_id) DO NOTHING
        RETURNING id`,
-      [origin_table, origin_id, description || null, debit_gl_account, credit_gl_account, Number(amount)]
+      [origin_table, origin_id, description || null, debit_gl_account, credit_gl_account, Number(amount), txn_date || null]
     );
     const id = r.rows?.[0]?.id || null;
     res.json({ ok: true, id, created: !!id });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// ─── Accounting Period Close (controller month-end lock) ─────────────────────
+// GET list, POST close, POST reopen. A closed period blocks any posting dated in it.
+app.get('/api/gl/periods', async (req, res) => {
+  try {
+    await ensureFinanceTables(db);
+    const r = await db.query(`SELECT * FROM accounting_periods ORDER BY period DESC`);
+    res.json({ ok: true, rows: r.rows || [] });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+app.post('/api/gl/periods/close', async (req, res) => {
+  const { period, closed_by, note } = req.body || {};
+  if (!/^\d{4}-\d{2}$/.test(String(period || ''))) return res.json({ ok: false, error: 'period must be YYYY-MM' });
+  try {
+    await ensureFinanceTables(db);
+    await db.query(
+      `INSERT INTO accounting_periods (period, status, closed_by, closed_at, note, updated_at)
+       VALUES ($1,'closed',$2,NOW(),$3,NOW())
+       ON CONFLICT (period) DO UPDATE SET status='closed', closed_by=$2, closed_at=NOW(), note=$3, updated_at=NOW()`,
+      [period, closed_by || 'controller', note || null]
+    );
+    res.json({ ok: true, period, status: 'closed' });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+app.post('/api/gl/periods/reopen', async (req, res) => {
+  const { period, reopened_by, note } = req.body || {};
+  if (!/^\d{4}-\d{2}$/.test(String(period || ''))) return res.json({ ok: false, error: 'period must be YYYY-MM' });
+  try {
+    await ensureFinanceTables(db);
+    await db.query(
+      `INSERT INTO accounting_periods (period, status, reopened_by, reopened_at, note, updated_at)
+       VALUES ($1,'open',$2,NOW(),$3,NOW())
+       ON CONFLICT (period) DO UPDATE SET status='open', reopened_by=$2, reopened_at=NOW(), note=$3, updated_at=NOW()`,
+      [period, reopened_by || 'controller', note || null]
+    );
+    res.json({ ok: true, period, status: 'open' });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
@@ -791,15 +843,19 @@ app.post('/api/gl/pending-batches', async (req, res) => {
 function batchFlushOps(batch, postedBy) {
   const entryId = `GLJE_BATCH_${batch.id}`;
   const by = postedBy || 'system';
+  // business_date = the source document's TRANSACTION date (txn_date), NOT the
+  // posting date — so a GRN dated 01 May posted in Aug books to May and every
+  // GL-based report (P&L, TB, journals) shows it in May. Falls back to today.
+  const bizDate = batch.txn_date ? String(batch.txn_date).slice(0, 10) : null;
   return { entryId, ops: [
     {
       sql: `INSERT INTO gl_journal_entries
               (id, entry_date, business_date, description, source, status,
                total_debit, total_credit, is_balanced, created_by, posted_by, posted_at, inserted_at)
-            VALUES ($1, NOW()::date, NOW()::date, $2, 'adjustment', 'posted', $3, $3, true, $4, $4, NOW(), NOW())
+            VALUES ($1, COALESCE($5::date, NOW()::date), COALESCE($5::date, NOW()::date), $2, 'adjustment', 'posted', $3, $3, true, $4, $4, NOW(), NOW())
             ON CONFLICT (id) DO NOTHING
             RETURNING id`,
-      params: [entryId, batch.description || `Batch ${batch.origin_table}/${batch.origin_id}`, Number(batch.amount), by]
+      params: [entryId, batch.description || `Batch ${batch.origin_table}/${batch.origin_id}`, Number(batch.amount), by, bizDate]
     },
     {
       sql: `INSERT INTO gl_journal_lines (id, journal_entry_id, gl_account_id, debit_amount, credit_amount, description, inserted_at)
@@ -833,6 +889,8 @@ app.post('/api/gl/pending-batches/flush', async (req, res) => {
 
     for (const batch of rows) {
       try {
+        // Closed-period guard: block posting a batch dated into a closed period.
+        await assertPeriodOpen(db, batch.txn_date || new Date(), 'post');
         const { ops } = batchFlushOps(batch, posted_by);
         const txResult = await db.transaction(ops);
         if (!txResult.ok) throw new Error(txResult.error || 'Transaction failed');
@@ -854,11 +912,12 @@ app.post('/api/gl/pending-batches/:id/flush', async (req, res) => {
     const p = await db.query(`SELECT * FROM gl_pending_batches WHERE id=$1 AND status='PENDING'`, [id]);
     const batch = p.rows?.[0];
     if (!batch) return res.json({ ok: false, error: 'Batch not found or not pending' });
+    await assertPeriodOpen(db, batch.txn_date || new Date(), 'post');
     const { entryId, ops } = batchFlushOps(batch, posted_by);
     const tx = await db.transaction(ops);
     if (!tx.ok) throw new Error(tx.error || 'Transaction failed');
     res.json({ ok: true, id, journal_id: entryId });
-  } catch (e) { res.json({ ok: false, error: e.message }); }
+  } catch (e) { res.json({ ok: false, error: e.message, code: e.code, period: e.period }); }
 });
 
 // PUT /api/gl/pending-batches/:id — edit a PENDING batch's accounts/description/amount
