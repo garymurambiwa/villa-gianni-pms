@@ -933,7 +933,9 @@ export const POSFrontOffice: React.FC = () => {
     // Continuous, shift-independent sequential bill number (assigned once).
     if (!bill.bill_number) {
       try {
-        bill.bill_number = String(await nextGlobalBillNumber()).padStart(4, '0');
+        // 5-digit continuous global sequence — never resets, so the next shift's
+        // first bill = this shift's last + 1 (gap = a lost/skipped/tampered bill).
+        bill.bill_number = String(await nextGlobalBillNumber()).padStart(5, '0');
       } catch {
         bill.bill_number = formatBillNumber(bill.id);
       }

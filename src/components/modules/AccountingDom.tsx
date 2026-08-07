@@ -82,6 +82,10 @@ const accountingModule = (() => {
           window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'supplier-payments' } } as any));
           break;
         }
+        case 'period-close': {
+          window.dispatchEvent(new CustomEvent('navigateToModule', { detail: { module: 'period-close' } } as any));
+          break;
+        }
         default: {
           deps?.toast({ title: 'Unknown action', description: String(action || '') });
         }
@@ -142,6 +146,7 @@ const AccountingDom: React.FC = () => {
         <button type="button" data-action="pending-batches" className="acct-btn">📋 Pending GL Batches</button>
         <button type="button" data-action="gl-transactions" className="acct-btn" aria-label="GL Transaction Listing"><span className="mr-2">📑</span>GL Transactions</button>
         <button type="button" data-action="supplier-payments" className="acct-btn" aria-label="Supplier Payments"><span className="mr-2">💸</span>Supplier Payments</button>
+        <button type="button" data-action="period-close" className="acct-btn" aria-label="Period Close"><span className="mr-2">🔒</span>Period Close</button>
       </div>
 
       {/* Daily Journal modal identical operation */}

@@ -46,6 +46,9 @@ const cashupThermalHTML = (d: {
   const shiftBlocks = d.shiftRows.map((r: any) => `
     <div class="b">${r.cashier}${r.outlet && r.outlet !== '—' ? ' · ' + r.outlet : ''}</div>
     <table>
+      <tr><td>First Bill #</td><td class="r">${r.firstBill || '—'}</td></tr>
+      <tr><td>Last Bill #</td><td class="r">${r.lastBill || '—'}</td></tr>
+      <tr${r.billGaps > 0 ? ' class="b"' : ''}><td>Bills / Gaps</td><td class="r">${r.billCount || 0}${r.billGaps > 0 ? ' / ⚠' + r.billGaps : ''}</td></tr>
       <tr><td>Opening Till</td><td class="r">${money(r.opening)}</td></tr>
       <tr><td>Cash</td><td class="r">${money(r.cash)}</td></tr>
       <tr><td>EcoCash</td><td class="r">${money(r.ecocash)}</td></tr>
@@ -648,6 +651,19 @@ if(!('error' in ordersRes)) {
       const cash = Number(s.total_cash || 0);
       const expected = s.expected_cash == null ? opening + cash : Number(s.expected_cash);
       const closing = s.closing_cash == null ? null : Number(s.closing_cash);
+      // First & last BILL NUMBER for this shift — the audit trail for lost/skipped/
+      // tampered bills. Derived from the shift's actual bills (numeric part).
+      const shiftBillNos = dbPosBills
+        .filter((b: any) => b.shift_id === s.id && b.bill_number)
+        .map((b: any) => Number(String(b.bill_number).replace(/\D/g, '')))
+        .filter((n: number) => Number.isFinite(n) && n > 0)
+        .sort((a: number, b: number) => a - b);
+      const pad5 = (n: number) => String(n).padStart(5, '0');
+      const firstBill = shiftBillNos.length ? pad5(shiftBillNos[0]) : null;
+      const lastBill = shiftBillNos.length ? pad5(shiftBillNos[shiftBillNos.length - 1]) : null;
+      // Gap = bills issued fewer than the numeric span (a missing bill number).
+      const expectedSpan = shiftBillNos.length ? (shiftBillNos[shiftBillNos.length - 1] - shiftBillNos[0] + 1) : 0;
+      const billGaps = expectedSpan - shiftBillNos.length;
       return {
         id: s.id, cashier: cashierOf(s), outlet: s.outlet || '—',
         openedAt: s.opened_at, closedAt: s.closed_at, status: s.status,
@@ -658,6 +674,7 @@ if(!('error' in ordersRes)) {
         sales: Number(s.total_sales || 0),
         voids: Number(s.total_voids || 0), voidCount: Number(s.void_count || 0),
         txns: Number(s.transaction_count || s.tx_count || 0),
+        firstBill, lastBill, billCount: shiftBillNos.length, billGaps,
         expected, closing,
         variance: closing == null ? null : closing - expected,
       };
@@ -683,7 +700,7 @@ if(!('error' in ordersRes)) {
       cm.set(m, (cm.get(m) || 0) + amt);
     });
     return { shiftRows, totals, byMethod, byCatMethod, catTotal };
-  }, [dbShifts, selectedShift, nonVoidedBills]);
+  }, [dbShifts, selectedShift, nonVoidedBills, dbPosBills]);
 
   const itemSalesSummary = React.useMemo(() => {
     const map = new Map<string, { id: string; name: string; qty: number; revenue: number; cost: number; profit: number }>();
@@ -856,7 +873,7 @@ if(!('error' in ordersRes)) {
             <div className="ds-table-container">
               <table className="ds-table">
                 <thead><tr>
-                  <th>Cashier</th><th>Outlet</th><th className="right">Opening Till</th>
+                  <th>Cashier</th><th>Outlet</th><th className="right">Bills (First → Last)</th><th className="right">Opening Till</th>
                   <th className="right">Cash</th><th className="right">EcoCash</th><th className="right">Swipe</th><th className="right">Room Chg</th>
                   <th className="right">Total Sales</th><th className="right">Expected</th><th className="right">Counted</th>
                   <th className="right">Over / Short</th><th className="right">Voids</th><th className="right">Txns</th>
@@ -864,7 +881,12 @@ if(!('error' in ordersRes)) {
                 <tbody>
                   {cashup.shiftRows.map((r: any) => (
                     <tr key={r.id}>
-                      <td className="font-medium">{r.cashier}</td><td>{r.outlet}</td><td className="right">{formatCurrency(r.opening)}</td>
+                      <td className="font-medium">{r.cashier}</td><td>{r.outlet}</td>
+                      <td className="right font-mono">
+                        {r.firstBill ? <>{r.firstBill} → {r.lastBill}</> : <span className="text-gray-400">—</span>}
+                        {r.billGaps > 0 && <span className="ml-1 text-red-600 font-bold" title={`${r.billGaps} bill number(s) missing in this shift's range`}>⚠{r.billGaps}</span>}
+                      </td>
+                      <td className="right">{formatCurrency(r.opening)}</td>
                       <td className="right">{formatCurrency(r.cash)}</td><td className="right">{formatCurrency(r.ecocash)}</td><td className="right">{formatCurrency(r.card)}</td><td className="right">{formatCurrency(r.room)}</td>
                       <td className="right font-bold">{formatCurrency(r.sales)}</td><td className="right">{formatCurrency(r.expected)}</td>
                       <td className="right">{r.closing == null ? '—' : formatCurrency(r.closing)}</td>
@@ -873,11 +895,11 @@ if(!('error' in ordersRes)) {
                       <td className="right">{r.txns}</td>
                     </tr>
                   ))}
-                  {cashup.shiftRows.length === 0 && <tr><td colSpan={13} className="text-center p-4">No shifts found in this range</td></tr>}
+                  {cashup.shiftRows.length === 0 && <tr><td colSpan={14} className="text-center p-4">No shifts found in this range</td></tr>}
                 </tbody>
                 {cashup.shiftRows.length > 0 && (
                   <tfoot><tr className="font-bold border-t-2">
-                    <td colSpan={2}>TOTAL</td><td className="right">{formatCurrency(cashup.totals.opening)}</td>
+                    <td colSpan={3}>TOTAL</td><td className="right">{formatCurrency(cashup.totals.opening)}</td>
                     <td className="right">{formatCurrency(cashup.totals.cash)}</td><td className="right">{formatCurrency(cashup.totals.ecocash)}</td><td className="right">{formatCurrency(cashup.totals.card)}</td><td className="right">{formatCurrency(cashup.totals.room)}</td>
                     <td className="right">{formatCurrency(cashup.totals.sales)}</td><td colSpan={3}></td>
                     <td className="right">{cashup.totals.voidCount} ({formatCurrency(cashup.totals.voids)})</td><td className="right">{cashup.totals.txns}</td>

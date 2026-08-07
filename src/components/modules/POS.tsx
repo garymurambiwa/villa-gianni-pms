@@ -261,7 +261,7 @@ export const POS: React.FC = () => {
     if (!bill.bill_number) {
       try {
         const seq = await nextGlobalBillNumber();
-        bill.bill_number = String(seq).padStart(4, '0');
+        bill.bill_number = String(seq).padStart(5, '0');
       } catch (e) {
         // Fallback to id-derived number only if the sequencer is unreachable
         bill.bill_number = formatBillNumber(bill.id);
