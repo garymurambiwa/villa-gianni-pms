@@ -15,6 +15,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const path = require('path');
 const { randomUUID } = require('crypto');
+const { assertPeriodOpen } = require('../finance-core.cjs');
 const fs = require('fs');
 
 // Import utility functions for robust ID generation and error handling with fallbacks
@@ -1152,6 +1153,12 @@ router.post('/grn/:id/post', async (req, res) => {
       client.release();
       return res.json({ ok: true, message: 'GRN already posted — no-op' });
     }
+    // Closed-period guard: block posting a GRN dated into a closed month.
+    try { await assertPeriodOpen(pool, grn.receipt_date || grn.inserted_at, 'post GRN'); }
+    catch (pe) {
+      if (pe.code === 'PERIOD_CLOSED') { await client.query('ROLLBACK'); client.release(); return res.status(409).json({ ok: false, error: pe.message, code: pe.code, period: pe.period }); }
+      throw pe;
+    }
 
     // Get lines
     const linesRes = await client.query(`SELECT * FROM public.inv_grn_lines WHERE grn_header_id = $1`, [id]);
@@ -1303,11 +1310,12 @@ router.post('/grn/:id/post', async (req, res) => {
             catLabel = grn.cost_category;
           }
         }
+        await pool.query(`ALTER TABLE gl_pending_batches ADD COLUMN IF NOT EXISTS txn_date DATE`).catch(() => {});
         await pool.query(
-          `INSERT INTO gl_pending_batches (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount)
-           VALUES ('inv_grn_headers', $1, $2, $3, '2100', $4)
+          `INSERT INTO gl_pending_batches (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount, txn_date)
+           VALUES ('inv_grn_headers', $1, $2, $3, '2100', $4, $5::date)
            ON CONFLICT (origin_table, origin_id) DO NOTHING`,
-          [id, `GRN ${grn.grn_number} — ${catLabel}`, drAcct, glGrnValue]
+          [id, `GRN ${grn.grn_number} — ${catLabel}`, drAcct, glGrnValue, grn.receipt_date || grn.inserted_at || null]
         );
       } catch (glErr) {
         console.warn('[inv-v11] gl_pending_batches insert skipped for GRN:', glErr.message);
@@ -3897,13 +3905,14 @@ router.post('/stock-take/:sheetId/lock', async (req, res) => {
       const drAcct  = isShrinkage ? '5100' : '1400';
       const crAcct  = isShrinkage ? '1400' : '5100';
       const desc    = `Stock Take ${reportNumber} — inventory ${isShrinkage ? 'shrinkage' : 'surplus'}`;
+      await client.query(`ALTER TABLE public.gl_pending_batches ADD COLUMN IF NOT EXISTS txn_date DATE`).catch(() => {});
       const glRes = await client.query(
         `INSERT INTO public.gl_pending_batches
-           (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount, status)
-         VALUES ('inv_stock_take_sheets', $1, $2, $3, $4, $5, 'PENDING')
+           (origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount, status, txn_date)
+         VALUES ('inv_stock_take_sheets', $1, $2, $3, $4, $5, 'PENDING', $6::date)
          ON CONFLICT (origin_table, origin_id) DO NOTHING
          RETURNING id`,
-        [sheet.id, desc, drAcct, crAcct, amount]
+        [sheet.id, desc, drAcct, crAcct, amount, sheet.period_end || null]
       );
       glBatchId = glRes.rows[0]?.id || null;
     }
