@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { formatShortId } from "@/lib/formatId";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useData } from "../../../context/DataContext";
@@ -298,7 +299,7 @@ const FolioManagement: React.FC = () => {
                   {guests.find(g => g.id === selectedFolio.guestId)?.name}
                 </CardTitle>
                 <CardDescription>
-                  Folio #{selectedFolio.id} | Balance: ${(computedBalance ? computedBalance.total : Number(selectedFolio.balance || 0)).toFixed(2)}
+                  Folio {formatShortId(selectedFolio.id)} | Balance: ${(computedBalance ? computedBalance.total : Number(selectedFolio.balance || 0)).toFixed(2)}
                 </CardDescription>
               </CardHeader>
               <CardContent>

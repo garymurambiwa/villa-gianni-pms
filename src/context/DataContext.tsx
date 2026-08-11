@@ -146,7 +146,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (chargesRes.success) setFolioCharges(chargesRes.charges);
 
       const guestRes = await db.query('SELECT * FROM guests');
-      if ('rows' in guestRes) setGuests(guestRes.rows || []);
+      // The guests table stores full_name (not name/first_name/last_name), but the
+      // whole UI reads guest.name — so every folio/list showed "Unknown Guest".
+      // Map a display `name` (and keep firstName/lastName split) onto each record.
+      if ('rows' in guestRes) setGuests((guestRes.rows || []).map((g: any) => {
+        const nm = g.full_name || g.name || [g.first_name, g.last_name].filter(Boolean).join(' ').trim();
+        const parts = String(nm || '').trim().split(/\s+/);
+        return {
+          ...g,
+          name: nm || '',
+          full_name: g.full_name || nm || '',
+          firstName: g.first_name || parts[0] || '',
+          lastName: g.last_name || parts.slice(1).join(' ') || '',
+        };
+      }));
 
       // Load POS orders (open table orders)
       const posOrdersRes = await db.query('SELECT * FROM pos_orders WHERE LOWER(status::text) = LOWER(?::text)', ['open']);

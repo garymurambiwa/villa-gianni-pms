@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from "react";
+import { formatShortId } from "@/lib/formatId";
 import { Folio } from "@/types/folio";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
@@ -217,7 +218,7 @@ const AccountStatement: React.FC<AccountStatementProps> = ({ folio, guests }) =>
               <FileText className="w-6 h-6 text-blue-600" />
               Account Statement
             </h2>
-            <p className="text-sm text-gray-500 mt-1">Folio #{folio.id}</p>
+            <p className="text-sm text-gray-500 mt-1" title={folio.id}>Folio {formatShortId(folio.id)}</p>
           </div>
           <Badge variant={folio.status === 'open' ? 'default' : folio.status === 'closed' ? 'secondary' : 'outline'}>
             {folio.status.charAt(0).toUpperCase() + folio.status.slice(1)}

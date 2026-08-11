@@ -2054,6 +2054,65 @@ app.get('/api/folio/statement', async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+// ─── Charges Audit (front-office daily audit review) ─────────────────────────
+// GET /api/charges?startDate&endDate&search&chargeCode&page&limit
+// Server-side paginated folio charges joined to guest + room, with a derived
+// transaction code, for Night Auditors / Managers to review a day's postings.
+app.get('/api/charges', async (req, res) => {
+  const { startDate, endDate, search, chargeCode } = req.query;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 25));
+  const offset = (page - 1) * limit;
+  try {
+    const conds = [`fc.is_voided IS NOT TRUE`];
+    const params = [];
+    const dateCol = `COALESCE(fc.business_date, fc.posting_date, fc.inserted_at::date)`;
+    if (startDate) { params.push(startDate); conds.push(`${dateCol} >= $${params.length}::date`); }
+    if (endDate)   { params.push(endDate);   conds.push(`${dateCol} <= $${params.length}::date`); }
+    if (search) {
+      params.push(`%${search}%`);
+      conds.push(`(g.full_name ILIKE $${params.length} OR fc.room_number ILIKE $${params.length} OR fc.description ILIKE $${params.length})`);
+    }
+    // Derived code: explicit charge_type/category → canonical audit code.
+    const codeExpr = `UPPER(COALESCE(NULLIF(fc.category,''), fc.charge_type, 'CHARGE'))`;
+    if (chargeCode && chargeCode !== 'all') { params.push(chargeCode); conds.push(`${codeExpr} = $${params.length}`); }
+    const where = conds.join(' AND ');
+
+    const countRes = await db.query(
+      `SELECT COUNT(*) AS n FROM folio_charges fc
+       LEFT JOIN guests g ON g.id = fc.guest_id WHERE ${where}`, params);
+    const totalCount = Number(countRes.rows?.[0]?.n || 0);
+
+    params.push(limit); params.push(offset);
+    const r = await db.query(
+      `SELECT fc.id, ${dateCol} AS tx_date, fc.posting_date, fc.business_date,
+              fc.guest_id, COALESCE(g.full_name,'Unassigned Guest') AS guest_name,
+              fc.room_number, fc.charge_type, fc.category, fc.description, fc.source,
+              fc.amount, fc.tax_amount, fc.total_amount, fc.folio_id, fc.reservation_id,
+              fc.created_by, ${codeExpr} AS code
+       FROM folio_charges fc
+       LEFT JOIN guests g ON g.id = fc.guest_id
+       WHERE ${where}
+       ORDER BY ${dateCol} DESC, fc.inserted_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+
+    res.json({
+      ok: true, rows: r.rows || [], totalCount,
+      totalPages: Math.max(1, Math.ceil(totalCount / limit)), currentPage: page, limit,
+    });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+// GET /api/charges/codes — distinct transaction codes for the filter dropdown
+app.get('/api/charges/codes', async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT DISTINCT UPPER(COALESCE(NULLIF(category,''), charge_type, 'CHARGE')) AS code
+       FROM folio_charges WHERE is_voided IS NOT TRUE ORDER BY 1`);
+    res.json({ ok: true, codes: (r.rows || []).map(x => x.code).filter(Boolean) });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // GET /api/reports/balance-sheet?as_of=YYYY-MM-DD
 // Classified balance sheet from gl_journal_lines up to as_of: Assets (debit-normal),
 // Liabilities & Equity (credit-normal), plus Current-Year Earnings (Revenue−Expense)

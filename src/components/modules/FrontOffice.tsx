@@ -15,6 +15,9 @@ import { format, differenceInCalendarDays, addDays, startOfToday } from 'date-fn
 import { Calendar, CreditCard, Search, UserCheck, UserX, Printer, Utensils, AlertTriangle, FileText, FileSearch, Settings, LayoutGrid, ArrowRightLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { getHotelName } from '@/lib/brand';
+import { useAuth } from '@/context/AuthContext';
+import { formatShortId } from '@/lib/formatId';
+import { ChargesAudit } from './ChargesAudit';
 import { getResPackageLabel, computeTotalRate, sanitizePackageCode } from '@/lib/packageUtils';
 import { logger } from '@/lib/logger';
 import FOPrintCustomization from '@/components/modules/FOPrintCustomization';
@@ -31,6 +34,11 @@ const packageOptions = [
 
 export const FrontOffice: React.FC = () => {
   const ctx = useData() as any;
+  const { user } = useAuth();
+  // Charges is a Daily Audit Review tool — restricted to Night Auditor / Manager /
+  // Admin (+ supervisor/auditor). Hidden from standard front-desk agents.
+  const canSeeCharges = ['admin', 'manager', 'supervisor', 'auditor', 'nightauditor', 'night_auditor', 'night auditor']
+    .includes(String(user?.role || '').toLowerCase().replace(/[^a-z_ ]/g, ''));
   const rooms: any[] = Array.isArray(ctx?.rooms) ? ctx.rooms : [];
   const reservations: any[] = Array.isArray(ctx?.reservations) ? ctx.reservations : [];
   const guests: any[] = Array.isArray(ctx?.guests) ? ctx.guests : [];
@@ -1312,8 +1320,7 @@ export const FrontOffice: React.FC = () => {
           <TabsTrigger value="arrivals">Arrivals ({arrivals.length})</TabsTrigger>
           <TabsTrigger value="departures">Departed ({checkedOutToday.length})</TabsTrigger>
           <TabsTrigger value="guests">Guests ({guests.length})</TabsTrigger>
-          <TabsTrigger value="charges">Charges</TabsTrigger>
-          <TabsTrigger value="reporting">POS Reporting</TabsTrigger>
+          {canSeeCharges && <TabsTrigger value="charges">Charges</TabsTrigger>}
           <TabsTrigger value="folio">Folio</TabsTrigger>
         </TabsList>
 
@@ -1610,91 +1617,22 @@ export const FrontOffice: React.FC = () => {
           </Card>
         </TabsContent>
 
+        {canSeeCharges && (
         <TabsContent value="charges" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Charges</CardTitle>
-              <CardDescription>Recent folio charges</CardDescription>
+              <CardTitle>Charges — Daily Audit Review</CardTitle>
+              <CardDescription>Review posted folio transactions by date. Restricted to Night Auditor / Manager / Admin.</CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Guest</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Code</TableHead>
-                    <TableHead>Date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {folioCharges.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                        No charges recorded
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    folioCharges.map(c => {
-                      const g = guests.find(x => x.id === c.guestId);
-                      return (
-                        <TableRow key={c.id}>
-                          <TableCell>{g?.name || c.guestId}</TableCell>
-                          <TableCell>${Number(c.amount || 0).toFixed(2)}</TableCell>
-                          <TableCell>{c.code || '-'}</TableCell>
-                          <TableCell>
-                            {(() => {
-                              try {
-                                const d = new Date(c.date);
-                                return isNaN(d.getTime()) ? '-' : format(d, 'MMM d, yyyy');
-                              } catch { return '-'; }
-                            })()}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })
-                  )}
-                </TableBody>
-              </Table>
+              <ChargesAudit />
             </CardContent>
           </Card>
         </TabsContent>
+        )}
 
-        <TabsContent value="reporting" className="mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>POS Reporting Tools</CardTitle>
-              <CardDescription>Generate and manage POS reports</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Range" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="today">Today</SelectItem>
-                    <SelectItem value="7d">Last 7 Days</SelectItem>
-                    <SelectItem value="30d">Last 30 Days</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Report Type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="sales">Sales</SelectItem>
-                    <SelectItem value="performance">Performance</SelectItem>
-                    <SelectItem value="inventory">Inventory</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex gap-2 mt-4">
-                <Button onClick={() => generateAndPrintReport()}>Print Report</Button>
-                <Button variant="outline" onClick={() => generateAndExportReport()}>Export Report</Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+        {/* POS Reporting tab removed from Front Office — POS reporting lives in
+            POS Management / Back-Office Reports. Standalone POS is unaffected. */}
 
         <TabsContent value="folio" className="mt-4">
           <FolioManagement />
