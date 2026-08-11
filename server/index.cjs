@@ -2054,6 +2054,36 @@ app.get('/api/folio/statement', async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+// ─── Guest Registry (server-side search + pagination) ────────────────────────
+// GET /api/guests?page&limit&search  — recent guests by default; ILIKE search on
+// name/email/phone. Keeps the registry responsive as the guest table grows.
+app.get('/api/guests', async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+  const offset = (page - 1) * limit;
+  const search = String(req.query.search || '').trim();
+  try {
+    const params = [];
+    let where = '';
+    if (search) {
+      params.push(`%${search}%`);
+      where = `WHERE full_name ILIKE $1 OR email ILIKE $1 OR phone ILIKE $1`;
+    }
+    const countRes = await db.query(`SELECT COUNT(*) AS n FROM guests ${where}`, params);
+    const totalCount = Number(countRes.rows?.[0]?.n || 0);
+    params.push(limit); params.push(offset);
+    const r = await db.query(
+      `SELECT id, full_name, email, phone, id_number, inserted_at
+       FROM guests ${where}
+       ORDER BY inserted_at DESC NULLS LAST, full_name
+       LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+    res.json({
+      ok: true, guests: r.rows || [], totalCount,
+      totalPages: Math.max(1, Math.ceil(totalCount / limit)), currentPage: page, limit,
+    });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // ─── Charges Audit (front-office daily audit review) ─────────────────────────
 // GET /api/charges?startDate&endDate&search&chargeCode&page&limit
 // Server-side paginated folio charges joined to guest + room, with a derived

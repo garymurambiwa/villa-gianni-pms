@@ -172,9 +172,9 @@ const FolioDetails: React.FC<FolioDetailsProps> = ({ folio, guests, onVoid, onTr
       <div className="grid grid-cols-2 gap-4">
         <div>
           <h3 className="text-lg font-medium">Guest Information</h3>
-          <p>Name: {guest?.name}</p>
-          <p>Email: {guest?.email}</p>
-          <p>Phone: {guest?.phone}</p>
+          <p>Name: {guest?.name || guest?.full_name || <span className="text-gray-400">Unassigned Guest</span>}</p>
+          <p>Email: {guest?.email || <span className="text-gray-400">—</span>}</p>
+          <p>Phone: {guest?.phone || <span className="text-gray-400">—</span>}</p>
         </div>
         <div>
           <h3 className="text-lg font-medium">Room Information</h3>

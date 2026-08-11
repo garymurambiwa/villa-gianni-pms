@@ -15,9 +15,10 @@ import { format, differenceInCalendarDays, addDays, startOfToday } from 'date-fn
 import { Calendar, CreditCard, Search, UserCheck, UserX, Printer, Utensils, AlertTriangle, FileText, FileSearch, Settings, LayoutGrid, ArrowRightLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { getHotelName } from '@/lib/brand';
-import { useAuth } from '@/context/AuthContext';
 import { formatShortId } from '@/lib/formatId';
+import { useAuth } from '@/context/AuthContext';
 import { ChargesAudit } from './ChargesAudit';
+import { GuestRegistry } from './GuestRegistry';
 import { getResPackageLabel, computeTotalRate, sanitizePackageCode } from '@/lib/packageUtils';
 import { logger } from '@/lib/logger';
 import FOPrintCustomization from '@/components/modules/FOPrintCustomization';
@@ -39,6 +40,29 @@ export const FrontOffice: React.FC = () => {
   // Admin (+ supervisor/auditor). Hidden from standard front-desk agents.
   const canSeeCharges = ['admin', 'manager', 'supervisor', 'auditor', 'nightauditor', 'night_auditor', 'night auditor']
     .includes(String(user?.role || '').toLowerCase().replace(/[^a-z_ ]/g, ''));
+
+  // In-House multi-field search + pagination (dataset is the current in-house
+  // guests — bounded — so client-side filtering stays responsive).
+  const [inHouseSearch, setInHouseSearch] = useState('');
+  const [inHouseSearchDebounced, setInHouseSearchDebounced] = useState('');
+  const [inHousePage, setInHousePage] = useState(1);
+  const inHousePageSize = 25;
+  React.useEffect(() => { const t = setTimeout(() => { setInHouseSearchDebounced(inHouseSearch); setInHousePage(1); }, 300); return () => clearTimeout(t); }, [inHouseSearch]);
+
+  // Clean print window: property name, report title, timestamp, full-width table.
+  const printFOReport = (title: string, headers: string[], rowVals: (string | number)[][]) => {
+    const esc = (s: any) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
+    const body = rowVals.map(r => `<tr>${r.map((v, i) => `<td class="${i >= headers.length - 1 ? 'r' : ''}">${esc(v)}</td>`).join('')}</tr>`).join('');
+    const html = `<!doctype html><html><head><title>${esc(title)}</title><style>
+      body{font-family:system-ui,-apple-system,sans-serif;padding:24px;color:#111}h1{font-size:19px;margin:0 0 2px}.sub{color:#666;font-size:12px;margin-bottom:12px}
+      table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}th{background:#f5f5f7;text-transform:uppercase;font-size:10px;color:#444}.r{text-align:right}
+    </style></head><body>
+      <h1>${esc(getHotelName())} — ${esc(title)}</h1>
+      <div class="sub">${rowVals.length} record(s) · Generated ${new Date().toLocaleString()}</div>
+      <table><thead><tr>${headers.map((h, i) => `<th class="${i >= headers.length - 1 ? 'r' : ''}">${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
+    </body></html>`;
+    const w = window.open('', '_blank'); if (w) { w.document.write(html); w.document.close(); w.focus(); setTimeout(() => w.print(), 300); }
+  };
   const rooms: any[] = Array.isArray(ctx?.rooms) ? ctx.rooms : [];
   const reservations: any[] = Array.isArray(ctx?.reservations) ? ctx.reservations : [];
   const guests: any[] = Array.isArray(ctx?.guests) ? ctx.guests : [];
@@ -1179,6 +1203,27 @@ export const FrontOffice: React.FC = () => {
 
   const inHouse = filteredReservations.filter(r => getResStatus(r) === 'checked-in');
 
+  // In-House view: multi-field search (guest / room / package) + client pagination.
+  const inHouseRoomNo = (res: any) => res.roomNumber || rooms.find(r => String(r.id) === String(res.room_id))?.number || '';
+  const inHouseFiltered = React.useMemo(() => {
+    const q = inHouseSearchDebounced.trim().toLowerCase();
+    if (!q) return inHouse;
+    return inHouse.filter(r =>
+      String(r.guestName || '').toLowerCase().includes(q) ||
+      String(inHouseRoomNo(r)).toLowerCase().includes(q) ||
+      String(getResPackage(r)).toLowerCase().includes(q));
+  }, [inHouse, inHouseSearchDebounced, rooms]);
+  const inHouseTotalPages = Math.max(1, Math.ceil(inHouseFiltered.length / inHousePageSize));
+  const inHousePaged = inHouseFiltered.slice((inHousePage - 1) * inHousePageSize, inHousePage * inHousePageSize);
+  const printInHouseList = () => printFOReport(
+    'In-House Guests Report',
+    ['Room', 'Guest', 'Reservation', 'Arrival', 'Departure', 'Package', 'Balance'],
+    inHouseFiltered.map(r => [
+      inHouseRoomNo(r) || 'Unassigned', r.guestName || 'Unknown', formatShortId(r.id),
+      r.checkIn ? String(r.checkIn).slice(0, 10) : '—', r.checkOut ? String(r.checkOut).slice(0, 10) : '—',
+      getResPackage(r), `$ ${(Number(r.rate) || 0).toFixed(2)}`,
+    ]));
+
   const checkedOutToday = useMemo(() => {
     // Use local date for accurate "today" check
     const today = format(new Date(), 'yyyy-MM-dd');
@@ -1327,8 +1372,16 @@ export const FrontOffice: React.FC = () => {
         <TabsContent value="arrivals" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Expected Arrivals</CardTitle>
-              <CardDescription>Guests scheduled to check in today</CardDescription>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <CardTitle>Expected Arrivals</CardTitle>
+                  <CardDescription>Guests scheduled to check in today</CardDescription>
+                </div>
+                <Button variant="outline" onClick={() => printFOReport('Daily Arrivals Report',
+                  ['Guest', 'Type', 'Arrival', 'Departure', 'Rate'],
+                  arrivals.map((r: any) => [r.guestName || 'Unknown', r.roomType || '—', r.checkIn ? String(r.checkIn).slice(0,10) : '—', r.checkOut ? String(r.checkOut).slice(0,10) : '—', `$ ${(Number(r.rate)||0).toFixed(2)}`]))}
+                  disabled={arrivals.length === 0}><Printer className="mr-2 h-4 w-4" />Print List</Button>
+              </div>
             </CardHeader>
             <CardContent>
               <Table>
@@ -1395,62 +1448,16 @@ export const FrontOffice: React.FC = () => {
               <CardDescription>View and manage all guest profiles in the system</CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Guest Name</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Phone</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {guests.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                        No guest profiles found
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    guests.sort((a,b) => (a.full_name || a.name || '').localeCompare(b.full_name || b.name || '')).map((g) => (
-                      <TableRow key={g.id}>
-                        <TableCell className="font-medium">{g.full_name || g.name}</TableCell>
-                        <TableCell>{g.email || '-'}</TableCell>
-                        <TableCell>{g.phone || '-'}</TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button size="sm" variant="ghost" onClick={() => {
-                              setEditingGuestId(g.id);
-                              setEditGuestName(g.full_name || g.name || '');
-                              setEditGuestEmail(g.email || '');
-                              setEditGuestPhone(g.phone || '');
-                              setShowEditGuestDialog(true);
-                            }}>Edit</Button>
-                            <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={async () => {
-                              if (confirm('Are you sure you want to delete this guest profile?')) {
-                                try {
-                                  // Update context/lib logic needs to be integrated with DataContext. 
-                                  // For now we use the dbSync helper added earlier.
-                                  const { deleteGuestFromDb } = await import('@/lib/dbSync');
-                                  const res = await deleteGuestFromDb(g.id);
-                                  if (res.success) {
-                                    toast.success('Guest profile deleted');
-                                    ctx.refreshData?.();
-                                  } else {
-                                    toast.error('Failed to delete guest: ' + res.error);
-                                  }
-                                } catch (err) {
-                                  toast.error('Failed to delete guest');
-                                }
-                              }
-                            }}>Delete</Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+              <GuestRegistry
+                onEdit={(g: any) => {
+                  setEditingGuestId(g.id);
+                  setEditGuestName(g.full_name || g.name || '');
+                  setEditGuestEmail(g.email || '');
+                  setEditGuestPhone(g.phone || '');
+                  setShowEditGuestDialog(true);
+                }}
+                onDeleted={() => ctx.refreshData?.()}
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -1458,8 +1465,19 @@ export const FrontOffice: React.FC = () => {
         <TabsContent value="in_house" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>In House Guests</CardTitle>
-              <CardDescription>Currently occupied rooms</CardDescription>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <CardTitle>In House Guests</CardTitle>
+                  <CardDescription>Currently occupied rooms</CardDescription>
+                </div>
+                <div className="flex items-end gap-2">
+                  <Input value={inHouseSearch} onChange={e => setInHouseSearch(e.target.value)}
+                    placeholder="Search guest, room or package…" className="w-64" />
+                  <Button variant="outline" onClick={printInHouseList} disabled={inHouseFiltered.length === 0}>
+                    <Printer className="mr-2 h-4 w-4" />Print In-House List
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               <Table>
@@ -1474,14 +1492,14 @@ export const FrontOffice: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {inHouse.length === 0 ? (
+                  {inHouseFiltered.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                        No in-house guests found
+                        {inHouseSearchDebounced ? 'No in-house guests match your search' : 'No in-house guests found'}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    inHouse.map((res) => {
+                    inHousePaged.map((res) => {
                       // Prefer the SQL-joined room_number already on the reservation (always up-to-date),
                       // fall back to client-side room lookup if for some reason it's missing.
                       const room = rooms.find(r => String(r.id) === String(res.room_id));
@@ -1551,6 +1569,14 @@ export const FrontOffice: React.FC = () => {
                   )}
                 </TableBody>
               </Table>
+              <div className="flex items-center justify-between text-sm mt-3">
+                <div className="text-muted-foreground">{inHouseFiltered.length} in-house guest(s)</div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" disabled={inHousePage <= 1} onClick={() => setInHousePage(p => p - 1)}>Previous</Button>
+                  <span className="text-xs">Page {inHousePage} of {inHouseTotalPages}</span>
+                  <Button variant="outline" size="sm" disabled={inHousePage >= inHouseTotalPages} onClick={() => setInHousePage(p => p + 1)}>Next</Button>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1558,8 +1584,16 @@ export const FrontOffice: React.FC = () => {
         <TabsContent value="departures" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Today's Check-Outs</CardTitle>
-              <CardDescription>Guests who have departed today</CardDescription>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <CardTitle>Today's Check-Outs</CardTitle>
+                  <CardDescription>Guests who have departed today</CardDescription>
+                </div>
+                <Button variant="outline" onClick={() => printFOReport('Daily Departures Report',
+                  ['Guest', 'Room', 'Departure', 'Balance'],
+                  checkedOutToday.map((r: any) => [r.guestName || 'Unknown', (rooms.find(x => x.id === r.room_id)?.number || r.roomType || '—'), r.checkOut ? String(r.checkOut).slice(0,10) : '—', `$ ${(Number(r.rate)||0).toFixed(2)}`]))}
+                  disabled={checkedOutToday.length === 0}><Printer className="mr-2 h-4 w-4" />Print List</Button>
+              </div>
             </CardHeader>
             <CardContent>
               <Table>
