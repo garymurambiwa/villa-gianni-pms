@@ -150,17 +150,30 @@ export const postRoomAndTax = (ctx: NightAuditContext) => {
   const businessDate = readJSON<string>('corepms_business_date', todayISO());
   // Read default rate plan and tax profile if available
   const ratePlan = readJSON<any>('corepms_rate_plan_default', { baseRate: 100 });
-  const taxProfile = readJSON<any>('corepms_tax_profile_default', { taxRate: 0.1 });
+  // Accommodation tax profile set in FO Settings → Tax Setup. Default 15%
+  // inclusive (the property's configured rate) — NOT the old 10% default that
+  // silently ignored the configured value.
+  const taxProfile = readJSON<any>('corepms_tax_profile_default', { taxRate: 0.15, inclusive: true });
+  const taxInclusive = taxProfile?.inclusive !== false;
   // For each occupied room, create a posting entry. Use a placeholder rate if none available.
   const occupiedRooms = ctx.rooms.filter((r: any) => r.status === 'OC' || r.status === 'OD');
   occupiedRooms.forEach((room: any) => {
     const guest = ctx.guests.find((g: any) => String(g.roomNumber) === String(room.number));
-    const totalAmount = Number(guest?.dailyRate ?? room?.dailyRate ?? ratePlan?.baseRate ?? 100);
-    const taxRate = Number(guest?.taxRate ?? taxProfile?.taxRate ?? 0.1);
-    
-    // Inclusive calculation: Derive tax from gross total
-    const tax = Number((totalAmount * (taxRate / (1 + taxRate))).toFixed(2));
-    const baseRate = Number((totalAmount - tax).toFixed(2));
+    const roomRate = Number(guest?.dailyRate ?? room?.dailyRate ?? ratePlan?.baseRate ?? 100);
+    const taxRate = Number(guest?.taxRate ?? taxProfile?.taxRate ?? 0.15);
+
+    // Inclusive: the room rate already contains tax → back it out.
+    // Exclusive: tax is added on top of the room rate.
+    let tax: number, baseRate: number, totalAmount: number;
+    if (taxInclusive) {
+      tax = Number((roomRate * (taxRate / (1 + taxRate))).toFixed(2));
+      baseRate = Number((roomRate - tax).toFixed(2));
+      totalAmount = roomRate;
+    } else {
+      baseRate = roomRate;
+      tax = Number((roomRate * taxRate).toFixed(2));
+      totalAmount = Number((roomRate + tax).toFixed(2));
+    }
     
     const guestId = guest?.id ?? null;
     const postingId = `POST_NA_${businessDate}_${room.number}_${Date.now()}`;

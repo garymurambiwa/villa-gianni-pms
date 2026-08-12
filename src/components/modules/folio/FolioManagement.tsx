@@ -89,6 +89,12 @@ const FolioManagement: React.FC = () => {
         id: dbFolio?.id || `folio-${guestId}`,
         guestId,
         roomNumber,
+        // Carry stay dates + guest name from the reservation so the statement
+        // and details panel don't show N/A (guests table has no dates).
+        guestName: res.guestName || res.guest_name || dbFolio?.guest_name || '',
+        arrivalDate: res.checkIn || res.check_in_date || dbFolio?.arrival_date || null,
+        departureDate: res.checkOut || res.check_out_date || dbFolio?.departure_date || null,
+        packageCode: res.packageCode || res.package_code || null,
         createdAt: dbFolio?.inserted_at ? new Date(dbFolio.inserted_at) : new Date(),
         updatedAt: new Date(),
         balance: bal,

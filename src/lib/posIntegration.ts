@@ -349,7 +349,11 @@ export const generateReceiptHTML = (data, settings, type = 'receipt', options: a
   const subtotal = Number(options.subtotalOverride != null ? options.subtotalOverride : safeItems.reduce((s, it) => s + Number(it.subtotal || (Number(it.quantity || 0) * Number(it.price || 0))), 0));
   const total = Number(options.totalOverride != null ? options.totalOverride : (Number(data.total) > 0 ? data.total : subtotal));
   const isKOT = type === 'confirmation';
+  // Proforma = a guest BILL printed BEFORE settlement (not a receipt of payment).
+  const isProforma = type === 'proforma' || options.proforma === true;
   const timestamp = new Date().toLocaleString();
+  // Cashier / server name — printed on every receipt & bill for accountability.
+  const cashierName = data.cashier || data.cashierName || data.served_by || options.cashier || '';
   const receiptNum = String(data.id || '').replace(/[^a-zA-Z0-9\-]/g, '').slice(0, 20);
   const pageSize = settings.paper_size === '58mm' ? '58mm' : '80mm';
   const bodyWidth = settings.paper_size === '58mm' ? '54mm' : '74mm';
@@ -371,17 +375,33 @@ export const generateReceiptHTML = (data, settings, type = 'receipt', options: a
     '</table>'
   ) : '';
 
-  const sigHTML = options.includeSignature ? '<div class="div">--------------------------------</div><div style="margin-top:8mm"><div>Guest Signature:</div><div style="border-bottom:1px solid #000;height:10mm;margin:2mm 0;"></div><div style="font-size:0.82em">I agree to have this charged to my room folio.</div></div>' : '';
+  // Signature block — for room charges AND proforma bills. Hotel standard:
+  // printed Guest Name write-in line + signature line.
+  const wantSig = options.includeSignature || isProforma || String(data.paymentMethod) === 'room-charge';
+  const sigConsent = String(data.paymentMethod) === 'room-charge'
+    ? 'I agree to have this charged to my room folio.'
+    : 'Received the above goods/services in good order.';
+  const sigHTML = wantSig
+    ? '<div class="div">--------------------------------</div><div style="margin-top:6mm">' +
+      '<div>Guest Name: <span style="display:inline-block;border-bottom:1px solid #000;min-width:34mm">&nbsp;</span></div>' +
+      '<div style="margin-top:4mm">Signature:</div><div style="border-bottom:1px solid #000;height:9mm;margin:2mm 0;"></div>' +
+      '<div style="font-size:0.82em">' + sigConsent + '</div></div>'
+    : '';
   const logoHTML = (settings.show_logo && settings.logo_url) ? '<div class="logo"><img src="' + settings.logo_url + '" alt=""/></div>' : '';
 
-  return '<!DOCTYPE html><html><head><title>' + (isKOT ? 'KOT' : 'Receipt') + '</title><meta charset="UTF-8"/><style>' +
+  const docLabel = isKOT ? 'KOT' : (isProforma ? 'GUEST BILL' : 'RECEIPT');
+  const proformaBanner = isProforma
+    ? '<div class="c b" style="border:1px solid #000;padding:1mm;margin:1mm 0">PROFORMA — NOT A RECEIPT OF PAYMENT</div><div class="c" style="font-size:0.82em">Please settle at the cashier.</div>'
+    : '';
+  const cashierHTML = cashierName ? '<div>Served by: ' + cashierName + '</div>' : '';
+  return '<!DOCTYPE html><html><head><title>' + (isKOT ? 'KOT' : (isProforma ? 'Guest Bill' : 'Receipt')) + '</title><meta charset="UTF-8"/><style>' +
     '@page { size: ' + pageSize + ' auto; margin: 0; } * { box-sizing: border-box; margin: 0; padding: 0; }' +
     'html, body { width: ' + bodyWidth + '; background: #fff; color: #000; } body { font-family: "Courier New", Courier, monospace; font-size: ' + fontSize + '; padding: 3mm 2mm 8mm; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
     '.c { text-align: center; } .r { text-align: right; } .b { font-weight: bold; } .div { text-align: center; margin: 1.5mm 0; } .logo { text-align: center; margin-bottom: 2mm; } .logo img { max-width: 48mm; max-height: 18mm; object-fit: contain; }' +
     '.nm { text-align: left; width: 58%; word-break: break-word; padding: 0.8mm 0; } .qt { text-align: center; width: 10%; padding: 0.8mm 1mm; } .pr { text-align: right; width: 32%; padding: 0.8mm 0; } .tot td { padding: 0.5mm 0; } .tot.grand td { font-weight: bold; font-size: 1.25em; border-top: 1px solid #000; padding-top: 1.5mm; }' +
     '</style></head><body>' + logoHTML + '<div class="center b" style="font-size:1.3em">' + settings.restaurant_name + '</div><div class="c" style="font-size:0.9em">' + (settings.address || '') + '</div>' +
-    '<div class="div">================================</div><div class="c b">' + (isKOT ? 'KOT' : 'RECEIPT') + '</div><div class="div">--------------------------------</div>' +
-     '<div>Bill: ' + receiptNum + '</div><div>Time: ' + timestamp + '</div>' + (data.paymentMethod ? '<div class="b" style="margin:1mm 0;border:1px solid #000;padding:1mm 2mm;display:inline-block">Payment: ' + ({'cash':'CASH','ecocash':'ECOCASH (MOBILE)','swipe':'CARD / SWIPE','room-charge':'CHARGED TO ROOM FOLIO'}[String(data.paymentMethod)] || String(data.paymentMethod).toUpperCase().replace(/-/g,' ')) + '</div>' : '') + (data.tableId ? '<div>Table: ' + data.tableId + '</div>' : '') + (data.roomNumber ? '<div class="b">Room: ' + data.roomNumber + '</div>' : '') + (data.customerName ? '<div class="b">Guest: ' + data.customerName + '</div>' : '') +
+    '<div class="div">================================</div><div class="c b">' + docLabel + '</div>' + proformaBanner + '<div class="div">--------------------------------</div>' +
+     '<div>Bill: ' + receiptNum + '</div><div>Time: ' + timestamp + '</div>' + cashierHTML + ((data.paymentMethod && !isProforma) ? '<div class="b" style="margin:1mm 0;border:1px solid #000;padding:1mm 2mm;display:inline-block">Payment: ' + ({'cash':'CASH','ecocash':'ECOCASH (MOBILE)','swipe':'CARD / SWIPE','room-charge':'CHARGED TO ROOM FOLIO'}[String(data.paymentMethod)] || String(data.paymentMethod).toUpperCase().replace(/-/g,' ')) + '</div>' : '') + (data.tableId ? '<div>Table: ' + data.tableId + '</div>' : '') + (data.roomNumber ? '<div class="b">Room: ' + data.roomNumber + '</div>' : '') + (data.customerName ? '<div class="b">Guest: ' + data.customerName + '</div>' : '') +
     '<div class="div">--------------------------------</div><table>' + rowsHTML + '</table>' + totalsHTML + sigHTML +
     '<div class="div">--------------------------------</div><div class="c">' + (settings.footer_text || 'Thank you!') + '</div><div class="c" style="font-size:0.8em;margin-top:2mm">Powered By Coredigita</div><!-- ReceiptBrandingApplied --></body></html>';
 };

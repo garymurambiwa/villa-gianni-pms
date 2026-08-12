@@ -87,6 +87,55 @@ const FOSetting: React.FC = () => {
   const [draft, setDraft] = React.useState<BrandSettings>(() => readJSON<BrandSettings>(K_BRAND, DEFAULT));
   const [previewUrl, setPreviewUrl] = React.useState<string | undefined>(draft.logoDataUrl);
 
+  // ── Accommodation Tax setup ────────────────────────────────────────────────
+  const [taxOpen, setTaxOpen] = React.useState(false);
+  const [taxRate, setTaxRate] = React.useState<string>('15');
+  const [taxInclusive, setTaxInclusive] = React.useState<boolean>(true);
+  const [taxSaved, setTaxSaved] = React.useState<string>('');
+  const canManageTax = ['admin', 'manager'].includes((role || '').toLowerCase());
+
+  React.useEffect(() => {
+    // Authoritative rate from system_configs.hotel_tax_rate; fall back to the
+    // night-audit localStorage profile the posting actually uses today.
+    fetch('/api/system/branding').then(r => r.json()).then(d => {
+      const r = d?.branding?.hotel_tax_rate;
+      if (r != null && !isNaN(Number(r))) setTaxRate(String(Number(r)));
+    }).catch(() => {});
+    try {
+      const prof = JSON.parse(localStorage.getItem('corepms_tax_profile_default') || 'null');
+      if (prof && prof.taxRate != null) { setTaxRate(String(Number(prof.taxRate) * 100)); if (prof.inclusive != null) setTaxInclusive(!!prof.inclusive); }
+    } catch { /* ignore */ }
+  }, []);
+
+  const saveTax = async () => {
+    const pct = Number(taxRate);
+    if (isNaN(pct) || pct < 0 || pct > 100) { setTaxSaved('Enter a rate between 0 and 100.'); return; }
+    // Persist to BOTH stores: system_configs (authoritative/branding) and the
+    // localStorage profile the night audit reads — so the configured rate is
+    // actually applied (previously night audit ignored config and posted 10%).
+    try {
+      await fetch('/api/db/query', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sql: `INSERT INTO system_configs (key, value, updated_at) VALUES ('hotel_tax_rate', $1::jsonb, NOW())
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+          params: [JSON.stringify(pct)],
+        }),
+      });
+      await fetch('/api/db/query', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sql: `INSERT INTO system_configs (key, value, updated_at) VALUES ('accommodation_tax_inclusive', $1::jsonb, NOW())
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+          params: [JSON.stringify(taxInclusive)],
+        }),
+      });
+    } catch { /* offline — localStorage still applies for this device */ }
+    try { localStorage.setItem('corepms_tax_profile_default', JSON.stringify({ taxRate: pct / 100, inclusive: taxInclusive })); } catch { /* ignore */ }
+    setTaxSaved(`Saved — accommodation tax is now ${pct}% (${taxInclusive ? 'tax-inclusive' : 'added on top'}).`);
+    setTimeout(() => { setTaxOpen(false); setTaxSaved(''); }, 1400);
+  };
+
   const apply = () => {
     setError('');
     if (!isValidName(draft.name)) { setError('Name must be 2–32 characters (letters, numbers, space, - _ .)'); return; }
@@ -127,7 +176,42 @@ const FOSetting: React.FC = () => {
             )}
           </Button>
         ))}
+        {canManageTax && (
+          <Button variant="outline" className="justify-start text-left h-auto py-3" onClick={() => setTaxOpen(true)}>
+            <span className="text-xl mr-3">🧾</span>
+            <span className="font-medium flex-1">Tax Setup <span className="block text-[11px] text-gray-500 font-normal">Accommodation tax rate — currently {taxRate}%</span></span>
+            <span className="ml-2 text-[10px] uppercase tracking-wide bg-red-600 text-white px-2 py-1 rounded">Admin/Manager</span>
+          </Button>
+        )}
       </div>
+
+      {taxOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setTaxOpen(false)}>
+          <div className="bg-white w-full max-w-md rounded-xl shadow-xl p-6" role="dialog" aria-modal="true" aria-label="Tax Setup" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold">Accommodation Tax Setup</h3>
+              <Button variant="outline" className="text-black" onClick={() => setTaxOpen(false)}>Close</Button>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">Applied by the night audit to room charges. Setting this fixes the prior mismatch where the configured rate was ignored and 10% was posted.</p>
+            <label className="text-xs font-medium">Accommodation Tax Rate (%)</label>
+            <Input type="number" step="0.1" min="0" max="100" value={taxRate} onChange={e => setTaxRate(e.target.value)} className="mt-1" />
+            <div className="mt-3 flex items-center gap-2">
+              <input id="tax-inclusive" type="checkbox" checked={taxInclusive} onChange={e => setTaxInclusive(e.target.checked)} className="h-4 w-4" />
+              <label htmlFor="tax-inclusive" className="text-sm">Tax is included in the room rate (inclusive)</label>
+            </div>
+            <div className="text-[11px] text-gray-500 mt-1">
+              {taxInclusive
+                ? `A $100 room at ${taxRate || 0}% → base $${(100 / (1 + Number(taxRate || 0) / 100)).toFixed(2)} + tax $${(100 - 100 / (1 + Number(taxRate || 0) / 100)).toFixed(2)}.`
+                : `A $100 room at ${taxRate || 0}% → base $100 + tax $${(100 * Number(taxRate || 0) / 100).toFixed(2)} = $${(100 * (1 + Number(taxRate || 0) / 100)).toFixed(2)}.`}
+            </div>
+            {taxSaved && <div className="mt-3 p-2 rounded bg-green-50 text-green-700 text-sm">{taxSaved}</div>}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <Button variant="outline" onClick={() => setTaxOpen(false)}>Cancel</Button>
+              <Button onClick={saveTax} className="bg-blue-600 text-white hover:bg-blue-700">Save Tax Rate</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {open && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

@@ -64,13 +64,14 @@ const AccountStatement: React.FC<AccountStatementProps> = ({ folio, guests }) =>
 
   // Guest information
   const guestInfo = useMemo(() => ({
-    name: guest?.name || 'Unknown Guest',
+    name: guest?.name || (folio as any).guestName || 'Unassigned Guest',
     roomNumber: folio.roomNumber || guest?.roomNumber || 'N/A',
-    checkIn: formatDate(guest?.checkIn),
-    checkOut: formatDate(guest?.checkOut),
+    // Stay dates live on the reservation → carried onto the folio; guest is a fallback.
+    checkIn: formatDate((folio as any).arrivalDate || guest?.checkIn),
+    checkOut: formatDate((folio as any).departureDate || guest?.checkOut),
     email: guest?.email || '',
     phone: guest?.phone || ''
-  }), [guest, folio.roomNumber]);
+  }), [guest, folio]);
 
   // Filter transactions based on date filter
   const filteredTransactions = useMemo(() => {

@@ -1299,28 +1299,31 @@ export const POSFrontOffice: React.FC = () => {
                 </DialogHeader>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setPrintOpen(false)}>Cancel</Button>
-                    <Button onClick={() => {
-                      if (!currentBill) return;
+                  {(() => {
+                    const buildHtml = (docType: 'receipt' | 'proforma') => {
+                      if (!currentBill) return '';
                       const items = Array.isArray(currentBill.items)
-                        ? currentBill.items.map((i: any) => ({
-                            name: i.menuItem?.name || 'Unknown Item',
-                            quantity: i.quantity,
-                            price: i.menuItem?.price || 0,
-                            subtotal: i.subtotal
-                          }))
+                        ? currentBill.items.map((i: any) => ({ name: i.menuItem?.name || 'Unknown Item', quantity: i.quantity, price: i.menuItem?.price || 0, subtotal: i.subtotal }))
                         : [];
-                       const html = generateReceiptHTML({
-                       id: currentBill.id,
-                       items,
-                       total: currentBill.total,
-                       customerName: currentBill.customerName,
-                       roomNumber: currentBill.roomNumber,
-                       tableId: activeTableId || currentBill.tableId,
-                       paymentMethod: currentBill.paymentMethod
-                     }, (() => { const b = readReceiptBranding(); return { restaurant_name: b.restaurant_name || 'Property', address: b.address || '', phone: b.phone || '', email: b.email || '', tax_rate: Number(b.tax_rate ?? 0), show_tax_breakdown: true, paper_size: (b.paper_size as any) || '80mm', logo_url: b.logo_url, show_logo: b.show_logo, header_text: b.header_text, footer_text: b.footer_text, promotional_message: b.promotional_message }; })(), 'receipt', { includeSignature: false, showTaxBreakdown: true, serverName: user?.name });
-                    printDocument(html, `Bill-${currentBill.id}`);
-                    setPrintOpen(false);
-                  }}>Print</Button>
+                      const b = readReceiptBranding();
+                      return generateReceiptHTML({
+                        id: currentBill.id, items, total: currentBill.total,
+                        customerName: currentBill.customerName, roomNumber: currentBill.roomNumber,
+                        tableId: activeTableId || currentBill.tableId,
+                        // Proforma is a pre-settlement bill → no payment method shown.
+                        paymentMethod: docType === 'proforma' ? undefined : currentBill.paymentMethod,
+                        cashier: user?.name || user?.username,
+                      }, { restaurant_name: b.restaurant_name || 'Property', address: b.address || '', phone: b.phone || '', email: b.email || '', tax_rate: Number(b.tax_rate ?? 0), show_tax_breakdown: true, paper_size: (b.paper_size as any) || '80mm', logo_url: b.logo_url, show_logo: b.show_logo, header_text: b.header_text, footer_text: b.footer_text, promotional_message: b.promotional_message } as any,
+                        docType, { showTaxBreakdown: true, cashier: user?.name || user?.username });
+                    };
+                    return (
+                      <>
+                        <Button variant="outline" onClick={() => { const h = buildHtml('proforma'); if (h) { printDocument(h, `Proforma-${currentBill?.id}`); setPrintOpen(false); } }}
+                          title="Print the guest bill BEFORE payment (not a receipt)">Print Bill (Pre-Settlement)</Button>
+                        <Button onClick={() => { const h = buildHtml('receipt'); if (h) { printDocument(h, `Bill-${currentBill?.id}`); setPrintOpen(false); } }}>Print Receipt</Button>
+                      </>
+                    );
+                  })()}
                 </DialogFooter>
               </DialogContent>
             </Dialog>
