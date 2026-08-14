@@ -834,7 +834,19 @@ function batchFlushOps(batch, postedBy) {
   // business_date = the source document's TRANSACTION date (txn_date), NOT the
   // posting date — so a GRN dated 01 May posted in Aug books to May and every
   // GL-based report (P&L, TB, journals) shows it in May. Falls back to today.
-  const bizDate = batch.txn_date ? String(batch.txn_date).slice(0, 10) : null;
+  // Format txn_date to YYYY-MM-DD. Postgres DATE columns come back as JS Date
+  // objects, and String(date).slice(0,10) yields "Sat Aug 01" — which fails the
+  // ::date cast. Handle Date objects AND already-ISO strings.
+  const toYMD = (v) => {
+    if (!v) return null;
+    if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+    const s = String(v);
+    const m = s.match(/^\d{4}-\d{2}-\d{2}/);
+    if (m) return m[0];
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  };
+  const bizDate = toYMD(batch.txn_date);
   return { entryId, ops: [
     {
       sql: `INSERT INTO gl_journal_entries
