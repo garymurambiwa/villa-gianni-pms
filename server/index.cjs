@@ -2469,12 +2469,17 @@ const server = app.listen(PORT, '0.0.0.0', () => {
       await dbMod.query(`CREATE INDEX IF NOT EXISTS idx_glpb_status ON gl_pending_batches(status)`);
       await dbMod.query(`CREATE INDEX IF NOT EXISTS idx_glpb_origin ON gl_pending_batches(origin_table, origin_id)`);
 
-      const schedule = await runner.getSystemConfig('night_audit_schedule',
-        { enabled: true, hour: 21, minute: 0, timezone: 'Africa/Harare' });
-      if (schedule.enabled !== false) {
-        runner.startScheduler(schedule.hour, schedule.minute, schedule.timezone);
-        console.log(`⏰ Night audit scheduler active — runs at ${String(schedule.hour).padStart(2,'0')}:${String(schedule.minute).padStart(2,'0')} ${schedule.timezone}`);
+      // SINGLE source of truth for the night audit: this server-side cron ONLY,
+      // fixed at 23:59 Africa/Harare (one minute before midnight) for every
+      // property. The browser-side scheduler has been removed. Force the stored
+      // schedule to 23:59 so any legacy value (e.g. 21:00) is corrected on boot.
+      const FIXED = { enabled: true, hour: 23, minute: 59, timezone: 'Africa/Harare' };
+      const schedule = await runner.getSystemConfig('night_audit_schedule', FIXED);
+      if (schedule.hour !== 23 || schedule.minute !== 59 || schedule.timezone !== 'Africa/Harare') {
+        try { await runner.setSystemConfig('night_audit_schedule', { ...FIXED, enabled: schedule.enabled !== false }); } catch { /* non-fatal */ }
       }
+      runner.startScheduler(FIXED.hour, FIXED.minute, FIXED.timezone);
+      console.log(`⏰ Night audit scheduler active (single reference) — runs at 23:59 ${FIXED.timezone}`);
     })().catch(console.error);
 });
 
