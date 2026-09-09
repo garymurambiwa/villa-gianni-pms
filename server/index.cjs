@@ -791,16 +791,20 @@ app.get('/api/gl/pending-batches', async (req, res) => {
 app.post('/api/pos/next-bill-number', async (req, res) => {
   try {
     await ensureFinanceTables(db);
+    // Seed the row (once) from the highest existing bill number — as a SEPARATE
+    // statement so the allocate UPDATE below sees it (a data-modifying CTE would
+    // run under the same snapshot and miss its own insert on first call).
+    await db.query(
+      `INSERT INTO doc_sequences (doc_type, next_val)
+       SELECT 'BILL', GREATEST(
+         COALESCE((SELECT MAX(NULLIF(regexp_replace(COALESCE(bill_number,''),'[^0-9]','','g'),'')::bigint) FROM pos_orders), 0),
+         COALESCE((SELECT MAX(NULLIF(regexp_replace(COALESCE(bill_number,''),'[^0-9]','','g'),'')::bigint) FROM pos_bills), 0)
+       ) + 1
+       ON CONFLICT (doc_type) DO NOTHING`
+    );
+    // Atomic allocation.
     const r = await db.query(
-      `WITH seed AS (
-         INSERT INTO doc_sequences (doc_type, next_val)
-         SELECT 'BILL', GREATEST(
-           COALESCE((SELECT MAX(NULLIF(regexp_replace(COALESCE(bill_number,''),'[^0-9]','','g'),'')::bigint) FROM pos_orders), 0),
-           COALESCE((SELECT MAX(NULLIF(regexp_replace(COALESCE(bill_number,''),'[^0-9]','','g'),'')::bigint) FROM pos_bills), 0)
-         ) + 1
-         ON CONFLICT (doc_type) DO NOTHING
-       )
-       UPDATE doc_sequences SET next_val = next_val + 1
+      `UPDATE doc_sequences SET next_val = next_val + 1
        WHERE doc_type = 'BILL' RETURNING next_val - 1 AS current`
     );
     const number = Number(r.rows?.[0]?.current || 0);
