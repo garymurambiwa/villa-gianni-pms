@@ -58,6 +58,19 @@ export class TransactionSequencer {
    * Returns the raw integer; callers format/pad as needed.
    */
   async nextGlobalBillNumber(): Promise<number> {
+    // AUTHORITATIVE: the server owns one atomic, property-wide bill sequence.
+    // This guarantees continuous numbers across every till/browser (the old
+    // localStorage counter produced non-continuous "random" numbers per device).
+    try {
+      const res = await fetch('/api/pos/next-bill-number', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const data = await res.json();
+      if (data?.ok && Number(data.number) > 0) {
+        // keep the local cache in step so an offline fallback continues sensibly
+        this.cachedCounters.set('GLOBAL_bill', Number(data.number));
+        this.saveToLocalStorage();
+        return Number(data.number);
+      }
+    } catch { /* offline — fall back to the local counter below */ }
     await this.ensureGlobalSeeded();
     return this.getNextCounter('GLOBAL_bill');
   }

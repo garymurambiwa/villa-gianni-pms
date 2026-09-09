@@ -33,6 +33,9 @@ interface AuthContextType {
   updateProfile: (patch: Partial<{ name?: string; phone?: string }>) => Promise<{ ok: boolean; error?: string }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ ok: boolean; error?: string }>;
   verifyPosPin: (pin: string) => Promise<{ success: boolean; user?: User; error?: string }>;
+  /** Switch the active operator (e.g. when a DIFFERENT user unlocks a locked POS
+   *  station) so the profile window and bill cashier reflect who is really there. */
+  switchPosOperator: (user: User) => void;
   isLocked: boolean;
   setIsLocked: (locked: boolean) => void;
 }
@@ -364,10 +367,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  // Switch the active operator identity. Used when a different user unlocks a
+  // locked POS station — prevents them from operating under the previous user's
+  // profile, and ensures bills/audit attribute to the real operator.
+  const switchPosOperator = (nextUser: User) => {
+    if (!nextUser) return;
+    setUser(enforceAdminRole({ ...nextUser, propertyId: nextUser.propertyId || 'P001' } as User));
+  };
+
   return (
-    <AuthContext.Provider value={{ 
+    <AuthContext.Provider value={{
       user, costCentre, shiftId, isLocked, setIsLocked,
-      setCostCentre, setShiftId, verifyPosPin, 
+      setCostCentre, setShiftId, verifyPosPin, switchPosOperator, 
       login, register, requestPasswordReset, resetPassword, 
       logout, updateProfile, changePassword 
     }}>

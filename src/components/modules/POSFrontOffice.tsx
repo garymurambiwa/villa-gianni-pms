@@ -31,7 +31,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 export const POSFrontOffice: React.FC = () => {
   const { guests, recordFolioCharge, removeFolioCharge, loading, posOrders, savePosOrder, closePosOrder, addCityLedgerTransaction } = useData();
   const { activeShift, startShift, endShift, getTotals, addTransaction } = useShift();
-  const { user, costCentre, shiftId, isLocked, setIsLocked, verifyPosPin } = useAuth();
+  const { user, costCentre, shiftId, isLocked, setIsLocked, verifyPosPin, switchPosOperator } = useAuth();
 
   // 90-second inactivity timeout — locks the station without losing table state.
   // Saves current page to localStorage so session recovery restores operational context.
@@ -1024,7 +1024,7 @@ export const POSFrontOffice: React.FC = () => {
     if (closePosOrder) {
       // Pass paymentData.paymentMethod so the DB row records cash/ecocash/swipe/
       // room-charge — Reports → Payment Methods reads this column directly.
-      const doClose = () => closePosOrder(bill.tableId, costCentre || undefined, paymentData?.paymentMethod, billNumber);
+      const doClose = () => closePosOrder(bill.tableId, costCentre || undefined, paymentData?.paymentMethod, billNumber, user?.name || user?.username);
       doClose()
         .then(() => {
           console.log('POS order closed (first pass)');
@@ -1097,14 +1097,22 @@ export const POSFrontOffice: React.FC = () => {
       <PINModal
         isOpen={isLocked}
         onClose={() => {}} // User cannot close without PIN
-        onSuccess={() => {
+        onSuccess={(unlockUser?: any) => {
           setIsLocked(false);
+          // SECURITY FIX: if a DIFFERENT user unlocked the station, switch the
+          // active operator to them — never resume into the previous user's
+          // profile with someone else's PIN. Bills/audit then attribute correctly.
+          const switchedToDifferentUser = !!(unlockUser?.id && user?.id && unlockUser.id !== user.id);
+          if (switchedToDifferentUser) {
+            switchPosOperator(unlockUser);
+          }
           // Session recovery: clear lock context, stay on current view (Table Management).
-          // No "Start Shift" redirect — operational continuity is maintained.
           try {
             const ctx = JSON.parse(localStorage.getItem('corepms_pos_last_context') || '{}');
             localStorage.removeItem('corepms_pos_last_context');
-            if (ctx.lockedAt) {
+            if (switchedToDifferentUser) {
+              toast({ title: '🔓 Operator switched', description: `Now signed in as ${unlockUser.name || unlockUser.username}.` });
+            } else if (ctx.lockedAt) {
               const lockDuration = Math.round((Date.now() - new Date(ctx.lockedAt).getTime()) / 60000);
               toast({ title: '🔓 Session resumed', description: `Locked for ${lockDuration} min — returning to Table Management.` });
             }

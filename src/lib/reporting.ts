@@ -732,8 +732,10 @@ export const buildPosBillRegister = async (from?: string, to?: string) => {
     const { db } = await import('@/lib/db');
     // pos_orders schema: cost_center (not outlet); bill_number added by schema
     // sync — orders closed before that carry no number and sort chronologically.
+    // cashier column may not exist on older DBs — COALESCE via to_jsonb guard.
     const res = await db.query<any>(
-      `SELECT bill_number, id, created_at, cost_center, payment_method, total_amount
+      `SELECT bill_number, id, created_at, cost_center, payment_method, total_amount,
+              (to_jsonb(pos_orders.*) ->> 'cashier') AS cashier
        FROM pos_orders
        WHERE status = 'closed' AND created_at::date >= $1::date AND created_at::date <= $2::date
        ORDER BY NULLIF(regexp_replace(COALESCE(bill_number,''), '[^0-9]', '', 'g'), '')::bigint NULLS LAST,
@@ -745,15 +747,16 @@ export const buildPosBillRegister = async (from?: string, to?: string) => {
       date: String(r.created_at).slice(0, 10),
       time: String(r.created_at).slice(11, 16),
       outlet: r.cost_center || '—',
+      cashier: r.cashier || '—',
       method: r.payment_method || '—',
       total: Number(r.total_amount || 0).toFixed(2),
     }));
     const total = rows.reduce((s: number, r: any) => s + Number(r.total), 0);
-    rows.push({ bill: `TOTAL (${rows.length} bills)`, date: '', time: '', outlet: '', method: '', total: total.toFixed(2) } as any);
+    rows.push({ bill: `TOTAL (${rows.length} bills)`, date: '', time: '', outlet: '', cashier: '', method: '', total: total.toFixed(2) } as any);
     return {
       title: `POS Bill Register ${start}${end !== start ? ` → ${end}` : ''}`,
-      columns: ['Bill #', 'Date', 'Time', 'Outlet', 'Payment', 'Total'],
-      rows: rows.map((r: any) => [r.bill, r.date, r.time, r.outlet, r.method, r.total]),
+      columns: ['Bill #', 'Date', 'Time', 'Outlet', 'Cashier', 'Payment', 'Total'],
+      rows: rows.map((r: any) => [r.bill, r.date, r.time, r.outlet, r.cashier, r.method, r.total]),
     };
   } catch (err) {
     console.warn('[Reporting] buildPosBillRegister failed:', err);

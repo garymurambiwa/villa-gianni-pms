@@ -781,6 +781,34 @@ app.get('/api/gl/pending-batches', async (req, res) => {
 });
 
 // POST /api/gl/pending-batches (create)
+// ─── POS bill number — authoritative, atomic, property-wide sequence ─────────
+// Previously the counter lived in per-browser localStorage (the DB
+// sequence_counters table never existed), so numbers were non-continuous across
+// stations and fell back to random UUID digits. This DB counter (doc_sequences
+// 'BILL') is seeded once from the highest existing bill number across pos_orders
+// and pos_bills, then atomically incremented — one continuous sequence for the
+// whole property, shared by every till and shift.
+app.post('/api/pos/next-bill-number', async (req, res) => {
+  try {
+    await ensureFinanceTables(db);
+    const r = await db.query(
+      `WITH seed AS (
+         INSERT INTO doc_sequences (doc_type, next_val)
+         SELECT 'BILL', GREATEST(
+           COALESCE((SELECT MAX(NULLIF(regexp_replace(COALESCE(bill_number,''),'[^0-9]','','g'),'')::bigint) FROM pos_orders), 0),
+           COALESCE((SELECT MAX(NULLIF(regexp_replace(COALESCE(bill_number,''),'[^0-9]','','g'),'')::bigint) FROM pos_bills), 0)
+         ) + 1
+         ON CONFLICT (doc_type) DO NOTHING
+       )
+       UPDATE doc_sequences SET next_val = next_val + 1
+       WHERE doc_type = 'BILL' RETURNING next_val - 1 AS current`
+    );
+    const number = Number(r.rows?.[0]?.current || 0);
+    if (!number) throw new Error('sequence allocation failed');
+    res.json({ ok: true, number });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 app.post('/api/gl/pending-batches', async (req, res) => {
   const { origin_table, origin_id, description, debit_gl_account, credit_gl_account, amount, txn_date } = req.body || {};
   if (!origin_table || !origin_id || !debit_gl_account || !credit_gl_account || amount == null)

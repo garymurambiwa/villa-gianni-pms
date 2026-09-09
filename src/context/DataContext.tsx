@@ -738,7 +738,7 @@ check_in_date = ?, check_out_date = ?, status = ?,
     }
   };
 
-  const closePosOrder = async (tableNumber: string, costCentre?: string, paymentMethod?: string, billNumber?: string): Promise<boolean> => {
+  const closePosOrder = async (tableNumber: string, costCentre?: string, paymentMethod?: string, billNumber?: string, cashier?: string): Promise<boolean> => {
     // Optimistic update — remove from local state immediately so posOrders effect
     // never re-occupies the table while the DB update is in-flight.
     // Use case-insensitive comparison for cost_center — DB may store 'conference'
@@ -762,13 +762,21 @@ check_in_date = ?, check_out_date = ?, status = ?,
       // Persist the sequential bill number so the POS Bill Register can list
       // bills in numbering sequence (column added by the startup schema sync).
       const setBill = billNumber ? ", bill_number = ?" : "";
+      // Persist the CASHIER (who created/closed the bill) for accountability —
+      // shown on the bill/receipt and the POS Bill Register.
+      let setCashier = '';
+      if (cashier) {
+        try { await db.query('ALTER TABLE pos_orders ADD COLUMN IF NOT EXISTS cashier TEXT', []); } catch { /* best-effort */ }
+        setCashier = ", cashier = ?";
+      }
       const baseParams: any[] = [
         ...(paymentMethod ? [paymentMethod] : []),
         ...(billNumber ? [billNumber] : []),
+        ...(cashier ? [cashier] : []),
       ];
       const query = costCentre
-        ? `UPDATE pos_orders SET status = 'closed'${setMethod}${setBill}, updated_at = NOW() WHERE table_number = ? AND status = 'open' AND LOWER(cost_center) = LOWER(?)`
-        : `UPDATE pos_orders SET status = 'closed'${setMethod}${setBill}, updated_at = NOW() WHERE table_number = ? AND status = 'open'`;
+        ? `UPDATE pos_orders SET status = 'closed'${setMethod}${setBill}${setCashier}, updated_at = NOW() WHERE table_number = ? AND status = 'open' AND LOWER(cost_center) = LOWER(?)`
+        : `UPDATE pos_orders SET status = 'closed'${setMethod}${setBill}${setCashier}, updated_at = NOW() WHERE table_number = ? AND status = 'open'`;
       const params = costCentre
         ? [...baseParams, tableNumber, costCentre]
         : [...baseParams, tableNumber];
