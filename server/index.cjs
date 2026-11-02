@@ -999,7 +999,8 @@ app.get('/api/system/branding', async (req, res) => {
       `SELECT key, value FROM system_configs
        WHERE key IN ('hotel_name','hotel_address','hotel_phone','hotel_email',
                      'hotel_website','hotel_logo_url','hotel_logo_show',
-                     'hotel_receipt_footer','hotel_tax_rate','hotel_paper_size')`
+                     'hotel_receipt_footer','hotel_tax_rate','hotel_paper_size',
+                     'license_banner_text','license_banner_enabled')`
     );
     const map = {};
     if (result.ok && result.rows) {

@@ -77,6 +77,7 @@ import { initializeDatabase } from '@/lib/databaseInitializer'
 import VendorManagement from './modules/VendorManagement';
 import BreakfastManager from './modules/BreakfastManager';
 import OfflineIndicator from './OfflineIndicator';
+import { LicenseBanner } from './LicenseBanner';
 import { InventoryReconciliation } from './modules/InventoryReconciliation';
 import InventoryV11Dashboard from './modules/InventoryV11Dashboard';
 import InventoryV11GRNForm from './modules/InventoryV11GRNForm';
@@ -594,7 +595,10 @@ const AppLayout: React.FC = () => {
        {/* Night Audit full-screen lock overlay — renders on top of everything */}
        <NightAuditLockOverlay />
        <ActiveModuleSync mod={activeModule} />
-       <div className="flex flex-col md:flex-row h-screen bg-gray-100">
+       <div className="flex flex-col h-screen">
+       {/* License alert marquee — full width, shown only where configured (Baradzanwa) */}
+       <LicenseBanner />
+       <div className="flex flex-col md:flex-row flex-1 min-h-0 bg-gray-100">
         <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} />
         <div className="flex-1 min-w-0 min-h-0 overflow-y-auto overflow-x-hidden" style={{ touchAction: 'pan-y' }}>
           {/* Dynamic Background Div - Changes color based on selected menu item */}
@@ -618,6 +622,7 @@ const AppLayout: React.FC = () => {
           {/* Module content */}
           {renderModule()}
         </div>
+      </div>
       </div>
     </HotkeysProvider>
   );
