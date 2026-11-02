@@ -93,6 +93,21 @@ const FOSetting: React.FC = () => {
   const [taxInclusive, setTaxInclusive] = React.useState<boolean>(true);
   const [taxSaved, setTaxSaved] = React.useState<string>('');
   const canManageTax = ['admin', 'manager'].includes((role || '').toLowerCase());
+  const canForceRefresh = isAdmin(role) || (role || '').toLowerCase() === 'manager';
+  const [refreshing, setRefreshing] = React.useState(false);
+  const forceRefreshAll = async () => {
+    if (!window.confirm('Force ALL logged-in users to refresh their browser? Each open session will reload once within ~60 seconds to pick up the latest update.')) return;
+    setRefreshing(true);
+    try {
+      const r = await fetch('/api/system/force-refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(x => x.json());
+      if (!r.ok) throw new Error(r.error || 'failed');
+      alert('Done — all open sessions will refresh within ~60 seconds. (This device reloads now.)');
+      setTimeout(() => window.location.reload(), 800);
+    } catch (e: any) {
+      alert('Force refresh failed: ' + (e?.message || e));
+      setRefreshing(false);
+    }
+  };
 
   React.useEffect(() => {
     // Authoritative rate from system_configs.hotel_tax_rate; fall back to the
@@ -180,6 +195,13 @@ const FOSetting: React.FC = () => {
           <Button variant="outline" className="justify-start text-left h-auto py-3" onClick={() => setTaxOpen(true)}>
             <span className="text-xl mr-3">🧾</span>
             <span className="font-medium flex-1">Tax Setup <span className="block text-[11px] text-gray-500 font-normal">Accommodation tax rate — currently {taxRate}%</span></span>
+            <span className="ml-2 text-[10px] uppercase tracking-wide bg-red-600 text-white px-2 py-1 rounded">Admin/Manager</span>
+          </Button>
+        )}
+        {canForceRefresh && (
+          <Button variant="outline" className="justify-start text-left h-auto py-3" disabled={refreshing} onClick={forceRefreshAll}>
+            <span className="text-xl mr-3">🔄</span>
+            <span className="font-medium flex-1">{refreshing ? 'Refreshing…' : 'Force Refresh All Users'} <span className="block text-[11px] text-gray-500 font-normal">Reloads every open session to apply the latest update</span></span>
             <span className="ml-2 text-[10px] uppercase tracking-wide bg-red-600 text-white px-2 py-1 rounded">Admin/Manager</span>
           </Button>
         )}

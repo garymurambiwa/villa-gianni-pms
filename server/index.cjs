@@ -1012,6 +1012,23 @@ app.get('/api/system/branding', async (req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+// POST /api/system/force-refresh — bump force_reload_token so every open client
+// reloads once (within the poll interval) to pick up a new deployment.
+app.post('/api/system/force-refresh', async (req, res) => {
+  try {
+    const token = `rel_${Date.now()}`;
+    const r = await db.query(
+      `INSERT INTO system_configs (key, value, updated_at)
+       VALUES ('force_reload_token', $1::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+       RETURNING value`,
+      [JSON.stringify(token)]
+    );
+    if (!r.ok) throw new Error(r.error || 'update failed');
+    res.json({ ok: true, token });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 app.post('/api/system/branding', async (req, res) => {
   const patch = req.body || {};
   const allowed = ['hotel_name','hotel_address','hotel_phone','hotel_email',
