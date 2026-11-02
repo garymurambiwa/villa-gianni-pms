@@ -37,10 +37,10 @@ export const LicenseBanner: React.FC = () => {
         overflow: 'hidden',
         whiteSpace: 'nowrap',
         position: 'relative',
-        height: '30px',
-        lineHeight: '30px',
+        height: '45px',
+        lineHeight: '45px',
         fontWeight: 700,
-        fontSize: '14px',
+        fontSize: '21px',
         letterSpacing: '0.02em',
         borderBottom: '1px solid #991b1b',
         zIndex: 60,
@@ -48,7 +48,7 @@ export const LicenseBanner: React.FC = () => {
     >
       <style>{`
         @keyframes license-marquee { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
-        .license-marquee-track { display: inline-block; padding-left: 100%; animation: license-marquee 54s linear infinite; }
+        .license-marquee-track { display: inline-block; padding-left: 100%; animation: license-marquee 81s linear infinite; }
       `}</style>
       <span className="license-marquee-track">
         ⚠ {text} &nbsp;&nbsp;•&nbsp;&nbsp; ⚠ {text} &nbsp;&nbsp;•&nbsp;&nbsp; ⚠ {text}
