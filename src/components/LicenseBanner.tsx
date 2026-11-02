@@ -48,7 +48,7 @@ export const LicenseBanner: React.FC = () => {
     >
       <style>{`
         @keyframes license-marquee { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
-        .license-marquee-track { display: inline-block; padding-left: 100%; animation: license-marquee 18s linear infinite; }
+        .license-marquee-track { display: inline-block; padding-left: 100%; animation: license-marquee 54s linear infinite; }
       `}</style>
       <span className="license-marquee-track">
         ⚠ {text} &nbsp;&nbsp;•&nbsp;&nbsp; ⚠ {text} &nbsp;&nbsp;•&nbsp;&nbsp; ⚠ {text}

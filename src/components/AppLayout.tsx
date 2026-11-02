@@ -78,6 +78,7 @@ import VendorManagement from './modules/VendorManagement';
 import BreakfastManager from './modules/BreakfastManager';
 import OfflineIndicator from './OfflineIndicator';
 import { LicenseBanner } from './LicenseBanner';
+import { useForceRefresh } from '@/hooks/useForceRefresh';
 import { InventoryReconciliation } from './modules/InventoryReconciliation';
 import InventoryV11Dashboard from './modules/InventoryV11Dashboard';
 import InventoryV11GRNForm from './modules/InventoryV11GRNForm';
@@ -88,6 +89,9 @@ import NightAuditLockOverlay from './NightAuditLockOverlay';
 
 const AppLayout: React.FC = () => {
   const { user } = useAuth();
+  // Fleet-wide forced refresh: reload every open client when the server's
+  // force_reload_token changes (admins bump it after a deploy).
+  useForceRefresh(60000);
   const [activeModule, setActiveModule] = useState('dashboard');
   const { toast } = useToast();
   const location = useLocation();
