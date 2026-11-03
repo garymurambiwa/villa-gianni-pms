@@ -11,6 +11,7 @@ import { AppProvider } from "@/contexts/AppContext";
 import { SettingsProvider } from "@/hooks/useSettings";
 import VersionDisplay from "@/components/ui/VersionDisplay";
 import { VirtualKeyboard } from "@/components/ui/VirtualKeyboard";
+import { SystemBlockOverlay } from "@/components/SystemBlockOverlay";
 
 // Lazy load pages for better performance
 const Index = lazy(() => import("./pages/Index"));
@@ -71,6 +72,9 @@ const App = () => (
               <Suspense fallback={<LoadingFallback />}>
                 <RouterProvider router={router} future={{ v7_startTransition: true }} />
               </Suspense>
+              {/* Full-screen system-block overlay — renders over login + app when
+                  system_block_enabled is set (Baradzanwa). Self-polls + self-clears. */}
+              <SystemBlockOverlay />
               <div
                 className="fixed bottom-3 right-3 z-50"
                 role="contentinfo"
